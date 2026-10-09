@@ -28,6 +28,8 @@ import type { Trader } from '../executor/trader';
 import type { LiveState } from '../scanner/live-state';
 import { getSolUsd } from '../lib/sol-price';
 import { FeeEstimator } from './fee-estimator';
+import type { OutcomeLabeler } from '../learner/outcome-labeler';
+import { currentRegime } from '../learner/regime-detector';
 import { keywordCheck, NEUTRAL_SOCIAL_FEATURES, SocialAnalyzer, socialsScore, twitterInfo } from './social-analyzer';
 import { analyzeMarket, type PrevCheckpoint } from './market-analyzer';
 import { checkEntryRules, decide, scoreFeatures, type FeatureVector } from './scorer';
@@ -48,6 +50,7 @@ export class Evaluator {
     private readonly liveState: LiveState,
     private readonly wallets: WalletAnalyzer,
     private readonly trader: Trader,
+    private readonly outcomes: OutcomeLabeler | null = null,
   ) {
     this.fees = new FeeEstimator(redis);
     this.social = new SocialAnalyzer(redis);
@@ -138,7 +141,10 @@ export class Evaluator {
     this.stats.evaluated++;
 
     // A tracked wallet buying is a signal of its own → lower bar for copy trades.
-    const threshold = cfg.entry.minCombinedScore + (STRATEGY.name === 'SMART_MONEY_COPY' ? cfg.copy.scoreThresholdDelta : 0);
+    // Market mood shifts the bar (stricter when cold / rug-heavy, easier when hot).
+    const regime = currentRegime();
+    const threshold =
+      cfg.entry.minCombinedScore + (STRATEGY.name === 'SMART_MONEY_COPY' ? cfg.copy.scoreThresholdDelta : 0) + cfg.regimeAdjustments[regime].scoreThresholdDelta;
     // Socials + keywords (from the metadata file, if it has been fetched).
     let socialInfo: { hasTwitter: boolean; blockedKeyword: string | null } | undefined;
     let socialFeatures = NEUTRAL_SOCIAL_FEATURES;
@@ -195,9 +201,12 @@ export class Evaluator {
           reasons,
           features: json({ checkpointSec, features, contributions: result.contributions, market: market.raw, creator: profile, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
+          regime,
         },
       });
       evaluationId = row.id;
+      // Learning: watch what the price does over the next hour.
+      await this.outcomes?.startWindow(mint, row.id, market.raw.priceSol);
       bus.publish({ type: 'evaluation', data: { mint, symbol: token.symbol, score: result.score, decision, reasons } });
       await prisma.token.update({ where: { mint }, data: { combinedScore: result.score } });
     }

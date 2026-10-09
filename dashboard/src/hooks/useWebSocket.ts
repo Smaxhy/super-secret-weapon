@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { getApiUrl, getToken } from '../lib/api';
 
 export interface BotEvent {
-  type: 'token' | 'safety' | 'evaluation' | 'trade' | 'stats';
+  type: 'token' | 'safety' | 'evaluation' | 'trade' | 'stats' | 'positions';
   data: Record<string, unknown>;
 }
 

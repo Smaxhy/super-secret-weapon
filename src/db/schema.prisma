@@ -229,23 +229,27 @@ model TokenSnapshot {
 // -----------------------------------------------------------------------------
 
 model Evaluation {
-  id             String        @id @default(uuid())
-  mint           String
-  strategy       Strategy?
-  safetyScore    Float
-  walletScore    Float?
-  marketScore    Float?
-  socialScore    Float?
-  mlScore        Float?
-  combinedScore  Float
-  decision       Decision
+  id               String        @id @default(uuid())
+  mint             String
+  strategy         Strategy?
+  safetyScore      Float
+  walletScore      Float?
+  marketScore      Float?
+  socialScore      Float?
+  mlScore          Float?
+  combinedScore    Float
+  decision         Decision
   /// Human-readable list of why this decision was made
-  reasons        Json
+  reasons          Json
   /// All raw features used — re-used for ML training
-  features       Json
-  weightsVersion Int?
-  regime         MarketRegime?
-  createdAt      DateTime      @default(now()) @db.Timestamptz(3)
+  features         Json
+  weightsVersion   Int?
+  regime           MarketRegime?
+  createdAt        DateTime      @default(now()) @db.Timestamptz(3)
+  /// Learning labels: best and worst price multiple in the hour after this evaluation
+  outcomeMax       Float?
+  outcomeMin       Float?
+  outcomeLabeledAt DateTime?     @db.Timestamptz(3)
 
   token     Token      @relation(fields: [mint], references: [mint], onDelete: Cascade)
   positions Position[]
@@ -253,6 +257,7 @@ model Evaluation {
   @@index([mint])
   @@index([createdAt])
   @@index([decision, createdAt])
+  @@index([outcomeLabeledAt])
 }
 
 // -----------------------------------------------------------------------------

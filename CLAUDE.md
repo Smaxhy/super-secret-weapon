@@ -20,8 +20,10 @@ smart money → learning engine → ML → social). See README.md.
 - Secrets live only in `/root/bot/.env` on the VPS (never in git).
 
 ## Current state (keep this section updated)
-- Phases done: 1 (scanner), 2 (scoring + paper trading), 3 (API + dashboard + PWA), plus parts of
-  6 (PumpSwap/migration strategy, copy-trading tracked wallets) and 9 (free metadata socials/keywords).
+- Phases done: 1 (scanner), 2 (scoring + paper trading), 3 (API + dashboard + PWA), 7 (learning:
+  outcome labels 1h after each stored evaluation, Bayesian pattern odds, nightly weight tuning 00:05 UTC,
+  regime detector every 15 min), plus parts of 6 (PumpSwap/migration strategy, copy-trading tracked
+  wallets) and 9 (free metadata socials/keywords). Positions stream live over WebSocket ('positions').
 - Mode: **PAPER only** (10 SOL fake balance). No wallet key on the server. Phase 4 (live) not built.
 - Data source default `DATA_SOURCE=hybrid`: PumpPortal (launches/migrations) + Solana public RPC
   `logsSubscribe` (trades). Helius is only for RPC checks (1M credits/month plan — be frugal).
@@ -35,8 +37,8 @@ smart money → learning engine → ML → social). See README.md.
 ## Open items / next steps
 1. Verify on the VPS that hybrid trade stream flows (`tradesPerMin` in hundreds+). If Solana's public
    node throttles, consider a cheap paid stream.
-2. Phase 7 learning engine (nightly weight tuning from outcomes, Bayesian beliefs, regime detection,
-   missed-opportunity tracking). Owner explicitly wants the bot to LEARN.
+2. Learning engine v2: use Bayesian pattern odds directly in scoring; Phase 8 ML model (XGBoost)
+   once a few weeks of labelled data exist.
 3. Phase 5 controls page (pause/kill switch, sliders for every rule, keyword lists, manual sell,
    blacklist). Rules are already in `BotConfig` (runtime-config.ts) — UI + API needed.
 4. Phase 4 live execution only after a week+ of profitable paper results, dedicated small wallet.

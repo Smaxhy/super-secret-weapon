@@ -21,6 +21,7 @@
 import type { ExitReason, Position } from '@prisma/client';
 import type { BotConfigShape } from '../config/default';
 import { getConfig } from '../config/runtime-config';
+import { bus } from '../lib/bus';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import { logTrade } from '../learner/trade-logger';
@@ -189,6 +190,7 @@ export class SellManager {
   private running = false;
   private readonly samples = new Map<string, ActivitySample[]>();
   private readonly lastPoll = new Map<string, number>();
+  private updates: Array<{ id: string; priceSol: number; multiple: number; peakMultiple: number; unrealizedPnlSol: number; risk: number; holders: number }> = [];
 
   constructor(
     private readonly executor: Executor,
@@ -210,6 +212,7 @@ export class SellManager {
     this.running = true;
     try {
       const positions = await prisma.position.findMany({ where: { mode: this.executor.mode, status: 'OPEN' }, include: { token: { select: { symbol: true, bondingCurve: true } } } });
+      this.updates = [];
       const openIds = new Set(positions.map((x) => x.id));
       for (const id of this.samples.keys()) if (!openIds.has(id)) this.samples.delete(id);
       for (const p of positions) {
@@ -220,6 +223,8 @@ export class SellManager {
           log.error({ positionId: p.id, err: (err as Error).message }, 'failed to manage position');
         }
       }
+      // Live prices for the dashboard's Positions page.
+      if (this.updates.length) bus.publish({ type: 'positions', data: { updates: this.updates } });
     } catch (err) {
       log.error({ err: (err as Error).message }, 'sell manager tick failed');
     } finally {
@@ -273,6 +278,20 @@ export class SellManager {
     while (hist.length && now - hist[0]!.t > 180_000) hist.shift();
     this.samples.set(p.id, hist);
     const { risk, why } = computeRisk(hist, Math.max(p.peakPriceSol, m.priceSol), now);
+    {
+      const costLeft = (p.sizeSol * p.remainingPct) / 100;
+      const multiple = m.priceSol / p.entryPriceSol;
+      const feeBps = view.ammBaseReserve ? cfg.paper.ammFeeBps : cfg.paper.curveFeeBps;
+      this.updates.push({
+        id: p.id,
+        priceSol: m.priceSol,
+        multiple,
+        peakMultiple: Math.max(p.peakPriceSol, m.priceSol) / p.entryPriceSol,
+        unrealizedPnlSol: costLeft * multiple * (1 - feeBps / 10_000) - costLeft,
+        risk,
+        holders: m.holderCount,
+      });
+    }
     const copied = (entry as { copiedWallet?: string | null }).copiedWallet;
     const copyWalletSold = !!copied && (await this.redis.exists(copySoldKey(p.mint, copied))) === 1;
 

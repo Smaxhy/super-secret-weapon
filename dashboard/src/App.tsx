@@ -11,6 +11,7 @@ import { BotStatusBadge } from './components/StatusBadge';
 import { disconnectSocket, useSocketStatus } from './hooks/useWebSocket';
 import { getToken, setToken } from './lib/api';
 import { History } from './pages/History';
+import { Learning } from './pages/Learning';
 import { LiveFeed } from './pages/LiveFeed';
 import { Login } from './pages/Login';
 import { Overview } from './pages/Overview';
@@ -27,6 +28,7 @@ const NAV = [
   { to: '/history', label: 'History', icon: '☰' },
   { to: '/performance', label: 'Performance', icon: '↗' },
   { to: '/wallets', label: 'Wallets', icon: '◈' },
+  { to: '/learning', label: 'Learning', icon: '✦' },
   { to: '/scanner', label: 'Scanner', icon: '◉' },
 ];
 
@@ -136,6 +138,7 @@ function Shell() {
           <Route path="/history" element={<History />} />
           <Route path="/performance" element={<Performance />} />
           <Route path="/wallets" element={<Wallets />} />
+          <Route path="/learning" element={<Learning />} />
           <Route path="/scanner" element={<ScannerStats />} />
           <Route path="/token/:mint" element={<TokenDetail />} />
           <Route path="*" element={<Navigate to="/" replace />} />
@@ -145,7 +148,7 @@ function Shell() {
       <Toasts />
 
       {/* Mobile bottom nav */}
-      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-7 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden" aria-label="Main">
+      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-8 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden" aria-label="Main">
         {NAV.map((n) => (
           <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => `flex min-h-14 flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium ${isActive ? 'text-accent' : 'text-ink-2'}`}>
             <span aria-hidden="true" className="text-lg leading-none">{n.icon}</span>

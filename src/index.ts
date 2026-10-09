@@ -21,6 +21,9 @@ import { Trader } from './executor/trader';
 import { ensureTimescale } from './db/timescale';
 import { SafetyChecker } from './evaluator/safety-checker';
 import { ObservationLogger } from './learner/observation-logger';
+import { scheduleDailyAdjuster } from './learner/daily-adjuster';
+import { OutcomeLabeler } from './learner/outcome-labeler';
+import { startRegimeDetector } from './learner/regime-detector';
 import { logger } from './lib/logger';
 import { prisma } from './lib/prisma';
 import { closeQueues } from './lib/queues';
@@ -71,7 +74,12 @@ async function main(): Promise<void> {
   const trader = new Trader(executor);
   const sellManager = new SellManager(executor, liveState, redis);
   sellManager.start();
-  const evaluator = new Evaluator(redis, liveState, new WalletAnalyzer(redis), trader);
+  // Learning engine: label outcomes, nightly weight tuning, market regime.
+  const outcomes = new OutcomeLabeler(liveState);
+  outcomes.start();
+  const nightly = scheduleDailyAdjuster();
+  const regimeTimer = await startRegimeDetector();
+  const evaluator = new Evaluator(redis, liveState, new WalletAnalyzer(redis), trader, outcomes);
   evaluator.start();
 
   const registry = new TokenRegistry(liveState, observations, safety, evaluator);
@@ -224,6 +232,9 @@ async function main(): Promise<void> {
       await api?.close();
       for (const src of sources) await src.stop();
       whales.stop();
+      void nightly.stop();
+      clearInterval(regimeTimer);
+      await outcomes.stop();
       await evaluator.stop();
       await sellManager.stop();
       stopConfigRefresh();

@@ -1,19 +1,46 @@
+import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useBotEvents, type BotEvent } from '../hooks/useWebSocket';
 import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { ago, multiple, num, pct, price, sol, STRATEGY_LABEL } from '../lib/format';
 import type { OpenPosition } from '../lib/types';
 
+interface LiveUpdate {
+  id: string;
+  priceSol: number;
+  multiple: number;
+  peakMultiple: number;
+  unrealizedPnlSol: number;
+  risk: number;
+  holders: number;
+}
+
 export function Positions() {
-  const { data, error, loading } = useApi<OpenPosition[]>('/api/positions', 3_000, ['trade']);
+  const { data, error, loading } = useApi<OpenPosition[]>('/api/positions', 10_000, ['trade']);
+  // The bot pushes every open position's price every ~2s; overlay it on the last full load.
+  const [live, setLive] = useState<Record<string, LiveUpdate & { at: number }>>({});
+  const onEvent = useCallback((e: BotEvent) => {
+    if (e.type !== 'positions') return;
+    const now = Date.now();
+    const next: Record<string, LiveUpdate & { at: number }> = {};
+    for (const u of (e.data as { updates: LiveUpdate[] }).updates) next[u.id] = { ...u, at: now };
+    setLive((prev) => ({ ...prev, ...next }));
+  }, []);
+  useBotEvents(onEvent);
   return (
     <>
-      <PageHeader title="Open positions" subtitle="Updates live. Manual sell arrives with the Controls page (Phase 5)." />
+      <PageHeader title="Open positions" subtitle="Prices stream live from the bot every ~2 seconds." />
       {error && <ErrorBox message={error} />}
       {loading && !data ? <Loading /> : !data?.length ? <Empty>No open positions right now.</Empty> : null}
       <div className="grid gap-4 lg:grid-cols-2">
-        {data?.map((p) => {
+        {data?.map((base) => {
+          const u = live[base.id];
+          const p = u
+            ? { ...base, currentPriceSol: u.priceSol, multiple: u.multiple, unrealizedPnlSol: u.unrealizedPnlSol, peakPriceSol: Math.max(base.peakPriceSol, u.peakMultiple * base.entryPriceSol), health: base.health ? { ...base.health, holders: u.holders } : base.health }
+            : base;
           const m = p.multiple ?? 0;
+          const risk = u?.risk;
           return (
             <Card
               key={p.id}
@@ -22,7 +49,17 @@ export function Positions() {
                   {p.symbol} <span className="font-normal text-ink-2">· {STRATEGY_LABEL[p.strategy] ?? p.strategy}</span>
                 </Link>
               }
-              action={<span className="text-sm text-muted">opened {ago(p.openedAt)}</span>}
+              action={
+                <span className="flex items-center gap-2 text-sm text-muted">
+                  {u && Date.now() - u.at < 6_000 && (
+                    <span className="inline-flex items-center gap-1 text-up">
+                      <span className="h-2 w-2 animate-pulse rounded-full bg-good" aria-hidden="true" />
+                      live
+                    </span>
+                  )}
+                  opened {ago(p.openedAt)}
+                </span>
+              }
             >
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                 <Field label="Now">
@@ -40,7 +77,9 @@ export function Positions() {
                 <Field label="Entry price">{price(p.entryPriceSol)}</Field>
                 <Field label="Current price">{price(p.currentPriceSol)}</Field>
                 <Field label="Peak">{multiple(p.peakPriceSol / p.entryPriceSol)}</Field>
-                <Field label="Score at entry">{p.scoreAtEntry?.toFixed(1) ?? '—'}</Field>
+                <Field label="Exit risk">
+                  {risk === undefined ? '—' : <span className={risk >= 0.6 ? 'text-down' : risk >= 0.35 ? 'text-warning' : 'text-up'}>{risk >= 0.6 ? 'High' : risk >= 0.35 ? 'Rising' : 'Low'} ({Math.round(risk * 100)})</span>}
+                </Field>
               </div>
 
               <div className="mt-4 border-t border-line pt-3 text-sm">

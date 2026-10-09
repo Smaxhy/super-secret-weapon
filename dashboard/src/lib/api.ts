@@ -43,7 +43,8 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     res = await fetch(`${getApiUrl()}${path}`, {
       ...init,
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers },
+      // Only claim JSON when there is a body — the server rejects empty JSON bodies.
+      headers: { ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init?.headers },
     });
   } catch {
     throw new ApiError(`Can't reach the bot at ${getApiUrl()}`, 0);

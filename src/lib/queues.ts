@@ -15,7 +15,13 @@ export const QUEUE_NAMES = {
   safety: 'safety-check',
   observations: 'observations',
   evaluate: 'evaluate',
+  outcome: 'outcome',
 } as const;
+
+export interface OutcomeJob {
+  mint: string;
+  evaluationId: string;
+}
 
 export interface EvaluateJob {
   mint: string;
@@ -61,6 +67,11 @@ export const evaluateQueue = new Queue<EvaluateJob>(QUEUE_NAMES.evaluate, {
   defaultJobOptions: { ...defaultJobOptions, attempts: 2 },
 });
 
+export const outcomeQueue = new Queue<OutcomeJob>(QUEUE_NAMES.outcome, {
+  connection: bullConnection(),
+  defaultJobOptions: { ...defaultJobOptions, attempts: 2 },
+});
+
 export async function closeQueues(): Promise<void> {
-  await Promise.all([safetyQueue.close(), observationQueue.close(), evaluateQueue.close()]);
+  await Promise.all([safetyQueue.close(), observationQueue.close(), evaluateQueue.close(), outcomeQueue.close()]);
 }

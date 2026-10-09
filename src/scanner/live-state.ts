@@ -65,6 +65,21 @@ if tonumber(ARGV[2]) <= 0 then redis.call('HDEL', KEYS[1], ARGV[1]) else redis.c
 return 1
 `;
 
+/**
+ * Learning: after an evaluation we record the best/worst price that follows.
+ * Runs on every trade but only does work while an outcome window is open.
+ */
+const OUTCOME_TRACK_LUA = `
+if redis.call('HEXISTS', KEYS[1], 'evalBase') == 0 then return 0 end
+local p = tonumber(ARGV[1])
+if not p or p <= 0 then return 0 end
+local mx = tonumber(redis.call('HGET', KEYS[1], 'evalMax') or '0')
+local mn = tonumber(redis.call('HGET', KEYS[1], 'evalMin') or '0')
+if p > mx then redis.call('HSET', KEYS[1], 'evalMax', ARGV[1]) end
+if mn == 0 or p < mn then redis.call('HSET', KEYS[1], 'evalMin', ARGV[1]) end
+return 1
+`;
+
 type RedisWithBalance = Redis & {
   balanceDelta(key: string, wallet: string, delta: string): Promise<number>;
 };
@@ -127,6 +142,7 @@ export class LiveState {
   constructor(redis: Redis) {
     redis.defineCommand('balanceDelta', { numberOfKeys: 1, lua: BALANCE_DELTA_LUA });
     redis.defineCommand('balanceSet', { numberOfKeys: 1, lua: BALANCE_SET_LUA });
+    redis.defineCommand('trackOutcome', { numberOfKeys: 1, lua: OUTCOME_TRACK_LUA });
     this.r = redis as RedisWithBalance;
   }
 
@@ -305,7 +321,11 @@ export class LiveState {
     p.hincrby(live, 'fees', t.feeLamports.toString());
     p.hset(live, { ...t.reserves, lastTradeAt: String(t.timestamp * 1000) });
     // ioredis pipelines support custom commands; typed loosely here.
-    const pp = p as unknown as { balanceDelta(k: string, w: string, d: string): void; balanceSet(k: string, w: string, v: string): void };
+    const pp = p as unknown as { balanceDelta(k: string, w: string, d: string): void; balanceSet(k: string, w: string, v: string): void; trackOutcome(k: string, price: string): void };
+    // Price after this trade, for the learning outcome window.
+    const r = t.reserves;
+    const px = r.ammQuote && r.ammBase ? Number(r.ammQuote) / 1e9 / (Number(r.ammBase) / 1e6) : r.vSol && r.vTok ? Number(r.vSol) / 1e9 / (Number(r.vTok) / 1e6) : 0;
+    if (px > 0) pp.trackOutcome(live, String(px));
     if (t.balanceAfter !== undefined) pp.balanceSet(bal, t.user, t.balanceAfter.toString());
     else pp.balanceDelta(bal, t.user, delta.toString());
     p.pfadd(hll, t.user);
@@ -321,6 +341,21 @@ export class LiveState {
     const results = await p.exec();
     const failed = results?.find(([err]) => err);
     if (failed) log.warn({ mint, err: failed[0]?.message }, 'trade pipeline had an error');
+  }
+
+  /** Open (or restart) the learning window: track best/worst price from now on. */
+  async startOutcomeWindow(mint: string, evaluationId: string, priceSol: number): Promise<void> {
+    if (!this.tracked.has(mint) || !(priceSol > 0)) return;
+    const p = String(priceSol);
+    await this.r.hset(key.live(mint), { evalId: evaluationId, evalBase: p, evalMax: p, evalMin: p, evalAt: String(Date.now()) });
+  }
+
+  /** Read the learning window. null if none is open for this evaluation. */
+  async readOutcomeWindow(mint: string, evaluationId: string): Promise<{ base: number; max: number; min: number; current: number } | null> {
+    const [id, base, max, min, vSol, vTok, aQ, aB] = await this.r.hmget(key.live(mint), 'evalId', 'evalBase', 'evalMax', 'evalMin', 'vSol', 'vTok', 'ammQuote', 'ammBase');
+    if (id !== evaluationId || !base) return null;
+    const current = aQ && aB ? Number(aQ) / 1e9 / (Number(aB) / 1e6) : vSol && vTok ? Number(vSol) / 1e9 / (Number(vTok) / 1e6) : Number(base);
+    return { base: Number(base), max: Number(max), min: Number(min), current };
   }
 
   /** Price refresh read straight from the chain (used when the stream goes quiet on a token we hold). */
