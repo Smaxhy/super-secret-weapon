@@ -54,8 +54,8 @@ describe('entry rules', () => {
   const base = { safetyScore: 100, safetyHardFail: false, market: goodMarket, strategy: STRATEGIES.CURVE_SNIPE, entry: DEFAULT_CONFIG.entry };
   it('passes a good token', () => expect(checkEntryRules(base)).toEqual([]));
   it('anti-rug limits: bundles, top 10, single wallet, dev dumping', () => {
-    const fails = checkEntryRules({ ...base, market: { ...goodMarket, earlyBuyerPct: 20, top10HolderPct: 50, maxHolderPct: 12, devSoldFraction: 0.95 } });
-    expect(fails).toEqual(['bundlers hold 20.0% > 15%', 'top 10 hold 50.0% > 45%', 'one wallet holds 12.0% > 8%', 'dev sold 95% of their bag']);
+    const fails = checkEntryRules({ ...base, market: { ...goodMarket, earlyBuyerPct: 20, top10HolderPct: 55, maxHolderPct: 12, devSoldFraction: 0.95 } });
+    expect(fails).toEqual(['bundlers hold 20.0% > 18%', 'top 10 hold 55.0% > 50%', 'one wallet holds 12.0% > 10%', 'dev sold 95% of their bag']);
   });
   it('migration strategy accepts completed curves only once on PumpSwap', () => {
     const mig = { ...base, strategy: STRATEGIES.MIGRATION_MOMENTUM, market: { ...goodMarket, holders: 80, complete: true, bondingCurvePct: 100 } };

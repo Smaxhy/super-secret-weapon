@@ -5,7 +5,7 @@ import { num, pct } from '../lib/format';
 import type { ScannerStatsData } from '../lib/types';
 
 const REASON_LABEL: Record<string, string> = {
-  score: 'Score below 75',
+  score: 'Score too low',
   holders: 'Not enough holders',
   MC: 'Market cap under $12k',
   volume: 'Volume under $12k',
@@ -87,7 +87,7 @@ export function ScannerStats() {
             </Card>
             <Card title="Score distribution (7d)">
               <CountBars data={d.scoreHistogram} labelKey="range" valueLabel="Tokens" />
-              <p className="mt-2 text-sm text-ink-2">Only tokens that reached a scoring checkpoint. The bot buys at 75+.</p>
+              <p className="mt-2 text-sm text-ink-2">Only tokens that reached a scoring checkpoint. The bot buys at 70+ (copy trades 60+).</p>
             </Card>
           </div>
           <Card title="Market regime" className="mt-4">

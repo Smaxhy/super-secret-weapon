@@ -29,8 +29,8 @@ smart money → learning engine → ML → social). See README.md.
   `logsSubscribe` (trades). Helius is only for RPC checks (1M credits/month plan — be frugal).
   Helius logsSubscribe burned ~5%/hour → never default to it.
 - Owner's entry rules: min $12k volume, min $12k MC, min 1 SOL total fees paid (terminal-style:
-  protocol fees + priority fees + Jito tips), score ≥ 75 (copy trades 65), anti-rug limits
-  (bundlers ≤15%, top10 ≤45%, single wallet ≤8%, dev ≤10%).
+  protocol fees + priority fees + Jito tips), score ≥ 70 (copy trades 60), anti-rug limits
+  (bundlers ≤18%, top10 ≤50%, single wallet ≤10%, dev ≤10%). Loosened slightly on request so it trades/learns more.
 - Exits: 40% at 1.8x, 30% at 3x, trailing 25% from 1.5x, protect profit (1.5x → floor 1.05x),
   momentum-risk exits, max hold per strategy, rug exits, copy exits. Owner wants profits banked early.
 

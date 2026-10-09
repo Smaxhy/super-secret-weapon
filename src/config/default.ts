@@ -31,17 +31,17 @@ export const DEFAULT_CONFIG = {
 
   entry: {
     minSafetyScore: 70,
-    minCombinedScore: 75,
-    minHoldersCurveSnipe: 20,
-    minHoldersMigration: 50,
+    minCombinedScore: 70,
+    minHoldersCurveSnipe: 15,
+    minHoldersMigration: 40,
     maxDevHoldingPct: 10,
     // ---- Anti-rug: hard limits, any one of them blocks a buy ----
     /** Bundled / sniper wallets (bought within ~1s of launch, dev excluded) may hold at most this % of supply. */
-    maxBundlePct: 15,
+    maxBundlePct: 18,
     /** Top 10 wallets combined may hold at most this % of supply. */
-    maxTop10Pct: 45,
+    maxTop10Pct: 50,
     /** No single wallet (dev excluded) may hold more than this % of supply. */
-    maxSingleHolderPct: 8,
+    maxSingleHolderPct: 10,
     /** Skip if the dev has already sold more than this share of what they bought (0-1). */
     maxDevSoldFraction: 0.9,
     requireNoMintAuthority: true,
@@ -57,7 +57,7 @@ export const DEFAULT_CONFIG = {
      * doesn't show. Until a token's transactions are sampled, assume this much
      * per trade (SOL). Typical Pump.fun trades pay ~0.001-0.005.
      */
-    assumedExtraFeePerTradeSol: 0.0015,
+    assumedExtraFeePerTradeSol: 0.002,
     /** Only buy tokens that link an X account / post / community in their metadata. */
     requireTwitter: false,
   },
@@ -141,7 +141,7 @@ export const DEFAULT_CONFIG = {
 
   scoring: {
     /** Checkpoints (seconds after launch) at which a token is (re)evaluated. */
-    checkpointsSec: [20, 45, 90, 180, 300, 480, 720, 900],
+    checkpointsSec: [20, 45, 90, 180, 300, 480, 720, 900, 1080, 1200],
     /** Checkpoints (seconds after migration to PumpSwap) for the migration strategy. */
     migrationCheckpointsSec: [60, 180, 300, 600, 1200, 2400, 3600],
     /** Only run the RPC-heavy wallet analysis if the pre-score is within this many points of the threshold. */

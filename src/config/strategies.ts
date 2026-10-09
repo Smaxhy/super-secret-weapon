@@ -26,8 +26,8 @@ export const STRATEGIES: Record<StrategyName, StrategyParams> = {
   CURVE_SNIPE: {
     name: 'CURVE_SNIPE',
     description: 'Early entries on the Pump.fun bonding curve for tokens that pass safety + early-traction checks.',
-    minHolders: 20,
-    entryWindowMinutes: { min: 0, max: 15 },
+    minHolders: 15,
+    entryWindowMinutes: { min: 0, max: 20 },
     // Upper bound is high because the $12k market-cap rule is only met once
     // the curve is ~55-70% full (depends on SOL price). Completed curves are
     // still excluded by their own rule.
@@ -38,7 +38,7 @@ export const STRATEGIES: Record<StrategyName, StrategyParams> = {
   MIGRATION_MOMENTUM: {
     name: 'MIGRATION_MOMENTUM',
     description: 'Buys tokens right after they complete the curve and migrate, riding post-migration momentum.',
-    minHolders: 50,
+    minHolders: 40,
     entryWindowMinutes: { min: 0, max: 24 * 60 },
     curveProgressRange: { min: 100, max: 100 },
     staleExitMinutes: 120,

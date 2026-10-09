@@ -1,5 +1,5 @@
 /** Score 0-100 as a number plus a meter bar (same-hue track). */
-export function ScoreGauge({ score, threshold = 75, size = 'sm' }: { score: number | null | undefined; threshold?: number; size?: 'sm' | 'lg' }) {
+export function ScoreGauge({ score, threshold = 70, size = 'sm' }: { score: number | null | undefined; threshold?: number; size?: 'sm' | 'lg' }) {
   if (score === null || score === undefined) return <span className="text-muted">—</span>;
   const w = Math.max(0, Math.min(100, score));
   return (
