@@ -8,6 +8,7 @@ dashboard/dist/
 .env
 .env.*
 !.env.example
+!dashboard/.env.production
 *.keypair.json
 wallet*.json
 id.json
