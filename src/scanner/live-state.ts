@@ -69,6 +69,8 @@ export interface LiveTokenView {
   sells: number;
   buyVolumeSol: number;
   sellVolumeSol: number;
+  /** Total trading fees (protocol + creator) paid on this token, in SOL. */
+  feesSol: number;
   virtualSolReserves: bigint;
   virtualTokenReserves: bigint;
   complete: boolean;
@@ -178,6 +180,8 @@ export class LiveState {
     const p = this.r.pipeline();
     p.hincrby(live, ev.isBuy ? 'buys' : 'sells', 1);
     p.hincrby(live, ev.isBuy ? 'buyVol' : 'sellVol', ev.solAmount.toString());
+    // Fees traders paid on this token. Older events lack the field → estimate at 1.25%.
+    p.hincrby(live, 'fees', (ev.feeLamports ?? (ev.solAmount * 125n) / 10_000n).toString());
     p.hset(live, {
       vSol: ev.virtualSolReserves.toString(),
       vTok: ev.virtualTokenReserves.toString(),
@@ -235,6 +239,7 @@ export class LiveState {
       sells: Number(h.sells ?? 0),
       buyVolumeSol: Number(h.buyVol ?? 0) / 1e9,
       sellVolumeSol: Number(h.sellVol ?? 0) / 1e9,
+      feesSol: Number(h.fees ?? 0) / 1e9,
       virtualSolReserves: big(h.vSol),
       virtualTokenReserves: big(h.vTok),
       complete: h.complete === '1',

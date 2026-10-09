@@ -33,6 +33,10 @@ export interface MarketRaw {
   /** Current holders / every wallet that ever traded. Low = lots of flipping. */
   retention: number;
   complete: boolean;
+  totalFeesSol: number;
+  /** USD values — null if the SOL price is unknown. */
+  volumeUsd: number | null;
+  marketCapUsd: number | null;
 }
 
 /** What we remember from the previous checkpoint, to measure recent momentum. */
@@ -48,7 +52,12 @@ export type MarketFeatures = Pick<
 
 const clamp01 = (x: number) => (Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0);
 
-export function analyzeMarket(view: LiveTokenView, prev: PrevCheckpoint | null, now = Date.now()): { raw: MarketRaw; features: MarketFeatures } {
+export function analyzeMarket(
+  view: LiveTokenView,
+  prev: PrevCheckpoint | null,
+  solUsd: number | null,
+  now = Date.now(),
+): { raw: MarketRaw; features: MarketFeatures } {
   const m = deriveMetrics(view);
   const ageSec = Math.max(1, (now - view.createdAtMs) / 1000);
 
@@ -77,6 +86,9 @@ export function analyzeMarket(view: LiveTokenView, prev: PrevCheckpoint | null, 
     earlyBuyerPct: m.earlyBuyerPct,
     retention: view.uniqueWallets > 0 ? m.holderCount / view.uniqueWallets : 0,
     complete: view.complete,
+    totalFeesSol: view.feesSol,
+    volumeUsd: solUsd ? m.volumeSol * solUsd : null,
+    marketCapUsd: solUsd ? m.marketCapSol * solUsd : null,
   };
 
   return { raw, features: marketFeatures(raw) };

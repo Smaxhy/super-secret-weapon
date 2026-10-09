@@ -59,6 +59,8 @@ export interface PumpTradeEvent {
   /** Only present on newer program versions. */
   realSolReserves?: bigint;
   realTokenReserves?: bigint;
+  /** Protocol + creator fee paid on this trade (lamports). Newer program versions only. */
+  feeLamports?: bigint;
 }
 
 /** Emitted when a bonding curve fills up (token is about to migrate). */

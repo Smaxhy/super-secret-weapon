@@ -11,6 +11,7 @@ const view: LiveTokenView = {
   sells: 2,
   buyVolumeSol: 3,
   sellVolumeSol: 1,
+  feesSol: 0.05,
   virtualSolReserves: 32_000_000_000n,
   virtualTokenReserves: 1_005_937_500_000_000n,
   complete: false,

@@ -36,7 +36,7 @@ describe('parsePumpLogs', () => {
     const [c, t] = r.events;
     expect(c).toMatchObject({ kind: 'create', name: 'Test Coin', symbol: 'TEST', mint, creator: dev, timestamp: create.timestamp });
     expect(c?.kind === 'create' && c.tokenTotalSupply).toBe(1_000_000_000_000_000n);
-    expect(t).toMatchObject({ kind: 'trade', mint, isBuy: true, user: dev, solAmount: 1_000_000_000n });
+    expect(t).toMatchObject({ kind: 'trade', mint, isBuy: true, user: dev, solAmount: 1_000_000_000n, feeLamports: 2n });
   });
 
   it('decodes the legacy (short) CreateEvent layout', () => {

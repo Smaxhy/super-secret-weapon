@@ -38,6 +38,11 @@ export const DEFAULT_CONFIG = {
     requireNoMintAuthority: true,
     requireNoFreezeAuthority: true,
     minLiquiditySol: 5,
+    /** Total traded volume (buys + sells) in USD. */
+    minVolumeUsd: 12_000,
+    minMarketCapUsd: 12_000,
+    /** Total fees traders have paid on the token, in SOL (a proxy for real activity). */
+    minTotalFeesSol: 1,
   },
 
   exit: {

@@ -25,6 +25,7 @@ import { evaluateQueue, QUEUE_NAMES, type EvaluateJob } from '../lib/queues';
 import { bullConnection } from '../lib/redis';
 import type { Trader } from '../executor/trader';
 import type { LiveState } from '../scanner/live-state';
+import { getSolUsd } from '../lib/sol-price';
 import { analyzeMarket, type PrevCheckpoint } from './market-analyzer';
 import { checkEntryRules, decide, scoreFeatures, type FeatureVector } from './scorer';
 import { NEUTRAL_WALLET_FEATURES, walletFeatures, type CreatorProfile, type WalletAnalyzer } from './wallet-analyzer';
@@ -88,7 +89,7 @@ export class Evaluator {
     const prevRaw = await this.redis.get(prevKey);
     const prev = prevRaw ? (JSON.parse(prevRaw) as PrevCheckpoint) : null;
 
-    const market = analyzeMarket(view, prev);
+    const market = analyzeMarket(view, prev, await getSolUsd());
     await this.redis.set(prevKey, JSON.stringify({ atMs: Date.now(), bondingCurvePct: market.raw.bondingCurvePct } satisfies PrevCheckpoint), 'EX', STATE_TTL_SECONDS);
     this.stats.evaluated++;
 

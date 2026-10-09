@@ -60,6 +60,13 @@ export function checkEntryRules(i: EntryCheckInput): string[] {
     fails.push(`curve ${m.bondingCurvePct.toFixed(1)}% outside ${s.curveProgressRange.min}-${s.curveProgressRange.max}%`);
   }
   if (m.complete) fails.push('curve already complete');
+  if (m.totalFeesSol < e.minTotalFeesSol) fails.push(`fees ${m.totalFeesSol.toFixed(2)} SOL < ${e.minTotalFeesSol}`);
+  // Fail closed: without a SOL price we can't verify the USD minimums.
+  if (m.volumeUsd === null || m.marketCapUsd === null) fails.push('SOL/USD price unknown');
+  else {
+    if (m.volumeUsd < e.minVolumeUsd) fails.push(`volume $${Math.round(m.volumeUsd)} < $${e.minVolumeUsd}`);
+    if (m.marketCapUsd < e.minMarketCapUsd) fails.push(`MC $${Math.round(m.marketCapUsd)} < $${e.minMarketCapUsd}`);
+  }
   return fails;
 }
 

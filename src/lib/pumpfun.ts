@@ -170,6 +170,20 @@ function decodeTrade(r: BorshReader): PumpTradeEvent {
   const virtualSolReserves = r.u64();
   const virtualTokenReserves = r.u64();
   const hasReal = r.remaining >= 16;
+  const realSolReserves = hasReal ? r.u64() : undefined;
+  const realTokenReserves = hasReal ? r.u64() : undefined;
+  // fee_recipient, fee_basis_points, fee, creator, creator_fee_basis_points, creator_fee
+  let feeLamports: bigint | undefined;
+  if (r.remaining >= 48) {
+    r.pubkey();
+    r.u64();
+    feeLamports = r.u64();
+    if (r.remaining >= 48) {
+      r.pubkey();
+      r.u64();
+      feeLamports += r.u64();
+    }
+  }
   return {
     kind: 'trade',
     mint,
@@ -180,8 +194,9 @@ function decodeTrade(r: BorshReader): PumpTradeEvent {
     timestamp,
     virtualSolReserves,
     virtualTokenReserves,
-    realSolReserves: hasReal ? r.u64() : undefined,
-    realTokenReserves: hasReal ? r.u64() : undefined,
+    realSolReserves,
+    realTokenReserves,
+    feeLamports,
   };
 }
 
