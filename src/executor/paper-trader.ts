@@ -4,8 +4,9 @@
  *
  * It reads the curve's current reserves from Redis (kept fresh by every
  * trade event), runs the exact constant-product maths the on-chain program
- * uses, charges the curve fee and a transaction fee, then applies an extra
- * adverse slippage to account for the 1-2s we'd really take to land a tx.
+ * uses, charges the curve fee and a transaction fee. Before filling it waits
+ * a random 0.4–1.2s (like a real tx landing), so the fill uses the price
+ * *after* the delay, then applies a small extra adverse slippage on top.
  *
  * Balance = starting balance − SOL spent on buys − tx fees + SOL from sells,
  * all from the PAPER trades in the database, so it survives restarts.
@@ -32,6 +33,7 @@ export class PaperExecutor implements Executor {
   }
 
   async buy(req: BuyRequest): Promise<Fill> {
+    await landingDelay();
     const view = await this.liveState.read(req.mint);
     if (!view) return failed('no live state');
     const p = getConfig().paper;
@@ -56,6 +58,7 @@ export class PaperExecutor implements Executor {
   }
 
   async sell(req: SellRequest): Promise<Fill> {
+    await landingDelay();
     const view = await this.liveState.read(req.mint);
     if (!view) return failed('no live state');
     const p = getConfig().paper;
@@ -75,6 +78,13 @@ export class PaperExecutor implements Executor {
       feeSol: p.txFeeSol,
     };
   }
+}
+
+/** Wait as long as a real transaction would take to land (random within the configured range). */
+function landingDelay(): Promise<void> {
+  const { latencyMinMs: lo = 0, latencyMaxMs: hi = 0 } = getConfig().paper;
+  const ms = lo + Math.random() * Math.max(0, hi - lo);
+  return ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
 }
 
 /**

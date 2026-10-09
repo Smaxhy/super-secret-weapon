@@ -37,7 +37,7 @@ smart money → learning engine → ML → social). See README.md.
   stake + fees back → "house money"), the rest rides as a **runner** with a volatility-adaptive trail
   (ignores resistance/risk exits, max hold 2× normal). Protect profit (1.3x → floor 1.05x), resistance exit,
   momentum-risk exits, rug/copy exits. Old stored exit configs without `initials` auto-upgrade to defaults.
-  Fees: curve 1.25%, PumpSwap 0.3%, 0.0015 SOL gas+tip per tx, 1.5% slippage. Every trade stores an explanation.
+  Fees: curve 1.25%, PumpSwap 0.3%, 0.0015 SOL gas+tip per tx, 1.5% slippage, 0.4–1.2s random landing delay before each paper fill. Every trade stores an explanation.
 - Dashboard: positions show entry MC vs current MC (SOL + USD), a live price chart per position
   (Redis `pos:hist:<id>`, 5s points, 3-day TTL) with TP/stop/trail lines; redesigned layout + footer.
 - Learning re-weights every 2h (own trades weighted 3x); per-hour size factor; regime every 15 min.

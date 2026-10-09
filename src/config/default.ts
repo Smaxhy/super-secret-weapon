@@ -202,6 +202,13 @@ export const DEFAULT_CONFIG = {
     curveFeeBps: 125,
     /** Extra adverse price movement assumed between decision and fill (latency). */
     slippagePct: 1.5,
+    /**
+     * Time for a real transaction to land (sign → send → confirm). Each paper buy/sell
+     * waits a random delay in this range and THEN fills at the live price, so fast
+     * pumps and dumps move against us exactly like they would with real money.
+     */
+    latencyMinMs: 400,
+    latencyMaxMs: 1200,
     /** Network + priority fee + Jito tip per transaction (realistic for fast Pump.fun fills). */
     txFeeSol: 0.0015,
     /** PumpSwap pool fee (LP + protocol + creator), basis points per side. Approximate. */
