@@ -1,8 +1,9 @@
 /** One row in the live feed. The whole row links to the token's breakdown. */
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { ago, num, pct, sol } from '../lib/format';
 import type { Detection } from '../lib/types';
 import { ScoreGauge } from './ScoreGauge';
+import { SocialLinks } from './SocialLinks';
 import { StatusBadge } from './StatusBadge';
 
 const EDGE: Record<Detection['feedStatus'], string> = {
@@ -14,6 +15,9 @@ const EDGE: Record<Detection['feedStatus'], string> = {
 };
 
 export function TokenCard({ d }: { d: Detection }) {
+  // A div (not <a>) because the card contains its own social links.
+  const navigate = useNavigate();
+  const open = () => navigate(`/token/${d.mint}`);
   const metrics = [
     ['MC', d.live ? sol(d.live.marketCapSol, 1) : null],
     ['Holders', d.live ? num(d.live.holders) : null],
@@ -22,12 +26,20 @@ export function TokenCard({ d }: { d: Detection }) {
   ].filter(([, v]) => v !== null) as Array<[string, string]>;
 
   return (
-    <Link to={`/token/${d.mint}`} className={`flex items-center gap-4 rounded-xl border border-l-4 border-line bg-surface p-3 hover:bg-surface-2 ${EDGE[d.feedStatus]}`}>
+    <div
+      role="link"
+      tabIndex={0}
+      aria-label={`${d.symbol} details`}
+      onClick={open}
+      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), open())}
+      className={`flex cursor-pointer items-center gap-4 rounded-xl border border-l-4 border-line bg-surface p-3 hover:bg-surface-2 ${EDGE[d.feedStatus]}`}
+    >
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate font-semibold text-ink">{d.symbol || '?'}</span>
           <StatusBadge status={d.feedStatus} />
           <span className="text-sm text-muted">{ago(d.createdAt)}</span>
+          <SocialLinks twitter={d.twitter} telegram={d.telegram} website={d.website} />
         </div>
         <div className="mt-1 truncate text-sm text-ink-2">{d.name}</div>
         <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-sm tabular">
@@ -40,6 +52,6 @@ export function TokenCard({ d }: { d: Detection }) {
         </div>
       </div>
       <ScoreGauge score={d.combinedScore} />
-    </Link>
+    </div>
   );
 }

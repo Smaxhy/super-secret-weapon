@@ -31,6 +31,9 @@ export interface Detection {
   safetyHardFail: boolean | null;
   combinedScore: number | null;
   feedStatus: FeedStatus;
+  twitter?: string | null;
+  telegram?: string | null;
+  website?: string | null;
   live: { holders: number; marketCapSol: number; curvePct: number; volumeSol: number; buys: number; sells: number; devHoldingPct: number } | null;
 }
 

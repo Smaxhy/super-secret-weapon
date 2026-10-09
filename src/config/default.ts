@@ -43,6 +43,16 @@ export const DEFAULT_CONFIG = {
     minMarketCapUsd: 12_000,
     /** Total fees traders have paid on the token, in SOL (a proxy for real activity). */
     minTotalFeesSol: 1,
+    /** Only buy tokens that link an X account / post / community in their metadata. */
+    requireTwitter: false,
+  },
+
+  /** Keyword lists matched against name, ticker and description (whole words, case-insensitive). */
+  keywords: {
+    /** A match nudges the score up. */
+    boost: [] as string[],
+    /** A match blocks the buy. */
+    block: ['rug', 'scam', 'honeypot', 'test'] as string[],
   },
 
   exit: {
@@ -147,11 +157,11 @@ export const SAFETY_PENALTIES = {
  */
 export const DEFAULT_WEIGHTS = {
   safety: 0.15,
-  holders: 0.12,
+  holders: 0.1,
   buyPressure: 0.1,
-  volume: 0.05,
-  curveVelocity: 0.1,
-  distribution: 0.1,
+  volume: 0.03,
+  curveVelocity: 0.08,
+  distribution: 0.08,
   devHolding: 0.06,
   devBehavior: 0.06,
   snipers: 0.08,
@@ -160,6 +170,8 @@ export const DEFAULT_WEIGHTS = {
   creatorSuccess: 0.03,
   funderReuse: 0.03,
   walletAge: 0.02,
+  socials: 0.06,
+  narrative: 0.02,
 } as const;
 
 export type FeatureName = keyof typeof DEFAULT_WEIGHTS;

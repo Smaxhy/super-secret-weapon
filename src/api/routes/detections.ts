@@ -12,7 +12,7 @@ export async function detectionsRoutes(app: FastifyInstance, deps: ApiDeps): Pro
       take: limit,
       select: {
         mint: true, name: true, symbol: true, creator: true, createdAt: true, status: true,
-        safetyScore: true, safetyHardFail: true, combinedScore: true, lastHolderCount: true, lastPriceSol: true, peakMarketCapSol: true,
+        safetyScore: true, safetyHardFail: true, combinedScore: true, lastHolderCount: true, lastPriceSol: true, peakMarketCapSol: true, twitter: true, telegram: true, website: true,
         positions: { select: { id: true }, take: 1 },
       },
     });

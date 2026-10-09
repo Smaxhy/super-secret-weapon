@@ -1,6 +1,7 @@
 /** Full evaluation breakdown for one token. */
 import { Link, useParams } from 'react-router-dom';
 import { ScoreGauge } from '../components/ScoreGauge';
+import { SocialLinks } from '../components/SocialLinks';
 import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { ago, EXIT_LABEL, num, pct, shortAddr, sol } from '../lib/format';
@@ -12,6 +13,11 @@ interface Detail {
   creator: string;
   createdAt: string;
   status: string;
+  description: string | null;
+  twitter: string | null;
+  telegram: string | null;
+  website: string | null;
+  metadataFetchedAt: string | null;
   safetyChecks: Array<{ score: number; hardFail: boolean; checks: Array<{ id: string; label: string; severity: 'PASS' | 'WARN' | 'FAIL'; detail: string }> }>;
   evaluations: Array<{ id: string; createdAt: string; combinedScore: number; decision: string; reasons: string[]; features: { checkpointSec?: number; contributions?: Record<string, number>; features?: Record<string, number> } }>;
   snapshots: Array<{ interval: string; holderCount: number; marketCapSol: number; bondingCurvePct: number; volumeSol: number; devHoldingPct: number; top10HolderPct: number }>;
@@ -22,7 +28,7 @@ interface Detail {
 const FEATURE_LABEL: Record<string, string> = {
   safety: 'Safety', holders: 'Holders', buyPressure: 'Buy pressure', volume: 'Volume', curveVelocity: 'Curve speed', distribution: 'Distribution',
   devHolding: 'Dev holding', devBehavior: 'Dev not selling', snipers: 'Few snipers', retention: 'Holder retention', creatorLaunches: 'Dev not a serial launcher',
-  creatorSuccess: "Dev's past success", funderReuse: 'Funding source', walletAge: 'Dev wallet age',
+  creatorSuccess: "Dev's past success", funderReuse: 'Funding source', walletAge: 'Dev wallet age', socials: 'Socials (X / TG / site)', narrative: 'Keywords',
 };
 
 export function TokenDetail() {
@@ -55,6 +61,10 @@ export function TokenDetail() {
           </div>
         }
       />
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        {d.metadataFetchedAt ? <SocialLinks twitter={d.twitter} telegram={d.telegram} website={d.website} size="md" /> : <span className="text-sm text-muted">Socials not checked yet (checked once it reaches 10 holders)</span>}
+      </div>
+      {d.description && <p className="mb-3 max-w-3xl text-ink-2">“{d.description}”</p>}
       <p className="mb-4 break-all text-sm text-ink-2">
         Mint <code className="text-ink">{d.mint}</code> · Dev <a className="underline" href={`https://solscan.io/account/${d.creator}`} target="_blank" rel="noreferrer">{shortAddr(d.creator)}</a>
       </p>

@@ -33,16 +33,16 @@ const goodWallet: CreatorProfile = { creator: 'c', balanceSol: 3, walletAgeHours
 
 describe('scoring', () => {
   it('a strong token scores above the 75 threshold', () => {
-    const { score } = scoreFeatures({ safety: 1, ...marketFeatures(goodMarket), ...walletFeatures(goodWallet) }, DEFAULT_WEIGHTS);
+    const { score } = scoreFeatures({ safety: 1, ...marketFeatures(goodMarket), ...walletFeatures(goodWallet), socials: 0.7, narrative: 0.5 }, DEFAULT_WEIGHTS);
     expect(score).toBeGreaterThan(75);
   });
   it('a serial launcher with a sniped, concentrated token scores low', () => {
     const bad = { ...goodMarket, top10HolderPct: 55, earlyBuyerPct: 25, buySellRatio: 1, devSoldFraction: 1, curveVelocity: 0.2 };
-    const { score } = scoreFeatures({ safety: 1, ...marketFeatures(bad), ...walletFeatures({ ...goodWallet, launches24h: 15, funderCreatorCount: 6 }) }, DEFAULT_WEIGHTS);
+    const { score } = scoreFeatures({ safety: 1, ...marketFeatures(bad), ...walletFeatures({ ...goodWallet, launches24h: 15, funderCreatorCount: 6 }), socials: 0, narrative: 0.5 }, DEFAULT_WEIGHTS);
     expect(score).toBeLessThan(50);
   });
   it('contributions add up to the score', () => {
-    const r = scoreFeatures({ safety: 1, ...marketFeatures(goodMarket), ...walletFeatures(goodWallet) }, DEFAULT_WEIGHTS);
+    const r = scoreFeatures({ safety: 1, ...marketFeatures(goodMarket), ...walletFeatures(goodWallet), socials: 0.7, narrative: 0.5 }, DEFAULT_WEIGHTS);
     expect(Object.values(r.contributions).reduce((a, b) => a + b, 0)).toBeCloseTo(r.score, 0);
   });
   it('default weights sum to 1', () => {

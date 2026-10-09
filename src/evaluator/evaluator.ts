@@ -28,6 +28,7 @@ import type { Trader } from '../executor/trader';
 import type { LiveState } from '../scanner/live-state';
 import { getSolUsd } from '../lib/sol-price';
 import { FeeEstimator } from './fee-estimator';
+import { keywordCheck, NEUTRAL_SOCIAL_FEATURES, SocialAnalyzer, socialsScore, twitterInfo } from './social-analyzer';
 import { analyzeMarket, type PrevCheckpoint } from './market-analyzer';
 import { checkEntryRules, decide, scoreFeatures, type FeatureVector } from './scorer';
 import { NEUTRAL_WALLET_FEATURES, walletFeatures, type CreatorProfile, type WalletAnalyzer } from './wallet-analyzer';
@@ -42,6 +43,7 @@ export class Evaluator {
   private worker: Worker<EvaluateJob> | null = null;
   readonly stats = { evaluated: 0, buys: 0, rejects: 0, walletLookups: 0, feeSamples: 0 };
   private readonly fees: FeeEstimator;
+  private readonly social: SocialAnalyzer;
 
   constructor(
     private readonly redis: Redis,
@@ -50,6 +52,7 @@ export class Evaluator {
     private readonly trader: Trader,
   ) {
     this.fees = new FeeEstimator(redis);
+    this.social = new SocialAnalyzer(redis);
   }
 
   /** Queue every checkpoint for a newly launched token. */
@@ -80,7 +83,7 @@ export class Evaluator {
     if (await this.redis.exists(doneKey)) return;
     const markDone = () => this.redis.set(doneKey, '1', 'EX', STATE_TTL_SECONDS);
 
-    const token = await prisma.token.findUnique({ where: { mint }, select: { symbol: true, creator: true, bondingCurve: true, safetyScore: true, safetyHardFail: true } });
+    const token = await prisma.token.findUnique({ where: { mint }, select: { symbol: true, name: true, uri: true, creator: true, bondingCurve: true, safetyScore: true, safetyHardFail: true, description: true, twitter: true, telegram: true, website: true, metadataFetchedAt: true } });
     if (!token) return;
     const view = await this.liveState.read(mint);
     if (!view) return void (await markDone());
@@ -91,6 +94,8 @@ export class Evaluator {
     if (token.safetyScore === null || token.safetyHardFail === null) {
       if (view.balances.size >= getConfig().scoring.safetyMinHolders) {
         await safetyQueue.add('check', { mint }, { jobId: `safety-${mint}` });
+        // Free (no Helius credits): read its X / Telegram / website links in the background.
+        void this.social.fetchAndStore(mint, token.uri);
       }
       if (final) await markDone();
       return;
@@ -107,7 +112,22 @@ export class Evaluator {
     this.stats.evaluated++;
 
     const threshold = cfg.entry.minCombinedScore;
-    const rules = () => checkEntryRules({ safetyScore: token.safetyScore!, safetyHardFail: token.safetyHardFail!, market: market.raw, strategy: STRATEGY, entry: cfg.entry });
+    // Socials + keywords (from the metadata file, if it has been fetched).
+    let socialInfo: { hasTwitter: boolean; blockedKeyword: string | null } | undefined;
+    let socialFeatures = NEUTRAL_SOCIAL_FEATURES;
+    const kw = keywordCheck(`${token.name} ${token.symbol} ${token.description ?? ''}`, cfg.keywords.boost, cfg.keywords.block);
+    if (token.metadataFetchedAt) {
+      const tw = twitterInfo(token.twitter);
+      socialInfo = { hasTwitter: !!(tw.handle || tw.isCommunity), blockedKeyword: kw.blocked };
+      socialFeatures = {
+        socials: socialsScore(token, await this.social.reuseCounts(token)),
+        narrative: kw.blocked ? 0 : kw.boosted ? 1 : 0.5,
+      };
+    } else if (kw.blocked) {
+      socialInfo = { hasTwitter: false, blockedKeyword: kw.blocked };
+    }
+
+    const rules = () => checkEntryRules({ safetyScore: token.safetyScore!, safetyHardFail: token.safetyHardFail!, market: market.raw, strategy: STRATEGY, entry: cfg.entry, social: socialInfo });
     let ruleFails = rules();
 
     // The event stream only has Pump.fun's own fee. If fees are the ONLY thing
@@ -120,7 +140,7 @@ export class Evaluator {
       ruleFails = rules();
     }
 
-    let features: FeatureVector = { safety: token.safetyScore / 100, ...market.features, ...NEUTRAL_WALLET_FEATURES };
+    let features: FeatureVector = { safety: token.safetyScore / 100, ...market.features, ...NEUTRAL_WALLET_FEATURES, ...socialFeatures };
     let result = scoreFeatures(features, weights);
     let profile: CreatorProfile | null = null;
 
@@ -146,7 +166,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, market: market.raw, creator: profile }),
+          features: json({ checkpointSec, features, contributions: result.contributions, market: market.raw, creator: profile, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
         },
       });

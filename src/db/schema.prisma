@@ -156,6 +156,13 @@ model Token {
   lastPriceSol     Float?
   lastHolderCount  Int?
 
+  // Socials from the token's metadata file (fetched once it gains holders)
+  description       String?
+  twitter           String?
+  telegram          String?
+  website           String?
+  metadataFetchedAt DateTime? @db.Timestamptz(3)
+
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   safetyChecks SafetyCheck[]
