@@ -27,3 +27,9 @@ describe('PumpPortal translation', () => {
     expect(translatePortalMessage({ mint: 'M', txType: 'weird' })).toEqual([]);
   });
 });
+
+describe('other launchpads', () => {
+  it('ignores non-Pump.fun launches', () => {
+    expect(translatePortalMessage({ mint: 'B', txType: 'create', pool: 'bonk', traderPublicKey: 'D', name: 'x', symbol: 'X' })).toEqual([]);
+  });
+});

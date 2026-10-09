@@ -62,6 +62,9 @@ export function translatePortalMessage(m: PortalMessage): PumpEvent[] {
   const ts = nowSec();
   const user = m.traderPublicKey ?? '';
 
+  // PumpPortal also streams other launchpads (e.g. "bonk"); we only trade Pump.fun.
+  if (m.pool && m.pool !== 'pump' && m.pool !== 'pump-amm') return [];
+
   if (m.txType === 'create') {
     const events: PumpEvent[] = [
       {
