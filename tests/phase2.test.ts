@@ -103,3 +103,26 @@ describe('exit rules', () => {
     expect(d.state.lastMoveAtMs).toBe(now + 31 * 60_000);
   });
 });
+
+import { Keypair, MessageV0, VersionedTransaction, type VersionedTransactionResponse } from '@solana/web3.js';
+import { extraFeeLamports } from '../src/evaluator/fee-estimator';
+
+describe('fee estimator', () => {
+  it('adds the network fee and Jito tips from a transaction', () => {
+    const payer = Keypair.generate().publicKey;
+    const tip = new (require('@solana/web3.js').PublicKey)('96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5');
+    const msg = new MessageV0({
+      header: { numRequiredSignatures: 1, numReadonlySignedAccounts: 0, numReadonlyUnsignedAccounts: 0 },
+      staticAccountKeys: [payer, tip],
+      recentBlockhash: '11111111111111111111111111111111',
+      compiledInstructions: [],
+      addressTableLookups: [],
+    });
+    const tx = {
+      slot: 1,
+      transaction: new VersionedTransaction(msg),
+      meta: { fee: 105_000, preBalances: [5_000_000_000, 1_000], postBalances: [4_998_895_000, 1_001_000], err: null, loadedAddresses: { writable: [], readonly: [] } },
+    } as unknown as VersionedTransactionResponse;
+    expect(extraFeeLamports(tx)).toBe(105_000 + 1_000_000);
+  });
+});

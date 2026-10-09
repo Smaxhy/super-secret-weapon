@@ -12,14 +12,16 @@ import { redis } from './redis';
 /** Count RPC calls per UTC day and per method, so usage shows on the dashboard. */
 function countCall(body: unknown): void {
   let method = 'unknown';
+  let n = 1; // a batch request counts once per call inside it
   try {
     const parsed = JSON.parse(String(body)) as { method?: string } | Array<{ method?: string }>;
     method = (Array.isArray(parsed) ? parsed[0]?.method : parsed.method) ?? 'unknown';
+    if (Array.isArray(parsed)) n = parsed.length;
   } catch {
     /* non-JSON body */
   }
   const k = `rpc:calls:${new Date().toISOString().slice(0, 10)}`;
-  void redis.multi().hincrby(k, method, 1).hincrby(k, '_total', 1).expire(k, 40 * 86_400).exec().catch(() => undefined);
+  void redis.multi().hincrby(k, method, n).hincrby(k, '_total', n).expire(k, 40 * 86_400).exec().catch(() => undefined);
 }
 
 /** RPC calls made on a given UTC day (default today), by method. */

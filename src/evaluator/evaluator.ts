@@ -27,6 +27,7 @@ import { bullConnection } from '../lib/redis';
 import type { Trader } from '../executor/trader';
 import type { LiveState } from '../scanner/live-state';
 import { getSolUsd } from '../lib/sol-price';
+import { FeeEstimator } from './fee-estimator';
 import { analyzeMarket, type PrevCheckpoint } from './market-analyzer';
 import { checkEntryRules, decide, scoreFeatures, type FeatureVector } from './scorer';
 import { NEUTRAL_WALLET_FEATURES, walletFeatures, type CreatorProfile, type WalletAnalyzer } from './wallet-analyzer';
@@ -39,14 +40,17 @@ const STRATEGY = STRATEGIES.CURVE_SNIPE;
 
 export class Evaluator {
   private worker: Worker<EvaluateJob> | null = null;
-  readonly stats = { evaluated: 0, buys: 0, rejects: 0, walletLookups: 0 };
+  readonly stats = { evaluated: 0, buys: 0, rejects: 0, walletLookups: 0, feeSamples: 0 };
+  private readonly fees: FeeEstimator;
 
   constructor(
     private readonly redis: Redis,
     private readonly liveState: LiveState,
     private readonly wallets: WalletAnalyzer,
     private readonly trader: Trader,
-  ) {}
+  ) {
+    this.fees = new FeeEstimator(redis);
+  }
 
   /** Queue every checkpoint for a newly launched token. */
   async scheduleFor(mint: string, createdAtMs: number): Promise<void> {
@@ -76,7 +80,7 @@ export class Evaluator {
     if (await this.redis.exists(doneKey)) return;
     const markDone = () => this.redis.set(doneKey, '1', 'EX', STATE_TTL_SECONDS);
 
-    const token = await prisma.token.findUnique({ where: { mint }, select: { symbol: true, creator: true, safetyScore: true, safetyHardFail: true } });
+    const token = await prisma.token.findUnique({ where: { mint }, select: { symbol: true, creator: true, bondingCurve: true, safetyScore: true, safetyHardFail: true } });
     if (!token) return;
     const view = await this.liveState.read(mint);
     if (!view) return void (await markDone());
@@ -103,7 +107,18 @@ export class Evaluator {
     this.stats.evaluated++;
 
     const threshold = cfg.entry.minCombinedScore;
-    const ruleFails = checkEntryRules({ safetyScore: token.safetyScore, safetyHardFail: token.safetyHardFail, market: market.raw, strategy: STRATEGY, entry: cfg.entry });
+    const rules = () => checkEntryRules({ safetyScore: token.safetyScore!, safetyHardFail: token.safetyHardFail!, market: market.raw, strategy: STRATEGY, entry: cfg.entry });
+    let ruleFails = rules();
+
+    // The event stream only has Pump.fun's own fee. If fees are the ONLY thing
+    // standing in the way, measure the full "total fees paid" (priority fees +
+    // Jito tips too) by sampling recent transactions, then re-check.
+    if (!token.safetyHardFail && ruleFails.length > 0 && ruleFails.every((f) => f.startsWith('fees '))) {
+      const est = await this.fees.estimate(mint, token.bondingCurve, market.raw.buys + market.raw.sells, market.raw.totalFeesSol);
+      this.stats.feeSamples++;
+      market.raw.totalFeesSol = est.totalFeesSol;
+      ruleFails = rules();
+    }
 
     let features: FeatureVector = { safety: token.safetyScore / 100, ...market.features, ...NEUTRAL_WALLET_FEATURES };
     let result = scoreFeatures(features, weights);

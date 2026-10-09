@@ -33,6 +33,7 @@ export interface MarketRaw {
   /** Current holders / every wallet that ever traded. Low = lots of flipping. */
   retention: number;
   complete: boolean;
+  /** Total fees traders paid, in SOL. Pump.fun fees only, until the fee estimator adds priority fees + tips. */
   totalFeesSol: number;
   /** USD values — null if the SOL price is unknown. */
   volumeUsd: number | null;
