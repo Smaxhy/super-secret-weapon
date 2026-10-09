@@ -34,6 +34,8 @@ export interface CrowdTrade {
   tok: number;
   /** SOL per whole token (from the trade's own amounts) */
   px: number;
+  /** Solana slot (0 = unknown) — same-slot buys reveal bundles. */
+  s?: number;
 }
 
 export interface CrowdMetrics {
@@ -49,6 +51,16 @@ export interface CrowdMetrics {
   whaleSellPct: number;
   /** Share of recent buyers the learner rates as proven winners (null = not looked up). */
   smartBuyerPct: number | null;
+  /** Volume (10m) from wallets trading back and forth — wash trading / volume bots. */
+  fakeVolumePct: number;
+  /** Buy volume (10m) in same-slot groups of 3+ wallets with near-identical sizes — bundles. */
+  bundledBuyPct: number;
+  /** Volume (10m) made by the 3 biggest wallets. */
+  top3VolumePct: number;
+  /** Trades under 0.005 SOL (tx-count inflation bots). */
+  dustTradePct: number;
+  /** Price change over the last 3 minutes, % (null = no price 3 min ago). */
+  priceChange3mPct: number | null;
   /** 0..1 summary of the above (0.5 = not enough data). */
   crowdScore: number;
   /** 0..1, full at `fullAttentionWallets` active wallets. */
@@ -127,6 +139,46 @@ export function computeCrowdMetrics(trades: readonly CrowdTrade[], now: number, 
   const whaleSellPct = buyVol5 > 0 ? (bigSell / buyVol5) * 100 : bigSell > 0 ? 100 : 0;
   const smartBuyerPct = opts.smartBuyerPct ?? null;
 
+  // ---- Manipulation (last 10 minutes) ----
+  const in10 = trades.filter((x) => now - x.t <= 10 * 60_000);
+  const vol10 = in10.reduce((s, x) => s + x.sol, 0);
+  // Fake volume: wallets with 2+ buys AND 2+ sells, or a fast round trip (sold ≥90% of what they bought within 60s).
+  let fakeVol = 0;
+  const volBy = new Map<string, number>();
+  for (const [w, p] of per) {
+    volBy.set(w, p.vol);
+    const bought = p.buys.reduce((s2, b) => s2 + b.tok, 0);
+    const firstBuy = p.buys[0];
+    const fastSold = firstBuy ? p.sells.filter((x) => x.t >= firstBuy.t && x.t - firstBuy.t <= 60_000).reduce((s2, b) => s2 + b.tok, 0) : 0;
+    if ((p.buys.length >= 2 && p.sells.length >= 2) || (bought > 0 && fastSold >= bought * 0.9)) fakeVol += p.vol;
+  }
+  const fakeVolumePct = vol10 > 0 ? (fakeVol / vol10) * 100 : 0;
+  const top3VolumePct = vol10 > 0 ? ([...volBy.values()].sort((a, b) => b - a).slice(0, 3).reduce((s2, v) => s2 + v, 0) / vol10) * 100 : 0;
+  const dustTradePct = in10.length ? (in10.filter((x) => x.sol < 0.005).length / in10.length) * 100 : 0;
+  // Bundles: 3+ different wallets buying near-identical sizes in the same slot (or same second if no slot).
+  const groups = new Map<string, CrowdTrade[]>();
+  for (const x of in10) {
+    if (!x.buy || x.sol < 0.01) continue;
+    const k = x.s ? `s${x.s}` : `t${Math.floor(x.t / 1000)}`;
+    const g = groups.get(k) ?? [];
+    g.push(x);
+    groups.set(k, g);
+  }
+  let bundled = 0;
+  const buyVol10 = in10.filter((x) => x.buy).reduce((s2, x) => s2 + x.sol, 0);
+  for (const g of groups.values()) {
+    if (g.length < 3) continue;
+    const sizes = g.map((x) => x.sol).sort((a, b) => a - b);
+    const mid = sizes[Math.floor(sizes.length / 2)]!;
+    const alike = g.filter((x) => Math.abs(x.sol - mid) / mid <= 0.03);
+    if (new Set(alike.map((x) => x.w)).size >= 3) bundled += alike.reduce((s2, x) => s2 + x.sol, 0);
+  }
+  const bundledBuyPct = buyVol10 > 0 ? (bundled / buyVol10) * 100 : 0;
+  // Chasing: price now vs ~3 minutes ago.
+  const px3 = [...trades].reverse().find((x) => now - x.t >= 3 * 60_000 && x.px > 0)?.px;
+  const pxNow = trades.length ? median(trades.slice(-3).map((x) => x.px).filter((v) => v > 0)) : 0;
+  const priceChange3mPct = px3 && pxNow > 0 ? (pxNow / px3 - 1) * 100 : null;
+
   // Summary score: each part 0..1, missing parts don't count.
   const parts: Array<[number | null, number]> = [
     [dipBuyRatio, 0.25],
@@ -139,8 +191,9 @@ export function computeCrowdMetrics(trades: readonly CrowdTrade[], now: number, 
   const used = parts.filter(([v]) => v !== null) as Array<[number, number]>;
   const wsum = used.reduce((s, [, w]) => s + w, 0);
   let crowdScore = wsum >= 0.3 ? used.reduce((s, [v, w]) => s + v * w, 0) / wsum : 0.5;
-  // A whale dumping into the crowd overrides the nice numbers.
+  // A whale dumping into the crowd, fake volume or bundles override the nice numbers.
   if (whaleSellPct > 60) crowdScore *= 0.6;
+  if (in10.length >= 10) crowdScore *= 1 - Math.min(0.6, Math.max(fakeVolumePct - 15, 0) / 100 + Math.max(bundledBuyPct - 10, 0) / 100);
   const attentionScore = clamp01(wallets5.size / Math.max(1, opts.fullAttentionWallets));
 
   const bits = [`${wallets5.size} active wallets (5m)`];
@@ -148,6 +201,8 @@ export function computeCrowdMetrics(trades: readonly CrowdTrade[], now: number, 
   if (paperHandsPct !== null) bits.push(`paper hands ${paperHandsPct.toFixed(0)}%`);
   if (in5.length >= 10) bits.push(`bot churn ${churnPct.toFixed(0)}%`);
   if (smartBuyerPct !== null && smartBuyerPct > 0) bits.push(`smart wallets ${smartBuyerPct.toFixed(0)}%`);
+  if (fakeVolumePct >= 25) bits.push(`fake volume ~${fakeVolumePct.toFixed(0)}%`);
+  if (bundledBuyPct >= 15) bits.push(`bundled buys ${bundledBuyPct.toFixed(0)}%`);
   if (whaleSellPct > 60) bits.push('whale selling into buyers');
 
   return {
@@ -162,6 +217,11 @@ export function computeCrowdMetrics(trades: readonly CrowdTrade[], now: number, 
     buyRatio2m,
     whaleSellPct,
     smartBuyerPct,
+    fakeVolumePct: Math.round(fakeVolumePct * 10) / 10,
+    bundledBuyPct: Math.round(bundledBuyPct * 10) / 10,
+    top3VolumePct: Math.round(top3VolumePct * 10) / 10,
+    dustTradePct: Math.round(dustTradePct * 10) / 10,
+    priceChange3mPct: priceChange3mPct === null ? null : Math.round(priceChange3mPct * 10) / 10,
     crowdScore: Math.round(crowdScore * 1000) / 1000,
     attentionScore: Math.round(attentionScore * 1000) / 1000,
     summary: bits.join(', '),
@@ -228,7 +288,7 @@ export class CrowdTracker {
     return this.logs.size;
   }
 
-  onCurveTrade(ev: PumpTradeEvent, now = Date.now()): void {
+  onCurveTrade(ev: PumpTradeEvent, slot = 0, now = Date.now()): void {
     const f = getConfig().focus;
     const pct = ev.virtualTokenReserves > 0n ? bondingCurvePct(ev.virtualTokenReserves) : 0;
     if (pct >= f.soon.minCurvePct && pct <= f.soon.maxCurvePct && !this.soonSeen.has(ev.mint)) {
@@ -238,13 +298,13 @@ export class CrowdTracker {
     if (pct < f.crowdLogFromCurvePct && !this.logs.has(ev.mint)) return;
     const tok = Number(ev.tokenAmount) / 10 ** PUMP_TOKEN_DECIMALS;
     const sol = Number(ev.solAmount) / 1e9;
-    this.push(ev.mint, { t: now, w: ev.user, buy: ev.isBuy, sol, tok, px: tok > 0 ? sol / tok : 0 });
+    this.push(ev.mint, { t: now, w: ev.user, buy: ev.isBuy, sol, tok, px: tok > 0 ? sol / tok : 0, s: slot || undefined });
   }
 
-  onAmmTrade(mint: string, ev: AmmTradeEvent, now = Date.now()): void {
+  onAmmTrade(mint: string, ev: AmmTradeEvent, slot = 0, now = Date.now()): void {
     const tok = Number(ev.baseAmount) / 10 ** PUMP_TOKEN_DECIMALS;
     const sol = Number(ev.quoteAmount) / 1e9;
-    this.push(mint, { t: now, w: ev.user, buy: ev.isBuy, sol, tok, px: tok > 0 ? sol / tok : 0 });
+    this.push(mint, { t: now, w: ev.user, buy: ev.isBuy, sol, tok, px: tok > 0 ? sol / tok : 0, s: slot || undefined });
   }
 
   trades(mint: string): readonly CrowdTrade[] {

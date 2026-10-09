@@ -115,6 +115,10 @@ export interface ExitInput {
   trailFactor?: number;
   /** Cost of selling now (fee + slippage + tx fees) in % — the stop-loss band is net of it. */
   exitCostPct?: number;
+  /** Strategy (strategy-specific stop limits). */
+  strategy?: string;
+  /** Minimum hold (copy trades): until then only stop-loss, rug and profit-taking exits fire. */
+  minHoldUntilMs?: number | null;
 }
 
 /** Marker stored in `tpTiersHit` once initials are out (real tiers are all > 1). */
@@ -300,12 +304,34 @@ export function breakEvenMultiple(t: Pick<TrailParams, 'sizeSol' | 'costSol' | '
  *  - runner: runnerTrailPct, capped tighter at 3x/5x/10x peaks (runnerProfitCaps);
  *  - both: never below break-even + fees once the peak reached 1.5x.
  */
+/** Trail % for a peak multiple from the ladder (linear between points). null = no ladder. Pure. */
+export function ladderTrailPct(peakX: number, ladder: ReadonlyArray<{ fromMultiple: number; pct: number }> | undefined): number | null {
+  if (!ladder?.length) return null;
+  const pts = [...ladder].sort((a, b) => a.fromMultiple - b.fromMultiple);
+  if (peakX <= pts[0]!.fromMultiple) return pts[0]!.pct;
+  for (let k = 1; k < pts.length; k++) {
+    const a = pts[k - 1]!;
+    const b = pts[k]!;
+    if (peakX <= b.fromMultiple) return a.pct + ((b.pct - a.pct) * (peakX - a.fromMultiple)) / (b.fromMultiple - a.fromMultiple);
+  }
+  return pts[pts.length - 1]!.pct;
+}
+
 export function trailingStopLevel(t: TrailParams, rules: ExitRules): TrailLevel | null {
   if (!(t.entryPriceSol > 0) || !(t.peakPriceSol > 0)) return null;
   const tr = trailRules(rules);
   const peakX = t.peakPriceSol / t.entryPriceSol;
   let pct: number;
-  if (t.initialsOut) {
+  const lad = ladderTrailPct(peakX, tr.ladder);
+  if (lad !== null) {
+    // Dynamic trail: the ladder sets it from the peak (tight on small moves, wide on big
+    // ones); volatility nudges it within volAdjust (a calm chart tighter, a wild one wider).
+    pct = lad;
+    if (t.volatilityPct !== null && lad > 0) {
+      const va = tr.volAdjust ?? { min: 0.8, max: 1.3 };
+      pct = lad * Math.max(va.min, Math.min(va.max, (tr.pre.volMultiplier * t.volatilityPct) / lad));
+    }
+  } else if (t.initialsOut) {
     pct = runnerTrailPct(t.volatilityPct, peakX, rules.runner);
     for (const c of tr.runnerProfitCaps) if (peakX >= c.fromMultiple) pct = Math.min(pct, c.maxTrailPct);
   } else {
@@ -314,7 +340,7 @@ export function trailingStopLevel(t: TrailParams, rules: ExitRules): TrailLevel 
   }
   if (t.trailFactor && t.trailFactor > 0) pct *= Math.max(0.75, Math.min(1.3, t.trailFactor));
   pct = Math.round(pct * 10) / 10;
-  const trailOn = t.initialsOut || t.trailingActive;
+  const trailOn = t.initialsOut || t.trailingActive || (lad !== null && peakX >= (tr.ladder?.[0]?.fromMultiple ?? Infinity));
   const floorOn = peakX >= tr.breakEvenAfterMultiple;
   if (!trailOn && !floorOn) return null;
   const trailPriceSol = t.peakPriceSol * (1 - pct / 100);
@@ -339,9 +365,12 @@ export function stopLossLevel(
   /** What selling costs right now (fee + slippage + tx fees, % of the position). The band is the
    *  loss AFTER these costs, so the price trigger sits that much higher. */
   exitCostPct = 0,
+  /** Strategy-specific max (e.g. migration plays 15%). */
+  strategy?: string,
 ): { stopPct: number; stopPriceSol: number; hardPct: number; hardPriceSol: number } {
   const sl = { ...DEFAULT_CONFIG.exit.stopLoss, ...((rules as Partial<ExitRules>).stopLoss ?? {}) };
-  const hardPct = Math.min(sl.maxPct, rules.hardStopLossPct ?? sl.maxPct);
+  const byStrategy = strategy ? (sl.maxPctByStrategy as Record<string, number | undefined> | undefined)?.[strategy] : undefined;
+  const hardPct = Math.max(sl.minPct, Math.min(sl.maxPct, byStrategy ?? sl.maxPct, rules.hardStopLossPct ?? sl.maxPct));
   const base = volatilityPct === null ? sl.fallbackPct : sl.volMultiplier * volatilityPct;
   const stopPct = Math.round(Math.max(sl.minPct, Math.min(hardPct, base + coachBiasPct)) * 10) / 10;
   const cost = Math.max(0, Math.min(15, exitCostPct)) / 100;
@@ -429,10 +458,12 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
     return all('RUG_DETECTED', `top-10 concentration ${i.top10PctEntry.toFixed(1)}% → ${i.top10PctNow.toFixed(1)}%`);
   }
 
-  if (i.copyWalletSold) return all('COPY_EXIT', 'the wallet we copied sold');
+  // Minimum hold (copy trades): wobbles and the copied wallet selling don't shake us out early.
+  const holding = !!i.minHoldUntilMs && i.nowMs < i.minHoldUntilMs;
+  if (i.copyWalletSold && !holding) return all('COPY_EXIT', 'the wallet we copied sold');
 
   // Stop loss: 10–20% band (volatility + coach). Past the hard limit → out at once.
-  const sl = stopLossLevel(i.entryPriceSol, i.volatilityPct, rules, i.coachStopBiasPct ?? 0, i.exitCostPct ?? 0);
+  const sl = stopLossLevel(i.entryPriceSol, i.volatilityPct, rules, i.coachStopBiasPct ?? 0, i.exitCostPct ?? 0, i.strategy);
   if (i.priceSol <= sl.hardPriceSol) return all('STOP_LOSS', `price ${((multiple - 1) * 100).toFixed(1)}% (hard limit −${sl.hardPct}% after fees)`);
   if (i.priceSol <= sl.stopPriceSol) {
     const tr = trailRules(rules);
@@ -445,7 +476,7 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
     state.breachSinceMs = since;
   }
   // Don't wait for the stop when it's clearly turning against us.
-  if (multiple <= rules.riskExit.cutLossBelowMultiple && i.risk >= rules.riskExit.threshold) {
+  if (!holding && multiple <= rules.riskExit.cutLossBelowMultiple && i.risk >= rules.riskExit.threshold) {
     return all('STOP_LOSS', `early exit at ${((multiple - 1) * 100).toFixed(0)}%: ${i.riskWhy}`);
   }
 
@@ -519,13 +550,13 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
     }
 
     // Keeps failing at the same ceiling → take what's there.
-    if (remaining > 0 && i.resistance.hit && multiple >= rules.resistance.minProfitMultiple) {
+    if (!holding && remaining > 0 && i.resistance.hit && multiple >= rules.resistance.minProfitMultiple) {
       sells.push({ pct: remaining, reason: 'TAKE_PROFIT', detail: `resistance at ${(i.resistance.level / i.entryPriceSol).toFixed(2)}x (${i.resistance.touches} rejections), sold at ${multiple.toFixed(2)}x` });
       return { sells, state };
     }
 
     // In profit and momentum is fading → bank it instead of riding it back down.
-    if (remaining > 0 && multiple >= rules.riskExit.minProfitMultiple && i.risk >= rules.riskExit.threshold) {
+    if (!holding && remaining > 0 && multiple >= rules.riskExit.minProfitMultiple && i.risk >= rules.riskExit.threshold) {
       sells.push({ pct: remaining, reason: 'TAKE_PROFIT', detail: `${multiple.toFixed(2)}x, risk rising: ${i.riskWhy}` });
       return { sells, state };
     }
@@ -533,6 +564,7 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
 
   // Don't hold forever (the runner gets longer to play out).
   const maxHold = initialsOut ? i.maxHoldMinutes * rules.runner.maxHoldMultiplier : i.maxHoldMinutes;
+  if (holding) return { sells, state };
   if (remaining > 0 && i.nowMs - i.openedAtMs >= maxHold * 60_000) {
     sells.push({ pct: remaining, reason: multiple >= 1 ? 'TAKE_PROFIT' : 'STALE', detail: `max hold ${maxHold}m reached at ${multiple.toFixed(2)}x` });
     return { sells, state };
@@ -776,6 +808,8 @@ export class SellManager {
         coachStopBiasPct: coach.stopBiasPct,
         trailFactor: coach.trailFactor,
         exitCostPct,
+        strategy: p.strategy,
+        minHoldUntilMs: p.strategy === 'SMART_MONEY_COPY' ? p.openedAt.getTime() + (cfg.copy.minHoldSec ?? 0) * 1000 : null,
       },
       cfg.exit,
     );

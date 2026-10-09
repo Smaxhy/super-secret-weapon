@@ -16,11 +16,20 @@ export const DEFAULT_CONFIG = {
     minPositionSol: 0.05,
     maxPositionSolCeiling: 0.3, // the dashboard slider can't go above this
     maxConcurrentPositions: 5,
+    /**
+     * Conviction sizing: maxPositionSol is the size of an AVERAGE-conviction buy.
+     * Strong setups (score well over the bar, good learned odds, healthy crowd) go up
+     * to ×maxConvictionMultiple, weak ones down to ×minConvictionMultiple.
+     * Never more than maxPositionPctOfCapital % of capital in one coin.
+     */
+    minConvictionMultiple: 0.4,
+    maxConvictionMultiple: 1.6,
+    maxPositionPctOfCapital: 6,
     /** Fraction of capital per strategy. Must add up to 1. */
     allocation: {
-      MIGRATION_MOMENTUM: 0.4,
-      SOON: 0.35,
-      SMART_MONEY_COPY: 0.15,
+      MIGRATION_MOMENTUM: 0.45,
+      SOON: 0.4,
+      SMART_MONEY_COPY: 0.05,
       CURVE_SNIPE: 0.1,
     } satisfies Record<StrategyName, number>,
     enabledStrategies: {
@@ -75,6 +84,24 @@ export const DEFAULT_CONFIG = {
     },
     /** Only buy tokens that link an X account / post / community in their metadata. */
     requireTwitter: false,
+    /** Never buy a coin younger than this (the first seconds are bots and bundles). */
+    minAgeSec: 15,
+    /**
+     * Confirmation delay: a BUY signal is re-checked `confirmDelaySec` later and only
+     * executed if it still passes AND the price didn't dump > maxDropPct, didn't run
+     * away > maxPumpPct (no chasing), and buyers are still at least even with sellers.
+     */
+    confirmDelaySec: 12,
+    confirm: { maxDropPct: 8, maxPumpPct: 30, minBuyRatio: 1 },
+    /**
+     * Fake volume / bundles / chasing (from the live trade log):
+     *  - fake volume = wallets trading back and forth (wash trading, volume bots)
+     *  - bundled buys = 3+ wallets buying near-identical sizes in the same slot
+     *  - top-3 volume = three wallets making most of the volume
+     *  - chase = price up this % in the last 3 minutes (buying a vertical candle)
+     * Over the max → no buy. Below it, points come off the score.
+     */
+    manipulation: { maxFakeVolumePct: 50, maxBundledBuyPct: 30, maxTop3VolumePct: 65, chasePct: 40 },
   },
 
   /**
@@ -93,6 +120,9 @@ export const DEFAULT_CONFIG = {
     burstSizeTolerancePct: 1.5,
     /** Buys smaller than this (SOL) are ignored for burst detection (dust bots). */
     burstMinSol: 0.05,
+    /** Only look for same-size bursts this long after launch (bundles are launch-time; later
+     *  bursts on hyped coins are real people using the same buy presets). */
+    burstMaxAgeSec: 180,
     /** Sells this many seconds from a dev sell (0 = same second ≈ same slot) mark the seller as an insider. */
     devSellWindowSec: 0,
     // ---- Funding graph (RPC, only for tokens that passed the market gates) ----
@@ -155,8 +185,8 @@ export const DEFAULT_CONFIG = {
     },
     /** Active wallets in 5 min at which the attention score is full (the "50+ eyes" rule of thumb). */
     fullAttentionWallets: 50,
-    /** Start keeping a per-trade log (crowd behaviour) once the curve is this full. */
-    crowdLogFromCurvePct: 40,
+    /** Start keeping a per-trade log (crowd behaviour, fake volume, bundles) once the curve is this full. */
+    crowdLogFromCurvePct: 0,
     /**
      * Swing trading Soon / migrated coins: after we exit (not on a rug), keep
      * watching; buy again when it pulls back `minPullbackPct`–`maxPullbackPct` from
@@ -178,8 +208,16 @@ export const DEFAULT_CONFIG = {
 
   /** Copy trading: react when a wallet on your watch list buys. */
   copy: {
-    /** Points added to the buy threshold for copy trades (negative = easier, e.g. 75 - 10 = 65). */
-    scoreThresholdDelta: -10,
+    /**
+     * Copy trades are heavily restricted (they underperformed): a STRICTER bar than
+     * normal, half size, max `maxOpen` at a time, 5% of capital.
+     */
+    scoreThresholdDelta: 5,
+    sizeMultiplier: 0.5,
+    maxOpen: 1,
+    /** Hold a copy trade at least this long: the copied wallet selling / momentum wobbles
+     *  don't shake us out early (the stop loss and rug exits still apply). */
+    minHoldSec: 120,
     /** Sell our copy position when the wallet we copied sells. */
     exitWhenWalletSells: true,
     /** Re-check the token this many seconds after the wallet's buy. */
@@ -244,7 +282,7 @@ export const DEFAULT_CONFIG = {
       maxHoldMultiplier: 2,
     },
     /** Before initials are out, the trailing stop arms here and trails this far below the peak. */
-    trailingStopActivateMultiple: 1.25,
+    trailingStopActivateMultiple: 1.2,
     trailingStopPct: 20,
     /** The higher the peak, the tighter the trail (only before initials are out). */
     trailingTightening: [
@@ -276,7 +314,22 @@ export const DEFAULT_CONFIG = {
       confirmTicks: 2,
       confirmSec: 3,
       gapMultiple: 1.5,
-      breakEvenAfterMultiple: 1.5,
+      /** Once the peak reached this, the stop never sits below break-even (+fees): no round-tripping winners. */
+      breakEvenAfterMultiple: 1.2,
+      /**
+       * Dynamic trail: tight on small moves, wider on big ones (room to run).
+       * Trail % for the peak multiple, linear between the points. Volatility then
+       * nudges it ×volAdjust.min–max (2.5 × volatility vs the ladder value).
+       */
+      ladder: [
+        { fromMultiple: 1.2, pct: 8 },
+        { fromMultiple: 1.5, pct: 12 },
+        { fromMultiple: 2, pct: 16 },
+        { fromMultiple: 3, pct: 20 },
+        { fromMultiple: 5, pct: 25 },
+        { fromMultiple: 10, pct: 30 },
+      ],
+      volAdjust: { min: 0.8, max: 1.3 },
       peakRefTolerancePct: 25,
     },
     /** After reaching `afterMultiple`, sell everything if it falls back to `floorMultiple` (before initials are out). */
@@ -319,7 +372,14 @@ export const DEFAULT_CONFIG = {
      * Below maxPct it sells at once; between the stop and maxPct it needs a
      * confirmed break (exit.trail.confirmTicks / confirmSec).
      */
-    stopLoss: { minPct: 10, maxPct: 20, volMultiplier: 2, fallbackPct: 15 },
+    stopLoss: {
+      minPct: 10,
+      maxPct: 20,
+      volMultiplier: 2,
+      fallbackPct: 15,
+      /** Tighter max per strategy (migration plays: 15%). */
+      maxPctByStrategy: { MIGRATION_MOMENTUM: 15 } as Partial<Record<StrategyName, number>>,
+    },
     rugExit: {
       /** Bundle wallets sold this many % of supply since we bought → exit. */
       bundleDumpPct: 5,

@@ -34,16 +34,19 @@ import type { OutcomeLabeler } from '../learner/outcome-labeler';
 import { currentRegime } from '../learner/regime-detector';
 import { keywordCheck, NEUTRAL_SOCIAL_FEATURES, SocialAnalyzer, socialsScore, twitterInfo } from './social-analyzer';
 import { analyzeMarket, withInsider, type PrevCheckpoint } from './market-analyzer';
-import { checkEntryRules, decide, learnedOddsAdjustment, scoreFeatures, withOdds, type FeatureVector, type LearnedOdds, type ScoreResult } from './scorer';
+import { checkEntryRules, convictionFactor, decide, manipulationCheck, learnedOddsAdjustment, scoreFeatures, withOdds, type FeatureVector, type LearnedOdds, type ScoreResult } from './scorer';
 import { ALL_PATTERN, beliefCache, patternsOf, type StoredFeatures } from '../learner/bayesian-updater';
 import { DEFAULT_CONFIG } from '../config/default';
 import { NEUTRAL_WALLET_FEATURES, walletFeatures, type CreatorProfile, type WalletAnalyzer } from './wallet-analyzer';
 import type { CrowdMetrics, CrowdTracker } from '../scanner/crowd-tracker';
 import { rememberBuyers, smartShare } from '../learner/wallet-reputation';
 import { coachFor } from '../learner/trade-coach';
+import { calibration, calibrationAdjust, type CalibrationAdjust } from '../learner/score-calibration';
 import type { StrategyName } from '../config/types';
 
 const log = moduleLogger('evaluator');
+
+type Scored = ScoreResult & { pre: number; cal: CalibrationAdjust };
 const STATE_TTL_SECONDS = 60 * 60;
 
 
@@ -181,6 +184,8 @@ export class Evaluator {
     const buyers = this.crowd?.recentBuyers(mint) ?? [];
     const smart = buyers.length ? await smartShare(this.redis, buyers) : { pct: null };
     const crowd: CrowdMetrics | null = this.crowd && this.crowd.trades(mint).length > 0 ? this.crowd.metrics(mint, smart.pct) : null;
+    // Fake volume / bundles / chasing: over the limits = no buy; under them = points off.
+    const manip = manipulationCheck(crowd, cfg.entry.manipulation);
     // Socials + keywords (from the metadata file, if it has been fetched).
     let socialInfo: { hasTwitter: boolean; blockedKeyword: string | null } | undefined;
     let socialFeatures = NEUTRAL_SOCIAL_FEATURES;
@@ -205,7 +210,7 @@ export class Evaluator {
       if (kw.blocked) socialInfo = { hasTwitter: false, blockedKeyword: kw.blocked };
     }
 
-    const rules = () => checkEntryRules({ safetyScore: token.safetyScore!, safetyHardFail: token.safetyHardFail!, market: market.raw, strategy: STRATEGY, entry: cfg.entry, social: socialInfo, focus: cfg.focus, crowd });
+    const rules = () => [...checkEntryRules({ safetyScore: token.safetyScore!, safetyHardFail: token.safetyHardFail!, market: market.raw, strategy: STRATEGY, entry: cfg.entry, social: socialInfo, focus: cfg.focus, crowd }), ...manip.fails];
     let ruleFails = rules();
 
     // Total fees so far use an ASSUMED priority fee + tip per trade. If fees are
@@ -228,7 +233,15 @@ export class Evaluator {
           { minSamples: lc.oddsMinSamples, priorStrength: lc.oddsPriorStrength, maxPoints: lc.oddsMaxPoints, pointsPerLogit: lc.oddsPointsPerLogit },
         )
       : null;
-    const score = (f: FeatureVector): ScoreResult => withOdds(scoreFeatures(f, weights), odds);
+    // Final score = weighted features + learned pattern odds − manipulation penalty, then
+    // calibrated by how this strategy's score band has REALLY done lately (high scores that
+    // keep losing get marked down). `pre` (before calibration) is what calibration measures.
+    const score = (f: FeatureVector): Scored => {
+      const r = withOdds(scoreFeatures(f, weights), odds);
+      const pre = Math.round((r.score - manip.penalty) * 100) / 100;
+      const cal = calibrationAdjust(calibration(), STRATEGY.name, pre);
+      return { ...r, score: Math.round(Math.max(0, Math.min(100, pre + cal.points)) * 100) / 100, pre, cal };
+    };
 
     let features: FeatureVector = {
       safety: token.safetyScore / 100,
@@ -288,7 +301,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, market: market.raw, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, market: market.raw, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },
@@ -310,9 +323,51 @@ export class Evaluator {
     // Curve snipes stop at migration (the migration strategy takes over from there).
     if (market.raw.complete && (STRATEGY.name === 'CURVE_SNIPE' || STRATEGY.name === 'SOON')) return void (await markDone());
 
+    // Confirmation delay: re-check a BUY signal a few seconds later before any money moves.
+    if (decision === 'BUY') {
+      const confirmSec = cfg.entry.confirmDelaySec ?? 0;
+      const pending = job.data.confirm;
+      if (confirmSec > 0 && !pending) {
+        // One confirmation at a time per coin + strategy.
+        const fresh = await this.redis.set(`confirm:${mint}:${STRATEGY.name}`, '1', 'EX', confirmSec + 10, 'NX');
+        if (!fresh) return;
+        await evaluateQueue.add(
+          'confirm',
+          { ...job.data, checkpointSec: checkpointSec + confirmSec, confirm: { priceSol: market.raw.priceSol, at: Date.now(), score: result.score } },
+          { jobId: `${mint}-${STRATEGY.name}-confirm-${Math.floor(Date.now() / 60_000)}`, delay: confirmSec * 1000 },
+        );
+        log.info({ mint, symbol: token.symbol, score: result.score }, `⏱  BUY signal ${token.symbol} (${result.score.toFixed(1)}) — confirming in ${confirmSec}s`);
+        return; // the confirmation job carries on (incl. the end-of-schedule watchlist)
+      }
+      if (pending && pending.priceSol > 0) {
+        const c = cfg.entry.confirm;
+        const drift = (market.raw.priceSol / pending.priceSol - 1) * 100;
+        const ratio = crowd?.buyRatio2m ?? null;
+        const why =
+          drift < -c.maxDropPct ? `price fell ${Math.abs(drift).toFixed(0)}% while confirming`
+          : drift > c.maxPumpPct ? `ran ${drift.toFixed(0)}% while confirming (not chasing)`
+          : ratio !== null && ratio < c.minBuyRatio ? `sellers took over (buy/sell ${ratio.toFixed(2)})`
+          : null;
+        if (why) {
+          log.info({ mint, symbol: token.symbol, why }, `✋ ${token.symbol} signal didn't confirm: ${why}`);
+          decision = 'SKIP';
+          reasons = [`didn't confirm: ${why}`];
+        }
+      }
+    }
+
     if (decision === 'BUY') {
       this.stats.buys++;
-      log.info({ mint, symbol: token.symbol, score: result.score, checkpointSec, holders: market.raw.holders, curvePct: +market.raw.bondingCurvePct.toFixed(1) }, `🎯 BUY signal ${token.symbol} (${result.score.toFixed(1)})`);
+      log.info({ mint, symbol: token.symbol, score: result.score, checkpointSec, holders: market.raw.holders, curvePct: +market.raw.bondingCurvePct.toFixed(1) }, `🎯 BUY ${token.symbol} confirmed (${result.score.toFixed(1)})`);
+      // Conviction sizing: more on the strongest setups, less on borderline ones.
+      const conv = convictionFactor({
+        scoreMargin: result.score - threshold,
+        calibrationFactor: result.cal.factor,
+        crowdScore: crowd?.crowdScore ?? null,
+        min: cfg.trading.minConvictionMultiple ?? 0.4,
+        max: cfg.trading.maxConvictionMultiple ?? 1.6,
+      });
+      const copyMult = STRATEGY.name === 'SMART_MONEY_COPY' ? (cfg.copy.sizeMultiplier ?? 0.5) : 1;
       const res = await this.trader.tryEnter({
         mint,
         symbol: token.symbol,
@@ -323,10 +378,10 @@ export class Evaluator {
         maxSlippageBps: STRATEGY.maxSlippageBps,
         features,
         copiedWallet: job.data.wallet,
-        sizeMultiplier: (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? 1) * coach.sizeFactor,
+        sizeMultiplier: (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? 1) * coach.sizeFactor * conv.factor * copyMult,
         swing,
         explain: (sizeSol) =>
-          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
+          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
       });
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.
       if (!swing && (res.entered || res.reason === 'already traded this token')) await markDone();

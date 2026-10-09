@@ -54,10 +54,10 @@ export class TokenRegistry {
       case 'trade':
         this.liveState.onTrade(event).then(() => {
           if (!this.liveState.isTracked(event.mint)) return;
-          this.crowd?.onCurveTrade(event);
+          this.crowd?.onCurveTrade(event, envelope.slot);
           if (!this.insiders) return;
           return this.insiders.onTrade({
-            mint: event.mint, user: event.user, isBuy: event.isBuy, lamports: event.solAmount, tokens: event.tokenAmount, timestamp: event.timestamp,
+            mint: event.mint, user: event.user, isBuy: event.isBuy, lamports: event.solAmount, tokens: event.tokenAmount, timestamp: event.timestamp, slot: envelope.slot,
             priceSol: event.virtualTokenReserves > 0n ? curvePriceSol(event.virtualSolReserves, event.virtualTokenReserves) : undefined,
           });
         }).catch((err: Error) => {
@@ -74,9 +74,9 @@ export class TokenRegistry {
       case 'ammTrade':
         this.liveState.onAmmTrade(event).then((mint) => {
           if (!mint) return;
-          this.crowd?.onAmmTrade(mint, event);
+          this.crowd?.onAmmTrade(mint, event, envelope.slot);
           if (!this.insiders) return;
-          return this.insiders.onTrade({ mint, user: event.user, isBuy: event.isBuy, lamports: event.quoteAmount, tokens: event.baseAmount, timestamp: event.timestamp });
+          return this.insiders.onTrade({ mint, user: event.user, isBuy: event.isBuy, lamports: event.quoteAmount, tokens: event.baseAmount, timestamp: event.timestamp, slot: envelope.slot });
         }).catch((err: Error) => {
           this.stats.tradeErrors++;
           if (this.stats.tradeErrors % 100 === 1) log.warn({ err: err.message }, 'pumpswap trade update failed');

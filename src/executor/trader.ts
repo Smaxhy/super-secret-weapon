@@ -54,6 +54,8 @@ export interface EntryResult {
 export class Trader {
   private lock: Promise<unknown> = Promise.resolve();
   private breakerTrippedDay: string | null = null;
+  /** Pre-entry rug screen, run right before every buy (set in index.ts). Returns a reason to refuse, or null. */
+  screen: ((req: EntryRequest) => Promise<string | null>) | null = null;
 
   constructor(private readonly executor: Executor) {}
 
@@ -91,6 +93,8 @@ export class Trader {
     }
 
     if (open.length >= cfg.trading.maxConcurrentPositions) return refuse(`max ${cfg.trading.maxConcurrentPositions} positions open`);
+    // Copy trades are heavily restricted.
+    if (req.strategy === 'SMART_MONEY_COPY' && open.filter((p) => p.strategy === 'SMART_MONEY_COPY').length >= (cfg.copy.maxOpen ?? 1)) return refuse('copy trade limit reached');
     const before = await prisma.position.findMany({ where: { mint: req.mint, mode }, select: { status: true, closedAt: true, exitReason: true } });
     if (before.length) {
       const sw = cfg.focus.swing;
@@ -108,10 +112,20 @@ export class Trader {
     // Market mood scales position size (e.g. ×1.2 when hot, ×0.5 when rug-heavy).
     // …and by time of day: hours that historically produce more winners get bigger size.
     const sized = Math.min(cfg.trading.maxPositionSol * cfg.regimeAdjustments[currentRegime()].sizeMultiplier * currentHourFactor(), cfg.trading.maxPositionSolCeiling);
-    // Multipliers (focus ×1.25, risky ×0.5, coach streak ×0.5…) never push past the size ceiling.
-    const size = Math.min(sized * (req.sizeMultiplier ?? 1), cfg.trading.maxPositionSolCeiling, budget, balance - reserve);
+    // Conviction & other multipliers scale around maxPositionSol, capped at ×maxConvictionMultiple
+    // of it and at maxPositionPctOfCapital % of capital.
+    const t = cfg.trading;
+    const cap = Math.min(t.maxPositionSol * (t.maxConvictionMultiple ?? 1.6), (capital * (t.maxPositionPctOfCapital ?? 100)) / 100);
+    const size = Math.min(sized * (req.sizeMultiplier ?? 1), cap, budget, balance - reserve);
     if (size < cfg.trading.minPositionSol) {
       return refuse(`size ${size.toFixed(3)} SOL below minimum (balance ${balance.toFixed(3)}, ${req.strategy} budget ${budget.toFixed(3)})`);
+    }
+
+    // Last look before the money moves: has anything rug-like happened since the signal?
+    const rug = this.screen ? await this.screen(req) : null;
+    if (rug) {
+      void recordEvent({ level: 'WARN', module: 'trader', type: 'rug_screen', mint: req.mint, message: `${req.symbol}: buy blocked — ${rug}` });
+      return refuse(`rug screen: ${rug}`);
     }
 
     const fill = await this.executor.buy({ mint: req.mint, solAmount: round4(size), maxSlippageBps: req.maxSlippageBps });

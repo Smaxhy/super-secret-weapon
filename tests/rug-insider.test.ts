@@ -73,14 +73,19 @@ async function seedToken(r: MiniRedis, mint: string, creator: string, balances: 
 describe('on-stream insider signals', () => {
   it('finds wallets buying near-identical sizes in a burst', () => {
     const buys = [
-      { w: 'a', sol: 0.5, sec: 10 },
-      { w: 'b', sol: 0.503, sec: 11 },
-      { w: 'c', sol: 0.498, sec: 11 },
+      { w: 'a', sol: 0.437, sec: 10 },
+      { w: 'b', sol: 0.44, sec: 11 },
+      { w: 'c', sol: 0.436, sec: 11 },
       { w: 'd', sol: 1.2, sec: 11 },
     ];
     expect(findSizeBurst(buys, cfg).sort()).toEqual(['a', 'b', 'c']);
     expect(findSizeBurst(buys.slice(0, 2), cfg)).toEqual([]);
     expect(findSizeBurst(buys.map((b) => ({ ...b, sol: b.sol / 100 })), cfg)).toEqual([]); // dust ignored
+    // Terminal presets (0.5 SOL) are how real people buy — never a burst.
+    expect(findSizeBurst(buys.map((b) => ({ ...b, sol: 0.5 })), cfg)).toEqual([]);
+    // With slots: only the same slot counts.
+    expect(findSizeBurst(buys.map((b, i) => ({ ...b, slot: 100 + i })), cfg)).toEqual([]);
+    expect(findSizeBurst(buys.map((b) => ({ ...b, slot: 100 })), cfg).sort()).toEqual(['a', 'b', 'c']);
   });
 
   it('flags bundles, bursts, transfer recipients and dev-slot sellers', async () => {

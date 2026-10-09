@@ -14,6 +14,7 @@ import { adjusterTimes, loadLabelled, recentSteps, runAdjustment } from '../../l
 import { ALL_PATTERN } from '../../learner/bayesian-updater';
 import { keywordInsights } from '../../learner/keyword-learner';
 import { coachSnapshot } from '../../learner/trade-coach';
+import { calibration } from '../../learner/score-calibration';
 import { topWallets } from '../../learner/wallet-reputation';
 import { redis } from '../../lib/redis';
 import { allHourFactors, currentRegime } from '../../learner/regime-detector';
@@ -79,6 +80,8 @@ export async function learnerRoutes(app: FastifyInstance): Promise<void> {
       coach,
       // Wallets the bot learned are early on winners.
       smartWallets,
+      // Real win rate per strategy per score band (do high scores actually win?).
+      calibration: calibration(),
       weightsVersion: version ?? 0,
       weights: Object.entries(weights).map(([feature, w]) => ({ feature, weight: w, default: DEFAULT_WEIGHTS[feature as keyof typeof DEFAULT_WEIGHTS] })),
       history: snapshots.map((s) => ({ version: s.version, active: s.active, reason: s.reason, createdAt: s.createdAt, changes: s.changes })),

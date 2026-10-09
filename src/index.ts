@@ -13,6 +13,9 @@ import { startApi } from './api/server';
 import { env, rpcEndpoints } from './config/env';
 import { bus } from './lib/bus';
 import { startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
+import { runConfigMigrations } from './config/migrations';
+import { startCalibration, stopCalibration } from './learner/score-calibration';
+import { screenEntry } from './executor/rug-screen';
 import { Evaluator } from './evaluator/evaluator';
 import { WalletAnalyzer } from './evaluator/wallet-analyzer';
 import { PaperExecutor } from './executor/paper-trader';
@@ -57,6 +60,8 @@ async function main(): Promise<void> {
   await prisma.$connect();
   log.info('postgres connected');
   await ensureTimescale();
+  // Push deliberate setting changes into saved settings (owner edits elsewhere are kept).
+  await runConfigMigrations();
   await startConfigRefresh();
 
   // 2. Redis
@@ -85,12 +90,15 @@ async function main(): Promise<void> {
   const nightly = scheduleDailyAdjuster(redis);
   startBeliefCache();
   const regimeTimer = await startRegimeDetector();
+  startCalibration();
   const evaluator = new Evaluator(redis, liveState, new WalletAnalyzer(redis, { blockByThrow: false }), trader, outcomes);
   evaluator.start();
 
   // How people behave on each coin (eyes, dip buying, paper hands, bots) + "Soon" detection.
   const crowd = new CrowdTracker();
   crowd.start();
+  // Last look before every buy: anything rug-like since the signal?
+  trader.screen = (req) => screenEntry(req, { liveState, redis, crowd });
   evaluator.crowd = crowd;
   crowd.onSoon = (mint, pct) => {
     log.info({ mint, curvePct: +pct.toFixed(1) }, '⏳ coin entered the Soon zone — checking');
@@ -267,6 +275,7 @@ async function main(): Promise<void> {
       stopPositionHistory();
       if (xTimer) clearInterval(xTimer);
       coach.stop();
+      stopCalibration();
       swings.stop();
       crowd.stop();
       await outcomes.stop();

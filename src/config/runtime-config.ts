@@ -35,6 +35,7 @@ export async function refreshConfig(): Promise<void> {
     const rows = await prisma.botConfig.findMany();
     const merged: Record<string, unknown> = { ...DEFAULT_CONFIG };
     for (const row of rows) {
+      if (row.key.startsWith('_')) continue; // bookkeeping rows (e.g. _version)
       const def = (DEFAULT_CONFIG as Record<string, unknown>)[row.key];
       // Deep-merge each section so newly added default fields (also nested ones,
       // e.g. a new strategy in `allocation`) still appear. Arrays are replaced.

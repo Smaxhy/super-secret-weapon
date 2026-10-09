@@ -48,7 +48,67 @@ export interface EntryCheckInput {
   /** Soon / migrated rules (replace the matching general minimums for those strategies). */
   focus?: BotConfigShape['focus'];
   /** Crowd numbers from the live trade log (null = no log for this coin yet). */
-  crowd?: { activeWallets5m: number } | null;
+  crowd?: { activeWallets5m: number; fakeVolumePct?: number; trades5m?: number } | null;
+}
+
+/**
+ * Conviction sizing (×min…×max of the normal size). Pure.
+ *  - score margin over the bar: at the bar ×0.6, +10 → ×1.0, +20 → ×1.4
+ *  - calibration: the score band's real win rate vs average (×0.7–1.3)
+ *  - crowd behaviour: ×0.85 (bad) – ×1.15 (great)
+ */
+export function convictionFactor(i: { scoreMargin: number; calibrationFactor: number; crowdScore: number | null; min: number; max: number }): { factor: number; note: string } {
+  const s = Math.max(0.6, Math.min(1.4, 0.6 + i.scoreMargin / 25));
+  const c = i.crowdScore === null ? 1 : 0.85 + 0.3 * i.crowdScore;
+  const f = Math.round(Math.max(i.min, Math.min(i.max, s * i.calibrationFactor * c)) * 100) / 100;
+  const bits = [`score ${i.scoreMargin >= 0 ? '+' : ''}${i.scoreMargin.toFixed(0)} over the bar`];
+  if (i.calibrationFactor !== 1) bits.push(`band record ×${i.calibrationFactor}`);
+  if (i.crowdScore !== null) bits.push(`crowd ${i.crowdScore.toFixed(2)}`);
+  return { factor: f, note: `size ×${f} conviction (${bits.join(', ')})` };
+}
+
+export interface ManipulationInput {
+  trades5m: number;
+  fakeVolumePct: number;
+  bundledBuyPct: number;
+  top3VolumePct: number;
+  dustTradePct: number;
+  priceChange3mPct: number | null;
+}
+
+/**
+ * Fake volume, bundles, a few wallets making all the volume, buying a vertical
+ * candle. Over the limits → rule failures (no buy). Under them → score points
+ * off, so manipulated coins can't score high just because their numbers look
+ * busy. Pure.
+ */
+export function manipulationCheck(c: ManipulationInput | null | undefined, lim: BotConfigShape['entry']['manipulation'] | undefined): { fails: string[]; penalty: number; notes: string[] } {
+  const out = { fails: [] as string[], penalty: 0, notes: [] as string[] };
+  if (!c || !lim || c.trades5m < 10) return out;
+  if (c.fakeVolumePct > lim.maxFakeVolumePct) out.fails.push(`fake volume ~${c.fakeVolumePct.toFixed(0)}% (wash trading)`);
+  else if (c.fakeVolumePct > 15) {
+    out.penalty += Math.min(7, (c.fakeVolumePct - 15) * 0.2);
+    out.notes.push(`fake volume ~${c.fakeVolumePct.toFixed(0)}%`);
+  }
+  if (c.bundledBuyPct > lim.maxBundledBuyPct) out.fails.push(`bundled buys ${c.bundledBuyPct.toFixed(0)}% of buying`);
+  else if (c.bundledBuyPct > 10) {
+    out.penalty += Math.min(5, (c.bundledBuyPct - 10) * 0.25);
+    out.notes.push(`bundled buys ${c.bundledBuyPct.toFixed(0)}%`);
+  }
+  if (c.trades5m >= 20 && c.top3VolumePct > lim.maxTop3VolumePct) out.fails.push(`${c.top3VolumePct.toFixed(0)}% of volume from 3 wallets`);
+  if (c.priceChange3mPct !== null && c.priceChange3mPct > lim.chasePct) {
+    out.penalty += 8;
+    out.notes.push(`up ${c.priceChange3mPct.toFixed(0)}% in 3 min (chasing)`);
+  } else if (c.priceChange3mPct !== null && c.priceChange3mPct > lim.chasePct / 2) {
+    out.penalty += 4;
+    out.notes.push(`up ${c.priceChange3mPct.toFixed(0)}% in 3 min`);
+  }
+  if (c.dustTradePct > 60) {
+    out.penalty += 3;
+    out.notes.push(`${c.dustTradePct.toFixed(0)}% dust trades (tx bots)`);
+  }
+  out.penalty = Math.round(Math.min(15, out.penalty) * 10) / 10;
+  return out;
 }
 
 /** The entry minimums that apply to this strategy (focus rules override the general ones). */
@@ -79,6 +139,7 @@ export function checkEntryRules(i: EntryCheckInput): string[] {
   if (m.maxHolderPct > e.maxSingleHolderPct) fails.push(`one wallet holds ${m.maxHolderPct.toFixed(1)}% > ${e.maxSingleHolderPct}%`);
   if (m.devSoldFraction > e.maxDevSoldFraction) fails.push(`dev sold ${(m.devSoldFraction * 100).toFixed(0)}% of their bag`);
   if (m.liquiditySol < e.minLiquiditySol) fails.push(`liquidity ${m.liquiditySol.toFixed(2)} SOL < ${e.minLiquiditySol}`);
+  if (e.minAgeSec && m.ageSec < e.minAgeSec) fails.push(`too young (${m.ageSec}s < ${e.minAgeSec}s)`);
   const ageMin = m.ageSec / 60;
   if (ageMin < s.entryWindowMinutes.min || ageMin > s.entryWindowMinutes.max) fails.push(`age ${ageMin.toFixed(1)}m outside entry window`);
   const range = mins.curveRange ?? s.curveProgressRange;
@@ -100,7 +161,10 @@ export function checkEntryRules(i: EntryCheckInput): string[] {
   // Fail closed: without a SOL price we can't verify the USD minimums.
   if (m.volumeUsd === null || m.marketCapUsd === null) fails.push('SOL/USD price unknown');
   else {
-    if (m.volumeUsd < mins.minVolumeUsd) fails.push(`volume $${Math.round(m.volumeUsd)} < $${mins.minVolumeUsd}`);
+    // Volume minus what the live log says is fake (wash trading / volume bots).
+    const fake = (i.crowd?.trades5m ?? 0) >= 10 ? Math.min(90, i.crowd?.fakeVolumePct ?? 0) : 0;
+    const organic = m.volumeUsd * (1 - fake / 100);
+    if (organic < mins.minVolumeUsd) fails.push(`${fake >= 10 ? 'organic ' : ''}volume $${Math.round(organic)} < $${mins.minVolumeUsd}`);
     if (m.marketCapUsd < mins.minMarketCapUsd) fails.push(`MC $${Math.round(m.marketCapUsd)} < $${mins.minMarketCapUsd}`);
   }
   return fails;

@@ -35,6 +35,8 @@ export interface EvaluateJob {
   swing?: boolean;
   /** Why the swing check fired (for the buy explanation). */
   swingWhy?: string;
+  /** Confirmation re-check of a BUY signal (price + score when it fired). */
+  confirm?: { priceSol: number; at: number; score: number };
   /** Copy trades: the tracked wallet whose buy triggered this check. */
   wallet?: string;
 }

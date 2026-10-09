@@ -28,6 +28,7 @@ interface LearnerData {
     reviews: Array<{ positionId: string; symbol: string; strategy: string; pnlSol: number; verdict: string; lesson: string; at: string; swing: boolean }>;
   } | null;
   smartWallets?: { wallets: Array<{ wallet: string; winRate: number; n: number }>; baseRate: number; tracked: number } | null;
+  calibration?: { bands: Array<{ strategy: string; lo: number; hi: number; n: number; winRate: number }>; base: Record<string, { n: number; winRate: number }> } | null;
 }
 
 const VERDICT: Record<string, string> = {
@@ -217,6 +218,32 @@ export function Learning() {
               </ul>
             ) : (
               <Empty>Lessons appear 30 minutes after each closed trade.</Empty>
+            )}
+          </Card>
+
+          <Card title="Do high scores win? (last 7 days)" className="mt-4">
+            <p className="mb-2 text-sm text-ink-2">Real win rate per score band. Bands that lose more than average get points taken off and smaller size automatically.</p>
+            {d.calibration && d.calibration.bands.some((b) => b.n >= 5) ? (
+              <div className="space-y-3">
+                {Object.entries(d.calibration.base).map(([strategy, base]) => (
+                  <div key={strategy} className="min-w-0 text-sm">
+                    <div className="font-semibold text-ink">
+                      {STRAT[strategy] ?? strategy} <span className="font-normal text-muted">· {Math.round(base.winRate * 100)}% overall (n={base.n})</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {d.calibration!.bands
+                        .filter((b) => b.strategy === strategy && b.n >= 5)
+                        .map((b) => (
+                          <span key={b.lo} className={`rounded-md border border-line px-2 py-0.5 tabular-nums ${b.winRate < base.winRate * 0.8 ? 'text-down' : b.winRate > base.winRate * 1.2 ? 'text-up' : 'text-ink-2'}`}>
+                            {b.lo}–{b.hi}: {Math.round(b.winRate * 100)}% <span className="text-muted">({b.n})</span>
+                          </span>
+                        ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Empty>Fills in as scored coins get their 1-hour result.</Empty>
             )}
           </Card>
 

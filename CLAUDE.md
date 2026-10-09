@@ -28,6 +28,19 @@ smart money → learning engine → ML → social). See README.md.
 - Data source default `DATA_SOURCE=hybrid`: PumpPortal (launches/migrations) + Solana public RPC
   `logsSubscribe` (trades). Helius is only for RPC checks (1M credits/month plan — be frugal).
   Helius logsSubscribe burned ~5%/hour → never default to it.
+- Entry pipeline (Oct 9 v3): min coin age 15s; BUY signal → **confirmation** re-check after 12s (price
+  −8%…+30%, buy/sell ≥1) → **pre-entry rug screen** in the trader (`src/executor/rug-screen.ts`: insider dump,
+  dev selling, bundlers dumping, top-10 jump, liquidity pulled, 1-min dump, whale sell, −15% since signal).
+  Manipulation (`entry.manipulation`, crowd log for every coin with slots): fake/wash volume >50%, same-slot
+  same-size bundles >30%, top-3 wallets >65% of volume → no buy; smaller amounts + chasing (>20/40% in 3 min)
+  → points off; min-volume rule uses organic volume. **Score calibration** (`src/learner/score-calibration.ts`):
+  real win rate per strategy per 5-pt band (7d) → −10…+4 pts and ×0.7–1.3 size (stored `preCalibrationScore`).
+  **Conviction sizing**: maxPositionSol = average size; ×0.4–1.6 by score margin, band record, crowd; capped at
+  ×1.6 and 6% of capital. Insider same-size bursts: same slot only, first 3 min only, terminal presets ignored.
+- Copy trades heavily restricted: bar +5 (stricter), size ×0.5, max 1 open, 5% allocation, 120s minimum hold
+  (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
+- Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
+  default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).
 - Owner's entry rules: min $12k volume, min $12k MC, min 1 SOL total fees paid (terminal-style), score ≥ 70
   (copy 60), anti-rug limits (bundlers ≤18%, top10 ≤50%, single wallet ≤10%, dev ≤10%); strong coins breaking
   only concentration limits (within 30/65/15%) are bought at half size; near-misses go on a watchlist;
@@ -47,7 +60,11 @@ smart money → learning engine → ML → social). See README.md.
   gave back profit, stopped then ran, sold too early…), stores the lesson on the position and adjusts per
   strategy: buy bar −5…+12, size ×0.35–1 on losing streaks, stop bias ±5%, trail ×0.75–1.3.
 - Stop loss (`exit.stopLoss`): owner's band = 10–20% loss AFTER fees: 2×volatility (+coach bias) clamped to
-  10–20% (15% until volatility is known), confirmed break (2 ticks + 3s), immediate past the 20% hard limit.
+  10–20% (15% until volatility is known), confirmed break (2 ticks + 3s), immediate past the hard limit.
+  MIGRATION_MOMENTUM max 15% (`maxPctByStrategy`).
+- Trailing (`exit.trail.ladder`): owner wants tight on small moves, wide on big ones: 8% at 1.2x → 12% 1.5x →
+  16% 2x → 20% 3x → 25% 5x → 30% 10x (linear), ×0.8–1.3 by volatility, × coach trailFactor. Break-even
+  (+fees) floor once the peak hit 1.2x. Empty ladder = legacy logic (still tested in exits-trailing.test.ts).
 - Exits: tiers (25% at 1.3x, 15% at 5x), then **initials** at 2x (sell enough to get the stake + fees back →
   "house money"), the rest rides as a **runner** with a volatility-adaptive trail (ignores resistance/risk exits,
   max hold 2× normal). Protect profit (1.3x → floor 1.05x), resistance exit, momentum-risk exits, rug/copy exits.

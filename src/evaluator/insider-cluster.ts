@@ -101,6 +101,8 @@ export interface InsiderTrade {
   tokens: bigint;
   /** Block time, seconds. */
   timestamp: number;
+  /** Solana slot (0/undefined = unknown). */
+  slot?: number;
   /** Trader's exact token balance after the trade, when the source reports it. */
   balanceAfter?: bigint;
   /** Price after the trade (SOL per whole token) — feeds the serial-rugger memory. */
@@ -112,7 +114,7 @@ interface TokMem {
   createdSec: number;
   /** We saw the create, so every buy since launch went through the tracker. */
   seenCreate: boolean;
-  recentBuys: Array<{ w: string; sol: number; sec: number }>;
+  recentBuys: Array<{ w: string; sol: number; sec: number; slot?: number }>;
   recentSells: Array<{ w: string; sec: number }>;
   lastDevSellSec: number | null;
   devSold: boolean;
@@ -126,11 +128,20 @@ interface TokMem {
  * Wallets in a "same-size burst": at least `minWallets` distinct wallets whose
  * buys (within the window) are all within `tolerancePct` of each other. Pure.
  */
-export function findSizeBurst(buys: ReadonlyArray<{ w: string; sol: number; sec: number }>, c: Pick<AntiRugConfig, 'burstMinWallets' | 'burstWindowSec' | 'burstSizeTolerancePct' | 'burstMinSol'>): string[] {
-  const eligible = buys.filter((b) => b.sol >= c.burstMinSol);
+/** Buy-button presets real people use on terminals (0.5 SOL, 1 SOL…) — many identical buys there are normal. */
+const PRESET_SOL = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 4, 5, 10];
+export function isPresetSize(sol: number): boolean {
+  return PRESET_SOL.some((p) => Math.abs(sol - p) / p <= 0.02);
+}
+
+export function findSizeBurst(buys: ReadonlyArray<{ w: string; sol: number; sec: number; slot?: number }>, c: Pick<AntiRugConfig, 'burstMinWallets' | 'burstWindowSec' | 'burstSizeTolerancePct' | 'burstMinSol'>): string[] {
+  // Preset sizes are how real people buy on hyped coins — not a bundle signature.
+  const eligible = buys.filter((b) => b.sol >= c.burstMinSol && !isPresetSize(b.sol));
   const out = new Set<string>();
   for (const anchor of eligible) {
-    const group = eligible.filter((b) => Math.abs(b.sec - anchor.sec) <= c.burstWindowSec && Math.abs(b.sol - anchor.sol) / anchor.sol <= c.burstSizeTolerancePct / 100);
+    // With slots: a bundle lands in the SAME slot. Without: same `burstWindowSec`.
+    const near = (b: { sec: number; slot?: number }) => (anchor.slot && b.slot ? b.slot === anchor.slot : Math.abs(b.sec - anchor.sec) <= c.burstWindowSec);
+    const group = eligible.filter((b) => near(b) && Math.abs(b.sol - anchor.sol) / anchor.sol <= c.burstSizeTolerancePct / 100);
     const wallets = new Set(group.map((b) => b.w));
     if (wallets.size >= c.burstMinWallets) wallets.forEach((w) => out.add(w));
   }
@@ -188,8 +199,9 @@ export class InsiderTracker {
         const balTooBig = t.isBuy && t.balanceAfter !== undefined && t.balanceAfter > net + net / 50n + 1_000_000n;
         if (sellTooBig || balTooBig) await flag(insKey.xfer(t.mint), [t.user]);
       }
-      if (t.isBuy) {
-        tok.recentBuys.push({ w: t.user, sol: Number(t.lamports) / 1e9, sec: t.timestamp });
+      // Bundles are a launch-time thing: only look for same-size bursts in the first minutes.
+      if (t.isBuy && t.timestamp - tok.createdSec <= (c.burstMaxAgeSec ?? 180)) {
+        tok.recentBuys.push({ w: t.user, sol: Number(t.lamports) / 1e9, sec: t.timestamp, slot: t.slot });
         tok.recentBuys = tok.recentBuys.filter((b) => t.timestamp - b.sec <= c.burstWindowSec);
         await flag(insKey.burst(t.mint), findSizeBurst(tok.recentBuys, c));
       } else {
