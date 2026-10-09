@@ -23,7 +23,18 @@ interface LearnerData {
   adjustments?: Array<{ at: string; trigger: string; accepted: boolean; aucBefore: number | null; aucAfter: number | null; message: string }>;
   labelStats?: { wins: number; losses: number; excluded: number; winRate: number | null } | null;
   keywords?: { good: KeywordRow[]; bad: KeywordRow[]; baseRate: number } | null;
+  coach?: {
+    states: Array<{ strategy: string; trades: number; winRatePct: number | null; lossStreak: number; thresholdDelta: number; sizeFactor: number; stopBiasPct: number; trailFactor: number; note: string }>;
+    reviews: Array<{ positionId: string; symbol: string; strategy: string; pnlSol: number; verdict: string; lesson: string; at: string; swing: boolean }>;
+  } | null;
+  smartWallets?: { wallets: Array<{ wallet: string; winRate: number; n: number }>; baseRate: number; tracked: number } | null;
 }
+
+const VERDICT: Record<string, string> = {
+  late_entry: 'Late entry', gave_back_profit: 'Gave back profit', stopped_then_ran: 'Stopped, then it ran', slow_loser: 'Slow loser',
+  good_cut: 'Good cut', sold_too_early: 'Sold too early', good_exit: 'Good exit', rug: 'Rug',
+};
+const STRAT: Record<string, string> = { CURVE_SNIPE: 'Curve snipe', SOON: 'Soon', MIGRATION_MOMENTUM: 'Migration', SMART_MONEY_COPY: 'Copy' };
 
 interface KeywordRow { word: string; winRate: number; n: number }
 
@@ -47,6 +58,7 @@ const FEATURE_LABEL: Record<string, string> = {
   safety: 'Safety', holders: 'Holders', buyPressure: 'Buy pressure', volume: 'Volume', curveVelocity: 'Momentum', distribution: 'Distribution',
   devHolding: 'Dev holding', devBehavior: 'Dev not selling', snipers: 'Few bundlers', retention: 'Holder retention', creatorLaunches: 'Not a serial launcher',
   creatorSuccess: "Dev's past success", funderReuse: 'Funding source', walletAge: 'Dev wallet age', socials: 'Socials', narrative: 'Narrative',
+  crowd: 'Crowd behaviour', attention: 'Eyes on it',
 };
 
 const REGIME: Record<LearnerData['regime'], { icon: string; label: string; note: string; cls: string }> = {
@@ -169,6 +181,61 @@ export function Learning() {
               )}
             </Card>
           </div>
+
+          <Card title="Trade coach (learns from every trade)" className="mt-4">
+            <p className="mb-3 text-sm text-ink-2">30 min after each trade it checks what the price did next, names the mistake, and adjusts that strategy: buy bar, size, stop and trail.</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {(d.coach?.states ?? []).map((c) => (
+                <div key={c.strategy} className="min-w-0 rounded-lg border border-line p-3 text-sm">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="font-semibold text-ink">{STRAT[c.strategy] ?? c.strategy}</span>
+                    <span className="text-muted">{c.trades} reviewed{c.winRatePct !== null ? ` · ${c.winRatePct}% wins` : ''}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 tabular-nums text-ink-2">
+                    <span>bar {c.thresholdDelta > 0 ? '+' : ''}{c.thresholdDelta}</span>
+                    <span>size ×{c.sizeFactor}</span>
+                    <span>stop {c.stopBiasPct > 0 ? '+' : ''}{c.stopBiasPct}%</span>
+                    <span>trail ×{c.trailFactor}</span>
+                  </div>
+                  {c.note && <p className="mt-1 break-words text-xs text-muted">{c.note}</p>}
+                </div>
+              ))}
+            </div>
+            {d.coach && d.coach.reviews.length > 0 ? (
+              <ul className="mt-3 divide-y divide-line text-sm">
+                {d.coach.reviews.slice(0, 10).map((r) => (
+                  <li key={r.positionId} className="py-2">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="font-semibold text-ink">
+                        {r.symbol} <span className="font-normal text-muted">· {STRAT[r.strategy] ?? r.strategy}{r.swing ? ' · swing' : ''}</span>
+                      </span>
+                      <span className={r.pnlSol > 0 ? 'text-up' : 'text-down'}>{VERDICT[r.verdict] ?? r.verdict}</span>
+                    </div>
+                    <div className="break-words text-ink-2">{r.lesson}</div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <Empty>Lessons appear 30 minutes after each closed trade.</Empty>
+            )}
+          </Card>
+
+          <Card title="Smart wallets it found" className="mt-4">
+            {d.smartWallets && d.smartWallets.wallets.length > 0 ? (
+              <ul className="space-y-1 text-sm">
+                {d.smartWallets.wallets.map((w) => (
+                  <li key={w.wallet} className="flex min-w-0 items-center justify-between gap-2">
+                    <span className="truncate font-mono text-ink">{w.wallet.slice(0, 4)}…{w.wallet.slice(-4)}</span>
+                    <span className="shrink-0 tabular-nums text-up">
+                      {(w.winRate * 100).toFixed(0)}% <span className="text-muted">n={w.n}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <Empty>Builds up as coins get labelled — wallets that keep buying early into winners show here (and boost coins they buy).</Empty>
+            )}
+          </Card>
 
           <Card title="Learning status" className="mt-4">
             <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">

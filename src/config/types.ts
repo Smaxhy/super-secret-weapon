@@ -12,7 +12,7 @@
 
 export type TradingMode = 'PAPER' | 'LIVE';
 
-export type StrategyName = 'CURVE_SNIPE' | 'MIGRATION_MOMENTUM' | 'SMART_MONEY_COPY';
+export type StrategyName = 'CURVE_SNIPE' | 'SOON' | 'MIGRATION_MOMENTUM' | 'SMART_MONEY_COPY';
 
 export type MarketRegime = 'HOT' | 'NORMAL' | 'COLD' | 'RUG_HEAVY';
 

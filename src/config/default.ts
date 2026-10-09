@@ -18,12 +18,14 @@ export const DEFAULT_CONFIG = {
     maxConcurrentPositions: 5,
     /** Fraction of capital per strategy. Must add up to 1. */
     allocation: {
-      MIGRATION_MOMENTUM: 0.6,
-      SMART_MONEY_COPY: 0.25,
-      CURVE_SNIPE: 0.15,
+      MIGRATION_MOMENTUM: 0.4,
+      SOON: 0.35,
+      SMART_MONEY_COPY: 0.15,
+      CURVE_SNIPE: 0.1,
     } satisfies Record<StrategyName, number>,
     enabledStrategies: {
       MIGRATION_MOMENTUM: true,
+      SOON: true,
       SMART_MONEY_COPY: true,
       CURVE_SNIPE: true,
     } satisfies Record<StrategyName, boolean>,
@@ -119,6 +121,59 @@ export const DEFAULT_CONFIG = {
     insiderDumpWindowSec: 60,
     /** Ignore the dump signal if insiders held less than this % of supply. */
     insiderDumpMinClusterPct: 1,
+  },
+
+  /**
+   * Where the bot hunts hardest: "Soon" coins (bonding curve 70%+, about to
+   * graduate) and freshly migrated coins. Each has its own entry rules on top
+   * of the general `entry` rules (these replace the matching general minimums),
+   * an easier score bar and bigger size, because the rules themselves are strict.
+   * `minActiveWallets5m` = different wallets that traded in the last 5 minutes
+   * (the closest public measure of how many people are watching a coin).
+   */
+  focus: {
+    soon: {
+      minCurvePct: 70,
+      maxCurvePct: 99.5,
+      /** Seconds after the coin first reaches `minCurvePct` at which it's checked. */
+      checkpointsSec: [0, 20, 45, 90, 150, 240, 360, 600, 900],
+      minTotalFeesSol: 3,
+      minMarketCapUsd: 20_000,
+      minVolumeUsd: 20_000,
+      minActiveWallets5m: 25,
+      scoreThresholdDelta: -5,
+      sizeMultiplier: 1.25,
+    },
+    migrated: {
+      minTotalFeesSol: 9,
+      minMarketCapUsd: 25_000,
+      /** Pool liquidity in USD (both sides, like trading terminals show it). */
+      minLiquidityUsd: 2_000,
+      minActiveWallets5m: 20,
+      scoreThresholdDelta: -5,
+      sizeMultiplier: 1.25,
+    },
+    /** Active wallets in 5 min at which the attention score is full (the "50+ eyes" rule of thumb). */
+    fullAttentionWallets: 50,
+    /** Start keeping a per-trade log (crowd behaviour) once the curve is this full. */
+    crowdLogFromCurvePct: 40,
+    /**
+     * Swing trading Soon / migrated coins: after we exit (not on a rug), keep
+     * watching; buy again when it pulls back `minPullbackPct`–`maxPullbackPct` from
+     * its high and bounces `bounceConfirmPct` off the low with buyers in control.
+     */
+    swing: {
+      enabled: true,
+      maxReentries: 3,
+      cooldownSec: 120,
+      watchMinutes: 120,
+      minPullbackPct: 15,
+      maxPullbackPct: 45,
+      bounceConfirmPct: 4,
+      /** Buy SOL ÷ sell SOL over the last 2 minutes. */
+      minBuyRatio: 1.2,
+      everySec: 15,
+    },
   },
 
   /** Copy trading: react when a wallet on your watch list buys. */
@@ -251,10 +306,20 @@ export const DEFAULT_CONFIG = {
     },
     maxHoldMinutes: {
       CURVE_SNIPE: 45,
+      SOON: 60,
       MIGRATION_MOMENTUM: 120,
       SMART_MONEY_COPY: 90,
     } satisfies Record<StrategyName, number>,
-    hardStopLossPct: 40,
+    /** Old hard stop (kept for saved configs) — the real limit is stopLoss.maxPct. */
+    hardStopLossPct: 20,
+    /**
+     * Stop loss band (owner's rule: never stop out on less than 10% noise,
+     * never lose more than 20%). Inside the band it follows volatility:
+     * stop % = volMultiplier × volatility (+ trade-coach bias), clamped to minPct–maxPct.
+     * Below maxPct it sells at once; between the stop and maxPct it needs a
+     * confirmed break (exit.trail.confirmTicks / confirmSec).
+     */
+    stopLoss: { minPct: 10, maxPct: 20, volMultiplier: 2, fallbackPct: 15 },
     rugExit: {
       /** Bundle wallets sold this many % of supply since we bought → exit. */
       bundleDumpPct: 5,
@@ -264,6 +329,7 @@ export const DEFAULT_CONFIG = {
     },
     staleMinutes: {
       CURVE_SNIPE: 30,
+      SOON: 20,
       MIGRATION_MOMENTUM: 120,
       SMART_MONEY_COPY: 120,
     } satisfies Record<StrategyName, number>,
@@ -424,23 +490,27 @@ export const SAFETY_PENALTIES = {
  * Phase 7's daily adjuster nudges these and stores new versions in WeightSnapshot.
  */
 export const DEFAULT_WEIGHTS = {
-  safety: 0.15,
-  holders: 0.1,
-  buyPressure: 0.1,
+  safety: 0.12,
+  holders: 0.06,
+  buyPressure: 0.08,
   volume: 0.02,
   volumeSpike: 0.04,
   curveVelocity: 0.05,
-  distribution: 0.08,
+  distribution: 0.07,
   devHolding: 0.06,
-  devBehavior: 0.06,
-  snipers: 0.08,
-  retention: 0.05,
-  creatorLaunches: 0.05,
+  devBehavior: 0.05,
+  snipers: 0.07,
+  retention: 0.04,
+  creatorLaunches: 0.03,
   creatorSuccess: 0.03,
   funderReuse: 0.03,
   walletAge: 0.02,
-  socials: 0.06,
-  narrative: 0.02,
+  socials: 0.03,
+  narrative: 0.04,
+  /** How the crowd behaves: dip buying, holding vs paper hands, organic vs bot churn, smart wallets. */
+  crowd: 0.1,
+  /** How many different wallets are active right now (eyes on the coin). */
+  attention: 0.06,
 } as const;
 
 export type FeatureName = keyof typeof DEFAULT_WEIGHTS;

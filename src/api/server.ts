@@ -2,7 +2,7 @@
  * Dashboard API (Fastify).
  *
  *   POST /api/auth/login        → JWT (public)
- *   GET  /api/health            → { ok, startedAt, uptimeSec, eventLoopLagMs } (public, for uptime checks;
+ *   GET  /api/health            → { ok, version, startedAt, uptimeSec, eventLoopLagMs } (public, for uptime checks;
  *                                  startedAt changes on every restart → tells restarts from network blips)
  *   GET  /api/overview          → headline numbers + P&L curve
  *   GET  /api/detections[/:mint]→ live feed / token breakdown
@@ -30,8 +30,8 @@ import { tradesRoutes } from './routes/trades';
 import { walletsRoutes } from './routes/wallets';
 import { learnerRoutes } from './routes/learner';
 import { controlsRoutes } from './routes/controls';
-import { PROCESS_STARTED_AT, registerWebSocket } from './websocket';
-import { eventLoopLagMs } from '../lib/process-guard';
+import { registerWebSocket } from './websocket';
+import { healthSnapshot } from '../lib/bot-health';
 
 const log = moduleLogger('api');
 
@@ -54,7 +54,9 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
 
   app.get('/api/health', async (_req, reply) => {
     reply.header('Cache-Control', 'no-store');
-    return { ok: true, startedAt: new Date(PROCESS_STARTED_AT).toISOString(), uptimeSec: Math.round(process.uptime()), eventLoopLagMs: eventLoopLagMs() };
+    // Public: just enough to tell a restart from a network blip and which code version runs.
+    const h = await healthSnapshot();
+    return { ok: true, version: h.version, startedAt: h.startedAt, uptimeSec: h.uptimeSec, eventLoopLagMs: h.eventLoopLagMs };
   });
   await registerAuth(app);
   await registerWebSocket(app);
@@ -62,6 +64,11 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
   // Everything registered inside this block requires a valid token.
   await app.register(async (secured) => {
     secured.addHook('preHandler', requireAuth);
+    // Logged-in only: restarts, why the last run ended, recent errors, memory.
+    secured.get('/api/system', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return healthSnapshot();
+    });
     await detectionsRoutes(secured, deps);
     await positionsRoutes(secured, deps);
     await tradesRoutes(secured, deps);

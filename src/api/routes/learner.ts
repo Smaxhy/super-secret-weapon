@@ -13,6 +13,8 @@ import { getConfig, getWeights } from '../../config/runtime-config';
 import { adjusterTimes, loadLabelled, recentSteps, runAdjustment } from '../../learner/daily-adjuster';
 import { ALL_PATTERN } from '../../learner/bayesian-updater';
 import { keywordInsights } from '../../learner/keyword-learner';
+import { coachSnapshot } from '../../learner/trade-coach';
+import { topWallets } from '../../learner/wallet-reputation';
 import { redis } from '../../lib/redis';
 import { allHourFactors, currentRegime } from '../../learner/regime-detector';
 import { prisma } from '../../lib/prisma';
@@ -53,13 +55,15 @@ export async function learnerRoutes(app: FastifyInstance): Promise<void> {
     const mints = [...new Set(missed.map((m) => m.mint))];
     const symbols = new Map((await prisma.token.findMany({ where: { mint: { in: mints } }, select: { mint: true, symbol: true } })).map((t) => [t.mint, t.symbol]));
     const lc = getConfig().learning ?? DEFAULT_CONFIG.learning;
-    const [times, adjustments, labels, keywords] = await Promise.all([
+    const [times, adjustments, labels, keywords, coach, smartWallets] = await Promise.all([
       adjusterTimes(redis),
       recentSteps(redis, 20),
       labelStats().catch(() => null),
       Promise.resolve()
         .then(() => keywordInsights(redis, 20))
         .catch(() => null),
+      coachSnapshot(redis).catch(() => null),
+      topWallets(redis, 10).catch(() => null),
     ]);
     return {
       winMultiple: lc.winMultiple,
@@ -71,6 +75,10 @@ export async function learnerRoutes(app: FastifyInstance): Promise<void> {
       adjustments,
       labelStats: labels,
       keywords,
+      // Trade coach: per-strategy adjustments + the latest trade reviews (lessons).
+      coach,
+      // Wallets the bot learned are early on winners.
+      smartWallets,
       weightsVersion: version ?? 0,
       weights: Object.entries(weights).map(([feature, w]) => ({ feature, weight: w, default: DEFAULT_WEIGHTS[feature as keyof typeof DEFAULT_WEIGHTS] })),
       history: snapshots.map((s) => ({ version: s.version, active: s.active, reason: s.reason, createdAt: s.createdAt, changes: s.changes })),

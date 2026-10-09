@@ -39,6 +39,8 @@ export interface EntryRequest {
   copiedWallet?: string;
   /** < 1 for higher-risk entries (e.g. bundled tokens bought at half size). */
   sizeMultiplier?: number;
+  /** Swing re-entry: may buy a token we traded before (up to focus.swing.maxReentries). */
+  swing?: boolean;
   /** Builds the human-readable "why we bought" once the size is known. */
   explain?: (sizeSol: number) => string;
 }
@@ -89,7 +91,16 @@ export class Trader {
     }
 
     if (open.length >= cfg.trading.maxConcurrentPositions) return refuse(`max ${cfg.trading.maxConcurrentPositions} positions open`);
-    if (await prisma.position.count({ where: { mint: req.mint } })) return refuse('already traded this token');
+    const before = await prisma.position.findMany({ where: { mint: req.mint, mode }, select: { status: true, closedAt: true, exitReason: true } });
+    if (before.length) {
+      const sw = cfg.focus.swing;
+      if (!req.swing || !sw.enabled) return refuse('already traded this token');
+      if (before.some((p) => p.status !== 'CLOSED')) return refuse('still holding this token');
+      if (before.some((p) => p.exitReason === 'RUG_DETECTED')) return refuse('rugged before — no swing re-entry');
+      if (before.length > sw.maxReentries) return refuse(`swing re-entries used up (${sw.maxReentries})`);
+      const last = Math.max(...before.map((p) => p.closedAt?.getTime() ?? 0));
+      if (Date.now() - last < sw.cooldownSec * 1000) return refuse('swing cooldown');
+    }
 
     const strategyOpen = open.filter((p) => p.strategy === req.strategy).reduce((s, p) => s + (p.sizeSol * p.remainingPct) / 100, 0);
     const budget = capital * cfg.trading.allocation[req.strategy] - strategyOpen;
@@ -97,7 +108,8 @@ export class Trader {
     // Market mood scales position size (e.g. ×1.2 when hot, ×0.5 when rug-heavy).
     // …and by time of day: hours that historically produce more winners get bigger size.
     const sized = Math.min(cfg.trading.maxPositionSol * cfg.regimeAdjustments[currentRegime()].sizeMultiplier * currentHourFactor(), cfg.trading.maxPositionSolCeiling);
-    const size = Math.min(sized * (req.sizeMultiplier ?? 1), budget, balance - reserve);
+    // Multipliers (focus ×1.25, risky ×0.5, coach streak ×0.5…) never push past the size ceiling.
+    const size = Math.min(sized * (req.sizeMultiplier ?? 1), cfg.trading.maxPositionSolCeiling, budget, balance - reserve);
     if (size < cfg.trading.minPositionSol) {
       return refuse(`size ${size.toFixed(3)} SOL below minimum (balance ${balance.toFixed(3)}, ${req.strategy} budget ${budget.toFixed(3)})`);
     }
@@ -127,6 +139,7 @@ export class Trader {
             devHoldingPct: req.market.devHoldingPct,
             earlyBuyerPct: req.market.earlyBuyerPct,
             copiedWallet: req.copiedWallet ?? null,
+            swing: req.swing === true,
             // Counted into each sell's cost basis so P&L includes the buy's gas/tip.
             buyFeeSol: fill.feeSol,
             explanation,

@@ -34,6 +34,7 @@ import { patternsOf, updateBeliefs, type StoredFeatures } from './bayesian-updat
 import { hadSuspiciousFill, labelOptions, syncResetMarker } from './learning-data';
 
 import { recordKeywordOutcome } from './keyword-learner';
+import { learnFromLabel } from './wallet-reputation';
 import { emptyPath, labelFromPath, PEEK_MINUTES, resolveLabel, tradeOutcome, updatePath, type LabelOptions, type PathState, type PriceOutcome, type TradeOutcome } from './labels';
 import { recordIfMissed } from './missed-opportunity';
 
@@ -160,6 +161,8 @@ export class OutcomeLabeler {
     const ownBuy = ev.decision === 'BUY';
     const lc = getConfig().learning ?? DEFAULT_CONFIG.learning;
     await updateBeliefs(patternsOf(feats, ev.strategy), res.win);
+    // Who was buying when we scored it? Credit / debit those wallets (smart-wallet learning).
+    await learnFromLabel(this.redis, evaluationId, res.win);
     if (ev.token) {
       await recordKeywordOutcome(this.redis, { name: ev.token.name, symbol: ev.token.symbol, description: ev.token.description }, res.win, ownBuy ? lc.ownBuyWeight : 1).catch((err: Error) =>
         log.warn({ mint, err: err.message }, 'keyword learning failed'),

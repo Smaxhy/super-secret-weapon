@@ -50,6 +50,7 @@ import { decodeBondingCurveAccount } from '../lib/pumpfun';
 import { getConnection } from '../lib/solana';
 import { copySoldKey } from '../scanner/whale-tracker';
 import { insiderDumpSignal } from '../evaluator/insider-cluster';
+import { coachFor } from '../learner/trade-coach';
 import type { Executor } from './types';
 
 const log = moduleLogger('sell-manager');
@@ -108,6 +109,12 @@ export interface ExitInput {
   breachTicks?: number;
   /** Insider / hidden dev wallets dumped (insiderDumpSignal) → immediate rug exit. */
   insiderDump?: { hit: boolean; detail: string } | null;
+  /** Trade coach: points added to the stop-loss % (still clamped to the 10–20% band). */
+  coachStopBiasPct?: number;
+  /** Trade coach: trail width multiplier. */
+  trailFactor?: number;
+  /** Cost of selling now (fee + slippage + tx fees) in % — the stop-loss band is net of it. */
+  exitCostPct?: number;
 }
 
 /** Marker stored in `tpTiersHit` once initials are out (real tiers are all > 1). */
@@ -252,6 +259,8 @@ export interface TrailParams {
   trailingActive: boolean;
   initialsOut: boolean;
   volatilityPct: number | null;
+  /** Trade coach: widen (>1) or tighten (<1) the trail from what recent exits taught it. */
+  trailFactor?: number;
   sizeSol: number;
   costSol: number;
   remainingPct: number;
@@ -303,6 +312,7 @@ export function trailingStopLevel(t: TrailParams, rules: ExitRules): TrailLevel 
     const classic = rules.trailingTightening.reduce<number>((acc, x) => (peakX >= x.fromMultiple ? Math.min(acc, x.pct) : acc), rules.trailingStopPct);
     pct = t.volatilityPct === null ? classic : Math.max(Math.min(tr.pre.minTrailPct, classic), Math.min(classic, tr.pre.volMultiplier * t.volatilityPct));
   }
+  if (t.trailFactor && t.trailFactor > 0) pct *= Math.max(0.75, Math.min(1.3, t.trailFactor));
   pct = Math.round(pct * 10) / 10;
   const trailOn = t.initialsOut || t.trailingActive;
   const floorOn = peakX >= tr.breakEvenAfterMultiple;
@@ -312,6 +322,38 @@ export function trailingStopLevel(t: TrailParams, rules: ExitRules): TrailLevel 
   const stopPriceSol = Math.max(trailOn ? trailPriceSol : 0, floorPriceSol ?? 0);
   const gapPriceSol = Math.max(0, t.peakPriceSol - tr.gapMultiple * (t.peakPriceSol - stopPriceSol));
   return { phase: t.initialsOut ? 'runner' : 'pre', trailPct: pct, trailPriceSol, floorPriceSol, stopPriceSol, gapPriceSol };
+}
+
+/**
+ * Stop loss: always between `minPct` and `maxPct` below entry (owner's rule:
+ * lose at least room for 10% noise, never more than 20%). Inside that band it
+ * follows the coin's volatility (wild coin → nearer 20%, calm coin → nearer 10%)
+ * plus the trade coach's bias. Below `maxPct` it sells at once; between the
+ * stop and `maxPct` it needs a confirmed break like the trailing stop. Pure.
+ */
+export function stopLossLevel(
+  entryPriceSol: number,
+  volatilityPct: number | null,
+  rules: ExitRules,
+  coachBiasPct = 0,
+  /** What selling costs right now (fee + slippage + tx fees, % of the position). The band is the
+   *  loss AFTER these costs, so the price trigger sits that much higher. */
+  exitCostPct = 0,
+): { stopPct: number; stopPriceSol: number; hardPct: number; hardPriceSol: number } {
+  const sl = { ...DEFAULT_CONFIG.exit.stopLoss, ...((rules as Partial<ExitRules>).stopLoss ?? {}) };
+  const hardPct = Math.min(sl.maxPct, rules.hardStopLossPct ?? sl.maxPct);
+  const base = volatilityPct === null ? sl.fallbackPct : sl.volMultiplier * volatilityPct;
+  const stopPct = Math.round(Math.max(sl.minPct, Math.min(hardPct, base + coachBiasPct)) * 10) / 10;
+  const cost = Math.max(0, Math.min(15, exitCostPct)) / 100;
+  // Loss after costs → price multiple that produces it (never closer than 3% to entry).
+  const priceAt = (lossPct: number) => entryPriceSol * Math.min(0.97, (1 - lossPct / 100) / (1 - cost));
+  return { stopPct, stopPriceSol: priceAt(stopPct), hardPct, hardPriceSol: priceAt(hardPct) };
+}
+
+/** Cost of selling now in % of the position: pool fee + assumed slippage + buy & sell tx fees. Pure. */
+export function exitCostPctFor(paper: BotConfigShape['paper'], onAmm: boolean, sizeLeftSol: number): number {
+  const fee = (onAmm ? paper.ammFeeBps : paper.curveFeeBps) / 100;
+  return fee + paper.slippagePct + (sizeLeftSol > 0 ? ((paper.txFeeSol * 2) / sizeLeftSol) * 100 : 0);
 }
 
 /**
@@ -389,8 +431,20 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
 
   if (i.copyWalletSold) return all('COPY_EXIT', 'the wallet we copied sold');
 
-  if (multiple <= 1 - rules.hardStopLossPct / 100) return all('STOP_LOSS', `${((multiple - 1) * 100).toFixed(1)}%`);
-  // Don't wait for −40% when it's clearly turning against us.
+  // Stop loss: 10–20% band (volatility + coach). Past the hard limit → out at once.
+  const sl = stopLossLevel(i.entryPriceSol, i.volatilityPct, rules, i.coachStopBiasPct ?? 0, i.exitCostPct ?? 0);
+  if (i.priceSol <= sl.hardPriceSol) return all('STOP_LOSS', `price ${((multiple - 1) * 100).toFixed(1)}% (hard limit −${sl.hardPct}% after fees)`);
+  if (i.priceSol <= sl.stopPriceSol) {
+    const tr = trailRules(rules);
+    const ticks = (i.breachTicks ?? 0) + 1;
+    const since = i.breachSinceMs ?? i.nowMs;
+    if (ticks >= tr.confirmTicks && i.nowMs - since >= tr.confirmSec * 1000) {
+      return all('STOP_LOSS', `price ${((multiple - 1) * 100).toFixed(1)}% held under the −${sl.stopPct}% stop (after fees) for ${Math.round((i.nowMs - since) / 1000)}s`);
+    }
+    state.breachTicks = ticks;
+    state.breachSinceMs = since;
+  }
+  // Don't wait for the stop when it's clearly turning against us.
   if (multiple <= rules.riskExit.cutLossBelowMultiple && i.risk >= rules.riskExit.threshold) {
     return all('STOP_LOSS', `early exit at ${((multiple - 1) * 100).toFixed(0)}%: ${i.riskWhy}`);
   }
@@ -433,14 +487,15 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   // under the stop for N checks and N seconds — or straight away if it gapped far below.
   const lvl = remaining > 0
     ? trailingStopLevel(
-        { entryPriceSol: i.entryPriceSol, peakPriceSol: state.peakPriceSol, trailingActive: state.trailingActive, initialsOut, volatilityPct: i.volatilityPct, sizeSol: i.sizeSol, costSol: i.costSol, remainingPct: remaining, txFeeSol: i.txFeeSol },
+        { entryPriceSol: i.entryPriceSol, peakPriceSol: state.peakPriceSol, trailingActive: state.trailingActive, initialsOut, volatilityPct: i.volatilityPct, sizeSol: i.sizeSol, costSol: i.costSol, remainingPct: remaining, txFeeSol: i.txFeeSol, trailFactor: i.trailFactor },
         rules,
       )
     : null;
   if (lvl && i.priceSol <= lvl.stopPriceSol) {
     const tr = trailRules(rules);
-    const ticks = (i.breachTicks ?? 0) + 1;
-    const since = i.breachSinceMs ?? i.nowMs;
+    // (the stop-loss check above may already have counted this check as a breach)
+    const ticks = state.breachTicks || (i.breachTicks ?? 0) + 1;
+    const since = state.breachSinceMs ?? i.breachSinceMs ?? i.nowMs;
     const gapped = i.priceSol <= lvl.gapPriceSol;
     const confirmed = ticks >= tr.confirmTicks && i.nowMs - since >= tr.confirmSec * 1000;
     if (gapped || confirmed) {
@@ -679,6 +734,10 @@ export class SellManager {
     const costSol = p.sizeSol + Number((entry as { buyFeeSol?: number }).buyFeeSol ?? 0);
     const proceedsSol = p.realizedPnlSol + (costSol * (100 - p.remainingPct)) / 100;
 
+    // What the trade coach learned from recent exits of this strategy.
+    const coach = coachFor(p.strategy);
+    // Selling costs (so the 10–20% stop band is the real loss after fees).
+    const exitCostPct = exitCostPctFor(cfg.paper, !!view.ammBaseReserve, (p.sizeSol * p.remainingPct) / 100);
     const decision = decideExit(
       {
         entryPriceSol: p.entryPriceSol,
@@ -714,6 +773,9 @@ export class SellManager {
         breachSinceMs: tr.breachSinceMs,
         breachTicks: tr.breachTicks,
         insiderDump,
+        coachStopBiasPct: coach.stopBiasPct,
+        trailFactor: coach.trailFactor,
+        exitCostPct,
       },
       cfg.exit,
     );

@@ -80,7 +80,7 @@ describe('resetPaperAccount', () => {
       'state:{"paused":false}',
     ]);
     expect(redisStore.get(PAPER_RESET_AT_KEY)).toBe(r.resetAt);
-    expect(deleted).toEqual(['pos:hist:p1', 'pos:hist:p2', 'pos:hist:p3']);
+    expect(deleted).toEqual(['coach:reviews', 'coach:state', 'coach:pending', 'swing:watch', 'pos:hist:p1', 'pos:hist:p2', 'pos:hist:p3']);
     expect(published).toContainEqual({ type: 'stats', data: { reset: true, resetAt: r.resetAt } });
     expect(cfg.state.paused).toBe(false);
   });

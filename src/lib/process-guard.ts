@@ -83,28 +83,48 @@ interface MinimalLogger {
   warn(obj: object, msg: string): void;
 }
 
-/** Decide what to do with an uncaught exception: 'continue' or 'exit'. */
-export function triageUncaught(err: unknown, budget: ErrorBudget, now = Date.now()): 'continue' | 'exit' {
-  if (!isRecoverableError(err)) return 'exit';
+/**
+ * Decide what to do with an uncaught exception: 'continue' or 'exit'.
+ * Network blips are always survivable (within the budget). A real bug in one
+ * event handler shouldn't take the whole bot (and the dashboard) down either:
+ * it's logged and the bot keeps running, unless they keep coming
+ * (`fatalBudget`, default 5 per minute) — then a clean restart is safer.
+ */
+export function triageUncaught(err: unknown, budget: ErrorBudget, now = Date.now(), fatalBudget?: ErrorBudget): 'continue' | 'exit' {
+  if (!isRecoverableError(err)) return fatalBudget ? (fatalBudget.hit(now) ? 'continue' : 'exit') : 'exit';
   return budget.hit(now) ? 'continue' : 'exit';
 }
 
+export interface GuardHooks {
+  /** A serious error happened (logged to the dashboard's health panel). */
+  onError?: (message: string) => void | Promise<void>;
+  /** About to exit because of `reason`. */
+  onFatal?: (reason: string) => void | Promise<void>;
+}
+
 /** Install unhandledRejection / uncaughtException handlers. `exit` is injectable for tests. */
-export function installProcessGuards(log: MinimalLogger, exit: (code: number) => void = (c) => process.exit(c)): void {
+export function installProcessGuards(log: MinimalLogger, exit: (code: number) => void = (c) => process.exit(c), hooks: GuardHooks = {}): void {
   const budget = new ErrorBudget();
+  const fatalBudget = new ErrorBudget(5);
   process.on('unhandledRejection', (reason) => {
     // A stray rejected promise is logged, never fatal.
-    log.error({ reason: reason instanceof Error ? reason.message : String(reason), recoverable: isRecoverableError(reason) }, 'unhandled promise rejection');
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    log.error({ reason: msg, recoverable: isRecoverableError(reason) }, 'unhandled promise rejection');
+    if (!isRecoverableError(reason)) void hooks.onError?.(`unhandled rejection: ${msg}`);
   });
   process.on('uncaughtException', (err) => {
-    const action = triageUncaught(err, budget);
+    const action = triageUncaught(err, budget, Date.now(), fatalBudget);
     if (action === 'continue') {
-      log.warn({ err: err.message, code: (err as { code?: string }).code }, 'recoverable uncaught exception — continuing');
+      if (isRecoverableError(err)) log.warn({ err: err.message, code: (err as { code?: string }).code }, 'recoverable uncaught exception — continuing');
+      else {
+        log.error({ err: err.message, stack: err.stack }, 'uncaught exception — continuing (bug logged)');
+        void hooks.onError?.(`uncaught: ${err.message}`);
+      }
       return;
     }
-    // Unknown state: log and exit; Docker's restart policy brings us back cleanly.
+    // Too many in a row: log and exit; Docker's restart policy brings us back cleanly.
     log.fatal({ err: err.message, stack: err.stack }, 'uncaught exception — exiting');
-    exit(1);
+    void Promise.resolve(hooks.onFatal?.(`crashed: ${err.message}`)).finally(() => exit(1));
   });
   startLagMonitor();
 }

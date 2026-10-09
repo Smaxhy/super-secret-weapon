@@ -31,6 +31,7 @@ enum TradingMode {
 
 enum Strategy {
   CURVE_SNIPE
+  SOON
   MIGRATION_MOMENTUM
   SMART_MONEY_COPY
 }

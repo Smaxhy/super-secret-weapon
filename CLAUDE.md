@@ -32,12 +32,27 @@ smart money → learning engine → ML → social). See README.md.
   (copy 60), anti-rug limits (bundlers ≤18%, top10 ≤50%, single wallet ≤10%, dev ≤10%); strong coins breaking
   only concentration limits (within 30/65/15%) are bought at half size; near-misses go on a watchlist;
   volume spikes trigger immediate checks; X hot keywords (needs TWITTER_BEARER_TOKEN) boost narrative.
-  All editable on the dashboard Controls page (BotConfig).
-- Exits: tiers (30% at 1.3x, 40% at 1.8x, 20% at 3x), then **initials** at 2x (sell enough to get the
-  stake + fees back → "house money"), the rest rides as a **runner** with a volatility-adaptive trail
-  (ignores resistance/risk exits, max hold 2× normal). Protect profit (1.3x → floor 1.05x), resistance exit,
-  momentum-risk exits, rug/copy exits. Old stored exit configs without `initials` auto-upgrade to defaults.
-  Fees: curve 1.25%, PumpSwap 0.3%, 0.0015 SOL gas+tip per tx, 1.5% slippage, 0.4–1.2s random landing delay before each paper fill. Every trade stores an explanation.
+  All editable on the dashboard Controls page (BotConfig). Config sections deep-merge with defaults.
+- **Focus = Soon + migrated coins** (`focus` config): SOON strategy fires when the curve crosses 70%
+  (CrowdTracker.onSoon → evaluator.scheduleSoon); rules ≥3 SOL fees, ≥$20k MC/volume, ≥25 active wallets (5m).
+  MIGRATION_MOMENTUM: ≥9 SOL fees, ≥$25k MC, ≥$2k liquidity (both sides, USD), ≥20 active wallets. Both get
+  bar −5 and size ×1.25; allocation MIGRATION 40% / SOON 35% / COPY 15% / CURVE 10%.
+- Crowd behaviour (`src/scanner/crowd-tracker.ts`, in-memory trade log for curve ≥40% / migrated coins):
+  active wallets 5m ("eyes" — pump.fun's own viewer count isn't public), dip buying, paper hands, bot churn,
+  retail share, buy acceleration, smart-wallet share → features `crowd` + `attention`. Wallet reputation
+  (`src/learner/wallet-reputation.ts`): buyers at scoring time get the coin's 1h label → finds smart wallets.
+- Swing trading (`focus.swing`, `src/executor/swing-watcher.ts`): after a SOON/migration exit (not rug) the coin
+  is watched 2h; 15–45% pullback + bounce with buy/sell ≥1.2 → re-evaluation as a swing (≤3 re-entries).
+- Trade coach (`src/learner/trade-coach.ts`): 30 min after every close it reviews the trade (late entry,
+  gave back profit, stopped then ran, sold too early…), stores the lesson on the position and adjusts per
+  strategy: buy bar −5…+12, size ×0.35–1 on losing streaks, stop bias ±5%, trail ×0.75–1.3.
+- Stop loss (`exit.stopLoss`): owner's band = 10–20% loss AFTER fees: 2×volatility (+coach bias) clamped to
+  10–20% (15% until volatility is known), confirmed break (2 ticks + 3s), immediate past the 20% hard limit.
+- Exits: tiers (25% at 1.3x, 15% at 5x), then **initials** at 2x (sell enough to get the stake + fees back →
+  "house money"), the rest rides as a **runner** with a volatility-adaptive trail (ignores resistance/risk exits,
+  max hold 2× normal). Protect profit (1.3x → floor 1.05x), resistance exit, momentum-risk exits, rug/copy exits.
+  Fees: curve 1.25%, PumpSwap 0.3%, 0.0015 SOL gas+tip per tx, 1.5% slippage, 0.4–1.2s random landing delay
+  before each paper fill. Every trade stores an explanation (+ the coach's lesson after review).
 - Dashboard: positions show entry MC vs current MC (SOL + USD), a live price chart per position
   (Redis `pos:hist:<id>`, 5s points, 3-day TTL) with TP/stop/trail lines; redesigned layout + footer.
 - Pricing safety: fake/duplicate PumpSwap pools rejected (curve must be ~complete, price within 3x of final curve
@@ -53,10 +68,19 @@ smart money → learning engine → ML → social). See README.md.
 - Learning: labels sampled over 1h (win = 1.8x before 0.7x), real trade P&L preferred; suspicious / >25x /
   pre-reset data excluded. Weights adjust every 20 min + after each close (recency, losses ×1.5, own ×3,
   holdout AUC check, cap 4%); Bayesian pattern odds adjust score ±8 pts. Regime every 15 min, per-hour size factor.
-- Paper reset (Controls/Overview): wipes paper trades/positions/stats, optional new starting balance, sets Redis
-  `paper:resetAt`. WebSocket heartbeat 20s + client backoff reconnect; `/api/health` has startedAt/uptime.
+- Paper reset (Controls/Overview): wipes paper trades/positions/stats, coach reviews and swing watches, optional
+  new starting balance, sets Redis `paper:resetAt`. Verified working locally (Oct 9) — if the owner says it
+  doesn't work, the VPS is probably running old code: check the dashboard's Bot health panel (version vs site).
+- Health: `/api/health` (public: version, uptime) + `/api/system` (auth: restarts 24h, why the last run ended,
+  recent errors, memory, Redis memory, lag) → Overview banner + Scanner page panel. Uncaught bugs are logged
+  and survived (exit only after 5/min). `scripts/diagnose.sh` on the VPS prints everything needed.
+  auto-update.sh keeps `.deployed-sha` and retries failed builds; passes GIT_SHA into the image.
+  WebSocket heartbeat 20s + client backoff reconnect.
   auto-update reloads Caddy when the Caddyfile changes.
+
 ## Open items / next steps
+0. **Owner asked:** once the bot shows steady paper profit over time, proactively present the next plans
+   (Phase 4 live execution with a small dedicated wallet, Phase 8 ML model, Phase 5 controls polish, paid data).
 1. Verify on the VPS that hybrid trade stream flows (`tradesPerMin` in hundreds+). If Solana's public
    node throttles, consider a cheap paid stream.
 2. Phase 8 ML model (XGBoost) once a few weeks of clean labelled data exist.

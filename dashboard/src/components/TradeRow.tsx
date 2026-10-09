@@ -55,6 +55,11 @@ export function TradeRow({ t }: { t: TradeRowData }) {
               <strong>Sell {i + 1}:</strong> {r}
             </p>
           ))}
+          {t.lesson && (
+            <p className="mt-1 text-accent">
+              <strong>Lesson:</strong> {t.lesson.lesson}
+            </p>
+          )}
         </td>
       </tr>
     )}
@@ -103,6 +108,11 @@ export function TradeCard({ t }: { t: TradeRowData }) {
               <strong>Sell {i + 1}:</strong> {r}
             </p>
           ))}
+          {t.lesson && (
+            <p className="text-accent">
+              <strong>Lesson:</strong> {t.lesson.lesson}
+            </p>
+          )}
         </div>
       )}
     </li>

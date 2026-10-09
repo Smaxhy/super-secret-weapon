@@ -62,6 +62,9 @@ export async function tradesRoutes(app: FastifyInstance, deps: ApiDeps): Promise
         // Best price within 1h of the buy signal (includes after we sold) — did we exit too early?
         bestWithin1hMultiple: p.evaluation?.outcomeMax ?? null,
         buyReason: (p.entryContext as { explanation?: string } | null)?.explanation ?? why(p.trades.find((t) => t.side === 'BUY') ?? { context: null }),
+        // Trade coach's verdict ~30 min after the close (null until reviewed).
+        lesson: (p.entryContext as { review?: { lesson?: string; verdict?: string } } | null)?.review ?? null,
+        swing: (p.entryContext as { swing?: boolean } | null)?.swing === true,
         sellReasons: sells.map(why).filter((x): x is string => !!x),
         openedAt: p.openedAt,
         closedAt: p.closedAt,

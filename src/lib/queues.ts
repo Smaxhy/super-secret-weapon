@@ -7,6 +7,7 @@
  *   - Failed jobs retry automatically with backoff (RPC hiccups).
  *   - Concurrency limits stop a launch burst from flooding the RPC.
  */
+import type { StrategyName } from '../config/types';
 import { Queue } from 'bullmq';
 import type { SnapshotInterval } from '../config/types';
 import { bullConnection } from './redis';
@@ -29,7 +30,11 @@ export interface EvaluateJob {
   /** True for the last checkpoint — always store the evaluation (training data). */
   final: boolean;
   /** Which strategy this checkpoint evaluates for (default CURVE_SNIPE). */
-  strategy?: 'CURVE_SNIPE' | 'MIGRATION_MOMENTUM' | 'SMART_MONEY_COPY';
+  strategy?: StrategyName;
+  /** Swing re-entry check (allowed to re-buy a token we traded before). */
+  swing?: boolean;
+  /** Why the swing check fired (for the buy explanation). */
+  swingWhy?: string;
   /** Copy trades: the tracked wallet whose buy triggered this check. */
   wallet?: string;
 }

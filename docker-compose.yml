@@ -39,7 +39,11 @@ services:
       retries: 20
 
   bot:
-    build: .
+    build:
+      context: .
+      args:
+        # Shown on the dashboard so a stuck update is obvious (set by scripts/auto-update.sh).
+        GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
     env_file: .env
     environment:

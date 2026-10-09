@@ -37,6 +37,8 @@ import type { ConfirmedSignatureInfo, ParsedInstruction, ParsedTransactionWithMe
 import { PublicKey } from '@solana/web3.js';
 import type { Redis } from 'ioredis';
 import { DEFAULT_CONFIG, LIVE_STATE_TTL_SECONDS, type BotConfigShape } from '../config/default';
+
+const INSIDER_TTL_SECONDS = 6 * 3600;
 import { getConfig } from '../config/runtime-config';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
@@ -165,7 +167,8 @@ export class InsiderTracker {
     if (!tok?.creator) return;
     const c = this.cfg();
     const r = this.redis;
-    const ttl = LIVE_STATE_TTL_SECONDS;
+    // Insider signals only matter for a few hours (entry + holding) — keep Redis small.
+    const ttl = INSIDER_TTL_SECONDS;
     tok.touchedSec = t.timestamp;
     const flag = async (k: string, wallets: string[]) => {
       if (!wallets.length) return;

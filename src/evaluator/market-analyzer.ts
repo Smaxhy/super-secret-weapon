@@ -45,6 +45,8 @@ export interface MarketRaw {
   /** USD values — null if the SOL price is unknown. */
   volumeUsd: number | null;
   marketCapUsd: number | null;
+  /** Pool liquidity in USD (PumpSwap: both sides, like terminals show it; curve: SOL in the curve). */
+  liquidityUsd: number | null;
   /**
    * Insider view (only after withInsider). The plain fields above stay as the
    * ledger sees them — the sell manager compares them with live values for rug exits.
@@ -124,6 +126,7 @@ export function analyzeMarket(
     totalFeesSol: view.feesSol + extraFeePerTradeSol * (view.buys + view.sells),
     volumeUsd: solUsd ? m.volumeSol * solUsd : null,
     marketCapUsd: solUsd ? m.marketCapSol * solUsd : null,
+    liquidityUsd: solUsd ? (view.ammQuoteReserve !== null && view.ammBaseReserve !== null && view.ammBaseReserve > 0n ? 2 : 1) * m.liquiditySol * solUsd : null,
   };
 
   return { raw, features: marketFeatures(raw) };

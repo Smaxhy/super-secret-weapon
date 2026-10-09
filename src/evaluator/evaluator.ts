@@ -38,6 +38,10 @@ import { checkEntryRules, decide, learnedOddsAdjustment, scoreFeatures, withOdds
 import { ALL_PATTERN, beliefCache, patternsOf, type StoredFeatures } from '../learner/bayesian-updater';
 import { DEFAULT_CONFIG } from '../config/default';
 import { NEUTRAL_WALLET_FEATURES, walletFeatures, type CreatorProfile, type WalletAnalyzer } from './wallet-analyzer';
+import type { CrowdMetrics, CrowdTracker } from '../scanner/crowd-tracker';
+import { rememberBuyers, smartShare } from '../learner/wallet-reputation';
+import { coachFor } from '../learner/trade-coach';
+import type { StrategyName } from '../config/types';
 
 const log = moduleLogger('evaluator');
 const STATE_TTL_SECONDS = 60 * 60;
@@ -48,6 +52,8 @@ export class Evaluator {
   readonly stats = { evaluated: 0, buys: 0, rejects: 0, walletLookups: 0, feeSamples: 0 };
   private readonly fees: FeeEstimator;
   private readonly social: SocialAnalyzer;
+  /** Live per-trade crowd log (set in index.ts). */
+  crowd: CrowdTracker | null = null;
 
   constructor(
     private readonly redis: Redis,
@@ -86,6 +92,18 @@ export class Evaluator {
     );
   }
 
+  /** The coin just entered the "Soon" zone (curve ≥ focus.soon.minCurvePct): check it over the next minutes. */
+  async scheduleSoon(mint: string): Promise<void> {
+    const cps = getConfig().focus.soon.checkpointsSec;
+    await evaluateQueue.addBulk(
+      cps.map((sec, i) => ({
+        name: `soon+${sec}s`,
+        data: { mint, checkpointSec: sec, final: i === cps.length - 1, strategy: 'SOON' as const },
+        opts: { jobId: `${mint}-soon-${sec}`, delay: sec * 1000 },
+      })),
+    );
+  }
+
   /** A tracked wallet just bought this token: check it now and a few times after. */
   async scheduleCopy(mint: string, wallet: string): Promise<void> {
     const cps = getConfig().copy.checkpointsSec;
@@ -113,7 +131,9 @@ export class Evaluator {
     const { mint, checkpointSec, final } = job.data;
     const STRATEGY = STRATEGIES[job.data.strategy ?? 'CURVE_SNIPE'];
     const doneKey = `eval:${mint}:${STRATEGY.name}:done`;
-    if (await this.redis.exists(doneKey)) return;
+    // Swing re-entries re-check a token we already finished with.
+    const swing = job.data.swing === true;
+    if (!swing && (await this.redis.exists(doneKey))) return;
     const markDone = () => this.redis.set(doneKey, '1', 'EX', STATE_TTL_SECONDS);
 
     const token = await prisma.token.findUnique({ where: { mint }, select: { symbol: true, name: true, uri: true, creator: true, bondingCurve: true, safetyScore: true, safetyHardFail: true, description: true, twitter: true, telegram: true, website: true, metadataFetchedAt: true } });
@@ -147,8 +167,20 @@ export class Evaluator {
     // A tracked wallet buying is a signal of its own → lower bar for copy trades.
     // Market mood shifts the bar (stricter when cold / rug-heavy, easier when hot).
     const regime = currentRegime();
+    // Soon / migrated coins have strict rules of their own → easier score bar.
+    // The trade coach moves the bar per strategy from what recent trades taught it.
+    const focusRules = STRATEGY.name === 'SOON' ? cfg.focus.soon : STRATEGY.name === 'MIGRATION_MOMENTUM' ? cfg.focus.migrated : null;
+    const coach = coachFor(STRATEGY.name);
     const threshold =
-      cfg.entry.minCombinedScore + (STRATEGY.name === 'SMART_MONEY_COPY' ? cfg.copy.scoreThresholdDelta : 0) + cfg.regimeAdjustments[regime].scoreThresholdDelta;
+      cfg.entry.minCombinedScore +
+      (STRATEGY.name === 'SMART_MONEY_COPY' ? cfg.copy.scoreThresholdDelta : 0) +
+      (focusRules?.scoreThresholdDelta ?? 0) +
+      coach.thresholdDelta +
+      cfg.regimeAdjustments[regime].scoreThresholdDelta;
+    // How people behave on this coin right now (dip buying, paper hands, bots, smart wallets, eyes).
+    const buyers = this.crowd?.recentBuyers(mint) ?? [];
+    const smart = buyers.length ? await smartShare(this.redis, buyers) : { pct: null };
+    const crowd: CrowdMetrics | null = this.crowd && this.crowd.trades(mint).length > 0 ? this.crowd.metrics(mint, smart.pct) : null;
     // Socials + keywords (from the metadata file, if it has been fetched).
     let socialInfo: { hasTwitter: boolean; blockedKeyword: string | null } | undefined;
     let socialFeatures = NEUTRAL_SOCIAL_FEATURES;
@@ -173,7 +205,7 @@ export class Evaluator {
       if (kw.blocked) socialInfo = { hasTwitter: false, blockedKeyword: kw.blocked };
     }
 
-    const rules = () => checkEntryRules({ safetyScore: token.safetyScore!, safetyHardFail: token.safetyHardFail!, market: market.raw, strategy: STRATEGY, entry: cfg.entry, social: socialInfo });
+    const rules = () => checkEntryRules({ safetyScore: token.safetyScore!, safetyHardFail: token.safetyHardFail!, market: market.raw, strategy: STRATEGY, entry: cfg.entry, social: socialInfo, focus: cfg.focus, crowd });
     let ruleFails = rules();
 
     // Total fees so far use an ASSUMED priority fee + tip per trade. If fees are
@@ -198,7 +230,14 @@ export class Evaluator {
       : null;
     const score = (f: FeatureVector): ScoreResult => withOdds(scoreFeatures(f, weights), odds);
 
-    let features: FeatureVector = { safety: token.safetyScore / 100, ...market.features, ...NEUTRAL_WALLET_FEATURES, ...socialFeatures };
+    let features: FeatureVector = {
+      safety: token.safetyScore / 100,
+      ...market.features,
+      ...NEUTRAL_WALLET_FEATURES,
+      ...socialFeatures,
+      crowd: crowd?.crowdScore ?? 0.5,
+      attention: crowd?.attentionScore ?? 0.5,
+    };
     let result = score(features);
     let profile: CreatorProfile | null = null;
 
@@ -249,12 +288,14 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, market: market.raw, creator: profile, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, market: market.raw, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },
       });
       evaluationId = row.id;
+      // Learning who's early on winners: remember who was buying when we scored it.
+      if (buyers.length) void rememberBuyers(this.redis, row.id, buyers).catch(() => undefined);
       // Learning: watch what the price does over the next hour.
       await this.outcomes?.startWindow(mint, row.id, market.raw.priceSol);
       bus.publish({ type: 'evaluation', data: { mint, symbol: token.symbol, score: result.score, decision, reasons } });
@@ -267,7 +308,7 @@ export class Evaluator {
       return;
     }
     // Curve snipes stop at migration (the migration strategy takes over from there).
-    if (market.raw.complete && STRATEGY.name === 'CURVE_SNIPE') return void (await markDone());
+    if (market.raw.complete && (STRATEGY.name === 'CURVE_SNIPE' || STRATEGY.name === 'SOON')) return void (await markDone());
 
     if (decision === 'BUY') {
       this.stats.buys++;
@@ -282,12 +323,13 @@ export class Evaluator {
         maxSlippageBps: STRATEGY.maxSlippageBps,
         features,
         copiedWallet: job.data.wallet,
-        sizeMultiplier: risky ? re.sizeMultiplier : 1,
+        sizeMultiplier: (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? 1) * coach.sizeFactor,
+        swing,
         explain: (sizeSol) =>
-          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
+          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
       });
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.
-      if (res.entered || res.reason === 'already traded this token') await markDone();
+      if (!swing && (res.entered || res.reason === 'already traded this token')) await markDone();
     } else if (result.score >= cfg.scoring.storeAboveScore) {
       log.debug({ mint, symbol: token.symbol, score: result.score, reasons }, `👀 ${token.symbol} ${result.score.toFixed(1)} — ${reasons[0]}`);
     }
@@ -310,9 +352,13 @@ export class Evaluator {
   }
 
   /** Something just happened on this token (volume spike) — check it right now. */
-  async checkNow(mint: string, strategy: 'CURVE_SNIPE' | 'MIGRATION_MOMENTUM', why: string): Promise<void> {
+  async checkNow(mint: string, strategy: StrategyName, why: string, opts: { swing?: boolean } = {}): Promise<void> {
     const bucket = Math.floor(Date.now() / 60_000);
-    await evaluateQueue.add(`now:${why}`, { mint, checkpointSec: 0, final: false, strategy }, { jobId: `${mint}-${strategy}-now-${bucket}` });
+    await evaluateQueue.add(
+      `now:${why}`,
+      { mint, checkpointSec: 0, final: false, strategy, ...(opts.swing ? { swing: true, swingWhy: why } : {}) },
+      { jobId: `${mint}-${strategy}-${opts.swing ? 'swing' : 'now'}-${bucket}` },
+    );
   }
 }
 

@@ -18,5 +18,8 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/src/db/schema.prisma ./src/db/schema.prisma
 COPY package.json ./
+# Last, so a new commit doesn't invalidate the cached layers above.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA
 # Sync the DB schema, then start. `db push` is idempotent — safe on every boot.
 CMD ["sh", "-c", "npx prisma db push --skip-generate && node dist/index.js"]

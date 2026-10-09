@@ -22,6 +22,9 @@ import { Trader } from './executor/trader';
 import { ensureTimescale } from './db/timescale';
 import { SafetyChecker } from './evaluator/safety-checker';
 import { InsiderTracker } from './evaluator/insider-cluster';
+import { CrowdTracker } from './scanner/crowd-tracker';
+import { TradeCoach } from './learner/trade-coach';
+import { SwingWatcher } from './executor/swing-watcher';
 import { ObservationLogger } from './learner/observation-logger';
 import { requestAdjustment, scheduleDailyAdjuster } from './learner/daily-adjuster';
 import { startBeliefCache, stopBeliefCache } from './learner/bayesian-updater';
@@ -29,6 +32,7 @@ import { OutcomeLabeler } from './learner/outcome-labeler';
 import { startRegimeDetector } from './learner/regime-detector';
 import { logger } from './lib/logger';
 import { installProcessGuards } from './lib/process-guard';
+import { recordError, recordExit, recordStart } from './lib/bot-health';
 import { prisma } from './lib/prisma';
 import { closeQueues } from './lib/queues';
 import { closeRedis, redis } from './lib/redis';
@@ -44,7 +48,7 @@ import { TokenRegistry } from './scanner/token-registry';
 const log = logger.child({ module: 'main' });
 
 // Network/socket blips are logged and survived; real bugs still exit so Docker restarts cleanly.
-installProcessGuards(log);
+installProcessGuards(log, undefined, { onError: (m) => recordError(m), onFatal: (r) => recordExit(r) });
 
 async function main(): Promise<void> {
   log.info({ mode: env.TRADING_MODE, env: env.NODE_ENV }, '🚀 Pump.fun bot starting');
@@ -58,6 +62,8 @@ async function main(): Promise<void> {
   // 2. Redis
   await redis.ping();
   log.info('redis connected');
+  const { lastExit } = await recordStart(redis);
+  if (lastExit) log.info({ lastExit }, 'previous run ended');
   const liveState = new LiveState(redis);
   await liveState.restore();
 
@@ -82,8 +88,22 @@ async function main(): Promise<void> {
   const evaluator = new Evaluator(redis, liveState, new WalletAnalyzer(redis, { blockByThrow: false }), trader, outcomes);
   evaluator.start();
 
+  // How people behave on each coin (eyes, dip buying, paper hands, bots) + "Soon" detection.
+  const crowd = new CrowdTracker();
+  crowd.start();
+  evaluator.crowd = crowd;
+  crowd.onSoon = (mint, pct) => {
+    log.info({ mint, curvePct: +pct.toFixed(1) }, '⏳ coin entered the Soon zone — checking');
+    void evaluator.scheduleSoon(mint).catch((err: Error) => log.warn({ mint, err: err.message }, 'could not schedule Soon checks'));
+  };
+  // Review every closed trade and adjust how the bot trades; swing re-entries on Soon/migrated coins.
+  const coach = new TradeCoach(redis, liveState, crowd);
+  await coach.start();
+  const swings = new SwingWatcher(redis, liveState, crowd, evaluator);
+  swings.start();
+
   const insiders = new InsiderTracker(redis);
-  const registry = new TokenRegistry(liveState, observations, safety, evaluator, insiders);
+  const registry = new TokenRegistry(liveState, observations, safety, evaluator, insiders, crowd);
   registry.startSafetyWorker();
   // Copy trading: watch the wallets you added on the dashboard.
   const whales = new WhaleTracker(redis, liveState, evaluator);
@@ -246,6 +266,9 @@ async function main(): Promise<void> {
       clearInterval(spikeTimer);
       stopPositionHistory();
       if (xTimer) clearInterval(xTimer);
+      coach.stop();
+      swings.stop();
+      crowd.stop();
       await outcomes.stop();
       await evaluator.stop();
       await sellManager.stop();
@@ -253,6 +276,7 @@ async function main(): Promise<void> {
       await registry.stop();
       await observations?.stop();
       await closeQueues();
+      await recordExit(`clean stop (${signal}) — restart or update`);
       await closeRedis();
       await prisma.$disconnect();
       log.info('bye 👋');

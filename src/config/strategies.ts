@@ -35,6 +35,15 @@ export const STRATEGIES: Record<StrategyName, StrategyParams> = {
     staleExitMinutes: 30,
     maxSlippageBps: 1500,
   },
+  SOON: {
+    name: 'SOON',
+    description: 'Coins about to graduate (curve 70%+, the "Soon" tab): real crowd, strong behaviour, swing traded.',
+    minHolders: 50,
+    entryWindowMinutes: { min: 0, max: 24 * 60 },
+    curveProgressRange: { min: 70, max: 99.5 },
+    staleExitMinutes: 20,
+    maxSlippageBps: 1500,
+  },
   MIGRATION_MOMENTUM: {
     name: 'MIGRATION_MOMENTUM',
     description: 'Buys tokens right after they complete the curve and migrate, riding post-migration momentum.',

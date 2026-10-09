@@ -53,6 +53,7 @@ export const shortAddr = (a: string) => `${a.slice(0, 4)}…${a.slice(-4)}`;
 
 export const STRATEGY_LABEL: Record<string, string> = {
   CURVE_SNIPE: 'Curve snipe',
+  SOON: 'Soon',
   MIGRATION_MOMENTUM: 'Migration',
   SMART_MONEY_COPY: 'Smart money',
 };

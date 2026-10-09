@@ -120,6 +120,9 @@ export interface TradeRowData {
   bestWithin1hMultiple: number | null;
   buyReason: string | null;
   sellReasons: string[];
+  /** Trade coach's review (~30 min after the close). */
+  lesson?: { verdict: string; lesson: string } | null;
+  swing?: boolean;
 }
 
 export interface PerformanceData {

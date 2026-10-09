@@ -6,7 +6,9 @@ import type { FastifyInstance } from 'fastify';
 import { getConfig } from '../../config/runtime-config';
 import type { BotConfigShape } from '../../config/default';
 import { readHistory } from '../../executor/position-history';
-import { INITIALS_MARKER, trailingStopLevel, type TrailLevel } from '../../executor/sell-manager';
+import { exitCostPctFor, INITIALS_MARKER, stopLossLevel, trailingStopLevel, type TrailLevel } from '../../executor/sell-manager';
+import { coachFor } from '../../learner/trade-coach';
+import type { StrategyName } from '../../config/types';
 import { prisma } from '../../lib/prisma';
 import { PUMP_TOKEN_DECIMALS, quoteSell } from '../../lib/pumpfun';
 import { getSolUsd } from '../../lib/sol-price';
@@ -32,7 +34,7 @@ interface EntryContext {
  * Returns null when no trailing stop is active.
  */
 function trailingLevel(
-  p: { id: string; entryPriceSol: number; peakPriceSol: number; trailingActive: boolean; tpTiersHit: unknown; sizeSol: number; remainingPct: number; entryContext: unknown },
+  p: { id: string; strategy: StrategyName; entryPriceSol: number; peakPriceSol: number; trailingActive: boolean; tpTiersHit: unknown; sizeSol: number; remainingPct: number; entryContext: unknown },
   cfg: BotConfigShape,
   volatilityPct: number | null,
 ): TrailLevel | null {
@@ -49,6 +51,7 @@ function trailingLevel(
       costSol: p.sizeSol + buyFeeSol,
       remainingPct: p.remainingPct,
       txFeeSol: cfg.paper.txFeeSol,
+      trailFactor: coachFor(p.strategy).trailFactor,
     },
     cfg.exit,
   );
@@ -128,7 +131,7 @@ export async function positionsRoutes(app: FastifyInstance, deps: ApiDeps): Prom
           solUsd,
           totalSupplyTokens: supply,
           targets: {
-            stopLossPrice: p.entryPriceSol * (1 - cfg.exit.hardStopLossPct / 100),
+            stopLossPrice: stopLossLevel(p.entryPriceSol, volatilityPct, cfg.exit, coachFor(p.strategy).stopBiasPct, exitCostPctFor(cfg.paper, false, (p.sizeSol * p.remainingPct) / 100)).stopPriceSol,
             takeProfits: cfg.exit.takeProfitTiers.map((t) => ({ multiple: t.multiple, sellPct: t.sellPct, hit: tiersHit.includes(t.multiple) })),
             trailingStopPrice: trail?.stopPriceSol ?? null,
             trailingStopPct: trail?.trailPct ?? null,
@@ -175,7 +178,7 @@ export async function positionsRoutes(app: FastifyInstance, deps: ApiDeps): Prom
       entryMarketCapSol: entryMarketCapSol(p.entryPriceSol, supply, ctx),
       points,
       takeProfits: cfg.exit.takeProfitTiers.map((t) => ({ multiple: t.multiple, sellPct: t.sellPct, hit: tiersHit.includes(t.multiple) })),
-      stopLossPriceSol: p.entryPriceSol * (1 - cfg.exit.hardStopLossPct / 100),
+      stopLossPriceSol: stopLossLevel(p.entryPriceSol, volatilityPct, cfg.exit, coachFor(p.strategy).stopBiasPct, exitCostPctFor(cfg.paper, false, (p.sizeSol * p.remainingPct) / 100)).stopPriceSol,
       // Exactly the stop the sell manager sells on (shared trailingStopLevel helper).
       trailingStopPriceSol: trail?.stopPriceSol ?? null,
       trailingStopPct: trail?.trailPct ?? null,

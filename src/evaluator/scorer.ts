@@ -45,11 +45,29 @@ export interface EntryCheckInput {
   entry: BotConfigShape['entry'];
   /** From the metadata file. undefined = not fetched yet. */
   social?: { hasTwitter: boolean; blockedKeyword: string | null };
+  /** Soon / migrated rules (replace the matching general minimums for those strategies). */
+  focus?: BotConfigShape['focus'];
+  /** Crowd numbers from the live trade log (null = no log for this coin yet). */
+  crowd?: { activeWallets5m: number } | null;
+}
+
+/** The entry minimums that apply to this strategy (focus rules override the general ones). */
+export function strategyMinimums(e: BotConfigShape['entry'], focus: BotConfigShape['focus'] | undefined, strategy: string) {
+  const fr = strategy === 'SOON' ? focus?.soon : strategy === 'MIGRATION_MOMENTUM' ? focus?.migrated : undefined;
+  return {
+    minTotalFeesSol: fr?.minTotalFeesSol ?? e.minTotalFeesSol,
+    minMarketCapUsd: fr?.minMarketCapUsd ?? e.minMarketCapUsd,
+    minVolumeUsd: fr && 'minVolumeUsd' in fr ? fr.minVolumeUsd : e.minVolumeUsd,
+    minLiquidityUsd: fr && 'minLiquidityUsd' in fr ? fr.minLiquidityUsd : 0,
+    minActiveWallets5m: fr?.minActiveWallets5m ?? 0,
+    curveRange: strategy === 'SOON' && focus ? { min: focus.soon.minCurvePct, max: focus.soon.maxCurvePct } : null,
+  };
 }
 
 /** Hard rules. Returns the list of rules that FAILED (empty = all passed). */
 export function checkEntryRules(i: EntryCheckInput): string[] {
   const { market: m, entry: e, strategy: s } = i;
+  const mins = strategyMinimums(e, i.focus, s.name);
   const fails: string[] = [];
   if (i.safetyHardFail) fails.push('safety hard fail');
   if (i.safetyScore < e.minSafetyScore) fails.push(`safety ${i.safetyScore} < ${e.minSafetyScore}`);
@@ -63,20 +81,27 @@ export function checkEntryRules(i: EntryCheckInput): string[] {
   if (m.liquiditySol < e.minLiquiditySol) fails.push(`liquidity ${m.liquiditySol.toFixed(2)} SOL < ${e.minLiquiditySol}`);
   const ageMin = m.ageSec / 60;
   if (ageMin < s.entryWindowMinutes.min || ageMin > s.entryWindowMinutes.max) fails.push(`age ${ageMin.toFixed(1)}m outside entry window`);
-  if (m.bondingCurvePct < s.curveProgressRange.min || m.bondingCurvePct > s.curveProgressRange.max) {
-    fails.push(`curve ${m.bondingCurvePct.toFixed(1)}% outside ${s.curveProgressRange.min}-${s.curveProgressRange.max}%`);
+  const range = mins.curveRange ?? s.curveProgressRange;
+  if (m.bondingCurvePct < range.min || m.bondingCurvePct > range.max) {
+    fails.push(`curve ${m.bondingCurvePct.toFixed(1)}% outside ${range.min}-${range.max}%`);
   }
-  if (m.complete && s.name === 'CURVE_SNIPE') fails.push('curve already complete');
+  if (m.complete && (s.name === 'CURVE_SNIPE' || s.name === 'SOON')) fails.push('curve already complete');
   // Migration plays need a live PumpSwap price; copy trades too once the token migrated.
-  if ((s.name === 'MIGRATION_MOMENTUM' || m.complete) && s.name !== 'CURVE_SNIPE' && !m.onAmm) fails.push('waiting for PumpSwap pool');
+  if ((s.name === 'MIGRATION_MOMENTUM' || m.complete) && s.name !== 'CURVE_SNIPE' && s.name !== 'SOON' && !m.onAmm) fails.push('waiting for PumpSwap pool');
+  if (mins.minLiquidityUsd > 0 && m.liquidityUsd !== null && m.liquidityUsd < mins.minLiquidityUsd) fails.push(`liquidity $${Math.round(m.liquidityUsd)} < $${mins.minLiquidityUsd}`);
+  // "Eyes on the coin": different wallets trading in the last 5 minutes.
+  if (mins.minActiveWallets5m > 0) {
+    const n = i.crowd?.activeWallets5m ?? 0;
+    if (n < mins.minActiveWallets5m) fails.push(`only ${n} active wallets in 5m (< ${mins.minActiveWallets5m})`);
+  }
   if (i.social?.blockedKeyword) fails.push(`blocked keyword "${i.social.blockedKeyword}"`);
   if (e.requireTwitter && !i.social?.hasTwitter) fails.push(i.social ? 'no X link' : 'socials not checked yet');
-  if (m.totalFeesSol < e.minTotalFeesSol) fails.push(`fees ${m.totalFeesSol.toFixed(2)} SOL < ${e.minTotalFeesSol}`);
+  if (m.totalFeesSol < mins.minTotalFeesSol) fails.push(`fees ${m.totalFeesSol.toFixed(2)} SOL < ${mins.minTotalFeesSol}`);
   // Fail closed: without a SOL price we can't verify the USD minimums.
   if (m.volumeUsd === null || m.marketCapUsd === null) fails.push('SOL/USD price unknown');
   else {
-    if (m.volumeUsd < e.minVolumeUsd) fails.push(`volume $${Math.round(m.volumeUsd)} < $${e.minVolumeUsd}`);
-    if (m.marketCapUsd < e.minMarketCapUsd) fails.push(`MC $${Math.round(m.marketCapUsd)} < $${e.minMarketCapUsd}`);
+    if (m.volumeUsd < mins.minVolumeUsd) fails.push(`volume $${Math.round(m.volumeUsd)} < $${mins.minVolumeUsd}`);
+    if (m.marketCapUsd < mins.minMarketCapUsd) fails.push(`MC $${Math.round(m.marketCapUsd)} < $${mins.minMarketCapUsd}`);
   }
   return fails;
 }

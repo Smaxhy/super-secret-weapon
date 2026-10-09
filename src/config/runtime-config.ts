@@ -36,11 +36,9 @@ export async function refreshConfig(): Promise<void> {
     const merged: Record<string, unknown> = { ...DEFAULT_CONFIG };
     for (const row of rows) {
       const def = (DEFAULT_CONFIG as Record<string, unknown>)[row.key];
-      // Shallow-merge each section so newly added default fields still appear.
-      merged[row.key] =
-        def && typeof def === 'object' && !Array.isArray(def) && row.value && typeof row.value === 'object'
-          ? { ...(def as object), ...(row.value as object) }
-          : row.value;
+      // Deep-merge each section so newly added default fields (also nested ones,
+      // e.g. a new strategy in `allocation`) still appear. Arrays are replaced.
+      merged[row.key] = def !== undefined ? deepMerge(def, row.value) : row.value;
     }
     current = merged as BotConfigShape;
 
@@ -52,6 +50,16 @@ export async function refreshConfig(): Promise<void> {
   } catch (err) {
     log.warn({ err: (err as Error).message }, 'config refresh failed — keeping previous values');
   }
+}
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** Stored values win; objects merge key by key (recursively) so new default keys show up. */
+export function deepMerge(def: unknown, stored: unknown): unknown {
+  if (!isPlainObject(def) || !isPlainObject(stored)) return stored === undefined ? def : stored;
+  const out: Record<string, unknown> = { ...def };
+  for (const [k, v] of Object.entries(stored)) out[k] = k in def ? deepMerge(def[k], v) : v;
+  return out;
 }
 
 /** Merge `patch` into one config section and persist it. */

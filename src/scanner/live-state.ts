@@ -525,6 +525,18 @@ export class LiveState {
     await this.r.hset(key.live(mint), { evalId: evaluationId, evalBase: p, evalMax: p, evalMin: p, evalAt: String(Date.now()) });
   }
 
+  /** Has the curve completed (migrated)? One cheap read. */
+  async isComplete(mint: string): Promise<boolean> {
+    return (await this.r.hget(key.live(mint), 'complete')) === '1';
+  }
+
+  /** Current price (SOL per whole token) from the stored reserves — one cheap read. null = unknown. */
+  async priceNow(mint: string): Promise<number | null> {
+    const [vSol, vTok, aQ, aB] = await this.r.hmget(key.live(mint), 'vSol', 'vTok', 'ammQuote', 'ammBase');
+    const px = aQ && aB && Number(aB) > 0 ? Number(aQ) / 1e9 / (Number(aB) / 1e6) : vSol && vTok && Number(vTok) > 0 ? Number(vSol) / 1e9 / (Number(vTok) / 1e6) : 0;
+    return px > 0 && Number.isFinite(px) ? px : null;
+  }
+
   /** Read the learning window. null if none is open for this evaluation. */
   async readOutcomeWindow(mint: string, evaluationId: string): Promise<{ base: number; max: number; min: number; current: number } | null> {
     const [id, base, max, min, vSol, vTok, aQ, aB] = await this.r.hmget(key.live(mint), 'evalId', 'evalBase', 'evalMax', 'evalMin', 'vSol', 'vTok', 'ammQuote', 'ammBase');

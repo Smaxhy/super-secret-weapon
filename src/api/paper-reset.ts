@@ -20,6 +20,8 @@ import { recordEvent } from '../lib/bot-events';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import { redis } from '../lib/redis';
+import { TradeCoach } from '../learner/trade-coach';
+import { SwingWatcher } from '../executor/swing-watcher';
 
 const log = moduleLogger('paper-reset');
 
@@ -71,6 +73,9 @@ export async function resetPaperAccount(opts: { startingBalanceSol?: number; set
     const resetAt = now.toISOString();
     try {
       await redis.set(PAPER_RESET_AT_KEY, resetAt);
+      // Fresh account: old trade reviews and swing watches shouldn't steer it.
+      await TradeCoach.reset(redis);
+      await SwingWatcher.reset(redis);
       // Old per-position price charts are no longer reachable.
       for (let i = 0; i < ids.length; i += 500) {
         const chunk = ids.slice(i, i + 500).map((id) => `pos:hist:${id}`);

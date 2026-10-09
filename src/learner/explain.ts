@@ -25,12 +25,15 @@ const LABEL: Record<string, string> = {
   walletAge: 'established dev wallet',
   socials: 'real socials',
   narrative: 'strong narrative',
+  crowd: 'healthy crowd behaviour',
+  attention: 'lots of eyes on it',
 };
 
 const STRATEGY: Record<string, string> = {
   CURVE_SNIPE: 'early bonding-curve entry',
   MIGRATION_MOMENTUM: 'post-migration momentum play',
   SMART_MONEY_COPY: 'copy trade',
+  SOON: '"Soon" play (about to graduate)',
 };
 
 const pct = (v: number, dp = 0) => `${v.toFixed(dp)}%`;
@@ -51,6 +54,9 @@ export function explainBuy(i: {
   odds?: { winRate: number; priorRate: number; n: number; points: number } | null;
   narrativeReason?: string | null;
   insiderNote?: string | null;
+  crowdSummary?: string | null;
+  swingNote?: string | null;
+  coachNote?: string | null;
 }): string {
   const m = i.market;
   const strong = Object.entries(i.features)
@@ -70,6 +76,9 @@ export function explainBuy(i: {
     `At entry: ${m.holders} holders, ${m.volumeUsd ? `$${Math.round(m.volumeUsd).toLocaleString()}` : `${m.volumeSol.toFixed(1)} SOL`} volume, MC ${m.marketCapUsd ? `$${Math.round(m.marketCapUsd).toLocaleString()}` : `${m.marketCapSol.toFixed(0)} SOL`}, ` +
       `buys/sells ${m.buySellRatio.toFixed(1)}, ${m.complete ? 'trading on PumpSwap' : `curve ${pct(m.bondingCurvePct)}`}, ` +
       `dev ${pct(m.devHoldingPct, 1)}, bundlers ${pct(m.earlyBuyerPct, 1)}, top 10 ${pct(m.top10HolderPct)}, fees paid ${m.totalFeesSol.toFixed(2)} SOL.`,
+    i.swingNote ? `Swing re-entry: ${i.swingNote}.` : '',
+    i.crowdSummary ? `Crowd: ${i.crowdSummary}.` : '',
+    i.coachNote ? `Coach: ${i.coachNote}.` : '',
     i.narrativeReason && i.narrativeReason !== 'neutral narrative' ? `Narrative: ${i.narrativeReason}.` : '',
     i.insiderNote ? `Insider check: ${i.insiderNote}.` : '',
     weak.length ? `Weak spots: ${weak.join(', ')}.` : '',

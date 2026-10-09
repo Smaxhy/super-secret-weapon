@@ -14,6 +14,7 @@ interface ControlsData {
 }
 
 const STRATS: Array<[string, string]> = [
+  ['SOON', 'Soon (curve 70%+, about to graduate)'],
   ['CURVE_SNIPE', 'Early curve entries'],
   ['MIGRATION_MOMENTUM', 'After migration'],
   ['SMART_MONEY_COPY', 'Copy tracked wallets'],

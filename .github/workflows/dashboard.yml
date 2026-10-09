@@ -39,6 +39,8 @@ jobs:
       - run: npm run build
         env:
           VITE_API_URL: ${{ vars.VITE_API_URL }}
+          # Shown next to the bot's version (spot a stuck VPS update).
+          VITE_GIT_SHA: ${{ github.sha }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dashboard/dist

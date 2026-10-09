@@ -33,7 +33,7 @@ const goodWallet: CreatorProfile = { creator: 'c', balanceSol: 3, walletAgeHours
 
 describe('scoring', () => {
   it('a strong token scores above the 75 threshold', () => {
-    const { score } = scoreFeatures({ safety: 1, ...marketFeatures(goodMarket), ...walletFeatures(goodWallet), socials: 0.7, narrative: 0.5 }, DEFAULT_WEIGHTS);
+    const { score } = scoreFeatures({ safety: 1, ...marketFeatures(goodMarket), ...walletFeatures(goodWallet), socials: 0.7, narrative: 0.5, crowd: 0.75, attention: 0.8 }, DEFAULT_WEIGHTS);
     expect(score).toBeGreaterThan(75);
   });
   it('a serial launcher with a sniped, concentrated token scores low', () => {

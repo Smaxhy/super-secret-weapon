@@ -33,3 +33,6 @@ Thumbs.db
 .idea/
 dump.rdb
 *.tsbuildinfo
+
+# Auto-update bookkeeping (VPS)
+.deployed-sha

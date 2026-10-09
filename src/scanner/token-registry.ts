@@ -25,6 +25,7 @@ import type { Evaluator } from '../evaluator/evaluator';
 import type { LiveState } from './live-state';
 import { curvePriceSol } from '../lib/pumpfun';
 import type { InsiderTracker } from '../evaluator/insider-cluster';
+import type { CrowdTracker } from './crowd-tracker';
 
 const log = moduleLogger('token-registry');
 
@@ -39,6 +40,8 @@ export class TokenRegistry {
     private readonly evaluator: Evaluator | null = null,
     /** Hidden-dev / bundle / insider signals from the trade stream (no RPC). */
     private readonly insiders: InsiderTracker | null = null,
+    /** Per-trade crowd log (behaviour, eyes, Soon detection). */
+    private readonly crowd: CrowdTracker | null = null,
   ) {}
 
   /** Wire this to `listener.on('event', ...)`. */
@@ -50,7 +53,9 @@ export class TokenRegistry {
         break;
       case 'trade':
         this.liveState.onTrade(event).then(() => {
-          if (!this.insiders || !this.liveState.isTracked(event.mint)) return;
+          if (!this.liveState.isTracked(event.mint)) return;
+          this.crowd?.onCurveTrade(event);
+          if (!this.insiders) return;
           return this.insiders.onTrade({
             mint: event.mint, user: event.user, isBuy: event.isBuy, lamports: event.solAmount, tokens: event.tokenAmount, timestamp: event.timestamp,
             priceSol: event.virtualTokenReserves > 0n ? curvePriceSol(event.virtualSolReserves, event.virtualTokenReserves) : undefined,
@@ -68,7 +73,9 @@ export class TokenRegistry {
         break;
       case 'ammTrade':
         this.liveState.onAmmTrade(event).then((mint) => {
-          if (!this.insiders || !mint) return;
+          if (!mint) return;
+          this.crowd?.onAmmTrade(mint, event);
+          if (!this.insiders) return;
           return this.insiders.onTrade({ mint, user: event.user, isBuy: event.isBuy, lamports: event.quoteAmount, tokens: event.baseAmount, timestamp: event.timestamp });
         }).catch((err: Error) => {
           this.stats.tradeErrors++;

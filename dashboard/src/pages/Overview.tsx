@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ResetPaperDialog } from '../components/ResetPaper';
+import { HealthBanner } from '../components/SystemHealth';
 import { PnlChart } from '../components/Charts';
 import { TokenCard } from '../components/TokenCard';
 import { McChange } from '../components/McCompare';
@@ -30,6 +31,7 @@ export function Overview() {
           ) : undefined
         }
       />
+      <HealthBanner />
       {o.error && <ErrorBox message={o.error} />}
       {d && (
         <>
