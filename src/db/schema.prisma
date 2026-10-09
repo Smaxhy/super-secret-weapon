@@ -1,0 +1,448 @@
+// =============================================================================
+// Prisma schema — every table the bot will ever need, across all phases.
+//
+// Quick primer:
+//   * `model X { ... }` = one database table.
+//   * `@id` = primary key, `@unique` = no duplicates, `@@index` = speed up lookups.
+//   * `?` after a type = the column may be empty (NULL).
+//   * SOL amounts that we only *analyse* are Float (in SOL).
+//     Exact on-chain amounts (lamports, raw token units) are BigInt.
+//
+// After editing this file run:  npm run db:push   (dev)  or  npm run db:migrate
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// Enums
+// -----------------------------------------------------------------------------
+
+enum TradingMode {
+  PAPER
+  LIVE
+}
+
+enum Strategy {
+  CURVE_SNIPE
+  MIGRATION_MOMENTUM
+  SMART_MONEY_COPY
+}
+
+enum TokenStatus {
+  ACTIVE // trading on the bonding curve
+  COMPLETED // curve filled, migrating / migrated
+  DEAD // no trades for a long time
+  RUGGED // flagged as a rug by the evaluator / sell manager
+}
+
+enum SnapshotInterval {
+  CREATION
+  M1
+  M5
+  M15
+  H1
+  H6
+  H24
+}
+
+enum Decision {
+  BUY
+  SKIP // passed safety but scored below threshold
+  REJECT // failed safety / hard rule
+}
+
+enum PositionStatus {
+  OPEN
+  CLOSING
+  CLOSED
+}
+
+enum TradeSide {
+  BUY
+  SELL
+}
+
+enum TradeStatus {
+  SIMULATED // paper trade
+  PENDING // sent, waiting for confirmation
+  CONFIRMED
+  FAILED
+}
+
+enum ExitReason {
+  TAKE_PROFIT
+  TRAILING_STOP
+  STOP_LOSS
+  RUG_DETECTED
+  STALE
+  MANUAL
+  KILL_SWITCH
+  CIRCUIT_BREAKER
+}
+
+enum WalletSource {
+  MANUAL
+  DISCOVERED
+}
+
+enum BlacklistType {
+  WALLET
+  MINT
+  CREATOR
+}
+
+enum MarketRegime {
+  HOT
+  NORMAL
+  COLD
+  RUG_HEAVY
+}
+
+enum ModelStatus {
+  CANDIDATE // trained, being paper-tested
+  ACTIVE // currently used for scoring
+  RETIRED
+}
+
+enum LogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+}
+
+// -----------------------------------------------------------------------------
+// Tokens & observations (Phase 1)
+// -----------------------------------------------------------------------------
+
+/// One row per Pump.fun token the scanner has ever seen.
+model Token {
+  mint            String   @id
+  name            String
+  symbol          String
+  uri             String
+  bondingCurve    String
+  creator         String
+  tokenProgram    String?
+  createSignature String
+  createSlot      BigInt
+  /// On-chain creation time (from the CreateEvent)
+  createdAt       DateTime @db.Timestamptz(3)
+  /// When our scanner saw it (createdAt vs detectedAt = our latency)
+  detectedAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  // Curve parameters at launch (raw units) — needed to compute curve %
+  initialVirtualSolReserves   BigInt
+  initialVirtualTokenReserves BigInt
+  initialRealTokenReserves    BigInt
+  totalSupply                 BigInt
+
+  status      TokenStatus @default(ACTIVE)
+  completedAt DateTime?   @db.Timestamptz(3)
+
+  // Latest summary numbers (denormalised for fast dashboard queries)
+  safetyScore      Int?
+  safetyHardFail   Boolean?
+  combinedScore    Float?
+  peakMarketCapSol Float?
+  lastPriceSol     Float?
+  lastHolderCount  Int?
+
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  safetyChecks SafetyCheck[]
+  snapshots    TokenSnapshot[]
+  evaluations  Evaluation[]
+  positions    Position[]
+  trades       Trade[]
+
+  @@index([createdAt])
+  @@index([creator])
+  @@index([status])
+}
+
+/// Result of each safety check run (a token can be re-checked).
+model SafetyCheck {
+  id        String   @id @default(uuid())
+  mint      String
+  score     Int
+  hardFail  Boolean
+  /// Array of { id, label, severity, penalty, detail }
+  checks    Json
+  /// Raw facts: authorities, extensions, supply, dev buy %
+  facts     Json
+  checkedAt DateTime @default(now()) @db.Timestamptz(3)
+
+  token Token @relation(fields: [mint], references: [mint], onDelete: Cascade)
+
+  @@index([mint, checkedAt])
+}
+
+/// Point-in-time snapshot of a token. Turned into a TimescaleDB hypertable
+/// (partitioned by day) by src/db/timescale.ts. This is the ML training data.
+model TokenSnapshot {
+  id       String           @default(uuid())
+  takenAt  DateTime         @db.Timestamptz(3)
+  mint     String
+  interval SnapshotInterval
+
+  ageSeconds      Int
+  holderCount     Int
+  uniqueWallets   Int
+  bondingCurvePct Float
+  volumeSol       Float
+  buyCount        Int
+  sellCount       Int
+  buySellRatio    Float
+  devHoldingPct   Float
+  top10HolderPct  Float
+  priceSol        Float
+  marketCapSol    Float
+  isComplete      Boolean
+
+  token Token @relation(fields: [mint], references: [mint], onDelete: Cascade)
+
+  // Timescale requires the time column in every unique index / primary key.
+  @@id([id, takenAt])
+  @@index([mint, interval])
+  @@index([interval, takenAt])
+}
+
+// -----------------------------------------------------------------------------
+// Scoring (Phase 2)
+// -----------------------------------------------------------------------------
+
+model Evaluation {
+  id             String        @id @default(uuid())
+  mint           String
+  strategy       Strategy?
+  safetyScore    Float
+  walletScore    Float?
+  marketScore    Float?
+  socialScore    Float?
+  mlScore        Float?
+  combinedScore  Float
+  decision       Decision
+  /// Human-readable list of why this decision was made
+  reasons        Json
+  /// All raw features used — re-used for ML training
+  features       Json
+  weightsVersion Int?
+  regime         MarketRegime?
+  createdAt      DateTime      @default(now()) @db.Timestamptz(3)
+
+  token     Token      @relation(fields: [mint], references: [mint], onDelete: Cascade)
+  positions Position[]
+
+  @@index([mint])
+  @@index([createdAt])
+  @@index([decision, createdAt])
+}
+
+// -----------------------------------------------------------------------------
+// Positions & trades (Phase 2 paper, Phase 4 live)
+// -----------------------------------------------------------------------------
+
+model Position {
+  id           String         @id @default(uuid())
+  mint         String
+  strategy     Strategy
+  mode         TradingMode
+  status       PositionStatus @default(OPEN)
+  evaluationId String?
+
+  entryPriceSol  Float
+  sizeSol        Float
+  tokenAmountRaw BigInt
+  /// % of the original token amount still held (100 → 0)
+  remainingPct   Float   @default(100)
+  peakPriceSol   Float
+  /// Which take-profit tiers already fired, e.g. [2, 5]
+  tpTiersHit     Json    @default("[]")
+  trailingActive Boolean @default(false)
+
+  realizedPnlSol Float       @default(0)
+  exitReason     ExitReason?
+  openedAt       DateTime    @default(now()) @db.Timestamptz(3)
+  closedAt       DateTime?   @db.Timestamptz(3)
+  updatedAt      DateTime    @updatedAt @db.Timestamptz(3)
+
+  token      Token       @relation(fields: [mint], references: [mint])
+  evaluation Evaluation? @relation(fields: [evaluationId], references: [id])
+  trades     Trade[]
+
+  @@index([status])
+  @@index([mode, status])
+  @@index([openedAt])
+}
+
+model Trade {
+  id             String      @id @default(uuid())
+  positionId     String?
+  mint           String
+  side           TradeSide
+  mode           TradingMode
+  strategy       Strategy
+  status         TradeStatus
+  amountSol      Float
+  tokenAmountRaw BigInt
+  priceSol       Float
+  feeSol         Float       @default(0)
+  slippageBps    Int?
+  signature      String?     @unique
+  /// Why this trade happened (entry signal / exit rule)
+  reason         String
+  /// Full snapshot of the market + score at the moment of the trade
+  context        Json
+  error          String?
+  createdAt      DateTime    @default(now()) @db.Timestamptz(3)
+  confirmedAt    DateTime?   @db.Timestamptz(3)
+
+  position Position? @relation(fields: [positionId], references: [id])
+  token    Token     @relation(fields: [mint], references: [mint])
+
+  @@index([mint])
+  @@index([createdAt])
+  @@index([mode, createdAt])
+}
+
+// -----------------------------------------------------------------------------
+// Wallet intelligence (Phase 6-7)
+// -----------------------------------------------------------------------------
+
+model TrackedWallet {
+  address    String       @id
+  label      String?
+  source     WalletSource @default(MANUAL)
+  /// How much we trust this wallet's buys (0-1). Discovered wallets start low.
+  weight     Float        @default(0.5)
+  /// Rolling 14-day performance score
+  score14d   Float?
+  winRate    Float?
+  tradeCount Int          @default(0)
+  active     Boolean      @default(true)
+  notes      String?
+  addedAt    DateTime     @default(now()) @db.Timestamptz(3)
+  lastSeenAt DateTime?    @db.Timestamptz(3)
+  updatedAt  DateTime     @updatedAt @db.Timestamptz(3)
+
+  scoreHistory WalletScoreHistory[]
+}
+
+model WalletScoreHistory {
+  id         String   @id @default(uuid())
+  address    String
+  score14d   Float
+  winRate    Float
+  tradeCount Int
+  weight     Float
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  wallet TrackedWallet @relation(fields: [address], references: [address], onDelete: Cascade)
+
+  @@index([address, createdAt])
+}
+
+model Blacklist {
+  address String        @id
+  type    BlacklistType
+  reason  String?
+  addedAt DateTime      @default(now()) @db.Timestamptz(3)
+}
+
+// -----------------------------------------------------------------------------
+// Config & logs
+// -----------------------------------------------------------------------------
+
+/// Key/value runtime config. The dashboard edits these; the bot reads them.
+model BotConfig {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+}
+
+/// Audit trail of every meaningful decision the bot makes.
+model BotEvent {
+  id        BigInt   @id @default(autoincrement())
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  level     LogLevel
+  module    String
+  type      String
+  mint      String?
+  message   String
+  data      Json?
+
+  @@index([createdAt])
+  @@index([mint])
+  @@index([module, type])
+}
+
+// -----------------------------------------------------------------------------
+// Learning engine (Phase 7-8)
+// -----------------------------------------------------------------------------
+
+/// Bayesian Beta(alpha, beta) belief per pattern, e.g. "dev_buy>10%:rug".
+model BeliefState {
+  pattern      String   @id
+  alpha        Float    @default(1)
+  beta         Float    @default(1)
+  observations Int      @default(0)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+}
+
+/// Versioned scorer weights so every change can be inspected and rolled back.
+model WeightSnapshot {
+  id        String   @id @default(uuid())
+  version   Int      @unique
+  weights   Json
+  /// What shifted and why (shown on the Learning page)
+  changes   Json?
+  reason    String
+  active    Boolean  @default(false)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+}
+
+model ModelVersion {
+  id                String      @id @default(uuid())
+  version           String      @unique
+  status            ModelStatus @default(CANDIDATE)
+  /// AUC, precision, paper-trade P&L, etc.
+  metrics           Json
+  featureImportance Json?
+  artifactPath      String?
+  trainedAt         DateTime    @default(now()) @db.Timestamptz(3)
+  deployedAt        DateTime?   @db.Timestamptz(3)
+}
+
+model RegimeSnapshot {
+  id        String       @id @default(uuid())
+  regime    MarketRegime
+  /// Rolling 6h stats the classification was based on
+  stats     Json
+  createdAt DateTime     @default(now()) @db.Timestamptz(3)
+
+  @@index([createdAt])
+}
+
+/// Counterfactuals: tokens we skipped that pumped, or bought that rugged.
+model MissedOpportunity {
+  id              String   @id @default(uuid())
+  mint            String
+  evaluationId    String?
+  decision        Decision
+  scoreAtDecision Float
+  peakMultiple    Float?
+  outcome         String
+  notes           String?
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([mint])
+  @@index([createdAt])
+}
