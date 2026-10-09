@@ -1,0 +1,88 @@
+# All services for the VPS. Start everything:   docker compose up -d --build
+# Just the databases (local dev on Windows):     docker compose up -d postgres redis
+#
+# Secrets come from the .env file next to this file (never committed).
+# Database ports are bound to 127.0.0.1 only — NOT reachable from the internet.
+
+services:
+  postgres:
+    image: timescale/timescaledb:2.17.2-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-solbot}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bot} -d ${POSTGRES_DB:-solbot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    # appendonly = survive restarts (BullMQ delayed jobs live here).
+    # noeviction is required by BullMQ — it must never silently drop jobs.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "1gb", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Inside Docker the services talk by name, not localhost.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-solbot}?schema=public
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:8080:8080" # API — only reachable via Caddy (HTTPS) from outside
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
+
+  # HTTPS reverse proxy for the dashboard API (VPS only — set API_DOMAIN in .env).
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    environment:
+      API_DOMAIN: ${API_DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+    depends_on:
+      - bot
+
+  # Phase 8 — uncomment once ml/ has a real service.
+  # ml-service:
+  #   build: ./ml
+  #   restart: unless-stopped
+  #   env_file: .env
+  #   ports:
+  #     - "127.0.0.1:8000:8000"
+  #   depends_on: [postgres]
+
+volumes:
+  pgdata:
+  redisdata:
+  caddydata:

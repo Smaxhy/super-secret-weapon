@@ -1,0 +1,8 @@
+# HTTPS in front of the bot API. Caddy gets a free Let's Encrypt certificate
+# automatically for API_DOMAIN (e.g. 209-250-254-34.sslip.io — sslip.io turns
+# any IP into a hostname, no domain purchase needed).
+# The dashboard on GitHub Pages is HTTPS, so browsers require the API to be HTTPS too.
+{$API_DOMAIN} {
+	encode gzip
+	reverse_proxy bot:8080
+}

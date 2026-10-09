@@ -1,0 +1,42 @@
+/** GET /api/scanner-stats — launch counts, completion & rug rates, score histogram, scanner health. */
+import type { FastifyInstance } from 'fastify';
+import { prisma } from '../../lib/prisma';
+import type { ApiDeps } from '../deps';
+
+export async function scannerStatsRoutes(app: FastifyInstance, deps: ApiDeps): Promise<void> {
+  app.get('/api/scanner-stats', async () => {
+    const now = Date.now();
+    const day = new Date(now - 24 * 3600_000);
+    const week = new Date(now - 7 * 24 * 3600_000);
+    const [today, thisWeek, completedWeek, flaggedWeek, ruggedWeek, buckets, hourly] = await Promise.all([
+      prisma.token.count({ where: { createdAt: { gte: day } } }),
+      prisma.token.count({ where: { createdAt: { gte: week } } }),
+      prisma.token.count({ where: { createdAt: { gte: week }, status: 'COMPLETED' } }),
+      prisma.token.count({ where: { createdAt: { gte: week }, safetyHardFail: true } }),
+      prisma.token.count({ where: { createdAt: { gte: week }, status: 'RUGGED' } }),
+      prisma.$queryRaw<Array<{ bucket: number; n: bigint }>>`
+        SELECT LEAST(FLOOR("combinedScore" / 10), 9)::int AS bucket, COUNT(*) AS n
+        FROM "Token" WHERE "combinedScore" IS NOT NULL AND "createdAt" >= ${week}
+        GROUP BY 1 ORDER BY 1`,
+      prisma.$queryRaw<Array<{ hour: Date; n: bigint }>>`
+        SELECT date_trunc('hour', "createdAt") AS hour, COUNT(*) AS n
+        FROM "Token" WHERE "createdAt" >= ${day}
+        GROUP BY 1 ORDER BY 1`,
+    ]);
+    const histogram = Array.from({ length: 10 }, (_, i) => ({
+      range: `${i * 10}-${i * 10 + 9}`,
+      count: Number(buckets.find((b) => b.bucket === i)?.n ?? 0),
+    }));
+    return {
+      launches24h: today,
+      launches7d: thisWeek,
+      completionRate7d: thisWeek ? (completedWeek / thisWeek) * 100 : null,
+      flaggedRate7d: thisWeek ? (flaggedWeek / thisWeek) * 100 : null,
+      rugRate7d: thisWeek ? (ruggedWeek / thisWeek) * 100 : null,
+      scoreHistogram: histogram,
+      launchesPerHour: hourly.map((h) => ({ hour: h.hour.toISOString(), count: Number(h.n) })),
+      regime: null, // Phase 7
+      scanner: deps.listenerStats(),
+    };
+  });
+}
