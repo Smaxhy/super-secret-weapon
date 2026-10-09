@@ -155,6 +155,10 @@ export class PumpPortalListener extends EventEmitter {
   private readonly toSub = new Set<string>();
   private readonly toUnsub = new Set<string>();
   private accounts: string[] = [];
+  /** Diagnostics: message counts by type/pool, and a few raw samples logged once. */
+  readonly seen: Record<string, number> = {};
+  private samplesLogged = 0;
+  private confirmationsLogged = 0;
   /** Token-trade and account-trade feeds can deliver the same trade twice. */
   private readonly recent = new Set<string>();
   private readonly recentOrder: string[] = [];
@@ -299,8 +303,14 @@ export class PumpPortalListener extends EventEmitter {
     if (m.errors || (m.message && !m.txType)) {
       // Subscription confirmations ("Successfully subscribed…") or errors.
       if (m.errors) log.warn({ error: m.errors }, 'PumpPortal error');
-      else log.debug({ message: m.message }, 'PumpPortal');
+      else if (this.confirmationsLogged++ < 5) log.info({ message: m.message }, 'PumpPortal says');
       return;
+    }
+    const kind = `${m.txType ?? '?'}/${m.pool ?? '-'}`;
+    this.seen[kind] = (this.seen[kind] ?? 0) + 1;
+    if (m.txType !== 'create' && this.samplesLogged < 3) {
+      this.samplesLogged++;
+      log.info({ sample: text.slice(0, 600) }, 'PumpPortal trade message sample');
     }
     if (m.signature && m.txType !== 'create') {
       const k = `${m.signature}:${m.traderPublicKey}:${m.txType}`;

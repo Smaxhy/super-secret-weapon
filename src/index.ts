@@ -141,6 +141,7 @@ async function main(): Promise<void> {
   // Heartbeat line every minute so you can see it's alive at a glance.
   let lastCreates = 0;
   let lastTrades = 0;
+  let lastAmm = 0;
   const statsTimer = setInterval(async () => {
     const s = listener?.stats;
     const [balance, openPositions] = await Promise.all([
@@ -160,6 +161,8 @@ async function main(): Promise<void> {
         reconnects: s?.reconnects ?? 0,
         rpcQueue: rpcLimiter.pending,
         avgLatencyMs: Math.round(registry.stats.latencyMsAvg),
+        ammTradesPerMin: (s?.ammTrades ?? 0) - lastAmm,
+        ...(listener instanceof PumpPortalListener ? { watching: listener.watchedCount, portalMsgs: { ...listener.seen } } : {}),
         evaluated: evaluator.stats.evaluated,
         buySignals: evaluator.stats.buys,
         walletLookups: evaluator.stats.walletLookups,
@@ -169,6 +172,7 @@ async function main(): Promise<void> {
       '📊 stats',
     );
     lastCreates = s?.creates ?? 0;
+    lastAmm = s?.ammTrades ?? 0;
     lastTrades = s?.trades ?? 0;
   }, 60_000);
 
