@@ -21,6 +21,12 @@ export function TradeRow({ t }: { t: TradeRowData }) {
         <Pnl value={t.pnlSol} />
         <div className={`text-xs ${t.pnlPct >= 0 ? 'text-up' : 'text-down'}`}>{pct(t.pnlPct, 1, true)}</div>
       </td>
+      <td className="pr-4">
+        <span className={t.peakMultiple >= 1 ? 'text-up' : 'text-ink-2'}>{pct((t.peakMultiple - 1) * 100, 0, true)}</span>
+        <div className="text-xs text-muted">
+          peak {t.peakMultiple.toFixed(2)}×{t.bestWithin1hMultiple && t.bestWithin1hMultiple > t.peakMultiple * 1.05 ? ` · later ${t.bestWithin1hMultiple.toFixed(1)}×` : ''}
+        </div>
+      </td>
       <td className="pr-4 text-ink-2">{duration(t.holdSeconds)}</td>
       <td className="pr-4 text-ink-2">{t.exitReason ? (EXIT_LABEL[t.exitReason] ?? t.exitReason) : '—'}</td>
       <td className="pr-2 text-ink-2">{t.scoreAtEntry?.toFixed(0) ?? '—'}</td>

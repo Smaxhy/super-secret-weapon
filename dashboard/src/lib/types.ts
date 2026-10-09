@@ -74,6 +74,9 @@ export interface TradeRowData {
   scoreAtEntry: number | null;
   openedAt: string;
   closedAt: string | null;
+  peakMultiple: number;
+  maxProfitSol: number;
+  bestWithin1hMultiple: number | null;
 }
 
 export interface PerformanceData {

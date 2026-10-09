@@ -33,7 +33,7 @@ export async function tradesRoutes(app: FastifyInstance, deps: ApiDeps): Promise
       take: clampInt(q.limit, 500, 1, 5000),
       include: {
         token: { select: { symbol: true, name: true } },
-        evaluation: { select: { combinedScore: true } },
+        evaluation: { select: { combinedScore: true, outcomeMax: true } },
         trades: { where: { side: 'SELL', status: { in: ['SIMULATED', 'CONFIRMED'] } }, select: { amountSol: true, tokenAmountRaw: true } },
       },
     });
@@ -54,6 +54,11 @@ export async function tradesRoutes(app: FastifyInstance, deps: ApiDeps): Promise
         holdSeconds: p.closedAt ? Math.round((p.closedAt.getTime() - p.openedAt.getTime()) / 1000) : null,
         exitReason: p.exitReason,
         scoreAtEntry: p.evaluation?.combinedScore ?? null,
+        // Best price while we held it, as a multiple of our entry, and what that would have paid.
+        peakMultiple: p.peakPriceSol / p.entryPriceSol,
+        maxProfitSol: p.sizeSol * (p.peakPriceSol / p.entryPriceSol - 1),
+        // Best price within 1h of the buy signal (includes after we sold) — did we exit too early?
+        bestWithin1hMultiple: p.evaluation?.outcomeMax ?? null,
         openedAt: p.openedAt,
         closedAt: p.closedAt,
       };

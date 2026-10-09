@@ -46,7 +46,7 @@ export function Overview() {
                     <div className="min-w-0">
                       <div className="truncate font-semibold text-ink">{t.symbol}</div>
                       <div className="text-sm text-muted">
-                        {EXIT_LABEL[t.exitReason ?? ''] ?? t.exitReason} · {ago(t.closedAt)}
+                        {EXIT_LABEL[t.exitReason ?? ''] ?? t.exitReason} · peak {t.peakMultiple.toFixed(2)}× · {ago(t.closedAt)}
                       </div>
                     </div>
                     <div className="text-right">

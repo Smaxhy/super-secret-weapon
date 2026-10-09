@@ -14,14 +14,17 @@ export function Toasts() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const onEvent = useCallback((e: BotEvent) => {
     if (e.type !== 'trade') return;
-    const d = e.data as { side: string; symbol?: string; mint: string; amountSol: number; reason: string; pnlSol?: number; mode: string };
+    const d = e.data as { side: string; symbol?: string; mint: string; amountSol: number; reason: string; pnlSol?: number; mode: string; peakMultiple?: number; closed?: boolean; totalPnlSol?: number };
     const name = d.symbol ?? d.mint.slice(0, 6);
     const tag = d.mode === 'PAPER' ? '📝' : '💸';
+    const signed = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(3)} SOL`;
     const text =
-      d.side === 'BUY'
+      d.side === 'SELL' && d.closed && d.totalPnlSol !== undefined
+        ? `${tag} Closed ${name}: ${signed(d.totalPnlSol)} total · max profit ${d.peakMultiple ? `${((d.peakMultiple - 1) * 100).toFixed(0)}% (${d.peakMultiple.toFixed(2)}×)` : '—'}`
+        : d.side === 'BUY'
         ? `${tag} Bought ${name} for ${d.amountSol.toFixed(3)} SOL`
         : `${tag} Sold ${name}: ${d.pnlSol !== undefined ? `${d.pnlSol >= 0 ? '+' : '−'}${Math.abs(d.pnlSol).toFixed(3)} SOL` : ''} (${d.reason.split(':')[0]?.toLowerCase().replace(/_/g, ' ')})`;
-    const tone = d.side === 'BUY' ? 'neutral' : (d.pnlSol ?? 0) >= 0 ? 'up' : 'down';
+    const tone = d.side === 'BUY' ? 'neutral' : ((d.closed ? d.totalPnlSol : d.pnlSol) ?? 0) >= 0 ? 'up' : 'down';
     const id = nextId++;
     setToasts((t) => [...t.slice(-3), { id, text, tone }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 6_000);

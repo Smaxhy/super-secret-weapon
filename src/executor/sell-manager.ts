@@ -348,7 +348,21 @@ export class SellManager {
 
     return prisma.$transaction(async (tx) => {
       await logTrade(
-        { positionId: p.id, mint: p.mint, symbol, side: 'SELL', mode: p.mode, strategy: p.strategy, fill, reason: `${reason}: ${detail}`, context: { pct, costBasis, multiple: fill.priceSol / p.entryPriceSol }, pnlSol: fill.ok ? pnl : undefined },
+        {
+          positionId: p.id,
+          mint: p.mint,
+          symbol,
+          side: 'SELL',
+          mode: p.mode,
+          strategy: p.strategy,
+          fill,
+          reason: `${reason}: ${detail}`,
+          context: { pct, costBasis, multiple: fill.priceSol / p.entryPriceSol, peakMultiple: p.peakPriceSol / p.entryPriceSol },
+          pnlSol: fill.ok ? pnl : undefined,
+          peakMultiple: p.peakPriceSol / p.entryPriceSol,
+          closed: fill.ok && closing,
+          totalPnlSol: fill.ok ? p.realizedPnlSol + pnl : undefined,
+        },
         tx,
       );
       if (!fill.ok) return p;

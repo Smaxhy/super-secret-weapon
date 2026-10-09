@@ -21,7 +21,7 @@ interface Detail {
   safetyChecks: Array<{ score: number; hardFail: boolean; checks: Array<{ id: string; label: string; severity: 'PASS' | 'WARN' | 'FAIL'; detail: string }> }>;
   evaluations: Array<{ id: string; createdAt: string; combinedScore: number; decision: string; reasons: string[]; features: { checkpointSec?: number; contributions?: Record<string, number>; features?: Record<string, number> } }>;
   snapshots: Array<{ interval: string; holderCount: number; marketCapSol: number; bondingCurvePct: number; volumeSol: number; devHoldingPct: number; top10HolderPct: number }>;
-  positions: Array<{ id: string; status: string; sizeSol: number; realizedPnlSol: number; exitReason: string | null; trades: Array<{ id: string; side: string; amountSol: number; reason: string; createdAt: string }> }>;
+  positions: Array<{ id: string; status: string; sizeSol: number; realizedPnlSol: number; exitReason: string | null; entryPriceSol: number; peakPriceSol: number; trades: Array<{ id: string; side: string; amountSol: number; reason: string; createdAt: string }> }>;
   live: { holderCount: number; marketCapSol: number; bondingCurvePct: number; volumeSol: number; devHoldingPct: number; top10HolderPct: number; earlyBuyerPct: number; buySellRatio: number } | null;
 }
 
@@ -159,7 +159,8 @@ export function TokenDetail() {
           {d.positions.map((p) => (
             <div key={p.id} className="text-sm">
               <div className="mb-2 text-ink">
-                {sol(p.sizeSol, 2)} position · {p.status.toLowerCase()} {p.exitReason ? `(${EXIT_LABEL[p.exitReason] ?? p.exitReason})` : ''} · result <Pnl value={p.realizedPnlSol} />
+                {sol(p.sizeSol, 2)} position · {p.status.toLowerCase()} {p.exitReason ? `(${EXIT_LABEL[p.exitReason] ?? p.exitReason})` : ''} · result <Pnl value={p.realizedPnlSol} /> · max profit{' '}
+                <span className="text-up">{pct((p.peakPriceSol / p.entryPriceSol - 1) * 100, 0, true)}</span> ({(p.peakPriceSol / p.entryPriceSol).toFixed(2)}×)
               </div>
               <ul className="space-y-1 text-ink-2">
                 {p.trades.map((t) => (

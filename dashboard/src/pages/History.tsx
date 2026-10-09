@@ -6,7 +6,7 @@ import { useApi } from '../hooks/useApi';
 import { EXIT_LABEL, STRATEGY_LABEL } from '../lib/format';
 import type { TradeRowData } from '../lib/types';
 
-type SortKey = 'closedAt' | 'symbol' | 'strategy' | 'sizeSol' | 'entryPriceSol' | 'exitPriceSol' | 'pnlSol' | 'holdSeconds' | 'exitReason' | 'scoreAtEntry';
+type SortKey = 'closedAt' | 'symbol' | 'strategy' | 'sizeSol' | 'entryPriceSol' | 'exitPriceSol' | 'pnlSol' | 'peakMultiple' | 'holdSeconds' | 'exitReason' | 'scoreAtEntry';
 const COLUMNS: Array<[SortKey, string]> = [
   ['closedAt', 'Token'],
   ['strategy', 'Strategy'],
@@ -14,6 +14,7 @@ const COLUMNS: Array<[SortKey, string]> = [
   ['entryPriceSol', 'Entry'],
   ['exitPriceSol', 'Exit'],
   ['pnlSol', 'P&L'],
+  ['peakMultiple', 'Max profit'],
   ['holdSeconds', 'Held'],
   ['exitReason', 'Exit reason'],
   ['scoreAtEntry', 'Score'],
@@ -43,8 +44,8 @@ export function History() {
   const total = rows.reduce((s, r) => s + r.pnlSol, 0);
 
   function exportCsv() {
-    const header = ['closed_at', 'symbol', 'mint', 'strategy', 'size_sol', 'entry_price_sol', 'exit_price_sol', 'pnl_sol', 'pnl_pct', 'hold_seconds', 'exit_reason', 'score_at_entry'];
-    const lines = rows.map((r) => [r.closedAt, r.symbol, r.mint, r.strategy, r.sizeSol, r.entryPriceSol, r.exitPriceSol, r.pnlSol, r.pnlPct.toFixed(2), r.holdSeconds, r.exitReason, r.scoreAtEntry].map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','));
+    const header = ['closed_at', 'symbol', 'mint', 'strategy', 'size_sol', 'entry_price_sol', 'exit_price_sol', 'pnl_sol', 'pnl_pct', 'peak_multiple', 'max_profit_sol', 'best_within_1h_multiple', 'hold_seconds', 'exit_reason', 'score_at_entry'];
+    const lines = rows.map((r) => [r.closedAt, r.symbol, r.mint, r.strategy, r.sizeSol, r.entryPriceSol, r.exitPriceSol, r.pnlSol, r.pnlPct.toFixed(2), r.peakMultiple.toFixed(3), r.maxProfitSol.toFixed(4), r.bestWithin1hMultiple?.toFixed(3) ?? '', r.holdSeconds, r.exitReason, r.scoreAtEntry].map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','));
     const blob = new Blob([[header.join(','), ...lines].join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -88,7 +89,7 @@ export function History() {
       ) : rows.length ? (
         <Card>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] text-sm tabular">
+            <table className="w-full min-w-[960px] text-sm tabular">
               <thead>
                 <tr className="text-left text-ink-2">
                   {COLUMNS.map(([k, l]) => (
