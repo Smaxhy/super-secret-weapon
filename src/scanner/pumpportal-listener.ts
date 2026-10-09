@@ -154,6 +154,10 @@ export class PumpPortalListener extends EventEmitter {
   private readonly watched = new Set<string>();
   private readonly toSub = new Set<string>();
   private readonly toUnsub = new Set<string>();
+  private accounts: string[] = [];
+  /** Token-trade and account-trade feeds can deliver the same trade twice. */
+  private readonly recent = new Set<string>();
+  private readonly recentOrder: string[] = [];
 
   readonly stats: ListenerStats = {
     connected: false,
@@ -208,6 +212,14 @@ export class PumpPortalListener extends EventEmitter {
     this.toUnsub.add(mint);
   }
 
+  /** Stream every Pump.fun trade made by these wallets (copy trading). Replaces the previous list. */
+  watchAccounts(addresses: string[]): void {
+    const removed = this.accounts.filter((a) => !addresses.includes(a));
+    if (removed.length) this.send({ method: 'unsubscribeAccountTrade', keys: removed });
+    this.accounts = [...addresses];
+    if (addresses.length) this.send({ method: 'subscribeAccountTrade', keys: addresses });
+  }
+
   get watchedCount(): number {
     return this.watched.size;
   }
@@ -224,6 +236,7 @@ export class PumpPortalListener extends EventEmitter {
       this.stats.connectedSince = Date.now();
       this.send({ method: 'subscribeNewToken' });
       this.send({ method: 'subscribeMigration' });
+      if (this.accounts.length) this.send({ method: 'subscribeAccountTrade', keys: this.accounts });
       // Re-subscribe everything we were watching before the reconnect.
       for (const m of this.watched) this.toSub.add(m);
       this.toUnsub.clear();
@@ -288,6 +301,13 @@ export class PumpPortalListener extends EventEmitter {
       if (m.errors) log.warn({ error: m.errors }, 'PumpPortal error');
       else log.debug({ message: m.message }, 'PumpPortal');
       return;
+    }
+    if (m.signature && m.txType !== 'create') {
+      const k = `${m.signature}:${m.traderPublicKey}:${m.txType}`;
+      if (this.recent.has(k)) return;
+      this.recent.add(k);
+      this.recentOrder.push(k);
+      if (this.recentOrder.length > 20_000) this.recent.delete(this.recentOrder.shift()!);
     }
     this.stats.notifications++;
     let events: PumpEvent[];

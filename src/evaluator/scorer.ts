@@ -66,8 +66,9 @@ export function checkEntryRules(i: EntryCheckInput): string[] {
   if (m.bondingCurvePct < s.curveProgressRange.min || m.bondingCurvePct > s.curveProgressRange.max) {
     fails.push(`curve ${m.bondingCurvePct.toFixed(1)}% outside ${s.curveProgressRange.min}-${s.curveProgressRange.max}%`);
   }
-  if (m.complete && s.name !== 'MIGRATION_MOMENTUM') fails.push('curve already complete');
-  if (s.name === 'MIGRATION_MOMENTUM' && !m.onAmm) fails.push('waiting for PumpSwap pool');
+  if (m.complete && s.name === 'CURVE_SNIPE') fails.push('curve already complete');
+  // Migration plays need a live PumpSwap price; copy trades too once the token migrated.
+  if ((s.name === 'MIGRATION_MOMENTUM' || m.complete) && s.name !== 'CURVE_SNIPE' && !m.onAmm) fails.push('waiting for PumpSwap pool');
   if (i.social?.blockedKeyword) fails.push(`blocked keyword "${i.social.blockedKeyword}"`);
   if (e.requireTwitter && !i.social?.hasTwitter) fails.push(i.social ? 'no X link' : 'socials not checked yet');
   if (m.totalFeesSol < e.minTotalFeesSol) fails.push(`fees ${m.totalFeesSol.toFixed(2)} SOL < ${e.minTotalFeesSol}`);

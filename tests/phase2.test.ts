@@ -4,7 +4,7 @@ import { STRATEGIES } from '../src/config/strategies';
 import { marketFeatures, type MarketRaw } from '../src/evaluator/market-analyzer';
 import { checkEntryRules, decide, scoreFeatures } from '../src/evaluator/scorer';
 import { walletFeatures, type CreatorProfile } from '../src/evaluator/wallet-analyzer';
-import { decideExit, type ExitInput } from '../src/executor/sell-manager';
+import { computeRisk, decideExit, type ExitInput } from '../src/executor/sell-manager';
 import { quoteBuy, quoteSell } from '../src/lib/pumpfun';
 
 const V_SOL = 30_000_000_000n;
@@ -86,35 +86,54 @@ describe('exit rules', () => {
   const now = 10_000_000;
   const base: ExitInput = {
     entryPriceSol: 1, peakPriceSol: 1, remainingPct: 100, tpTiersHit: [], trailingActive: false, refPriceSol: 1, lastMoveAtMs: now,
-    staleMinutes: 30, priceSol: 1, migratedNoMarket: false, bundlePctEntry: 8, bundlePctNow: 8, devHoldingPctEntry: 3, devHoldingPctNow: 3, top10PctEntry: 15, top10PctNow: 15, nowMs: now,
+    staleMinutes: 30, priceSol: 1, migratedNoMarket: false, bundlePctEntry: 8, bundlePctNow: 8, devHoldingPctEntry: 3, devHoldingPctNow: 3,
+    top10PctEntry: 15, top10PctNow: 15, nowMs: now, copyWalletSold: false, risk: 0, riskWhy: '', openedAtMs: now, maxHoldMinutes: 45,
   };
   const rules = DEFAULT_CONFIG.exit;
   const reasons = (i: Partial<ExitInput>) => decideExit({ ...base, ...i }, rules).sells.map((s) => `${s.reason}:${s.pct}`);
 
   it('holds when nothing happens', () => expect(reasons({})).toEqual([]));
   it('stop loss at -40%', () => expect(reasons({ priceSol: 0.59 })).toEqual(['STOP_LOSS:100']));
-  it('take profit 30% at 2x, activates trailing', () => {
-    const d = decideExit({ ...base, priceSol: 2.1 }, rules);
-    expect(d.sells.map((s) => `${s.reason}:${s.pct}`)).toEqual(['TAKE_PROFIT:30']);
+  it('takes 40% at 1.8x and arms the trailing stop', () => {
+    const d = decideExit({ ...base, priceSol: 1.85, peakPriceSol: 1.85 }, rules);
+    expect(d.sells.map((s) => `${s.reason}:${s.pct}`)).toEqual(['TAKE_PROFIT:40']);
     expect(d.state.trailingActive).toBe(true);
   });
-  it('both tiers fire on a jump straight to 5x', () => expect(reasons({ priceSol: 5.5 })).toEqual(['TAKE_PROFIT:30', 'TAKE_PROFIT:30']));
-  it('does not re-fire a tier', () => expect(reasons({ priceSol: 2.5, tpTiersHit: [2], remainingPct: 70, trailingActive: true, peakPriceSol: 2.5 })).toEqual([]));
-  it('trailing stop sells the rest 30% below peak', () =>
-    expect(reasons({ priceSol: 2.7, peakPriceSol: 4, tpTiersHit: [2], remainingPct: 70, trailingActive: true })).toEqual(['TRAILING_STOP:70']));
+  it('both tiers fire on a jump straight to 3x', () => expect(reasons({ priceSol: 3.2 })).toEqual(['TAKE_PROFIT:40', 'TAKE_PROFIT:30']));
+  it('does not re-fire a tier', () => expect(reasons({ priceSol: 2, peakPriceSol: 2, tpTiersHit: [1.8], remainingPct: 60, trailingActive: true })).toEqual([]));
+  it('trailing stop sells the rest 25% below peak', () =>
+    expect(reasons({ priceSol: 2.2, peakPriceSol: 3, tpTiersHit: [1.8], remainingPct: 60, trailingActive: true })).toEqual(['TRAILING_STOP:60']));
+  it('protects profit: peaked 1.6x, back to 1.04x → out', () => expect(reasons({ priceSol: 1.04, peakPriceSol: 1.6 })).toEqual(['TRAILING_STOP:100']));
+  it('in profit + risk rising → take profit early', () => expect(reasons({ priceSol: 1.3, peakPriceSol: 1.35, risk: 0.7, riskWhy: 'x' })).toEqual(['TAKE_PROFIT:100']));
+  it('in profit + low risk → keep holding', () => expect(reasons({ priceSol: 1.3, peakPriceSol: 1.35, risk: 0.3 })).toEqual([]));
+  it('losing + risk rising → cut early at -15%', () => expect(reasons({ priceSol: 0.84, risk: 0.7, riskWhy: 'x' })).toEqual(['STOP_LOSS:100']));
+  it('max hold time closes the trade', () => expect(reasons({ priceSol: 1.1, refPriceSol: 1.1, nowMs: now + 46 * 60_000, lastMoveAtMs: now + 40 * 60_000 })).toEqual(['TAKE_PROFIT:100']));
+  it('copied wallet sold → out', () => expect(reasons({ copyWalletSold: true, priceSol: 1.4 })).toEqual(['COPY_EXIT:100']));
   it('rug: dev dumps', () => expect(reasons({ devHoldingPctNow: 1 })).toEqual(['RUG_DETECTED:100']));
   it('rug: concentration spike while underwater', () => expect(reasons({ top10PctNow: 31, priceSol: 0.9 })).toEqual(['RUG_DETECTED:100']));
-  it('whales concentrating a pump is not a rug', () => expect(reasons({ top10PctNow: 40, priceSol: 1.5 })).toEqual([]));
+  it('whales concentrating a pump is not a rug', () => expect(reasons({ top10PctNow: 40, priceSol: 1.3, peakPriceSol: 1.3 })).toEqual([]));
   it('exits if migrated but no PumpSwap pool ever appeared', () => expect(reasons({ migratedNoMarket: true, priceSol: 3 })).toEqual(['MIGRATED:100']));
   it('rug: bundlers dumping', () => expect(reasons({ bundlePctNow: 2 })).toEqual(['RUG_DETECTED:100']));
   it('bundlers selling a little is fine', () => expect(reasons({ bundlePctNow: 5 })).toEqual([]));
-  it('stale after 30 flat minutes', () => expect(reasons({ priceSol: 1.02, nowMs: now + 31 * 60_000 })).toEqual(['STALE:100']));
+  it('stale after 30 flat minutes', () => expect(reasons({ priceSol: 1.02, nowMs: now + 31 * 60_000, maxHoldMinutes: 120 })).toEqual(['STALE:100']));
   it('a real move resets the stale clock', () => {
-    const d = decideExit({ ...base, priceSol: 1.2, nowMs: now + 31 * 60_000 }, rules);
+    const d = decideExit({ ...base, priceSol: 1.12, peakPriceSol: 1.12, nowMs: now + 31 * 60_000, maxHoldMinutes: 120 }, rules);
     expect(d.sells).toEqual([]);
     expect(d.state.lastMoveAtMs).toBe(now + 31 * 60_000);
   });
 });
+
+describe('computeRisk', () => {
+  const s = (t: number, buys: number, sells: number, holders: number, priceSol: number) => ({ t, buys, sells, holders, priceSol });
+  it('is low when buyers dominate and price rises', () => {
+    expect(computeRisk([s(0, 100, 50, 80, 1), s(90_000, 140, 55, 95, 1.3)], 1.3, 90_000).risk).toBeLessThan(0.1);
+  });
+  it('is high when sellers dominate, holders leave and price falls', () => {
+    expect(computeRisk([s(0, 100, 50, 100, 1.5), s(90_000, 103, 75, 85, 1.1)], 1.6, 90_000).risk).toBeGreaterThan(0.7);
+  });
+  it('needs enough history', () => expect(computeRisk([s(0, 1, 1, 1, 1)], 1, 1_000).risk).toBe(0));
+});
+
 
 import { Keypair, MessageV0, VersionedTransaction, type VersionedTransactionResponse } from '@solana/web3.js';
 import { extraFeeLamports } from '../src/evaluator/fee-estimator';

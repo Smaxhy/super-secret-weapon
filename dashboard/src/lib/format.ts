@@ -49,4 +49,5 @@ export const EXIT_LABEL: Record<string, string> = {
   KILL_SWITCH: 'Kill switch',
   CIRCUIT_BREAKER: 'Circuit breaker',
   MIGRATED: 'Migrated',
+  COPY_EXIT: 'Copied wallet sold',
 };

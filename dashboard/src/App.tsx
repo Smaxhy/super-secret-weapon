@@ -18,6 +18,7 @@ import { Performance } from './pages/Performance';
 import { Positions } from './pages/Positions';
 import { ScannerStats } from './pages/ScannerStats';
 import { TokenDetail } from './pages/TokenDetail';
+import { Wallets } from './pages/Wallets';
 
 const NAV = [
   { to: '/', label: 'Overview', icon: '◎' },
@@ -25,6 +26,7 @@ const NAV = [
   { to: '/positions', label: 'Positions', icon: '▤' },
   { to: '/history', label: 'History', icon: '☰' },
   { to: '/performance', label: 'Performance', icon: '↗' },
+  { to: '/wallets', label: 'Wallets', icon: '◈' },
   { to: '/scanner', label: 'Scanner', icon: '◉' },
 ];
 
@@ -133,6 +135,7 @@ function Shell() {
           <Route path="/positions" element={<Positions />} />
           <Route path="/history" element={<History />} />
           <Route path="/performance" element={<Performance />} />
+          <Route path="/wallets" element={<Wallets />} />
           <Route path="/scanner" element={<ScannerStats />} />
           <Route path="/token/:mint" element={<TokenDetail />} />
           <Route path="*" element={<Navigate to="/" replace />} />
@@ -142,9 +145,9 @@ function Shell() {
       <Toasts />
 
       {/* Mobile bottom nav */}
-      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-6 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden" aria-label="Main">
+      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-7 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden" aria-label="Main">
         {NAV.map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => `flex min-h-14 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium ${isActive ? 'text-accent' : 'text-ink-2'}`}>
+          <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => `flex min-h-14 flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium ${isActive ? 'text-accent' : 'text-ink-2'}`}>
             <span aria-hidden="true" className="text-lg leading-none">{n.icon}</span>
             {n.label.split(' ')[0]}
           </NavLink>

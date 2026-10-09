@@ -85,7 +85,8 @@ enum ExitReason {
   MANUAL
   KILL_SWITCH
   CIRCUIT_BREAKER
-  MIGRATED // curve completed while held (post-migration tracking arrives in Phase 6)
+  MIGRATED // curve completed but no PumpSwap market appeared
+  COPY_EXIT // a tracked wallet we copied sold
 }
 
 enum WalletSource {

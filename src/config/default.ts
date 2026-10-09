@@ -62,6 +62,16 @@ export const DEFAULT_CONFIG = {
     requireTwitter: false,
   },
 
+  /** Copy trading: react when a wallet on your watch list buys. */
+  copy: {
+    /** Points added to the buy threshold for copy trades (negative = easier, e.g. 75 - 10 = 65). */
+    scoreThresholdDelta: -10,
+    /** Sell our copy position when the wallet we copied sells. */
+    exitWhenWalletSells: true,
+    /** Re-check the token this many seconds after the wallet's buy. */
+    checkpointsSec: [0, 30, 90, 180],
+  },
+
   /** Keyword lists matched against name, ticker and description (whole words, case-insensitive). */
   keywords: {
     /** A match nudges the score up. */
@@ -73,12 +83,27 @@ export const DEFAULT_CONFIG = {
   exit: {
     /** Tiered take-profit: sell `sellPct` of the ORIGINAL position at `multiple`x. */
     takeProfitTiers: [
-      { multiple: 2, sellPct: 30 },
-      { multiple: 5, sellPct: 30 },
+      { multiple: 1.8, sellPct: 40 },
+      { multiple: 3, sellPct: 30 },
     ],
-    /** The remaining 40% rides with the trailing stop. */
-    trailingStopActivateMultiple: 2,
-    trailingStopPct: 30,
+    /** The remaining 30% rides with the trailing stop. */
+    trailingStopActivateMultiple: 1.5,
+    trailingStopPct: 25,
+    /** After reaching `afterMultiple`, sell everything if it falls back to `floorMultiple`. */
+    protectProfit: { afterMultiple: 1.5, floorMultiple: 1.05 },
+    /** Momentum-based exits (risk 0-1 from recent sells / holders / price). */
+    riskExit: {
+      threshold: 0.6,
+      /** Take profit early on high risk once at least this multiple. */
+      minProfitMultiple: 1.2,
+      /** Cut a loser early on high risk once below this multiple (0.85 = −15%). */
+      cutLossBelowMultiple: 0.85,
+    },
+    maxHoldMinutes: {
+      CURVE_SNIPE: 45,
+      MIGRATION_MOMENTUM: 120,
+      SMART_MONEY_COPY: 90,
+    } satisfies Record<StrategyName, number>,
     hardStopLossPct: 40,
     rugExit: {
       /** Bundle wallets sold this many % of supply since we bought → exit. */

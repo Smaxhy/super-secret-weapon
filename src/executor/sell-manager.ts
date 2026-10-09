@@ -1,21 +1,20 @@
 /**
  * Sell manager — watches every open position and executes the exit rules.
  *
- * Runs every 2 seconds. For each open position it reads the live curve state
- * and asks `decideExit()` (a pure function — easy to test, no side effects)
- * what to do. Rules, checked in this order:
+ * Runs every 2 seconds. For each open position it reads the live state and
+ * asks `decideExit()` (a pure function — easy to test) what to do. In order:
  *
- *   1. MIGRATED      curve completed but no PumpSwap pool appeared within 10 min
- *                    (positions otherwise keep running on PumpSwap after migration)
- *   2. RUG_DETECTED  bundle/sniper wallets dumped ≥5% of supply since entry, or
- *                    dev sold ≥10% of what they held at our entry, or top-10
- *                    concentration jumped ≥15 points while we're underwater
- *                    (whales buying a pump also raises concentration — that's
- *                    not a rug, so it only counts when price is below entry)
- *   3. STOP_LOSS     price ≤ entry × 0.6 (−40%)
- *   4. TAKE_PROFIT   sell 30% of the original at 2x, another 30% at 5x
- *   5. TRAILING_STOP once the peak hits 2x, sell the rest if price falls 30% from peak
- *   6. STALE         price hasn't moved >5% for 30 min (curve) / 2h (migration)
+ *   1. MIGRATED       curve completed but no PumpSwap market appeared in 10 min
+ *   2. RUG_DETECTED   bundlers dumped / dev dumped / concentration spike while underwater
+ *   3. COPY_EXIT      the tracked wallet we copied sold
+ *   4. STOP_LOSS      hard −40%, or an early cut when risk is high and we're down 15%+
+ *   5. TAKE_PROFIT    tiers: 40% at 1.8×, 30% at 3×
+ *   6. TRAILING_STOP  after 1.5×, sell the rest 25% below the peak
+ *   7. Protect profit once it reached 1.5×, never let it fall back below 1.05×
+ *   8. TAKE_PROFIT    "risk rising": in profit (≥1.2×) and momentum is fading
+ *                     (sells outnumber buys, holders leaving, falling from peak)
+ *   9. Max hold time  don't sit in a trade forever (45m curve / 2h migration / 90m copy)
+ *  10. STALE          price hasn't moved >5% for 30 min
  *
  * Positions are re-read from the database every tick, so a restart loses nothing.
  */
@@ -26,6 +25,8 @@ import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import { logTrade } from '../learner/trade-logger';
 import { deriveMetrics, type LiveState } from '../scanner/live-state';
+import type { Redis } from 'ioredis';
+import { copySoldKey } from '../scanner/whale-tracker';
 import type { Executor } from './types';
 
 const log = moduleLogger('sell-manager');
@@ -52,6 +53,49 @@ export interface ExitInput {
   top10PctEntry: number;
   top10PctNow: number;
   nowMs: number;
+  /** The wallet this copy trade followed has sold. */
+  copyWalletSold: boolean;
+  /** 0-1 "this is turning" score from recent activity (see computeRisk). */
+  risk: number;
+  riskWhy: string;
+  openedAtMs: number;
+  maxHoldMinutes: number;
+}
+
+export interface ActivitySample {
+  t: number;
+  buys: number;
+  sells: number;
+  holders: number;
+  priceSol: number;
+}
+
+const clamp01 = (x: number) => (Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0);
+
+/**
+ * How likely the move is over, 0-1, from the last ~90 seconds of activity:
+ * sells outnumbering buys, holders leaving, price falling from its peak and
+ * over the window. Pure — exported for tests.
+ */
+export function computeRisk(samples: ActivitySample[], peakPriceSol: number, now: number, windowMs = 90_000): { risk: number; why: string } {
+  const cur = samples[samples.length - 1];
+  const old = samples.find((x) => now - x.t <= windowMs);
+  if (!cur || !old || cur.t - old.t < windowMs / 2) return { risk: 0, why: 'not enough history' };
+  const dB = cur.buys - old.buys;
+  const dS = cur.sells - old.sells;
+  const sellShare = dB + dS >= 4 ? dS / (dB + dS) : 0.5;
+  const holderDelta = old.holders > 0 ? (cur.holders - old.holders) / old.holders : 0;
+  const fromPeak = peakPriceSol > 0 ? 1 - cur.priceSol / peakPriceSol : 0;
+  const windowMove = old.priceSol > 0 ? cur.priceSol / old.priceSol - 1 : 0;
+  const parts = {
+    sellPressure: clamp01((sellShare - 0.5) / 0.3),
+    holdersLeaving: clamp01(-holderDelta / 0.1),
+    offPeak: clamp01(fromPeak / 0.3),
+    falling: clamp01(-windowMove / 0.2),
+  };
+  const risk = 0.35 * parts.sellPressure + 0.25 * parts.holdersLeaving + 0.2 * parts.offPeak + 0.2 * parts.falling;
+  const why = `${Math.round(sellShare * 100)}% sells, holders ${holderDelta >= 0 ? '+' : ''}${(holderDelta * 100).toFixed(0)}%, ${(fromPeak * 100).toFixed(0)}% off peak`;
+  return { risk, why };
 }
 
 export interface ExitDecision {
@@ -85,7 +129,13 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
     return all('RUG_DETECTED', `top-10 concentration ${i.top10PctEntry.toFixed(1)}% → ${i.top10PctNow.toFixed(1)}%`);
   }
 
+  if (i.copyWalletSold) return all('COPY_EXIT', 'the wallet we copied sold');
+
   if (multiple <= 1 - rules.hardStopLossPct / 100) return all('STOP_LOSS', `${((multiple - 1) * 100).toFixed(1)}%`);
+  // Don't wait for −40% when it's clearly turning against us.
+  if (multiple <= rules.riskExit.cutLossBelowMultiple && i.risk >= rules.riskExit.threshold) {
+    return all('STOP_LOSS', `early exit at ${((multiple - 1) * 100).toFixed(0)}%: ${i.riskWhy}`);
+  }
 
   const sells: ExitDecision['sells'] = [];
   let remaining = i.remainingPct;
@@ -104,6 +154,24 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
     return { sells, state };
   }
 
+  // Once it reached e.g. 1.5×, a winner must not turn into a loser.
+  if (remaining > 0 && state.peakPriceSol >= i.entryPriceSol * rules.protectProfit.afterMultiple && multiple <= rules.protectProfit.floorMultiple) {
+    sells.push({ pct: remaining, reason: 'TRAILING_STOP', detail: `protecting profit: peaked ${(state.peakPriceSol / i.entryPriceSol).toFixed(2)}x, back to ${multiple.toFixed(2)}x` });
+    return { sells, state };
+  }
+
+  // In profit and momentum is fading → bank it instead of riding it back down.
+  if (remaining > 0 && multiple >= rules.riskExit.minProfitMultiple && i.risk >= rules.riskExit.threshold) {
+    sells.push({ pct: remaining, reason: 'TAKE_PROFIT', detail: `${multiple.toFixed(2)}x, risk rising: ${i.riskWhy}` });
+    return { sells, state };
+  }
+
+  // Don't hold forever.
+  if (remaining > 0 && i.nowMs - i.openedAtMs >= i.maxHoldMinutes * 60_000) {
+    sells.push({ pct: remaining, reason: multiple >= 1 ? 'TAKE_PROFIT' : 'STALE', detail: `max hold ${i.maxHoldMinutes}m reached at ${multiple.toFixed(2)}x` });
+    return { sells, state };
+  }
+
   if (Math.abs(i.priceSol / state.refPriceSol - 1) > MOVE_THRESHOLD) {
     state.refPriceSol = i.priceSol;
     state.lastMoveAtMs = i.nowMs;
@@ -116,10 +184,12 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
 export class SellManager {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
+  private readonly samples = new Map<string, ActivitySample[]>();
 
   constructor(
     private readonly executor: Executor,
     private readonly liveState: LiveState,
+    private readonly redis: Redis,
   ) {}
 
   start(): void {
@@ -136,6 +206,8 @@ export class SellManager {
     this.running = true;
     try {
       const positions = await prisma.position.findMany({ where: { mode: this.executor.mode, status: 'OPEN' }, include: { token: { select: { symbol: true } } } });
+      const openIds = new Set(positions.map((x) => x.id));
+      for (const id of this.samples.keys()) if (!openIds.has(id)) this.samples.delete(id);
       for (const p of positions) {
         try {
           await this.manage(p, p.token.symbol);
@@ -169,6 +241,16 @@ export class SellManager {
     const entry = (p.entryContext ?? {}) as { devHoldingPct?: number; top10HolderPct?: number; earlyBuyerPct?: number };
     // Migrated but no PumpSwap trades seen 10 min later → we can't price it anymore.
     const completedLongAgo = view.complete && view.ammTrades === 0 && Date.now() - (view.migratedAtMs ?? view.lastTradeAtMs ?? 0) > 10 * 60_000;
+    // Recent activity for the risk score (kept in memory, last ~3 minutes).
+    const now = Date.now();
+    const hist = this.samples.get(p.id) ?? [];
+    hist.push({ t: now, buys: view.buys, sells: view.sells, holders: m.holderCount, priceSol: m.priceSol });
+    while (hist.length && now - hist[0]!.t > 180_000) hist.shift();
+    this.samples.set(p.id, hist);
+    const { risk, why } = computeRisk(hist, Math.max(p.peakPriceSol, m.priceSol), now);
+    const copied = (entry as { copiedWallet?: string | null }).copiedWallet;
+    const copyWalletSold = !!copied && (await this.redis.exists(copySoldKey(p.mint, copied))) === 1;
+
     const decision = decideExit(
       {
         entryPriceSol: p.entryPriceSol,
@@ -187,7 +269,12 @@ export class SellManager {
         devHoldingPctNow: m.devHoldingPct,
         top10PctEntry: entry.top10HolderPct ?? m.top10HolderPct,
         top10PctNow: m.top10HolderPct,
-        nowMs: Date.now(),
+        nowMs: now,
+        copyWalletSold,
+        risk,
+        riskWhy: why,
+        openedAtMs: p.openedAt.getTime(),
+        maxHoldMinutes: cfg.exit.maxHoldMinutes[p.strategy],
       },
       cfg.exit,
     );

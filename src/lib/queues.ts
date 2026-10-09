@@ -23,7 +23,9 @@ export interface EvaluateJob {
   /** True for the last checkpoint — always store the evaluation (training data). */
   final: boolean;
   /** Which strategy this checkpoint evaluates for (default CURVE_SNIPE). */
-  strategy?: 'CURVE_SNIPE' | 'MIGRATION_MOMENTUM';
+  strategy?: 'CURVE_SNIPE' | 'MIGRATION_MOMENTUM' | 'SMART_MONEY_COPY';
+  /** Copy trades: the tracked wallet whose buy triggered this check. */
+  wallet?: string;
 }
 
 export interface SafetyJob {

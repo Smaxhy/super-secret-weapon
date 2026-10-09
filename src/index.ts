@@ -29,6 +29,7 @@ import { rpcLimiter } from './lib/solana';
 import { LiveState } from './scanner/live-state';
 import { PumpFunListener } from './scanner/pumpfun-listener';
 import { PumpPortalListener } from './scanner/pumpportal-listener';
+import { WhaleTracker } from './scanner/whale-tracker';
 import { TokenRegistry } from './scanner/token-registry';
 
 const log = logger.child({ module: 'main' });
@@ -68,13 +69,15 @@ async function main(): Promise<void> {
   if (env.TRADING_MODE === 'LIVE') log.warn('TRADING_MODE=LIVE but live execution is not built yet (Phase 4) — running PAPER');
   const executor = new PaperExecutor(liveState);
   const trader = new Trader(executor);
-  const sellManager = new SellManager(executor, liveState);
+  const sellManager = new SellManager(executor, liveState, redis);
   sellManager.start();
   const evaluator = new Evaluator(redis, liveState, new WalletAnalyzer(redis), trader);
   evaluator.start();
 
   const registry = new TokenRegistry(liveState, observations, safety, evaluator);
   registry.startSafetyWorker();
+  // Copy trading: watch the wallets you added on the dashboard.
+  const whales = new WhaleTracker(redis, liveState, evaluator);
 
   // 4. Listener
   const { ws } = rpcEndpoints();
@@ -87,7 +90,10 @@ async function main(): Promise<void> {
     portal.on('event', (e) => {
       if (e.event.kind === 'create') portal.watch(e.event.mint);
       registry.handle(e);
+      whales.onEvent(e);
     });
+    whales.onWalletsChanged = (list) => portal.watchAccounts(list);
+    whales.onWatchToken = (m) => portal.watch(m);
     for (const m of liveState.trackedMints()) portal.watch(m);
     liveState.onForget.push((m) => portal.unwatch(m));
     portal.start();
@@ -114,9 +120,12 @@ async function main(): Promise<void> {
   } else {
     listener = new PumpFunListener(ws);
     listener.on('event', registry.handle);
+    listener.on('event', whales.onEvent);
     listener.start();
     log.warn('data source: Helius logsSubscribe — this uses a lot of Helius credits');
   }
+
+  await whales.start();
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
@@ -175,6 +184,7 @@ async function main(): Promise<void> {
     try {
       await api?.close();
       await listener?.stop();
+      whales.stop();
       await evaluator.stop();
       await sellManager.stop();
       stopConfigRefresh();

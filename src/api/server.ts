@@ -26,6 +26,7 @@ import { performanceRoutes } from './routes/performance';
 import { positionsRoutes } from './routes/positions';
 import { scannerStatsRoutes } from './routes/scanner-stats';
 import { tradesRoutes } from './routes/trades';
+import { walletsRoutes } from './routes/wallets';
 import { registerWebSocket } from './websocket';
 
 const log = moduleLogger('api');
@@ -43,7 +44,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
   app.setReplySerializer(bigintSafe);
 
   const origins = env.CORS_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean);
-  await app.register(cors, { origin: origins, methods: ['GET', 'POST', 'PUT', 'DELETE'] });
+  await app.register(cors, { origin: origins, methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] });
   await app.register(jwt, { secret: env.JWT_SECRET });
   await app.register(websocket);
 
@@ -59,6 +60,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     await tradesRoutes(secured, deps);
     await performanceRoutes(secured, deps);
     await scannerStatsRoutes(secured, deps);
+    await walletsRoutes(secured);
   });
 
   app.setErrorHandler((error, req, reply) => {

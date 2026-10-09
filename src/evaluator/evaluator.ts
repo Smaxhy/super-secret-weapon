@@ -79,6 +79,20 @@ export class Evaluator {
     );
   }
 
+  /** A tracked wallet just bought this token: check it now and a few times after. */
+  async scheduleCopy(mint: string, wallet: string): Promise<void> {
+    const cps = getConfig().copy.checkpointsSec;
+    const now = Date.now();
+    await evaluateQueue.addBulk(
+      cps.map((sec, i) => ({
+        name: `copy+${sec}s`,
+        data: { mint, checkpointSec: sec, final: i === cps.length - 1, strategy: 'SMART_MONEY_COPY' as const, wallet },
+        // jobId includes the time so a second buy later can trigger a fresh round.
+        opts: { jobId: `${mint}-copy-${sec}-${Math.floor(now / 600_000)}`, delay: sec * 1000 },
+      })),
+    );
+  }
+
   start(concurrency = 8): void {
     this.worker = new Worker<EvaluateJob>(QUEUE_NAMES.evaluate, (job) => this.process(job), { connection: bullConnection(), concurrency });
     this.worker.on('failed', (job, err) => log.warn({ mint: job?.data.mint, err: err.message }, 'evaluation failed'));
@@ -123,7 +137,8 @@ export class Evaluator {
     await this.redis.set(prevKey, JSON.stringify({ atMs: Date.now(), bondingCurvePct: market.raw.bondingCurvePct, priceSol: market.raw.priceSol } satisfies PrevCheckpoint), 'EX', STATE_TTL_SECONDS);
     this.stats.evaluated++;
 
-    const threshold = cfg.entry.minCombinedScore;
+    // A tracked wallet buying is a signal of its own → lower bar for copy trades.
+    const threshold = cfg.entry.minCombinedScore + (STRATEGY.name === 'SMART_MONEY_COPY' ? cfg.copy.scoreThresholdDelta : 0);
     // Socials + keywords (from the metadata file, if it has been fetched).
     let socialInfo: { hasTwitter: boolean; blockedKeyword: string | null } | undefined;
     let socialFeatures = NEUTRAL_SOCIAL_FEATURES;
@@ -207,6 +222,7 @@ export class Evaluator {
         market: market.raw,
         maxSlippageBps: STRATEGY.maxSlippageBps,
         features,
+        copiedWallet: job.data.wallet,
       });
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.
       if (res.entered || res.reason === 'already traded this token') await markDone();
