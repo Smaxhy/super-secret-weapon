@@ -7,6 +7,26 @@
 import { Connection } from '@solana/web3.js';
 import { env, rpcEndpoints } from '../config/env';
 import { RateLimiter } from './rate-limiter';
+import { redis } from './redis';
+
+/** Count RPC calls per UTC day and per method, so usage shows on the dashboard. */
+function countCall(body: unknown): void {
+  let method = 'unknown';
+  try {
+    const parsed = JSON.parse(String(body)) as { method?: string } | Array<{ method?: string }>;
+    method = (Array.isArray(parsed) ? parsed[0]?.method : parsed.method) ?? 'unknown';
+  } catch {
+    /* non-JSON body */
+  }
+  const k = `rpc:calls:${new Date().toISOString().slice(0, 10)}`;
+  void redis.multi().hincrby(k, method, 1).hincrby(k, '_total', 1).expire(k, 40 * 86_400).exec().catch(() => undefined);
+}
+
+/** RPC calls made on a given UTC day (default today), by method. */
+export async function rpcUsage(day = new Date().toISOString().slice(0, 10)): Promise<Record<string, number>> {
+  const h = await redis.hgetall(`rpc:calls:${day}`);
+  return Object.fromEntries(Object.entries(h).map(([k, v]) => [k, Number(v)]));
+}
 
 export const rpcLimiter = new RateLimiter(env.RPC_MAX_RPS);
 
@@ -20,6 +40,7 @@ export function getConnection(): Connection {
   }
   const limitedFetch = async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     await rpcLimiter.acquire();
+    countCall(init?.body);
     return fetch(input, init);
   };
   connection = new Connection(http, {

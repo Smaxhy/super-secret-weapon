@@ -20,6 +20,25 @@ export function ScannerStats() {
             <StatTile label="Flagged dangerous (7d)" value={pct(d.flaggedRate7d, 1)} sub="failed a hard safety check" />
             <StatTile label="Scanner" value={d.scanner?.connected ? '● Connected' : '○ Offline'} sub={d.scanner ? `${d.scanner.reconnects} reconnects · ${d.scanner.decodeErrors} decode errors` : undefined} />
           </div>
+          <Card title="Helius RPC usage" className="mt-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <StatTile label="Calls today (UTC)" value={num(d.rpc.today)} />
+              <StatTile label="Estimated per month" value={num(d.rpc.estMonth)} sub="based on recent days" />
+              <div className="col-span-2 text-sm text-ink-2 sm:col-span-1">
+                {Object.entries(d.rpc.byMethodToday)
+                  .filter(([k]) => k !== '_total')
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([k, v]) => (
+                    <div key={k} className="flex justify-between gap-3 tabular">
+                      <span>{k}</span>
+                      <span className="text-ink">{num(v)}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+            <p className="mt-3 text-sm text-muted">Calls the bot made, not exact Helius credits (some methods cost more than 1). Your real balance is on dashboard.helius.dev.</p>
+          </Card>
+
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <Card title="Launches per hour (last 24h)">
               <CountBars data={d.launchesPerHour} labelKey="hour" valueLabel="Launches" tickFormatter={(h) => new Date(h).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })} />

@@ -13,11 +13,12 @@ export interface ApiDeps {
 /** Classify a token for the live feed colour code. */
 export type DetectionStatus = 'bought' | 'flagged' | 'interesting' | 'skipped' | 'pending';
 
-export function detectionStatus(t: { safetyHardFail: boolean | null; combinedScore: number | null; hasPosition: boolean }): DetectionStatus {
+export function detectionStatus(t: { safetyHardFail: boolean | null; combinedScore: number | null; hasPosition: boolean; createdAt: Date }): DetectionStatus {
   if (t.hasPosition) return 'bought';
   if (t.safetyHardFail) return 'flagged';
   if (t.combinedScore !== null && t.combinedScore >= 60) return 'interesting';
-  if (t.safetyHardFail === null) return 'pending';
+  // Young tokens are still being watched; older unchecked ones never got enough holders.
+  if (t.safetyHardFail === null && Date.now() - t.createdAt.getTime() < 90_000) return 'pending';
   return 'skipped';
 }
 

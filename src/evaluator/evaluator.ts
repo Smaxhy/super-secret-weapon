@@ -22,7 +22,7 @@ import { STRATEGIES } from '../config/strategies';
 import { bus } from '../lib/bus';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
-import { evaluateQueue, QUEUE_NAMES, type EvaluateJob } from '../lib/queues';
+import { evaluateQueue, QUEUE_NAMES, safetyQueue, type EvaluateJob } from '../lib/queues';
 import { bullConnection } from '../lib/redis';
 import type { Trader } from '../executor/trader';
 import type { LiveState } from '../scanner/live-state';
@@ -78,11 +78,19 @@ export class Evaluator {
 
     const token = await prisma.token.findUnique({ where: { mint }, select: { symbol: true, creator: true, safetyScore: true, safetyHardFail: true } });
     if (!token) return;
-    // Safety check not finished yet — try again at the next checkpoint.
-    if (token.safetyScore === null || token.safetyHardFail === null) return;
-
     const view = await this.liveState.read(mint);
     if (!view) return void (await markDone());
+
+    // No safety result yet. Request one only once the token has real holders
+    // (saves RPC credits — most launches never get there); the result is
+    // used from the next checkpoint on.
+    if (token.safetyScore === null || token.safetyHardFail === null) {
+      if (view.balances.size >= getConfig().scoring.safetyMinHolders) {
+        await safetyQueue.add('check', { mint }, { jobId: `safety-${mint}` });
+      }
+      if (final) await markDone();
+      return;
+    }
 
     const cfg = getConfig();
     const { weights, version } = getWeights();

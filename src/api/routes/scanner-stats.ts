@@ -1,6 +1,7 @@
 /** GET /api/scanner-stats — launch counts, completion & rug rates, score histogram, scanner health. */
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../../lib/prisma';
+import { rpcUsage } from '../../lib/solana';
 import type { ApiDeps } from '../deps';
 
 export async function scannerStatsRoutes(app: FastifyInstance, deps: ApiDeps): Promise<void> {
@@ -36,6 +37,14 @@ export async function scannerStatsRoutes(app: FastifyInstance, deps: ApiDeps): P
       scoreHistogram: histogram,
       launchesPerHour: hourly.map((h) => ({ hour: h.hour.toISOString(), count: Number(h.n) })),
       regime: null, // Phase 7
+      rpc: await (async () => {
+        const days = Array.from({ length: 7 }, (_, i) => new Date(now - i * 86_400_000).toISOString().slice(0, 10));
+        const usage = await Promise.all(days.map((d) => rpcUsage(d)));
+        const today = usage[0] ?? {};
+        const done = usage.slice(1).filter((u) => (u._total ?? 0) > 0);
+        const avgPerDay = done.length ? done.reduce((s, u) => s + (u._total ?? 0), 0) / done.length : (today._total ?? 0);
+        return { today: today._total ?? 0, byMethodToday: today, estMonth: Math.round(avgPerDay * 30) };
+      })(),
       scanner: deps.listenerStats(),
     };
   });

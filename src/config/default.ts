@@ -92,6 +92,11 @@ export const DEFAULT_CONFIG = {
     walletAnalysisMargin: 10,
     /** Evaluations scoring at least this are stored even when skipped ("interesting"). */
     storeAboveScore: 60,
+    /**
+     * Save Helius credits: only run the (RPC) safety check once a token has
+     * this many holders. Most launches never get there.
+     */
+    safetyMinHolders: 10,
   },
 
   /** How the regime detector nudges size and thresholds (Phase 7). */

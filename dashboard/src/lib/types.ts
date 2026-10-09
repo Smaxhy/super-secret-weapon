@@ -104,4 +104,5 @@ export interface ScannerStatsData {
   launchesPerHour: Array<{ hour: string; count: number }>;
   regime: string | null;
   scanner: { connected: boolean; reconnects: number; creates: number; trades: number; decodeErrors: number } | null;
+  rpc: { today: number; byMethodToday: Record<string, number>; estMonth: number };
 }

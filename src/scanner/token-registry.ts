@@ -3,7 +3,7 @@
  *
  * For every decoded Pump.fun event:
  *   CreateEvent   → save Token row, start live tracking, schedule 7 snapshots,
- *                   queue a safety check
+ *                   schedule evaluations (which trigger the safety check)
  *   TradeEvent    → update live state in Redis (no DB write — too many)
  *   CompleteEvent → mark the token COMPLETED (curve filled, migrating)
  *
@@ -16,7 +16,7 @@ import { recordEvent } from '../lib/bot-events';
 import { bus } from '../lib/bus';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
-import { QUEUE_NAMES, safetyQueue, type SafetyJob } from '../lib/queues';
+import { QUEUE_NAMES, type SafetyJob } from '../lib/queues';
 import { bullConnection } from '../lib/redis';
 import type { SafetyChecker } from '../evaluator/safety-checker';
 import type { ObservationLogger } from '../learner/observation-logger';
@@ -24,9 +24,6 @@ import type { Evaluator } from '../evaluator/evaluator';
 import type { LiveState } from './live-state';
 
 const log = moduleLogger('token-registry');
-
-/** Wait this long before the safety check so the dev's launch buy is in the ledger. */
-const SAFETY_CHECK_DELAY_MS = 3_000;
 
 export class TokenRegistry {
   private safetyWorker: Worker<SafetyJob> | null = null;
@@ -97,9 +94,8 @@ export class TokenRegistry {
       bus.publish({ type: 'token', data: { mint: ev.mint, name: ev.name, symbol: ev.symbol, creator: ev.creator, createdAt: new Date(createdAtMs).toISOString() } });
       await this.observations?.scheduleFor(ev.mint, createdAtMs);
       await this.evaluator?.scheduleFor(ev.mint, createdAtMs);
-      if (this.safety) {
-        await safetyQueue.add('check', { mint: ev.mint }, { jobId: `safety-${ev.mint}`, delay: SAFETY_CHECK_DELAY_MS });
-      }
+      // Safety checks cost RPC credits, so the evaluator queues them only for
+      // tokens that gain real holders (see scoring.safetyMinHolders).
     } catch (err) {
       this.stats.createErrors++;
       log.error({ mint: ev.mint, err: (err as Error).message }, 'failed to register new token');
