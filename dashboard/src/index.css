@@ -91,6 +91,8 @@
 
 html,
 body {
+  overscroll-behavior-y: none; /* no rubber-band bounce in the installed app */
+  -webkit-tap-highlight-color: transparent;
   background: var(--page);
   color: var(--ink);
   font-family: var(--font-sans);

@@ -106,6 +106,13 @@ Open http://localhost:5173 and log in.
 2. Merge this branch into `main`. In GitHub, go to repo Settings → Pages → Source and pick **GitHub Actions**.
 3. Open `https://smaxhy.github.io/super-secret-weapon/`. Under "Bot address", enter `https://45-32-238-44.sslip.io` and log in.
 
+### Install it on your phone
+The dashboard is an installable web app. Open the GitHub Pages link on your phone:
+- **Android (Chrome):** tap **Install app**, or ⋮ → *Install app*.
+- **iPhone (Safari):** tap **Share** → **Add to Home Screen**.
+
+It then opens full-screen from its own icon, like a normal app. The bot's data is always fetched live and never stored on the phone.
+
 ## Useful commands
 
 | Command | What it does |

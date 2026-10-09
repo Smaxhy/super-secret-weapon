@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { InstallButton } from '../components/InstallButton';
 import { getApiUrl, login, setApiUrl } from '../lib/api';
 
 export function Login() {
@@ -48,6 +49,9 @@ export function Login() {
         <button type="submit" disabled={busy} className="w-full rounded-lg bg-accent py-2.5 font-semibold text-white disabled:opacity-60">
           {busy ? 'Logging in…' : 'Log in'}
         </button>
+        <div className="mt-4 flex justify-center">
+          <InstallButton compact />
+        </div>
       </form>
     </main>
   );

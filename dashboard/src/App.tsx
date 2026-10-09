@@ -5,6 +5,7 @@
  */
 import { useEffect, useState } from 'react';
 import { HashRouter, NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { InstallButton } from './components/InstallButton';
 import { BotStatusBadge } from './components/StatusBadge';
 import { disconnectSocket, useSocketStatus } from './hooks/useWebSocket';
 import { getToken, setToken } from './lib/api';
@@ -83,6 +84,7 @@ function Shell() {
           ))}
         </nav>
         <div className="mt-auto flex flex-col gap-2 pt-6">
+          <InstallButton />
           <BotStatusBadge connected={connected} />
           <button type="button" onClick={nextTheme} className="rounded-lg px-3 py-2 text-left text-sm text-ink-2 hover:bg-surface-2">
             Theme: {theme}
@@ -101,17 +103,29 @@ function Shell() {
       </aside>
 
       {/* Mobile top bar */}
-      <header className="sticky top-0 z-20 flex items-center justify-between border-b border-line bg-surface px-4 py-3 md:hidden">
+      <header className="sticky top-0 z-20 flex items-center justify-between border-b border-line bg-surface px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] md:hidden">
         <span className="text-lg font-bold">Solbot</span>
         <div className="flex items-center gap-2">
+          <InstallButton compact />
           <BotStatusBadge connected={connected} />
           <button type="button" onClick={nextTheme} aria-label={`Theme: ${theme}`} className="rounded-lg border border-line px-2.5 py-1 text-base leading-none">
             ◐
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              disconnectSocket();
+              setToken(null);
+            }}
+            aria-label="Log out"
+            className="rounded-lg border border-line px-2.5 py-1 text-base leading-none"
+          >
+            ⎋
+          </button>
         </div>
       </header>
 
-      <main id="main" className="mx-auto w-full max-w-7xl flex-1 px-4 pb-24 pt-5 sm:px-6 md:pb-10">
+      <main id="main" className="mx-auto w-full max-w-7xl flex-1 px-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-5 sm:px-6 md:pb-10">
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/feed" element={<LiveFeed />} />
@@ -125,9 +139,9 @@ function Shell() {
       </main>
 
       {/* Mobile bottom nav */}
-      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-6 border-t border-line bg-surface md:hidden" aria-label="Main">
+      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-6 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden" aria-label="Main">
         {NAV.map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => `flex flex-col items-center gap-0.5 py-2 text-[11px] font-medium ${isActive ? 'text-accent' : 'text-ink-2'}`}>
+          <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => `flex min-h-14 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium ${isActive ? 'text-accent' : 'text-ink-2'}`}>
             <span aria-hidden="true" className="text-lg leading-none">{n.icon}</span>
             {n.label.split(' ')[0]}
           </NavLink>
