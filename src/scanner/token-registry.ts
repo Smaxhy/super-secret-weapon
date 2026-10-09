@@ -89,7 +89,7 @@ export class TokenRegistry {
       this.stats.created++;
       const latency = Math.max(0, detectedAt - createdAtMs);
       this.stats.latencyMsAvg = this.stats.latencyMsAvg * 0.95 + latency * 0.05;
-      log.info({ mint: ev.mint, name: ev.name, symbol: ev.symbol, creator: ev.creator, latencyMs: latency }, `🆕 ${ev.symbol}`);
+      log.info({ mint: ev.mint, tokenName: ev.name, symbol: ev.symbol, creator: ev.creator, latencyMs: latency }, `🆕 ${ev.symbol}`);
 
       await this.observations?.scheduleFor(ev.mint, createdAtMs);
       if (this.safety) {
