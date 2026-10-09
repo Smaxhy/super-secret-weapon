@@ -1,5 +1,6 @@
-/** Bot controls: pause / kill switch, trade size, entry rules, keywords, paper reset. */
+/** Bot controls: pause / kill switch, trade size, entry rules, keywords, paper account reset. */
 import { useEffect, useState } from 'react';
+import { ResetPaperForm } from '../components/ResetPaper';
 import { Card, ErrorBox, Loading, PageHeader } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
@@ -77,7 +78,6 @@ export function Controls() {
             trading: form.trading,
             entry: { ...form.entry, riskyEnabled: form.entry.riskyEntry.enabled },
             keywords: form.keywords,
-            paper: form.paper,
           }),
         }),
       '✓ Saved — the bot uses the new settings within 30 seconds.',
@@ -118,7 +118,6 @@ export function Controls() {
           <div className="grid grid-cols-2 gap-3">
             <NumberField label="Size per trade" value={form.trading.maxPositionSol} step={0.05} min={0.01} max={10} suffix="SOL" onChange={(v) => set('trading', { maxPositionSol: v })} hint="Raise as results improve." />
             <NumberField label="Max open trades" value={form.trading.maxConcurrentPositions} min={1} max={20} onChange={(v) => set('trading', { maxConcurrentPositions: v })} />
-            <NumberField label="Paper balance" value={form.paper.startingBalanceSol} step={1} min={0.1} suffix="SOL" onChange={(v) => set('paper', { startingBalanceSol: v })} hint="Fake starting money." />
           </div>
           <div className="mt-3 grid gap-2">
             {STRATS.map(([k, l]) => (
@@ -163,19 +162,9 @@ export function Controls() {
         </button>
       </div>
 
-      <Card title="Start fresh" className="mt-6">
-        <p className="mb-3 text-sm text-ink-2">Deletes all paper trades and positions (e.g. after a bug or a strategy change). Learning data is kept.</p>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => {
-            const c = window.prompt('Type RESET to wipe all paper trades');
-            if (c) void run(() => api('/api/controls/reset-paper', { method: 'POST', body: JSON.stringify({ confirm: c }) }), '✓ Paper trading reset');
-          }}
-          className="rounded-lg border border-critical px-4 py-2 text-sm font-semibold text-down"
-        >
-          Reset paper trading
-        </button>
+      <Card title="Reset paper account" className="mt-6 border-critical/40">
+        <ResetPaperForm defaultBalance={10} />
+        <p className="mt-3 text-xs text-muted">Current paper starting balance: {form.paper.startingBalanceSol} SOL.</p>
       </Card>
     </>
   );

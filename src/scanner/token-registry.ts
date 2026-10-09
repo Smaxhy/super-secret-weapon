@@ -23,6 +23,8 @@ import type { SafetyChecker } from '../evaluator/safety-checker';
 import type { ObservationLogger } from '../learner/observation-logger';
 import type { Evaluator } from '../evaluator/evaluator';
 import type { LiveState } from './live-state';
+import { curvePriceSol } from '../lib/pumpfun';
+import type { InsiderTracker } from '../evaluator/insider-cluster';
 
 const log = moduleLogger('token-registry');
 
@@ -35,6 +37,8 @@ export class TokenRegistry {
     private readonly observations: ObservationLogger | null,
     private readonly safety: SafetyChecker | null,
     private readonly evaluator: Evaluator | null = null,
+    /** Hidden-dev / bundle / insider signals from the trade stream (no RPC). */
+    private readonly insiders: InsiderTracker | null = null,
   ) {}
 
   /** Wire this to `listener.on('event', ...)`. */
@@ -45,7 +49,13 @@ export class TokenRegistry {
         void this.onCreate(event, envelope);
         break;
       case 'trade':
-        this.liveState.onTrade(event).catch((err: Error) => {
+        this.liveState.onTrade(event).then(() => {
+          if (!this.insiders || !this.liveState.isTracked(event.mint)) return;
+          return this.insiders.onTrade({
+            mint: event.mint, user: event.user, isBuy: event.isBuy, lamports: event.solAmount, tokens: event.tokenAmount, timestamp: event.timestamp,
+            priceSol: event.virtualTokenReserves > 0n ? curvePriceSol(event.virtualSolReserves, event.virtualTokenReserves) : undefined,
+          });
+        }).catch((err: Error) => {
           this.stats.tradeErrors++;
           if (this.stats.tradeErrors % 100 === 1) log.warn({ err: err.message }, 'trade update failed');
         });
@@ -57,7 +67,10 @@ export class TokenRegistry {
         void this.onAmmPool(event);
         break;
       case 'ammTrade':
-        this.liveState.onAmmTrade(event).catch((err: Error) => {
+        this.liveState.onAmmTrade(event).then((mint) => {
+          if (!this.insiders || !mint) return;
+          return this.insiders.onTrade({ mint, user: event.user, isBuy: event.isBuy, lamports: event.quoteAmount, tokens: event.baseAmount, timestamp: event.timestamp });
+        }).catch((err: Error) => {
           this.stats.tradeErrors++;
           if (this.stats.tradeErrors % 100 === 1) log.warn({ err: err.message }, 'pumpswap trade update failed');
         });
@@ -73,6 +86,7 @@ export class TokenRegistry {
     try {
       // Live state first: trades from the same transaction arrive right behind this.
       await this.liveState.onCreate(ev, detectedAt);
+      if (this.insiders) void this.insiders.onCreate({ mint: ev.mint, creator: ev.creator, timestamp: ev.timestamp }).catch(() => undefined);
 
       await prisma.token.upsert({
         where: { mint: ev.mint },

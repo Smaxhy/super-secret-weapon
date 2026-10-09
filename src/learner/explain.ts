@@ -24,7 +24,7 @@ const LABEL: Record<string, string> = {
   funderReuse: 'clean funding source',
   walletAge: 'established dev wallet',
   socials: 'real socials',
-  narrative: 'matching keywords',
+  narrative: 'strong narrative',
 };
 
 const STRATEGY: Record<string, string> = {
@@ -47,6 +47,10 @@ export function explainBuy(i: {
   regime: string;
   risky?: string | null;
   copiedWallet?: string | null;
+  /** Learned pattern odds that nudged the score (null/undefined = none). */
+  odds?: { winRate: number; priorRate: number; n: number; points: number } | null;
+  narrativeReason?: string | null;
+  insiderNote?: string | null;
 }): string {
   const m = i.market;
   const strong = Object.entries(i.features)
@@ -66,7 +70,10 @@ export function explainBuy(i: {
     `At entry: ${m.holders} holders, ${m.volumeUsd ? `$${Math.round(m.volumeUsd).toLocaleString()}` : `${m.volumeSol.toFixed(1)} SOL`} volume, MC ${m.marketCapUsd ? `$${Math.round(m.marketCapUsd).toLocaleString()}` : `${m.marketCapSol.toFixed(0)} SOL`}, ` +
       `buys/sells ${m.buySellRatio.toFixed(1)}, ${m.complete ? 'trading on PumpSwap' : `curve ${pct(m.bondingCurvePct)}`}, ` +
       `dev ${pct(m.devHoldingPct, 1)}, bundlers ${pct(m.earlyBuyerPct, 1)}, top 10 ${pct(m.top10HolderPct)}, fees paid ${m.totalFeesSol.toFixed(2)} SOL.`,
+    i.narrativeReason && i.narrativeReason !== 'neutral narrative' ? `Narrative: ${i.narrativeReason}.` : '',
+    i.insiderNote ? `Insider check: ${i.insiderNote}.` : '',
     weak.length ? `Weak spots: ${weak.join(', ')}.` : '',
+    i.odds ? oddsSentence(i.odds) : '',
     i.risky ? `Higher-risk entry (${i.risky}) — bought at reduced size.` : '',
     i.regime !== 'NORMAL' ? `Market mood: ${i.regime.toLowerCase().replace('_', '-')}.` : '',
   ];
@@ -100,4 +107,10 @@ export function explainSell(i: {
     `Sold ${i.closing ? 'the rest' : `${i.pct.toFixed(0)}%`} of ${i.symbol} at ${i.multiple.toFixed(2)}× after ${i.heldMinutes.toFixed(0)} min (peak ${i.peakMultiple.toFixed(2)}×).`,
     `This sell: ${i.pnlSol >= 0 ? '+' : '−'}${Math.abs(i.pnlSol).toFixed(4)} SOL after fees.`,
   ].join(' ');
+}
+
+/** "Learned odds: similar coins won 42% (n=31) vs 30% overall (+3.2 pts)." */
+export function oddsSentence(o: { winRate: number; priorRate: number; n: number; points: number }): string {
+  const pts = `${o.points >= 0 ? '+' : '−'}${Math.abs(o.points).toFixed(1)} pts`;
+  return `Learned odds: similar coins won ${Math.round(o.winRate * 100)}% (n=${o.n}) vs ${Math.round(o.priorRate * 100)}% overall (${pts}).`;
 }

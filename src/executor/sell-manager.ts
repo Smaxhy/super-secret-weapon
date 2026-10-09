@@ -12,11 +12,17 @@
  *   6. TAKE_PROFIT    "initials out" at 2×: sell exactly enough that all SOL received
  *                     so far covers all SOL paid (incl. fees). The rest is the RUNNER
  *                     (house money) — it can no longer lose us money.
- *   7. TRAILING_STOP  before initials: armed at 1.25×, 20% below the peak, tightening
- *                     to 15% (2× peak) and 10% (3× peak).
- *                     runner: volatility-adaptive trail = 3 × recent volatility,
- *                     kept between 12% and 35% (max 20% once it peaked at 10×+), so
- *                     normal wicks don't shake us out of a 5-20× move.
+ *   7. TRAILING_STOP  (trailingStopLevel — the dashboard draws the same line)
+ *                     before initials: armed at 1.25×, 2.5 × volatility, between 10% and
+ *                     20% (15% from a 2× peak, 10% from 3×; 20% until volatility is known).
+ *                     runner: 3 × volatility, kept between 12% and 35%, capped at
+ *                     30/25/20% after 3×/5×/10× peaks.
+ *                     Volatility = robust (outlier-proof) spread of 15s returns over 4 min.
+ *                     Peak = real-trade prices only, held for two checks (no single wick).
+ *                     Once 1.5× was seen, the stop never sits below break-even + fees.
+ *                     A break must be confirmed (2 checks and 3s under the stop) unless
+ *                     it gapped >1.5× the trail distance below the peak → sell at once.
+ *                     RUG_DETECTED also fires when the insider cluster dumps (insiderDumpSignal).
  *   8. Protect profit (before initials) once it reached 1.3×, never let it fall back below 1.05×
  *   9. TAKE_PROFIT    resistance: rejected 2+ times at the same ceiling while ≥1.2× → sell
  *                     (before initials only — the runner ignores it)
@@ -43,6 +49,7 @@ import { PublicKey } from '@solana/web3.js';
 import { decodeBondingCurveAccount } from '../lib/pumpfun';
 import { getConnection } from '../lib/solana';
 import { copySoldKey } from '../scanner/whale-tracker';
+import { insiderDumpSignal } from '../evaluator/insider-cluster';
 import type { Executor } from './types';
 
 const log = moduleLogger('sell-manager');
@@ -88,6 +95,19 @@ export interface ExitInput {
   volatilityPct: number | null;
   /** Fixed SOL cost of every sell transaction (network + priority fee + tip), on top of the % fees. */
   txFeeSol: number;
+  /**
+   * The price agrees with the last real trade (see priceTrusted). An untrusted
+   * price can still trigger exits but never raises the peak. Default true.
+   */
+  priceTrusted?: boolean;
+  /** Price at the previous check. A new peak only counts once two checks in a row were up there. */
+  prevPriceSol?: number | null;
+  /** Price has been under the trailing stop since this time (null = it isn't). */
+  breachSinceMs?: number | null;
+  /** How many checks in a row the price has been under the trailing stop. */
+  breachTicks?: number;
+  /** Insider / hidden dev wallets dumped (insiderDumpSignal) → immediate rug exit. */
+  insiderDump?: { hit: boolean; detail: string } | null;
 }
 
 /** Marker stored in `tpTiersHit` once initials are out (real tiers are all > 1). */
@@ -99,6 +119,8 @@ export interface ActivitySample {
   sells: number;
   holders: number;
   priceSol: number;
+  /** false = the price was far from the last real trade (suspicious) — ignored for volatility. */
+  trusted?: boolean;
 }
 
 /**
@@ -158,26 +180,51 @@ export function computeRisk(samples: ActivitySample[], peakPriceSol: number, now
   return { risk, why };
 }
 
+const median = (xs: number[]): number => {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
+};
+
 /**
- * How choppy the price is: the standard deviation of ~`stepMs` price changes
- * over the last `windowMs`, in %. E.g. 5 means "it typically moves about 5%
- * every 10 seconds". Returns null when there isn't enough history (fewer than
- * 4 steps). Pure — exported for tests.
+ * How choppy the price is, ATR-style: the typical size of a `stepMs` price
+ * move over the last `windowMs`, in %. E.g. 5 means "it typically moves about
+ * 5% every 15 seconds". Built to ignore noise and one-off bad prints:
+ *  1. samples flagged `trusted: false` (price far from the last real trade) are dropped,
+ *  2. a median-of-3 filter removes isolated single-sample spikes (wicks),
+ *  3. the series is re-sampled on a fixed time grid (last price at each grid
+ *     point — time-weighted, so a burst of ticks doesn't count extra),
+ *  4. the spread of the step returns is a robust one: the trimmed mean absolute
+ *     deviation from the median (largest 10% dropped) or the MAD, whichever is
+ *     larger, both scaled to match a standard deviation.
+ * Returns null when there isn't enough history (fewer than 4 steps). Pure — exported for tests.
  */
-export function computeVolatilityPct(samples: ActivitySample[], now: number, windowMs = 180_000, stepMs = 10_000): number | null {
-  const win = samples.filter((x) => now - x.t <= windowMs && x.priceSol > 0);
-  // Re-sample to one price every `stepMs` (samples arrive every ~2s).
-  const picked: ActivitySample[] = [];
-  for (const x of win) {
-    const last = picked[picked.length - 1];
-    if (!last || x.t - last.t >= stepMs) picked.push(x);
+export function computeVolatilityPct(samples: ActivitySample[], now: number, windowMs = 240_000, stepMs = 15_000): number | null {
+  const win = samples.filter((x) => now - x.t <= windowMs && x.t <= now && x.priceSol > 0 && x.trusted !== false);
+  if (win.length < 2) return null;
+  // Median-of-3: a lone spike (both neighbours disagree with it) is replaced by the middle value.
+  const px = win.map((x, k) => (k === 0 || k === win.length - 1 ? x.priceSol : median([win[k - 1]!.priceSol, x.priceSol, win[k + 1]!.priceSol])));
+  // Time grid from the first sample to the last one, one price per step, interpolated
+  // (log-linear) between the samples either side, so uneven tick timing doesn't alias.
+  const grid: number[] = [];
+  let j = 0;
+  for (let t = win[0]!.t; t <= win[win.length - 1]!.t; t += stepMs) {
+    while (j + 1 < win.length && win[j + 1]!.t <= t) j++;
+    const a = win[j]!;
+    const b = win[j + 1];
+    if (!b || b.t === a.t) grid.push(px[j]!);
+    else grid.push(px[j]! * (px[j + 1]! / px[j]!) ** ((t - a.t) / (b.t - a.t)));
   }
   const returns: number[] = [];
-  for (let k = 1; k < picked.length; k++) returns.push((picked[k]!.priceSol / picked[k - 1]!.priceSol - 1) * 100);
+  for (let k = 1; k < grid.length; k++) returns.push((grid[k]! / grid[k - 1]! - 1) * 100);
   if (returns.length < 4) return null;
-  const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
-  const variance = returns.reduce((a, b) => a + (b - mean) ** 2, 0) / (returns.length - 1);
-  return Math.sqrt(variance);
+  const med = median(returns);
+  const dev = returns.map((r) => Math.abs(r - med)).sort((a, b) => a - b);
+  const trim = returns.length >= 6 ? Math.max(1, Math.floor(returns.length * 0.1)) : 0;
+  const kept = dev.slice(0, dev.length - trim);
+  const trimmedMeanAbs = kept.reduce((a, b) => a + b, 0) / kept.length;
+  // 1.2533 / 1.4826 turn a mean absolute / median absolute deviation into a standard-deviation-sized number.
+  return Math.max(1.2533 * trimmedMeanAbs, 1.4826 * median(dev));
 }
 
 /** Runner trailing stop %: volatility × multiplier, clamped, tighter after a huge peak. Pure. */
@@ -188,19 +235,138 @@ export function runnerTrailPct(volatilityPct: number | null, peakMultiple: numbe
   return Math.round(pct * 10) / 10;
 }
 
+type ExitRules = BotConfigShape['exit'];
+type TrailRules = ExitRules['trail'];
+
+/** Trail settings, falling back to the defaults (a saved exit section from an older version has none). */
+export function trailRules(rules: ExitRules): TrailRules {
+  const t = (rules as Partial<ExitRules>).trail;
+  return t ? { ...DEFAULT_CONFIG.exit.trail, ...t } : DEFAULT_CONFIG.exit.trail;
+}
+
+/** What the trailing stop needs to know about a position. */
+export interface TrailParams {
+  entryPriceSol: number;
+  /** Highest confirmed real-trade price so far. */
+  peakPriceSol: number;
+  trailingActive: boolean;
+  initialsOut: boolean;
+  volatilityPct: number | null;
+  sizeSol: number;
+  costSol: number;
+  remainingPct: number;
+  txFeeSol: number;
+}
+
+export interface TrailLevel {
+  phase: 'pre' | 'runner';
+  /** Trail distance below the peak, %. */
+  trailPct: number;
+  /** Where the trail alone would sit. */
+  trailPriceSol: number;
+  /** Break-even (incl. fees) floor, once the peak reached `breakEvenAfterMultiple`. */
+  floorPriceSol: number | null;
+  /** The effective stop: max(trail, floor). */
+  stopPriceSol: number;
+  /** At or below this, sell immediately without waiting for confirmation (a gap / dump). */
+  gapPriceSol: number;
+}
+
+/**
+ * Price multiple at which selling what's left gets back its share of the cost
+ * plus fees (% fees + this sale's tx fee). Pure.
+ */
+export function breakEvenMultiple(t: Pick<TrailParams, 'sizeSol' | 'costSol' | 'remainingPct' | 'txFeeSol'>, feeBufferPct: number): number {
+  if (!(t.sizeSol > 0)) return 1;
+  const slice = (t.sizeSol * Math.max(t.remainingPct, 1)) / 100;
+  return t.costSol / t.sizeSol / (1 - feeBufferPct / 100) + t.txFeeSol / slice;
+}
+
+/**
+ * The trailing stop right now — the ONE place this is computed, used by
+ * decideExit and by the dashboard chart (so the line drawn is exactly the one
+ * we sell on). Returns null when no trailing stop is active. Pure.
+ *  - before initials: vol-adaptive (pre.volMultiplier × vol), between pre.minTrailPct
+ *    and the classic trailingStopPct/trailingTightening value (also the fallback);
+ *  - runner: runnerTrailPct, capped tighter at 3x/5x/10x peaks (runnerProfitCaps);
+ *  - both: never below break-even + fees once the peak reached 1.5x.
+ */
+export function trailingStopLevel(t: TrailParams, rules: ExitRules): TrailLevel | null {
+  if (!(t.entryPriceSol > 0) || !(t.peakPriceSol > 0)) return null;
+  const tr = trailRules(rules);
+  const peakX = t.peakPriceSol / t.entryPriceSol;
+  let pct: number;
+  if (t.initialsOut) {
+    pct = runnerTrailPct(t.volatilityPct, peakX, rules.runner);
+    for (const c of tr.runnerProfitCaps) if (peakX >= c.fromMultiple) pct = Math.min(pct, c.maxTrailPct);
+  } else {
+    const classic = rules.trailingTightening.reduce<number>((acc, x) => (peakX >= x.fromMultiple ? Math.min(acc, x.pct) : acc), rules.trailingStopPct);
+    pct = t.volatilityPct === null ? classic : Math.max(Math.min(tr.pre.minTrailPct, classic), Math.min(classic, tr.pre.volMultiplier * t.volatilityPct));
+  }
+  pct = Math.round(pct * 10) / 10;
+  const trailOn = t.initialsOut || t.trailingActive;
+  const floorOn = peakX >= tr.breakEvenAfterMultiple;
+  if (!trailOn && !floorOn) return null;
+  const trailPriceSol = t.peakPriceSol * (1 - pct / 100);
+  const floorPriceSol = floorOn ? t.entryPriceSol * breakEvenMultiple(t, rules.initials.feeBufferPct) : null;
+  const stopPriceSol = Math.max(trailOn ? trailPriceSol : 0, floorPriceSol ?? 0);
+  const gapPriceSol = Math.max(0, t.peakPriceSol - tr.gapMultiple * (t.peakPriceSol - stopPriceSol));
+  return { phase: t.initialsOut ? 'runner' : 'pre', trailPct: pct, trailPriceSol, floorPriceSol, stopPriceSol, gapPriceSol };
+}
+
+/**
+ * Should this price count toward the peak? Only if it agrees with the last real
+ * trade's execution price (live-state's reference) within `tolerancePct`. No
+ * reference yet → trusted. Pure.
+ */
+export function priceTrusted(priceSol: number, refPriceSol: number | null | undefined, tolerancePct: number): boolean {
+  if (!(priceSol > 0)) return false;
+  if (!refPriceSol || !(refPriceSol > 0)) return true;
+  return Math.abs(priceSol / refPriceSol - 1) * 100 <= tolerancePct;
+}
+
+/**
+ * Turn insiderDumpSignal()'s answer ({ dumping, reason }; a plain boolean or a
+ * hit/detail object also work) into { hit, detail } for decideExit. Pure.
+ */
+export function normaliseInsiderSignal(sig: unknown): { hit: boolean; detail: string } | null {
+  if (sig === null || sig === undefined) return null;
+  if (typeof sig === 'boolean') return sig ? { hit: true, detail: 'insiders dumping' } : null;
+  if (typeof sig !== 'object') return null;
+  const o = sig as Record<string, unknown>;
+  const hit = [o.dumping, o.hit, o.dumped, o.triggered].some((v) => v === true);
+  if (!hit) return null;
+  const detail = [o.reason, o.detail].find((v): v is string => typeof v === 'string' && v.length > 0);
+  return { hit, detail: detail ?? 'insiders dumping' };
+}
+
 export interface ExitDecision {
   /** Sells to execute now, each as % of the ORIGINAL position. */
   sells: Array<{ pct: number; reason: ExitReason; detail: string }>;
-  state: { peakPriceSol: number; trailingActive: boolean; refPriceSol: number; lastMoveAtMs: number; tpTiersHit: number[] };
+  state: {
+    peakPriceSol: number;
+    trailingActive: boolean;
+    refPriceSol: number;
+    lastMoveAtMs: number;
+    tpTiersHit: number[];
+    /** Unconfirmed trailing-stop break in progress (kept in memory by the sell manager). */
+    breachSinceMs: number | null;
+    breachTicks: number;
+  };
 }
 
 export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDecision {
-  const state = {
-    peakPriceSol: Math.max(i.peakPriceSol, i.priceSol),
+  // Peak from real trades only: a suspicious price can't raise it, and a new high
+  // must hold for two checks in a row (min of this and the previous price) — a single wick doesn't count.
+  const peakCandidate = i.priceTrusted === false ? 0 : i.prevPriceSol && i.prevPriceSol > 0 ? Math.min(i.priceSol, i.prevPriceSol) : i.priceSol;
+  const state: ExitDecision['state'] = {
+    peakPriceSol: Math.max(i.peakPriceSol, peakCandidate),
     trailingActive: i.trailingActive,
     refPriceSol: i.refPriceSol,
     lastMoveAtMs: i.lastMoveAtMs,
     tpTiersHit: [...i.tpTiersHit],
+    breachSinceMs: null,
+    breachTicks: 0,
   };
   const all = (reason: ExitReason, detail: string): ExitDecision => ({ sells: [{ pct: i.remainingPct, reason, detail }], state });
   const multiple = i.priceSol / i.entryPriceSol;
@@ -210,6 +376,8 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   if (i.bundlePctEntry - i.bundlePctNow >= rules.rugExit.bundleDumpPct) {
     return all('RUG_DETECTED', `bundlers dumped ${(i.bundlePctEntry - i.bundlePctNow).toFixed(1)}% of supply`);
   }
+
+  if (i.insiderDump?.hit) return all('RUG_DETECTED', i.insiderDump.detail);
 
   if (i.devHoldingPctEntry > 0.1) {
     const devSoldPct = ((i.devHoldingPctEntry - i.devHoldingPctNow) / i.devHoldingPctEntry) * 100;
@@ -261,21 +429,34 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
 
   if (state.peakPriceSol >= i.entryPriceSol * rules.trailingStopActivateMultiple) state.trailingActive = true;
   const peakX = state.peakPriceSol / i.entryPriceSol;
-  if (initialsOut) {
-    // Runner: the trail follows the chart's volatility so it can catch a big win.
-    const trailPct = runnerTrailPct(i.volatilityPct, peakX, rules.runner);
-    if (remaining > 0 && i.priceSol <= state.peakPriceSol * (1 - trailPct / 100)) {
+  // Trailing stop (vol-adaptive, break-even floor after 1.5x). Only a CONFIRMED break sells:
+  // under the stop for N checks and N seconds — or straight away if it gapped far below.
+  const lvl = remaining > 0
+    ? trailingStopLevel(
+        { entryPriceSol: i.entryPriceSol, peakPriceSol: state.peakPriceSol, trailingActive: state.trailingActive, initialsOut, volatilityPct: i.volatilityPct, sizeSol: i.sizeSol, costSol: i.costSol, remainingPct: remaining, txFeeSol: i.txFeeSol },
+        rules,
+      )
+    : null;
+  if (lvl && i.priceSol <= lvl.stopPriceSol) {
+    const tr = trailRules(rules);
+    const ticks = (i.breachTicks ?? 0) + 1;
+    const since = i.breachSinceMs ?? i.nowMs;
+    const gapped = i.priceSol <= lvl.gapPriceSol;
+    const confirmed = ticks >= tr.confirmTicks && i.nowMs - since >= tr.confirmSec * 1000;
+    if (gapped || confirmed) {
+      const onFloor = lvl.floorPriceSol !== null && lvl.floorPriceSol >= lvl.trailPriceSol;
       const vol = i.volatilityPct === null ? 'no vol data yet' : `vol ${i.volatilityPct.toFixed(1)}%`;
-      sells.push({ pct: remaining, reason: 'TRAILING_STOP', detail: `runner: ${peakX.toFixed(2)}x peak, fell ${trailPct}% (${vol}) to ${multiple.toFixed(2)}x` });
+      const how = gapped ? 'gapped through the stop' : `held under the stop ${Math.round((i.nowMs - since) / 1000)}s`;
+      const what = onFloor
+        ? `break-even floor ${(lvl.floorPriceSol! / i.entryPriceSol).toFixed(2)}x after a ${peakX.toFixed(2)}x peak`
+        : `${peakX.toFixed(2)}x peak, trail ${lvl.trailPct}% (${vol})`;
+      sells.push({ pct: remaining, reason: 'TRAILING_STOP', detail: `${lvl.phase === 'runner' ? 'runner: ' : ''}${what}, ${how}, at ${multiple.toFixed(2)}x` });
       return { sells, state };
     }
-  } else {
-    const trailPct = rules.trailingTightening.reduce<number>((pct, t) => (peakX >= t.fromMultiple ? Math.min(pct, t.pct) : pct), rules.trailingStopPct);
-    if (state.trailingActive && remaining > 0 && i.priceSol <= state.peakPriceSol * (1 - trailPct / 100)) {
-      sells.push({ pct: remaining, reason: 'TRAILING_STOP', detail: `${peakX.toFixed(2)}x peak, fell ${trailPct}% to ${multiple.toFixed(2)}x` });
-      return { sells, state };
-    }
-
+    state.breachTicks = ticks;
+    state.breachSinceMs = since;
+  }
+  if (!initialsOut) {
     // Once it reached e.g. 1.3×, a winner must not turn into a loser.
     if (remaining > 0 && state.peakPriceSol >= i.entryPriceSol * rules.protectProfit.afterMultiple && multiple <= rules.protectProfit.floorMultiple) {
       sells.push({ pct: remaining, reason: 'TRAILING_STOP', detail: `protecting profit: peaked ${peakX.toFixed(2)}x, back to ${multiple.toFixed(2)}x` });
@@ -334,11 +515,23 @@ async function upgradeStoredExitRules(): Promise<void> {
   }
 }
 
+/** Insider / hidden-dev wallets dumping (the rug agent's cluster signal). Never throws. */
+async function readInsiderDump(redis: Redis, mint: string): Promise<{ hit: boolean; detail: string } | null> {
+  try {
+    return normaliseInsiderSignal(await insiderDumpSignal(redis, mint));
+  } catch (err) {
+    log.debug({ mint, err: (err as Error).message }, 'insider dump check failed');
+    return null;
+  }
+}
+
 export class SellManager {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
   private readonly samples = new Map<string, ActivitySample[]>();
   private readonly lastPoll = new Map<string, number>();
+  /** Per position: unconfirmed trailing-stop break + last measured volatility (memory only). */
+  private readonly trail = new Map<string, { breachSinceMs: number | null; breachTicks: number; volatilityPct: number | null }>();
   private updates: Array<{ id: string; priceSol: number; multiple: number; peakMultiple: number; unrealizedPnlSol: number; risk: number; holders: number; ownSupplyPct: number; exitImpactPct: number }> = [];
 
   constructor(
@@ -365,6 +558,7 @@ export class SellManager {
       this.updates = [];
       const openIds = new Set(positions.map((x) => x.id));
       for (const id of this.samples.keys()) if (!openIds.has(id)) this.samples.delete(id);
+      for (const id of this.trail.keys()) if (!openIds.has(id)) this.trail.delete(id);
       for (const p of positions) {
         try {
           await this.refreshIfStale(p.mint, p.token.bondingCurve);
@@ -400,6 +594,11 @@ export class SellManager {
     } catch (err) {
       log.debug({ mint, err: (err as Error).message }, 'curve poll failed');
     }
+  }
+
+  /** Latest measured volatility for a position (for the dashboard's trailing-stop line); null = not measured yet. */
+  volatilityFor(positionId: string): number | null {
+    return this.trail.get(positionId)?.volatilityPct ?? null;
   }
 
   /** Force-sell everything left in a position (manual sell / kill switch). */
@@ -443,7 +642,9 @@ export class SellManager {
     // Recent activity for the risk score (kept in memory, last ~3 minutes).
     const now = Date.now();
     const hist = this.samples.get(p.id) ?? [];
-    hist.push({ t: now, buys: view.buys, sells: view.sells, holders: m.holderCount, priceSol: m.priceSol });
+    const trusted = priceTrusted(m.priceSol, view.refPriceSol, trailRules(cfg.exit).peakRefTolerancePct);
+    const prevPriceSol = [...hist].reverse().find((x) => x.trusted !== false)?.priceSol ?? null;
+    hist.push({ t: now, buys: view.buys, sells: view.sells, holders: m.holderCount, priceSol: m.priceSol, trusted });
     while (hist.length && now - hist[0]!.t > Math.max(180_000, cfg.exit.resistance.windowSec * 1000, cfg.exit.runner.volWindowSec * 1000)) hist.shift();
     this.samples.set(p.id, hist);
     const { risk, why } = computeRisk(hist, Math.max(p.peakPriceSol, m.priceSol), now);
@@ -470,6 +671,9 @@ export class SellManager {
     }
     const copied = (entry as { copiedWallet?: string | null }).copiedWallet;
     const copyWalletSold = !!copied && (await this.redis.exists(copySoldKey(p.mint, copied))) === 1;
+    const insiderDump = await readInsiderDump(this.redis, p.mint);
+    const volatilityPct = computeVolatilityPct(hist, now, cfg.exit.runner.volWindowSec * 1000, cfg.exit.runner.volStepSec * 1000);
+    const tr = this.trail.get(p.id) ?? { breachSinceMs: null, breachTicks: 0, volatilityPct: null };
     // Money in vs money out, for "take initials". realizedPnlSol already subtracts
     // the cost of every slice sold, so adding that cost back gives what we received.
     const costSol = p.sizeSol + Number((entry as { buyFeeSol?: number }).buyFeeSol ?? 0);
@@ -503,13 +707,19 @@ export class SellManager {
         sizeSol: p.sizeSol,
         costSol,
         proceedsSol,
-        volatilityPct: computeVolatilityPct(hist, now, cfg.exit.runner.volWindowSec * 1000, cfg.exit.runner.volStepSec * 1000),
+        volatilityPct,
         txFeeSol: cfg.paper.txFeeSol,
+        priceTrusted: trusted,
+        prevPriceSol,
+        breachSinceMs: tr.breachSinceMs,
+        breachTicks: tr.breachTicks,
+        insiderDump,
       },
       cfg.exit,
     );
 
     const s = decision.state;
+    this.trail.set(p.id, { breachSinceMs: s.breachSinceMs, breachTicks: s.breachTicks, volatilityPct });
     await prisma.position.update({
       where: { id: p.id },
       data: { peakPriceSol: s.peakPriceSol, trailingActive: s.trailingActive, refPriceSol: s.refPriceSol, lastMoveAt: new Date(s.lastMoveAtMs), tpTiersHit: s.tpTiersHit },

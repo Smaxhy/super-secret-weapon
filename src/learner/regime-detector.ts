@@ -12,7 +12,9 @@
 import type { MarketRegime } from '@prisma/client';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
-import { WIN_MULTIPLE } from './outcome-labeler';
+import { DEFAULT_CONFIG } from '../config/default';
+
+const WIN_MULTIPLE = DEFAULT_CONFIG.learning.winMultiple;
 
 const log = moduleLogger('regime');
 const EVERY_MS = 15 * 60_000;
@@ -38,7 +40,7 @@ async function updateHourFactors(): Promise<void> {
   const rows = await prisma.$queryRaw<Array<{ h: number; n: bigint; wins: bigint }>>`
     SELECT EXTRACT(HOUR FROM "createdAt" AT TIME ZONE 'UTC')::int AS h, COUNT(*) AS n,
            COUNT(*) FILTER (WHERE "outcomeMax" >= ${WIN_MULTIPLE}) AS wins
-    FROM "Evaluation" WHERE "outcomeLabeledAt" IS NOT NULL AND "createdAt" >= NOW() - INTERVAL '7 days'
+    FROM "Evaluation" WHERE "outcomeLabeledAt" IS NOT NULL AND "outcomeMax" IS NOT NULL AND "createdAt" >= NOW() - INTERVAL '7 days'
     GROUP BY 1`;
   const total = rows.reduce((s, r) => s + Number(r.n), 0);
   const wins = rows.reduce((s, r) => s + Number(r.wins), 0);
@@ -67,7 +69,7 @@ async function measure(): Promise<RegimeStats> {
     prisma.token.count({ where: { createdAt: { gte: h6 } } }),
     prisma.token.count({ where: { createdAt: { gte: d7 } } }),
     prisma.token.count({ where: { createdAt: { gte: h6 }, status: 'COMPLETED' } }),
-    prisma.evaluation.findMany({ where: { outcomeLabeledAt: { gte: h6 } }, select: { outcomeMax: true, outcomeMin: true }, take: 10_000 }),
+    prisma.evaluation.findMany({ where: { outcomeLabeledAt: { gte: h6 }, outcomeMax: { not: null } }, select: { outcomeMax: true, outcomeMin: true }, take: 10_000 }),
   ]);
   const firstToken = await prisma.token.findFirst({ orderBy: { createdAt: 'asc' }, select: { createdAt: true } });
   const hours7d = firstToken ? Math.max(1, Math.min(168, (now - firstToken.createdAt.getTime()) / 3600_000)) : 1;

@@ -2,15 +2,40 @@
  * Learning engine data for the dashboard.
  *   GET  /api/learner          weights (now vs default), weight history, beliefs,
  *                              regime now + history, missed opportunities, label stats
+ *                              + lastAdjustAt / nextAdjustAt, recent adjustment steps
+ *                              (accepted/rejected, AUC before/after), clean label stats
+ *                              (wins / losses / excluded) and learned keywords
  *   POST /api/learner/adjust   run the weight adjustment right now
  */
 import type { FastifyInstance } from 'fastify';
-import { DEFAULT_WEIGHTS } from '../../config/default';
-import { getWeights } from '../../config/runtime-config';
-import { runDailyAdjustment } from '../../learner/daily-adjuster';
-import { WIN_MULTIPLE } from '../../learner/outcome-labeler';
+import { DEFAULT_CONFIG, DEFAULT_WEIGHTS } from '../../config/default';
+import { getConfig, getWeights } from '../../config/runtime-config';
+import { adjusterTimes, loadLabelled, recentSteps, runAdjustment } from '../../learner/daily-adjuster';
+import { ALL_PATTERN } from '../../learner/bayesian-updater';
+import { keywordInsights } from '../../learner/keyword-learner';
+import { redis } from '../../lib/redis';
 import { allHourFactors, currentRegime } from '../../learner/regime-detector';
 import { prisma } from '../../lib/prisma';
+
+/** Label stats are a 20k-row scan → cache them for a minute. */
+const WIN_MULTIPLE = DEFAULT_CONFIG.learning.winMultiple;
+
+let labelCache: { at: number; value: unknown } | null = null;
+async function labelStats(): Promise<unknown> {
+  if (labelCache && Date.now() - labelCache.at < 60_000) return labelCache.value;
+  const s = await loadLabelled(redis, false);
+  const value = {
+    since: s.since.toISOString(),
+    wins: s.wins,
+    losses: s.losses,
+    excluded: s.excluded,
+    excludedBy: s.excludedBy,
+    fromTrades: s.fromTrades,
+    winRate: s.wins + s.losses ? (s.wins / (s.wins + s.losses)) * 100 : null,
+  };
+  labelCache = { at: Date.now(), value };
+  return value;
+}
 
 export async function learnerRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/learner', async () => {
@@ -21,18 +46,42 @@ export async function learnerRoutes(app: FastifyInstance): Promise<void> {
       prisma.beliefState.findMany({ orderBy: { observations: 'desc' }, take: 30 }),
       prisma.regimeSnapshot.findMany({ orderBy: { createdAt: 'desc' }, take: 96 }),
       prisma.missedOpportunity.findMany({ orderBy: { createdAt: 'desc' }, take: 30 }),
-      prisma.evaluation.count({ where: { outcomeLabeledAt: { gte: day } } }),
-      prisma.evaluation.count({ where: { outcomeLabeledAt: { gte: day }, outcomeMax: { gte: WIN_MULTIPLE } } }),
+      prisma.evaluation.count({ where: { outcomeLabeledAt: { gte: day }, outcomeMax: { not: null } } }),
+      prisma.evaluation.count({ where: { outcomeLabeledAt: { gte: day }, outcomeMax: { gte: WIN_MULTIPLE }, outcomeMin: { gt: DEFAULT_CONFIG.learning.drawdownLossMultiple } } }),
       prisma.evaluation.groupBy({ by: ['decision'], where: { outcomeLabeledAt: { gte: day } }, _count: true, _avg: { outcomeMax: true } }),
     ]);
     const mints = [...new Set(missed.map((m) => m.mint))];
     const symbols = new Map((await prisma.token.findMany({ where: { mint: { in: mints } }, select: { mint: true, symbol: true } })).map((t) => [t.mint, t.symbol]));
+    const lc = getConfig().learning ?? DEFAULT_CONFIG.learning;
+    const [times, adjustments, labels, keywords] = await Promise.all([
+      adjusterTimes(redis),
+      recentSteps(redis, 20),
+      labelStats().catch(() => null),
+      Promise.resolve()
+        .then(() => keywordInsights(redis, 20))
+        .catch(() => null),
+    ]);
     return {
-      winMultiple: WIN_MULTIPLE,
+      winMultiple: lc.winMultiple,
+      drawdownLossMultiple: lc.drawdownLossMultiple,
+      lastAdjustAt: times.lastAdjustAt,
+      nextAdjustAt: times.nextAdjustAt,
+      adjustPendingAfterTrade: times.pendingAfterTrade,
+      adjustEveryMinutes: lc.adjustEveryMinutes,
+      adjustments,
+      labelStats: labels,
+      keywords,
       weightsVersion: version ?? 0,
       weights: Object.entries(weights).map(([feature, w]) => ({ feature, weight: w, default: DEFAULT_WEIGHTS[feature as keyof typeof DEFAULT_WEIGHTS] })),
       history: snapshots.map((s) => ({ version: s.version, active: s.active, reason: s.reason, createdAt: s.createdAt, changes: s.changes })),
-      beliefs: beliefs.map((b) => ({ pattern: b.pattern, winRate: (b.alpha / (b.alpha + b.beta)) * 100, observations: b.observations })),
+      beliefs: beliefs.map((b) => ({
+        pattern: b.pattern,
+        winRate: (b.alpha / (b.alpha + b.beta)) * 100,
+        observations: b.observations,
+        overall: b.pattern === ALL_PATTERN,
+        // Used in scoring once it has enough samples.
+        usedInScoring: lc.oddsEnabled && b.pattern !== ALL_PATTERN && b.observations >= lc.oddsMinSamples,
+      })),
       regime: currentRegime(),
       hourFactors: allHourFactors(),
       regimeHistory: regimes.reverse().map((r) => ({ t: r.createdAt, regime: r.regime, stats: r.stats })),
@@ -43,5 +92,5 @@ export async function learnerRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
-  app.post('/api/learner/adjust', async () => runDailyAdjustment('manual'));
+  app.post('/api/learner/adjust', async () => runAdjustment('manual'));
 }

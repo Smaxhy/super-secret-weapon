@@ -1,3 +1,5 @@
+import type { ConnStatus } from '../lib/reconnect';
+
 /** Status pill: icon + label + colour (never colour alone). */
 export type FeedStatus = 'bought' | 'flagged' | 'interesting' | 'skipped' | 'pending';
 
@@ -19,10 +21,17 @@ export function StatusBadge({ status }: { status: FeedStatus }) {
   );
 }
 
-export function BotStatusBadge({ connected, paused }: { connected: boolean; paused?: boolean }) {
-  const state = !connected ? { dot: 'bg-critical', label: 'Offline' } : paused ? { dot: 'bg-warning', label: 'Paused' } : { dot: 'bg-good', label: 'Live' };
+export function BotStatusBadge({ status, paused }: { status: ConnStatus; paused?: boolean }) {
+  const state =
+    status === 'offline'
+      ? { dot: 'bg-critical', label: 'Offline' }
+      : status === 'reconnecting'
+        ? { dot: 'bg-warning animate-pulse', label: 'Reconnecting…' }
+        : paused
+          ? { dot: 'bg-warning', label: 'Paused' }
+          : { dot: 'bg-good', label: 'Live' };
   return (
-    <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1 text-sm font-medium text-ink" role="status">
+    <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-line bg-surface px-3 py-1 text-sm font-medium text-ink" role="status">
       <span className={`h-2.5 w-2.5 rounded-full ${state.dot}`} aria-hidden="true" />
       {state.label}
     </span>

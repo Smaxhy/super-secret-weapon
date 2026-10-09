@@ -33,8 +33,10 @@ import { hotKeywords } from '../scanner/x-watcher';
 import type { OutcomeLabeler } from '../learner/outcome-labeler';
 import { currentRegime } from '../learner/regime-detector';
 import { keywordCheck, NEUTRAL_SOCIAL_FEATURES, SocialAnalyzer, socialsScore, twitterInfo } from './social-analyzer';
-import { analyzeMarket, type PrevCheckpoint } from './market-analyzer';
-import { checkEntryRules, decide, scoreFeatures, type FeatureVector } from './scorer';
+import { analyzeMarket, withInsider, type PrevCheckpoint } from './market-analyzer';
+import { checkEntryRules, decide, learnedOddsAdjustment, scoreFeatures, withOdds, type FeatureVector, type LearnedOdds, type ScoreResult } from './scorer';
+import { ALL_PATTERN, beliefCache, patternsOf, type StoredFeatures } from '../learner/bayesian-updater';
+import { DEFAULT_CONFIG } from '../config/default';
 import { NEUTRAL_WALLET_FEATURES, walletFeatures, type CreatorProfile, type WalletAnalyzer } from './wallet-analyzer';
 
 const log = moduleLogger('evaluator');
@@ -152,15 +154,23 @@ export class Evaluator {
     let socialFeatures = NEUTRAL_SOCIAL_FEATURES;
     // Your boost list + keywords currently hot on X (e.g. from Elon's latest post).
     const kw = keywordCheck(`${token.name} ${token.symbol} ${token.description ?? ''}`, [...cfg.keywords.boost, ...hotKeywords()], cfg.keywords.block);
+    // Narrative quality: keywords (static + hot + learned win odds), copycats, trends, description/socials quality.
+    let narrativeReason: string | null = null;
+    let narrativeScore = kw.blocked ? 0 : kw.boosted ? 1 : 0.5;
+    try {
+      const nar = await this.social.narrative({ ...token, mint }, cfg.keywords, hotKeywords());
+      narrativeScore = nar.score;
+      narrativeReason = nar.reason;
+    } catch (err) {
+      log.warn({ mint, err: (err as Error).message }, 'narrative check failed — using keyword match only');
+    }
     if (token.metadataFetchedAt) {
       const tw = twitterInfo(token.twitter);
       socialInfo = { hasTwitter: !!(tw.handle || tw.isCommunity), blockedKeyword: kw.blocked };
-      socialFeatures = {
-        socials: socialsScore(token, await this.social.reuseCounts(token)),
-        narrative: kw.blocked ? 0 : kw.boosted ? 1 : 0.5,
-      };
-    } else if (kw.blocked) {
-      socialInfo = { hasTwitter: false, blockedKeyword: kw.blocked };
+      socialFeatures = { socials: socialsScore(token, await this.social.reuseCounts(token)), narrative: narrativeScore };
+    } else {
+      socialFeatures = { ...NEUTRAL_SOCIAL_FEATURES, narrative: narrativeScore };
+      if (kw.blocked) socialInfo = { hasTwitter: false, blockedKeyword: kw.blocked };
     }
 
     const rules = () => checkEntryRules({ safetyScore: token.safetyScore!, safetyHardFail: token.safetyHardFail!, market: market.raw, strategy: STRATEGY, entry: cfg.entry, social: socialInfo });
@@ -176,8 +186,20 @@ export class Evaluator {
       ruleFails = rules();
     }
 
+    // Learned odds: how often coins with the same patterns went on to win (bounded ±points).
+    const lc = cfg.learning ?? DEFAULT_CONFIG.learning;
+    const odds: LearnedOdds | null = lc.oddsEnabled
+      ? learnedOddsAdjustment(
+          patternsOf({ market: market.raw as unknown as StoredFeatures['market'], socials: { twitter: token.twitter, website: token.website, telegram: token.telegram } }, STRATEGY.name),
+          beliefCache(),
+          beliefCache().get(ALL_PATTERN),
+          { minSamples: lc.oddsMinSamples, priorStrength: lc.oddsPriorStrength, maxPoints: lc.oddsMaxPoints, pointsPerLogit: lc.oddsPointsPerLogit },
+        )
+      : null;
+    const score = (f: FeatureVector): ScoreResult => withOdds(scoreFeatures(f, weights), odds);
+
     let features: FeatureVector = { safety: token.safetyScore / 100, ...market.features, ...NEUTRAL_WALLET_FEATURES, ...socialFeatures };
-    let result = scoreFeatures(features, weights);
+    let result = score(features);
     let profile: CreatorProfile | null = null;
 
     // Soft = concentration limits a strong token may still be bought through at reduced size.
@@ -185,8 +207,17 @@ export class Evaluator {
     if (!token.safetyHardFail && ruleFails.every(isSoft) && result.score >= threshold - cfg.scoring.walletAnalysisMargin) {
       profile = await this.wallets.analyze(token.creator, mint);
       this.stats.walletLookups++;
+      // Hidden dev wallets / insider clusters count toward the anti-rug limits.
+      if (profile.insiderFails?.length) ruleFails = [...ruleFails, ...profile.insiderFails];
+      if (profile.rugBlock?.length) ruleFails = [...ruleFails, ...profile.rugBlock.map((r) => `insider rug: ${r}`)];
+      if (profile.insider) {
+        const mi = withInsider(market.raw, profile.insider);
+        market.raw = mi.raw;
+        market.features = mi.features;
+        features = { ...features, ...mi.features };
+      }
       features = { ...features, ...walletFeatures(profile) };
-      result = scoreFeatures(features, weights);
+      result = score(features);
     }
 
     let { decision, reasons } = decide(result.score, threshold, ruleFails, token.safetyHardFail);
@@ -197,7 +228,7 @@ export class Evaluator {
     const re = cfg.entry.riskyEntry;
     if (
       decision === 'SKIP' && re.enabled && ruleFails.length > 0 && ruleFails.every(isSoft) &&
-      market.raw.earlyBuyerPct <= re.maxBundlePct && market.raw.top10HolderPct <= re.maxTop10Pct && market.raw.maxHolderPct <= re.maxSingleHolderPct &&
+      (market.raw.effectiveBundlePct ?? market.raw.earlyBuyerPct) <= re.maxBundlePct && market.raw.top10HolderPct <= re.maxTop10Pct && (market.raw.effectiveMaxHolderPct ?? market.raw.maxHolderPct) <= re.maxSingleHolderPct &&
       result.score >= threshold + re.extraScore
     ) {
       risky = ruleFails.join(', ');
@@ -218,7 +249,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, market: market.raw, creator: profile, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, market: market.raw, creator: profile, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },
@@ -253,7 +284,7 @@ export class Evaluator {
         copiedWallet: job.data.wallet,
         sizeMultiplier: risky ? re.sizeMultiplier : 1,
         explain: (sizeSol) =>
-          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet }),
+          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
       });
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.
       if (res.entered || res.reason === 'already traded this token') await markDone();

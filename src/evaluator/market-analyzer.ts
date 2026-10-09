@@ -11,6 +11,7 @@
  */
 import type { FeatureName } from '../config/default';
 import { deriveMetrics, type LiveTokenView } from '../scanner/live-state';
+import type { InsiderSummary } from './insider-cluster';
 
 export interface MarketRaw {
   ageSec: number;
@@ -44,6 +45,20 @@ export interface MarketRaw {
   /** USD values — null if the SOL price is unknown. */
   volumeUsd: number | null;
   marketCapUsd: number | null;
+  /**
+   * Insider view (only after withInsider). The plain fields above stay as the
+   * ledger sees them — the sell manager compares them with live values for rug exits.
+   */
+  hiddenDevPct?: number;
+  /** Dev + hidden dev wallets, % of supply. */
+  effectiveDevPct?: number;
+  /** Every known insider wallet (bundles, bursts, transfers, funding clusters), % of supply. */
+  insiderClusterPct?: number;
+  /** max(early buyers, insider cluster). */
+  effectiveBundlePct?: number;
+  /** max(single wallet, biggest funding cluster). */
+  effectiveMaxHolderPct?: number;
+  insiderReasons?: string[];
 }
 
 /** What we remember from the previous checkpoint, to measure recent momentum. */
@@ -114,6 +129,25 @@ export function analyzeMarket(
   return { raw, features: marketFeatures(raw) };
 }
 
+/**
+ * Fold the insider analysis into the market numbers: adds the effective fields
+ * and scores devHolding / snipers / distribution on them (so hidden wallets
+ * count), without touching the plain ledger fields. Pure.
+ */
+export function withInsider(raw: MarketRaw, s: InsiderSummary | null | undefined): { raw: MarketRaw; features: MarketFeatures } {
+  if (!s) return { raw, features: marketFeatures(raw) };
+  const out: MarketRaw = {
+    ...raw,
+    hiddenDevPct: s.hiddenDevPct,
+    effectiveDevPct: Math.max(raw.devHoldingPct, s.effectiveDevPct),
+    insiderClusterPct: s.clusterPct,
+    effectiveBundlePct: Math.max(raw.earlyBuyerPct, s.effectiveBundlePct),
+    effectiveMaxHolderPct: Math.max(raw.maxHolderPct, s.effectiveMaxHolderPct),
+    insiderReasons: s.reasons,
+  };
+  return { raw: out, features: marketFeatures(out) };
+}
+
 /** Normalise raw numbers to 0-1 scores. Pure — tuned by hand now, by the learner later. */
 export function marketFeatures(r: MarketRaw): MarketFeatures {
   return {
@@ -128,13 +162,14 @@ export function marketFeatures(r: MarketRaw): MarketFeatures {
     // Sweet spot 2-8 %/min. Slower = no demand; much faster = usually a bot-driven pump.
     curveVelocity: velocityScore(r.curveVelocity),
     // Top 10 wallets ≤ 15% of supply = great, ≥ 50% = terrible.
-    distribution: 1 - clamp01((r.top10HolderPct - 15) / 35),
-    // Dev holding 0% = 1, 10%+ = 0.
-    devHolding: 1 - clamp01(r.devHoldingPct / 10),
+    // A funding cluster bigger than the top-10 share means even worse distribution.
+    distribution: 1 - clamp01((Math.max(r.top10HolderPct, r.effectiveMaxHolderPct ?? 0) - 15) / 35),
+    // Dev holding 0% = 1, 10%+ = 0 (hidden dev wallets included when known).
+    devHolding: 1 - clamp01((r.effectiveDevPct ?? r.devHoldingPct) / 10),
     // Dev dumping their bag is a classic exit signal.
     devBehavior: 1 - clamp01(r.devSoldFraction),
     // Snipers / bundles holding 20%+ of supply = 0.
-    snipers: 1 - clamp01(r.earlyBuyerPct / 20),
+    snipers: 1 - clamp01((r.effectiveBundlePct ?? r.earlyBuyerPct) / 20),
     // ≥ 80% of traders still holding = 1, ≤ 30% = 0.
     retention: clamp01((r.retention - 0.3) / 0.5),
   };

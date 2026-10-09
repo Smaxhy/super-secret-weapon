@@ -19,12 +19,17 @@ import { prisma } from '../lib/prisma';
 const log = moduleLogger('x-watcher');
 const HOT_KEY = 'x:hot';
 const STOP = new Set(
-  'the and for that this with have from your just what will been they them then than when were about there their would could should into more some very only also over like make made good great today tomorrow people thing things really because which while being doing going https http amp'.split(' '),
+  (
+    'the and for that this with have from your just what will been they them then than when were about there their would could should into more some very only also over like make made good great today tomorrow people thing things really because which while being doing going https http amp ' +
+    // generic crypto words would match half of all launches — never "hot"
+    'coin coins token tokens solana pump crypto meme memes official launch community'
+  ).split(' '),
 );
 
-let hot: string[] = [];
-/** Keywords currently hot on X (lower-case). */
-export const hotKeywords = (): string[] => hot;
+/** keyword → expiry (ms). Refreshed from Redis every poll. */
+let hot = new Map<string, number>();
+/** Keywords currently hot on X (lower-case). Expired ones drop out even between polls. */
+export const hotKeywords = (now = Date.now()): string[] => [...hot].filter(([, until]) => until > now).map(([w]) => w);
 
 /** Words worth matching against token names: hashtags, cashtags, Capitalised words, 4+ letters. Pure. */
 export function extractKeywords(text: string): string[] {
@@ -82,7 +87,10 @@ export function startXWatcher(redis: Redis, onHotKeyword: (keyword: string, mint
         }
       }
       await redis.zremrangebyscore(HOT_KEY, '-inf', String(Date.now()));
-      hot = await redis.zrange(HOT_KEY, '0', '-1');
+      const rows = await redis.zrange(HOT_KEY, '0', '-1', 'WITHSCORES');
+      const next = new Map<string, number>();
+      for (let i = 0; i + 1 < rows.length; i += 2) next.set(rows[i]!, Number(rows[i + 1]));
+      hot = next;
     } catch (err) {
       log.warn({ err: (err as Error).message }, 'X poll failed');
     }

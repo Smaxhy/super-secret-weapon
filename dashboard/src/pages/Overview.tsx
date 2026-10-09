@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { ResetPaperDialog } from '../components/ResetPaper';
 import { PnlChart } from '../components/Charts';
 import { TokenCard } from '../components/TokenCard';
 import { McChange } from '../components/McCompare';
@@ -36,7 +38,10 @@ export function Overview() {
             {/* Phones: big number on top, stats in a 2x2 grid below. Wide screens: side by side. */}
             <div className="grid gap-x-10 gap-y-5 xl:grid-cols-[auto_minmax(0,1fr)] xl:items-end">
               <div className="min-w-0">
-                <div className="text-sm font-medium text-ink-2">Total profit</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-medium text-ink-2">Total profit</div>
+                  {d.mode === 'PAPER' && <HeroMenu startingBalanceSol={d.startingBalanceSol} />}
+                </div>
                 <div className="mt-1 break-words text-4xl font-bold leading-tight tracking-tight sm:text-5xl">
                   <Pnl value={d.totalPnlSol} />
                 </div>
@@ -46,7 +51,7 @@ export function Overview() {
               </div>
               <dl className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-4 border-t border-line pt-4 sm:gap-x-6 lg:grid-cols-4 xl:grid-cols-2 xl:border-t-0 xl:pt-0 2xl:grid-cols-4">
                 <HeroStat label="Today" value={<Pnl value={d.todayPnlSol} />} sub="since 00:00 UTC" />
-                <HeroStat label="Win rate" value={pct(d.winRate, 0)} sub={`${d.trades} closed trades`} />
+                <HeroStat label="Win rate" value={pct(d.winRate, 0)} sub={`${d.trades.toLocaleString()} closed trades`} />
                 <HeroStat label={d.mode === 'PAPER' ? 'Paper balance' : 'Balance'} value={sol(d.balanceSol, 2)} />
                 <HeroStat label="Open" value={`${d.openPositions} / ${d.maxPositions}`} sub={`${d.launchesToday.toLocaleString()} launches today`} />
               </dl>
@@ -97,6 +102,45 @@ export function Overview() {
         </Card>
       </div>
     </>
+  );
+}
+
+/** Small "⋯" menu on the profit card — currently just "Reset paper account". */
+function HeroMenu({ startingBalanceSol }: { startingBalanceSol: number }) {
+  const [open, setOpen] = useState(false);
+  const [dialog, setDialog] = useState(false);
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Profit card options"
+        onClick={() => setOpen((o) => !o)}
+        className="-my-1 grid h-8 w-8 place-items-center rounded-full text-lg leading-none text-ink-2 hover:bg-surface-2"
+      >
+        ⋯
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} aria-hidden="true" />
+          <div role="menu" className="absolute right-0 z-30 mt-1 w-56 rounded-xl border border-line bg-surface p-1 shadow-2xl">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                setDialog(true);
+              }}
+              className="w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium text-down hover:bg-surface-2"
+            >
+              ↺ Reset paper account…
+            </button>
+          </div>
+        </>
+      )}
+      <ResetPaperDialog open={dialog} onClose={() => setDialog(false)} defaultBalance={startingBalanceSol || 10} />
+    </div>
   );
 }
 

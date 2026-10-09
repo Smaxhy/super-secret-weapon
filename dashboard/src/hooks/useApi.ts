@@ -2,10 +2,12 @@
  * Fetch JSON from the API and keep it fresh:
  *  - instantly (debounced) when a matching real-time event arrives over the WebSocket,
  *  - every `refreshMs` as a fallback,
- *  - whenever the app comes back to the foreground (phone unlocked, tab re-opened).
+ *  - whenever the app comes back to the foreground (phone unlocked, tab re-opened),
+ *  - whenever refreshAll() fires (paper reset, reconnect, bot restart).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
+import { onRefreshAll } from '../lib/refresh';
 import { useBotEvents, type BotEvent } from './useWebSocket';
 
 export function useApi<T>(path: string | null, refreshMs = 0, liveOn: Array<BotEvent['type']> = []) {
@@ -37,7 +39,10 @@ export function useApi<T>(path: string | null, refreshMs = 0, liveOn: Array<BotE
     const t = refreshMs > 0 ? setInterval(() => document.visibilityState === 'visible' && void load(), refreshMs) : null;
     const onVisible = () => document.visibilityState === 'visible' && void load();
     document.addEventListener('visibilitychange', onVisible);
+    // Paper reset, WebSocket reconnect or bot restart → refetch.
+    const offRefresh = onRefreshAll(() => void load());
     return () => {
+      offRefresh();
       alive.current = false;
       if (t) clearInterval(t);
       if (debounce.current) clearTimeout(debounce.current);

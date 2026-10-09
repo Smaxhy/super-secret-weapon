@@ -23,9 +23,12 @@ export function Positions() {
             <Card
               key={p.id}
               title={
-                <Link to={`/token/${p.mint}`} className="flex min-w-0 items-baseline gap-1 hover:underline">
+                <Link to={`/token/${p.mint}`} className="flex min-w-0 flex-col hover:underline sm:flex-row sm:items-baseline sm:gap-1">
                   <span className="truncate">{p.symbol}</span>
-                  <span className="shrink-0 font-normal text-ink-2">· {STRATEGY_LABEL[p.strategy] ?? p.strategy}</span>
+                  <span className="shrink-0 text-sm font-normal text-ink-2 sm:text-base">
+                    <span className="hidden sm:inline">· </span>
+                    {STRATEGY_LABEL[p.strategy] ?? p.strategy}
+                  </span>
                 </Link>
               }
               action={

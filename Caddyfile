@@ -3,6 +3,26 @@
 # any IP into a hostname, no domain purchase needed).
 # The dashboard on GitHub Pages is HTTPS, so browsers require the API to be HTTPS too.
 {$API_DOMAIN} {
-	encode gzip
-	reverse_proxy bot:8080
+	# Never gzip the live WebSocket stream (buffering delays it); normal API JSON is fine.
+	@notws not path /ws
+	encode @notws gzip
+
+	reverse_proxy bot:8080 {
+		# Stream WebSocket frames immediately, never buffer.
+		flush_interval -1
+		# Long-lived dashboard sockets: no idle cut-off from Caddy's side
+		# (the bot sends a heartbeat every 20s anyway).
+		stream_timeout 24h
+		# On a Caddy config reload keep open sockets alive for a while instead of
+		# dropping every dashboard at once.
+		stream_close_delay 5m
+		# While the bot restarts (deploy), retry for a few seconds instead of
+		# returning 502 straight away.
+		lb_try_duration 10s
+		lb_try_interval 500ms
+		transport http {
+			dial_timeout 5s
+			keepalive 2m
+		}
+	}
 }

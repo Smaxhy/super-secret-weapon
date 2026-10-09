@@ -10,7 +10,7 @@ import { InstallButton } from './components/InstallButton';
 import { Toasts } from './components/Toasts';
 import { BotStatusBadge } from './components/StatusBadge';
 import { useApi } from './hooks/useApi';
-import { disconnectSocket, useSocketStatus } from './hooks/useWebSocket';
+import { disconnectSocket, useBotUptime, useSocketStatus } from './hooks/useWebSocket';
 import { getToken, setToken } from './lib/api';
 import type { Overview as OverviewData } from './lib/types';
 import { History } from './pages/History';
@@ -75,7 +75,8 @@ function useAuthed(): boolean {
 
 function Shell() {
   const [theme, nextTheme] = useTheme();
-  const connected = useSocketStatus();
+  const status = useSocketStatus();
+  const botUptime = useBotUptime();
   const [more, setMore] = useState(false);
   // Mode (PAPER/LIVE) + paused state for the header pill and footer. Light poll; also refreshes on trades.
   const ov = useApi<OverviewData>('/api/overview', 60_000);
@@ -105,7 +106,7 @@ function Shell() {
         </nav>
         <div className="mt-auto flex flex-col gap-2 pt-6">
           <InstallButton />
-          <BotStatusBadge connected={connected} paused={paused} />
+          <BotStatusBadge status={status} paused={paused} />
           <button type="button" onClick={nextTheme} className="rounded-lg px-3 py-2 text-left text-sm text-ink-2 hover:bg-surface-2">
             Theme: {theme}
           </button>
@@ -130,7 +131,7 @@ function Shell() {
         </span>
         <div className="flex items-center gap-2">
           <InstallButton compact />
-          <BotStatusBadge connected={connected} paused={paused} />
+          <BotStatusBadge status={status} paused={paused} />
         </div>
       </header>
 
@@ -152,7 +153,7 @@ function Shell() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
-        <AppFooter mode={mode} connected={connected} paused={paused} />
+        <AppFooter mode={mode} status={status} paused={paused} uptimeSec={botUptime ?? ov.data?.uptimeSec} />
       </div>
 
       <Toasts />

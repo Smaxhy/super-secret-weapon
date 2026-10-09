@@ -16,6 +16,9 @@ REMOTE="$(git rev-parse "origin/$BRANCH")"
 
 echo "$(date -u '+%F %T') updating $BRANCH ${LOCAL:0:7} → ${REMOTE:0:7}"
 git pull -q --ff-only origin "$BRANCH"
+CADDY_CHANGED="$(git diff --name-only "$LOCAL" HEAD -- Caddyfile)"
 docker compose up -d --build --remove-orphans
+# Caddy only reads its config at start/reload.
+[[ -n "$CADDY_CHANGED" ]] && docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || true
 docker image prune -f >/dev/null
 echo "$(date -u '+%F %T') update done"

@@ -18,12 +18,35 @@ interface LearnerData {
   labeled24h: number;
   hitRate24h: number | null;
   byDecision: Array<{ decision: string; count: number; avgMax: number | null }>;
+  lastAdjustAt?: string | null;
+  nextAdjustAt?: string | null;
+  adjustments?: Array<{ at: string; trigger: string; accepted: boolean; aucBefore: number | null; aucAfter: number | null; message: string }>;
+  labelStats?: { wins: number; losses: number; excluded: number; winRate: number | null } | null;
+  keywords?: { good: KeywordRow[]; bad: KeywordRow[]; baseRate: number } | null;
+}
+
+interface KeywordRow { word: string; winRate: number; n: number }
+
+function KeywordList({ rows, cls }: { rows: KeywordRow[]; cls: string }) {
+  if (!rows.length) return <Empty>Needs 8+ results per word.</Empty>;
+  return (
+    <ul className="space-y-1 text-sm">
+      {rows.slice(0, 10).map((k) => (
+        <li key={k.word} className="flex min-w-0 items-center justify-between gap-2">
+          <span className="truncate font-medium text-ink">{k.word}</span>
+          <span className={`shrink-0 tabular-nums ${cls}`}>
+            {(k.winRate * 100).toFixed(0)}% <span className="text-muted">n={Math.round(k.n)}</span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 const FEATURE_LABEL: Record<string, string> = {
   safety: 'Safety', holders: 'Holders', buyPressure: 'Buy pressure', volume: 'Volume', curveVelocity: 'Momentum', distribution: 'Distribution',
   devHolding: 'Dev holding', devBehavior: 'Dev not selling', snipers: 'Few bundlers', retention: 'Holder retention', creatorLaunches: 'Not a serial launcher',
-  creatorSuccess: "Dev's past success", funderReuse: 'Funding source', walletAge: 'Dev wallet age', socials: 'Socials', narrative: 'Keywords',
+  creatorSuccess: "Dev's past success", funderReuse: 'Funding source', walletAge: 'Dev wallet age', socials: 'Socials', narrative: 'Narrative',
 };
 
 const REGIME: Record<LearnerData['regime'], { icon: string; label: string; note: string; cls: string }> = {
@@ -59,7 +82,7 @@ export function Learning() {
     <>
       <PageHeader
         title="Learning"
-        subtitle={d ? `Every scored coin is checked again an hour later: did it reach ${d.winMultiple}×? Weights adjust every 2 hours, counting the bot's own trades 3× (so losses teach the most).` : undefined}
+        subtitle={d ? `Every scored coin is tracked for an hour: did it reach ${d.winMultiple}× before dropping 30%? Weights adjust every 20 min and after every closed trade — own trades count 3×, losses count extra, and a change is only kept if it would have picked recent coins better.` : undefined}
         action={
           <button type="button" onClick={() => void adjustNow()} disabled={busy} className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
             {busy ? 'Adjusting…' : '↻ Adjust weights now'}
@@ -144,6 +167,34 @@ export function Learning() {
               ) : (
                 <Empty>Fills in as outcomes are checked.</Empty>
               )}
+            </Card>
+          </div>
+
+          <Card title="Learning status" className="mt-4">
+            <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+              <div className="min-w-0"><div className="text-muted">Last adjust</div><div className="font-medium text-ink">{d.lastAdjustAt ? ago(d.lastAdjustAt) : '—'}</div></div>
+              <div className="min-w-0"><div className="text-muted">Next adjust</div><div className="font-medium text-ink">{d.nextAdjustAt ? new Date(d.nextAdjustAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</div></div>
+              <div className="min-w-0"><div className="text-muted">Clean labels</div><div className="font-medium text-ink">{d.labelStats ? `${d.labelStats.wins} W / ${d.labelStats.losses} L` : '—'}</div></div>
+              <div className="min-w-0"><div className="text-muted">Bad data ignored</div><div className="font-medium text-ink">{d.labelStats?.excluded ?? 0}</div></div>
+            </div>
+            {d.adjustments && d.adjustments.length > 0 && (
+              <ul className="mt-3 space-y-1 text-sm">
+                {d.adjustments.slice(0, 5).map((a) => (
+                  <li key={a.at} className="min-w-0 break-words">
+                    <span className={a.accepted ? 'text-up' : 'text-muted'}>{a.accepted ? '✓ kept' : '– skipped'}</span>{' '}
+                    <span className="text-muted">{ago(a.at)} · {a.trigger.replace('_', ' ')}</span> <span className="text-ink-2">{a.message}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <Card title="Words that win">
+              <KeywordList rows={d.keywords?.good ?? []} cls="text-up" />
+            </Card>
+            <Card title="Words that lose">
+              <KeywordList rows={d.keywords?.bad ?? []} cls="text-down" />
             </Card>
           </div>
 

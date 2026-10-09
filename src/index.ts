@@ -21,11 +21,14 @@ import { startPositionHistory, stopPositionHistory } from './executor/position-h
 import { Trader } from './executor/trader';
 import { ensureTimescale } from './db/timescale';
 import { SafetyChecker } from './evaluator/safety-checker';
+import { InsiderTracker } from './evaluator/insider-cluster';
 import { ObservationLogger } from './learner/observation-logger';
-import { scheduleDailyAdjuster } from './learner/daily-adjuster';
+import { requestAdjustment, scheduleDailyAdjuster } from './learner/daily-adjuster';
+import { startBeliefCache, stopBeliefCache } from './learner/bayesian-updater';
 import { OutcomeLabeler } from './learner/outcome-labeler';
 import { startRegimeDetector } from './learner/regime-detector';
 import { logger } from './lib/logger';
+import { installProcessGuards } from './lib/process-guard';
 import { prisma } from './lib/prisma';
 import { closeQueues } from './lib/queues';
 import { closeRedis, redis } from './lib/redis';
@@ -40,16 +43,8 @@ import { TokenRegistry } from './scanner/token-registry';
 
 const log = logger.child({ module: 'main' });
 
-// A stray rejected promise should be logged, not crash the bot.
-process.on('unhandledRejection', (reason) => {
-  log.error({ reason: reason instanceof Error ? reason.message : String(reason) }, 'unhandled promise rejection');
-});
-// A truly unexpected exception leaves the process in an unknown state:
-// log it and exit; Docker's restart policy brings us back cleanly.
-process.on('uncaughtException', (err) => {
-  log.fatal({ err: err.message, stack: err.stack }, 'uncaught exception — exiting');
-  process.exit(1);
-});
+// Network/socket blips are logged and survived; real bugs still exit so Docker restarts cleanly.
+installProcessGuards(log);
 
 async function main(): Promise<void> {
   log.info({ mode: env.TRADING_MODE, env: env.NODE_ENV }, '🚀 Pump.fun bot starting');
@@ -69,7 +64,7 @@ async function main(): Promise<void> {
   // 3. Workers
   const observations = env.ENABLE_OBSERVATIONS ? new ObservationLogger(liveState) : null;
   observations?.start();
-  const safety = env.ENABLE_SAFETY_CHECKS ? new SafetyChecker(liveState) : null;
+  const safety = env.ENABLE_SAFETY_CHECKS ? new SafetyChecker(liveState, redis) : null;
 
   // Phase 2: scoring + execution. LIVE execution arrives in Phase 4.
   if (env.TRADING_MODE === 'LIVE') log.warn('TRADING_MODE=LIVE but live execution is not built yet (Phase 4) — running PAPER');
@@ -77,15 +72,18 @@ async function main(): Promise<void> {
   const trader = new Trader(executor);
   const sellManager = new SellManager(executor, liveState, redis);
   sellManager.start();
-  // Learning engine: label outcomes, nightly weight tuning, market regime.
-  const outcomes = new OutcomeLabeler(liveState);
+  // Learning engine: label outcomes, weight tuning (every 20 min + after each closed trade), market regime.
+  const outcomes = new OutcomeLabeler(liveState, redis);
+  outcomes.afterTradeClosed = () => requestAdjustment('trade_closed');
   outcomes.start();
-  const nightly = scheduleDailyAdjuster();
+  const nightly = scheduleDailyAdjuster(redis);
+  startBeliefCache();
   const regimeTimer = await startRegimeDetector();
-  const evaluator = new Evaluator(redis, liveState, new WalletAnalyzer(redis), trader, outcomes);
+  const evaluator = new Evaluator(redis, liveState, new WalletAnalyzer(redis, { blockByThrow: false }), trader, outcomes);
   evaluator.start();
 
-  const registry = new TokenRegistry(liveState, observations, safety, evaluator);
+  const insiders = new InsiderTracker(redis);
+  const registry = new TokenRegistry(liveState, observations, safety, evaluator, insiders);
   registry.startSafetyWorker();
   // Copy trading: watch the wallets you added on the dashboard.
   const whales = new WhaleTracker(redis, liveState, evaluator);
@@ -242,7 +240,8 @@ async function main(): Promise<void> {
       await api?.close();
       for (const src of sources) await src.stop();
       whales.stop();
-      void nightly.stop();
+      nightly.stop();
+      stopBeliefCache();
       clearInterval(regimeTimer);
       clearInterval(spikeTimer);
       stopPositionHistory();

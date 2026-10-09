@@ -6,7 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import { getConfig } from '../../config/runtime-config';
 import type { BotConfigShape } from '../../config/default';
 import { readHistory } from '../../executor/position-history';
-import { INITIALS_MARKER, runnerTrailPct } from '../../executor/sell-manager';
+import { INITIALS_MARKER, trailingStopLevel, type TrailLevel } from '../../executor/sell-manager';
 import { prisma } from '../../lib/prisma';
 import { PUMP_TOKEN_DECIMALS, quoteSell } from '../../lib/pumpfun';
 import { getSolUsd } from '../../lib/sol-price';
@@ -26,25 +26,32 @@ interface EntryContext {
 }
 
 /**
- * Where the trailing stop sits right now, mirroring decideExit in sell-manager:
- * - after initials are out the runner trail applies (always on; volatility isn't stored, so the
- *   fallback trail % is used as a close stand-in),
- * - otherwise the normal trail (tightening as the peak grows), only once it has been activated.
+ * Where the trailing stop sits right now — the exact rule the sell manager sells on
+ * (shared trailingStopLevel helper: vol-adaptive trail, runner caps, break-even floor),
+ * fed with the volatility the sell manager last measured for this position.
  * Returns null when no trailing stop is active.
  */
-function trailingStopPriceSol(
-  p: { entryPriceSol: number; peakPriceSol: number; trailingActive: boolean; tpTiersHit: unknown },
-  exit: BotConfigShape['exit'],
-): number | null {
-  if (!(p.entryPriceSol > 0) || !(p.peakPriceSol > 0)) return null;
-  const peakX = p.peakPriceSol / p.entryPriceSol;
+function trailingLevel(
+  p: { id: string; entryPriceSol: number; peakPriceSol: number; trailingActive: boolean; tpTiersHit: unknown; sizeSol: number; remainingPct: number; entryContext: unknown },
+  cfg: BotConfigShape,
+  volatilityPct: number | null,
+): TrailLevel | null {
   const tiersHit = Array.isArray(p.tpTiersHit) ? (p.tpTiersHit as number[]) : [];
-  if (tiersHit.includes(INITIALS_MARKER)) {
-    return p.peakPriceSol * (1 - runnerTrailPct(null, peakX, exit.runner) / 100);
-  }
-  if (!p.trailingActive) return null;
-  const pct = exit.trailingTightening.reduce<number>((acc, t) => (peakX >= t.fromMultiple ? Math.min(acc, t.pct) : acc), exit.trailingStopPct);
-  return p.peakPriceSol * (1 - pct / 100);
+  const buyFeeSol = Number((p.entryContext as { buyFeeSol?: number } | null)?.buyFeeSol ?? 0);
+  return trailingStopLevel(
+    {
+      entryPriceSol: p.entryPriceSol,
+      peakPriceSol: p.peakPriceSol,
+      trailingActive: p.trailingActive,
+      initialsOut: tiersHit.includes(INITIALS_MARKER),
+      volatilityPct,
+      sizeSol: p.sizeSol,
+      costSol: p.sizeSol + buyFeeSol,
+      remainingPct: p.remainingPct,
+      txFeeSol: cfg.paper.txFeeSol,
+    },
+    cfg.exit,
+  );
 }
 
 /** Total supply in whole tokens: live curve data first, then what we saved at entry, then 1e9. */
@@ -92,6 +99,8 @@ export async function positionsRoutes(app: FastifyInstance, deps: ApiDeps): Prom
         const ctx = p.entryContext as EntryContext | null;
         const supply = supplyTokens(view, ctx);
         const currentMcSol = price !== null ? price * supply : null;
+        const volatilityPct = deps.sellManager.volatilityFor(p.id);
+        const trail = trailingLevel(p, cfg, volatilityPct);
         return {
           id: p.id,
           mint: p.mint,
@@ -121,7 +130,10 @@ export async function positionsRoutes(app: FastifyInstance, deps: ApiDeps): Prom
           targets: {
             stopLossPrice: p.entryPriceSol * (1 - cfg.exit.hardStopLossPct / 100),
             takeProfits: cfg.exit.takeProfitTiers.map((t) => ({ multiple: t.multiple, sellPct: t.sellPct, hit: tiersHit.includes(t.multiple) })),
-            trailingStopPrice: trailingStopPriceSol(p, cfg.exit),
+            trailingStopPrice: trail?.stopPriceSol ?? null,
+            trailingStopPct: trail?.trailPct ?? null,
+            breakEvenFloorPrice: trail?.floorPriceSol ?? null,
+            volatilityPct,
           },
           health: m ? { holders: m.holderCount, devHoldingPct: m.devHoldingPct, top10HolderPct: m.top10HolderPct, curvePct: m.bondingCurvePct } : null,
         };
@@ -151,6 +163,8 @@ export async function positionsRoutes(app: FastifyInstance, deps: ApiDeps): Prom
         .map((h) => ({ t: h.t, priceSol: h.priceSol, marketCapSol: h.priceSol * supply })),
     ];
     const tiersHit = Array.isArray(p.tpTiersHit) ? (p.tpTiersHit as number[]) : [];
+    const volatilityPct = p.status === 'OPEN' ? deps.sellManager.volatilityFor(p.id) : null;
+    const trail = trailingLevel(p, cfg, volatilityPct);
 
     return {
       positionId: p.id,
@@ -162,8 +176,11 @@ export async function positionsRoutes(app: FastifyInstance, deps: ApiDeps): Prom
       points,
       takeProfits: cfg.exit.takeProfitTiers.map((t) => ({ multiple: t.multiple, sellPct: t.sellPct, hit: tiersHit.includes(t.multiple) })),
       stopLossPriceSol: p.entryPriceSol * (1 - cfg.exit.hardStopLossPct / 100),
-      // Same rule the sell manager uses (runner trail after initials, tightening trail before).
-      trailingStopPriceSol: trailingStopPriceSol(p, cfg.exit),
+      // Exactly the stop the sell manager sells on (shared trailingStopLevel helper).
+      trailingStopPriceSol: trail?.stopPriceSol ?? null,
+      trailingStopPct: trail?.trailPct ?? null,
+      breakEvenFloorPriceSol: trail?.floorPriceSol ?? null,
+      volatilityPct,
       peakPriceSol: p.peakPriceSol,
     };
   });

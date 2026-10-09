@@ -9,7 +9,7 @@ export function Performance() {
   if (loading && !d) return <Loading />;
   return (
     <>
-      <PageHeader title="Performance" subtitle={d ? `${d.mode === 'PAPER' ? 'Paper trading' : 'Live trading'} results from ${d.trades} closed trades` : undefined} />
+      <PageHeader title="Performance" subtitle={d ? `${d.mode === 'PAPER' ? 'Paper trading' : 'Live trading'} results from ${d.trades.toLocaleString()} closed trades` : undefined} />
       {error && <ErrorBox message={error} />}
       {d && !d.trades && <Empty>No closed trades yet — charts appear after the first trade closes.</Empty>}
       {d && d.trades > 0 && (

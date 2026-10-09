@@ -81,6 +81,82 @@ export function checkEntryRules(i: EntryCheckInput): string[] {
   return fails;
 }
 
+export interface PatternBelief {
+  pattern: string;
+  alpha: number;
+  beta: number;
+  observations: number;
+}
+
+export interface OddsOptions {
+  minSamples: number;
+  priorStrength: number;
+  maxPoints: number;
+  pointsPerLogit: number;
+}
+
+export interface LearnedOdds {
+  /** Score points to add (−maxPoints…+maxPoints). */
+  points: number;
+  /** Pooled (shrunk) win rate of the matching patterns, 0-1. */
+  winRate: number;
+  /** Overall win rate (the prior), 0-1. */
+  priorRate: number;
+  /** Largest single pattern sample count behind it. */
+  n: number;
+  patterns: string[];
+}
+
+/**
+ * Learned odds → score points. Pure.
+ *
+ * For each matching pattern with enough samples, its win rate is shrunk
+ * toward the overall rate (`priorStrength` pseudo-samples), turned into a
+ * log-odds difference vs the overall rate, and the differences are averaged
+ * (weighted by sample count). × pointsPerLogit, capped at ±maxPoints.
+ * null = nothing qualified (no adjustment).
+ */
+export function learnedOddsAdjustment(matched: string[], beliefs: ReadonlyMap<string, PatternBelief>, prior: PatternBelief | undefined, o: OddsOptions): LearnedOdds | null {
+  if (!prior || prior.alpha + prior.beta <= 2) return null;
+  const priorRate = clampRate(prior.alpha / (prior.alpha + prior.beta));
+  let sumW = 0;
+  let sumDelta = 0;
+  let sumRate = 0;
+  let n = 0;
+  const used: string[] = [];
+  for (const name of matched) {
+    const b = beliefs.get(name);
+    if (!b || b.observations < o.minSamples) continue;
+    // alpha/beta start at 1 each (uniform prior) — strip that, then shrink toward the overall rate.
+    const wins = Math.max(0, b.alpha - 1);
+    const total = Math.max(0, b.alpha + b.beta - 2);
+    const rate = clampRate((wins + o.priorStrength * priorRate) / (total + o.priorStrength));
+    const delta = logit(rate) - logit(priorRate);
+    const w = b.observations;
+    sumW += w;
+    sumDelta += w * delta;
+    sumRate += w * rate;
+    n = Math.max(n, b.observations);
+    used.push(name);
+  }
+  if (!sumW) return null;
+  const points = Math.max(-o.maxPoints, Math.min(o.maxPoints, (sumDelta / sumW) * o.pointsPerLogit));
+  return { points: round2(points), winRate: sumRate / sumW, priorRate, n, patterns: used };
+}
+
+/** Add the learned-odds points to a score (kept within 0-100). Pure. */
+export function withOdds(r: ScoreResult, odds: LearnedOdds | null): ScoreResult {
+  if (!odds || !odds.points) return r;
+  return { ...r, score: Math.round(Math.max(0, Math.min(100, r.score + odds.points)) * 100) / 100 };
+}
+
+function clampRate(p: number): number {
+  return Math.max(0.001, Math.min(0.999, p));
+}
+function logit(p: number): number {
+  return Math.log(p / (1 - p));
+}
+
 export function decide(score: number, threshold: number, ruleFails: string[], hardFail: boolean): { decision: Decision; reasons: string[] } {
   if (hardFail) return { decision: 'REJECT', reasons: ruleFails };
   const reasons = [...ruleFails];

@@ -12,6 +12,10 @@
  *   7. Creator isn't on our blacklist
  *   8. Name / symbol / metadata look sane
  *
+ *   9. Insiders (insider-cluster.ts, Redis only — no extra RPC): serial-rugger
+ *      memory (hard fail), hidden dev wallets from cached funding lookups,
+ *      same-size buy bursts, tokens received by transfer, sells in the dev's slot.
+ *
  * Later phases add: honeypot sell simulation (Phase 4), LP status after
  * migration (Phase 6).
  *
@@ -20,6 +24,7 @@
  */
 import { ExtensionType, getExtensionTypes, unpackMint } from '@solana/spl-token';
 import { PublicKey } from '@solana/web3.js';
+import type { Redis } from 'ioredis';
 import { SAFETY_PENALTIES as P } from '../config/default';
 import type { SafetyCheckItem, SafetyReport } from '../config/types';
 import { bus } from '../lib/bus';
@@ -28,6 +33,8 @@ import { prisma } from '../lib/prisma';
 import { PUMP_DEFAULT_TOTAL_SUPPLY, PUMP_TOKEN_DECIMALS, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '../lib/pumpfun';
 import { getConnection } from '../lib/solana';
 import type { LiveState } from '../scanner/live-state';
+import { getConfig } from '../config/runtime-config';
+import { analyzeInsiders, antiRugConfig, serialRuggerCheck, type InsiderSummary } from './insider-cluster';
 
 const log = moduleLogger('safety-checker');
 
@@ -57,6 +64,13 @@ export interface SafetyInputs {
   uri: string;
   devInitialBuyPct: number | null;
   creatorBlacklisted: boolean;
+  /** Insider facts (optional: older callers / tests leave it out). */
+  insider?: {
+    summary: InsiderSummary | null;
+    /** e.g. "AbCd…wxyz rugged 2 tokens before". */
+    serialRugger: string | null;
+    maxDevHoldingPct: number;
+  } | null;
 }
 
 /** Pure scoring function: facts in → report out. */
@@ -95,6 +109,21 @@ export function evaluateSafety(i: SafetyInputs): SafetyReport {
 
   add('creator_blacklist', 'Creator not blacklisted', i.creatorBlacklisted, P.blacklistedCreator, i.creatorBlacklisted ? 'Creator is on the blacklist' : 'Clean', true);
 
+  if (i.insider) {
+    const { summary: s, serialRugger } = i.insider;
+    add('serial_rugger', 'Creator / funder never rugged before', !!serialRugger, P.serialRugger, serialRugger ?? 'No rugs on record', true);
+    if (s) {
+      const hiddenReason = s.reasons.find((r) => r.includes('hidden dev')) ?? 'None found';
+      const hiddenBig = s.hiddenDevWallets.length > 0 && s.hiddenDevPct >= 0.5;
+      const overLimit = hiddenBig && s.effectiveDevPct > i.insider.maxDevHoldingPct;
+      add('hidden_dev', 'No hidden dev wallets', hiddenBig, P.hiddenDevWallets, hiddenReason, overLimit);
+      const why = (k: string, fallback: string) => s.reasons.find((r) => r.includes(k)) ?? fallback;
+      add('insider_burst', 'No same-size buy bursts', s.flags.burst > 0, P.insiderBurst, s.flags.burst ? why('burst', `${s.flags.burst} wallets`) : 'None');
+      add('transfer_recipients', 'No tokens moved in by transfer', s.flags.transfer > 0, P.transferRecipients, s.flags.transfer ? why('transfer', `${s.flags.transfer} wallets`) : 'None');
+      add('dev_sync_sells', "Nobody sells in the dev's slot", s.flags.devSync > 0, P.devSyncSells, s.flags.devSync ? why('same slot', `${s.flags.devSync} wallets`) : 'None');
+    }
+  }
+
   // eslint-disable-next-line no-control-regex
   const weird = (s: string) => s.length === 0 || s.length > 64 || /[\u0000-\u001f]/.test(s);
   const nameBad = weird(i.name) || weird(i.symbol);
@@ -124,7 +153,31 @@ export function evaluateSafety(i: SafetyInputs): SafetyReport {
 }
 
 export class SafetyChecker {
-  constructor(private readonly liveState: LiveState) {}
+  private readonly redis: Redis | null;
+
+  /** `redis` defaults to the live state's own connection (same Redis). */
+  constructor(
+    private readonly liveState: LiveState,
+    redis?: Redis,
+  ) {
+    this.redis = redis ?? (liveState as unknown as { r?: Redis }).r ?? null;
+  }
+
+  /** Insider facts for the safety report — Redis + our DB only, never RPC. */
+  private async insiderFacts(mint: string, creator: string): Promise<SafetyInputs['insider']> {
+    if (!this.redis) return null;
+    try {
+      const c = antiRugConfig();
+      // Creator's funder, if the wallet analyzer already looked it up (cached, free).
+      const cached = await this.redis.get(`creator:${creator}`);
+      const funder = cached ? ((JSON.parse(cached) as { funder?: string | null }).funder ?? null) : null;
+      const [rugger, res] = await Promise.all([serialRuggerCheck(this.redis, mint, creator, funder, c), analyzeInsiders(this.redis, mint, { funding: 'cache', cfg: c })]);
+      return { summary: res?.summary ?? null, serialRugger: rugger?.detail ?? null, maxDevHoldingPct: getConfig().entry.maxDevHoldingPct };
+    } catch (err) {
+      log.debug({ mint, err: (err as Error).message }, 'insider facts unavailable');
+      return null;
+    }
+  }
 
   /**
    * Run all checks for one token, store the result and return it.
@@ -181,6 +234,7 @@ export class SafetyChecker {
       uri: token.uri,
       devInitialBuyPct,
       creatorBlacklisted: blacklisted !== null,
+      insider: await this.insiderFacts(mint, token.creator),
     });
 
     await prisma.$transaction([

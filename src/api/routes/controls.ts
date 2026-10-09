@@ -5,7 +5,8 @@
  *   POST /api/controls/pause         { paused: boolean }
  *   POST /api/controls/kill          stop new entries AND sell every open position now
  *   POST /api/controls/resume        clear pause + kill switch
- *   POST /api/controls/reset-paper   { confirm: "RESET" } wipe paper trades/positions (fresh start)
+ *   POST /api/controls/reset-paper   { confirm: "RESET", startingBalanceSol?: 0.1–1000 } wipe paper trades/positions
+ *                                    (open ones too) and optionally set a new starting balance
  *   POST /api/positions/:id/sell     manual sell of one position
  */
 import type { FastifyInstance } from 'fastify';
@@ -13,6 +14,7 @@ import { getConfig, updateConfigSection } from '../../config/runtime-config';
 import { recordEvent } from '../../lib/bot-events';
 import { prisma } from '../../lib/prisma';
 import type { ApiDeps } from '../deps';
+import { isResetting, MAX_START_SOL, MIN_START_SOL, parseStartingBalance, resetPaperAccount } from '../paper-reset';
 
 const num = (v: unknown, min: number, max: number): number | undefined => {
   const n = Number(v);
@@ -66,7 +68,7 @@ export async function controlsRoutes(app: FastifyInstance, deps: ApiDeps): Promi
       changed.push(...Object.keys(patch).map((k) => `keywords.${k}`));
     }
     if (b.paper) {
-      const patch = defined({ startingBalanceSol: num(b.paper.startingBalanceSol, 0.1, 10_000) });
+      const patch = defined({ startingBalanceSol: num(b.paper.startingBalanceSol, MIN_START_SOL, MAX_START_SOL) });
       await updateConfigSection('paper', patch as never);
       changed.push(...Object.keys(patch));
     }
@@ -96,13 +98,13 @@ export async function controlsRoutes(app: FastifyInstance, deps: ApiDeps): Promi
     return { ok: true, state: getConfig().state };
   });
 
-  app.post<{ Body: { confirm?: string } }>('/api/controls/reset-paper', async (req, reply) => {
+  app.post<{ Body: { confirm?: string; startingBalanceSol?: unknown } }>('/api/controls/reset-paper', async (req, reply) => {
     if (req.body?.confirm !== 'RESET') return reply.code(400).send({ error: 'Type RESET to confirm' });
-    const open = await prisma.position.count({ where: { mode: 'PAPER', status: 'OPEN' } });
-    if (open) return reply.code(400).send({ error: `Close the ${open} open paper position(s) first (or use the kill switch)` });
-    const [t, p] = await prisma.$transaction([prisma.trade.deleteMany({ where: { mode: 'PAPER' } }), prisma.position.deleteMany({ where: { mode: 'PAPER' } })]);
-    void recordEvent({ level: 'WARN', module: 'controls', type: 'paper_reset', message: `Paper trading reset (${p.count} positions, ${t.count} trades removed)` });
-    return { ok: true, positions: p.count, trades: t.count };
+    const start = parseStartingBalance(req.body?.startingBalanceSol);
+    if (start === null) return reply.code(400).send({ error: `Starting balance must be ${MIN_START_SOL}–${MAX_START_SOL} SOL` });
+    if (isResetting()) return reply.code(409).send({ error: 'A reset is already running' });
+    // Open positions are frozen and removed too (entries are paused while it runs).
+    return resetPaperAccount({ startingBalanceSol: start });
   });
 
   app.post<{ Params: { id: string } }>('/api/positions/:id/sell', async (req, reply) => {

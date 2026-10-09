@@ -48,19 +48,68 @@ export function patternsOf(f: StoredFeatures, strategy: string | null): string[]
     .map(([name]) => name);
 }
 
-/** Add one labelled outcome to every pattern it matched. Never throws. */
-export async function updateBeliefs(patterns: string[], win: boolean): Promise<void> {
+/** Pseudo-pattern every labelled outcome counts towards → the overall win rate (the prior). */
+export const ALL_PATTERN = 'All labelled tokens';
+
+/**
+ * Add one labelled outcome to every pattern it matched (plus the overall
+ * pattern). `weight` lets our own trades count more (alpha/beta are floats).
+ * Never throws.
+ */
+export async function updateBeliefs(patterns: string[], win: boolean, weight = 1): Promise<void> {
+  const w = Number.isFinite(weight) && weight > 0 ? weight : 1;
   try {
     await prisma.$transaction(
-      patterns.map((pattern) =>
+      [...patterns, ALL_PATTERN].map((pattern) =>
         prisma.beliefState.upsert({
           where: { pattern },
-          update: { alpha: { increment: win ? 1 : 0 }, beta: { increment: win ? 0 : 1 }, observations: { increment: 1 } },
-          create: { pattern, alpha: 1 + (win ? 1 : 0), beta: 1 + (win ? 0 : 1), observations: 1 },
+          update: { alpha: { increment: win ? w : 0 }, beta: { increment: win ? 0 : w }, observations: { increment: 1 } },
+          create: { pattern, alpha: 1 + (win ? w : 0), beta: 1 + (win ? 0 : w), observations: 1 },
         }),
       ),
     );
   } catch (err) {
     log.warn({ err: (err as Error).message }, 'belief update failed');
   }
+}
+
+export interface BeliefStat {
+  pattern: string;
+  alpha: number;
+  beta: number;
+  observations: number;
+}
+
+/** In-memory copy of all beliefs, refreshed every few minutes for the scorer (no DB hit per evaluation). */
+let cache = new Map<string, BeliefStat>();
+let cacheTimer: NodeJS.Timeout | null = null;
+export const beliefCache = (): ReadonlyMap<string, BeliefStat> => cache;
+
+export async function refreshBeliefCache(): Promise<void> {
+  try {
+    const rows = await prisma.beliefState.findMany();
+    cache = new Map(rows.map((r) => [r.pattern, { pattern: r.pattern, alpha: r.alpha, beta: r.beta, observations: r.observations }]));
+  } catch (err) {
+    log.warn({ err: (err as Error).message }, 'belief cache refresh failed');
+  }
+}
+
+export function startBeliefCache(everyMs = 5 * 60_000): void {
+  void refreshBeliefCache();
+  cacheTimer ??= setInterval(() => void refreshBeliefCache(), everyMs);
+  cacheTimer.unref?.();
+}
+export function stopBeliefCache(): void {
+  if (cacheTimer) clearInterval(cacheTimer);
+  cacheTimer = null;
+}
+
+/**
+ * Forget all beliefs (they're rebuilt from new labels). Used after a paper
+ * reset so nothing learnt from the old, bugged data keeps steering the scorer.
+ */
+export async function clearBeliefs(): Promise<number> {
+  const r = await prisma.beliefState.deleteMany({});
+  cache = new Map();
+  return r.count;
 }

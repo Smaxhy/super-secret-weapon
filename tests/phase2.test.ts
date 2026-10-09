@@ -105,7 +105,9 @@ describe('exit rules', () => {
   it('before initials the trail tightens to 15% after a 2x-ish peak', () => {
     // peak 1.9x (no initials yet) → 20% trail: 1.55 holds, 1.5 sells
     expect(reasons({ priceSol: 1.55, peakPriceSol: 1.9, tpTiersHit: [1.3], remainingPct: 75, trailingActive: true })).toEqual([]);
-    expect(reasons({ priceSol: 1.5, peakPriceSol: 1.9, tpTiersHit: [1.3], remainingPct: 75, trailingActive: true })).toEqual(['TRAILING_STOP:75']);
+    // first check under the stop is only a possible wick; confirmed on the next check 3s+ later
+    expect(reasons({ priceSol: 1.5, peakPriceSol: 1.9, tpTiersHit: [1.3], remainingPct: 75, trailingActive: true })).toEqual([]);
+    expect(reasons({ priceSol: 1.5, peakPriceSol: 1.9, tpTiersHit: [1.3], remainingPct: 75, trailingActive: true, breachTicks: 1, breachSinceMs: now - 4000 })).toEqual(['TRAILING_STOP:75']);
   });
   it('sells at resistance once in profit', () => expect(reasons({ priceSol: 1.25, peakPriceSol: 1.29, resistance: { hit: true, level: 1.29, touches: 3 } })).toEqual(['TAKE_PROFIT:100']));
   it('ignores resistance below 1.2x', () => expect(reasons({ priceSol: 1.1, peakPriceSol: 1.15, resistance: { hit: true, level: 1.15, touches: 3 } })).toEqual([]));
@@ -230,7 +232,9 @@ describe('take initials + runner', () => {
   });
   it('caps the trail at 20% after a 10x peak', () => {
     expect(runnerTrailPct(50, 10, rules.runner)).toBe(20);
-    expect(decideExit({ ...runner, tpTiersHit: [1.3, INITIALS_MARKER, 5], peakPriceSol: 12, priceSol: 9.5, volatilityPct: 50 }, rules).sells.map((s) => s.reason)).toEqual(['TRAILING_STOP']);
+    const big = { ...runner, tpTiersHit: [1.3, INITIALS_MARKER, 5], peakPriceSol: 12, priceSol: 9.5, volatilityPct: 50 };
+    expect(decideExit(big, rules).sells).toEqual([]); // not confirmed yet
+    expect(decideExit({ ...big, breachTicks: 1, breachSinceMs: now - 4000 }, rules).sells.map((s) => s.reason)).toEqual(['TRAILING_STOP']);
   });
 });
 

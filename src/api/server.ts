@@ -2,7 +2,8 @@
  * Dashboard API (Fastify).
  *
  *   POST /api/auth/login        → JWT (public)
- *   GET  /api/health            → { ok } (public, for uptime checks)
+ *   GET  /api/health            → { ok, startedAt, uptimeSec, eventLoopLagMs } (public, for uptime checks;
+ *                                  startedAt changes on every restart → tells restarts from network blips)
  *   GET  /api/overview          → headline numbers + P&L curve
  *   GET  /api/detections[/:mint]→ live feed / token breakdown
  *   GET  /api/positions         → open positions
@@ -29,7 +30,8 @@ import { tradesRoutes } from './routes/trades';
 import { walletsRoutes } from './routes/wallets';
 import { learnerRoutes } from './routes/learner';
 import { controlsRoutes } from './routes/controls';
-import { registerWebSocket } from './websocket';
+import { PROCESS_STARTED_AT, registerWebSocket } from './websocket';
+import { eventLoopLagMs } from '../lib/process-guard';
 
 const log = moduleLogger('api');
 
@@ -50,7 +52,10 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
   await app.register(jwt, { secret: env.JWT_SECRET });
   await app.register(websocket);
 
-  app.get('/api/health', async () => ({ ok: true }));
+  app.get('/api/health', async (_req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    return { ok: true, startedAt: new Date(PROCESS_STARTED_AT).toISOString(), uptimeSec: Math.round(process.uptime()), eventLoopLagMs: eventLoopLagMs() };
+  });
   await registerAuth(app);
   await registerWebSocket(app);
 

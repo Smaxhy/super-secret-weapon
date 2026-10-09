@@ -40,14 +40,26 @@ smart money → learning engine → ML → social). See README.md.
   Fees: curve 1.25%, PumpSwap 0.3%, 0.0015 SOL gas+tip per tx, 1.5% slippage, 0.4–1.2s random landing delay before each paper fill. Every trade stores an explanation.
 - Dashboard: positions show entry MC vs current MC (SOL + USD), a live price chart per position
   (Redis `pos:hist:<id>`, 5s points, 3-day TTL) with TP/stop/trail lines; redesigned layout + footer.
-- Learning re-weights every 2h (own trades weighted 3x); per-hour size factor; regime every 15 min.
-- Fixed bug: PumpSwap pool reserves derived from curve used ~0 tokens → fake 20x profits (now 206.9M LP tokens).
-
+- Pricing safety: fake/duplicate PumpSwap pools rejected (curve must be ~complete, price within 3x of final curve
+  price), trade-implied price cross-checks, every paper fill clamped to ≤3x the last real trade price
+  (`suspicious_fill` WARN events), sells serialized per position. `scripts/find-suspicious-trades.ts` lists bad trades.
+- Trailing stop (`exit.trail`): volatility from 15s returns over 4 min (outlier-robust), 2.5×vol before initials,
+  runner capped 30/25/20% at 3/5/10x, break needs 2 ticks + 3s (instant on a >1.5× gap), break-even floor after 1.5x.
+- Anti-rug (`antiRug` + `src/evaluator/insider-cluster.ts`): stream flags (bundle/same-size burst/transfer/dev-sync
+  sellers) fed by TokenRegistry→InsiderTracker; funding graph via RPC (≤10 wallets/token, 24h cache) finds hidden
+  dev wallets; effective dev/bundle % count toward limits; serial-rugger memory = hard fail; insider dump → RUG exit.
+- Narrative: social-analyzer `narrative()` (boost/hot/learned keyword odds, copycats, trends, description quality)
+  → 'narrative' feature + reason in buy explanation. Keyword beliefs in Redis `kw:*` (src/learner/keyword-learner.ts).
+- Learning: labels sampled over 1h (win = 1.8x before 0.7x), real trade P&L preferred; suspicious / >25x /
+  pre-reset data excluded. Weights adjust every 20 min + after each close (recency, losses ×1.5, own ×3,
+  holdout AUC check, cap 4%); Bayesian pattern odds adjust score ±8 pts. Regime every 15 min, per-hour size factor.
+- Paper reset (Controls/Overview): wipes paper trades/positions/stats, optional new starting balance, sets Redis
+  `paper:resetAt`. WebSocket heartbeat 20s + client backoff reconnect; `/api/health` has startedAt/uptime.
+  auto-update reloads Caddy when the Caddyfile changes.
 ## Open items / next steps
 1. Verify on the VPS that hybrid trade stream flows (`tradesPerMin` in hundreds+). If Solana's public
    node throttles, consider a cheap paid stream.
-2. Learning engine v2: use Bayesian pattern odds directly in scoring; Phase 8 ML model (XGBoost)
-   once a few weeks of labelled data exist.
+2. Phase 8 ML model (XGBoost) once a few weeks of clean labelled data exist.
 3. Phase 5 controls page (pause/kill switch, sliders for every rule, keyword lists, manual sell,
    blacklist). Rules are already in `BotConfig` (runtime-config.ts) — UI + API needed.
 4. Phase 4 live execution only after a week+ of profitable paper results, dedicated small wallet.

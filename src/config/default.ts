@@ -75,6 +75,52 @@ export const DEFAULT_CONFIG = {
     requireTwitter: false,
   },
 
+  /**
+   * Anti-rug: hidden dev wallets + insider clusters (src/evaluator/insider-cluster.ts).
+   * Hidden wallets count toward the entry limits above (dev / bundlers / single wallet).
+   * Flat keys on purpose: the dashboard config merge is shallow.
+   */
+  antiRug: {
+    // ---- Free signals from the trade stream (no RPC) ----
+    /** Buys this many seconds after the create (≈ same / next 2 slots) are bundle buys. */
+    bundleWindowSec: 1,
+    /** Same-size burst: this many wallets buying within `burstWindowSec`… */
+    burstMinWallets: 3,
+    burstWindowSec: 2,
+    /** …with SOL sizes within this % of each other. */
+    burstSizeTolerancePct: 1.5,
+    /** Buys smaller than this (SOL) are ignored for burst detection (dust bots). */
+    burstMinSol: 0.05,
+    /** Sells this many seconds from a dev sell (0 = same second ≈ same slot) mark the seller as an insider. */
+    devSellWindowSec: 0,
+    // ---- Funding graph (RPC, only for tokens that passed the market gates) ----
+    fundingGraphEnabled: true,
+    /** Max wallets looked up per token (dev + biggest holders). 2 RPC calls each, cached. */
+    fundingMaxWallets: 10,
+    /** Cache each wallet's first funder this long. */
+    fundingCacheHours: 24,
+    /** Re-run a token's funding graph at most this often (new holders only cost RPC). */
+    fundingRecheckMinutes: 10,
+    /** Wallets younger than this can be clustered by a shared funder (old wallets are real traders). */
+    freshWalletHours: 72,
+    /** A funder that bankrolled this many looked-up wallets is an exchange / hub → ignored for clustering. */
+    hubFunderMinWallets: 20,
+    // ---- Serial ruggers ----
+    serialRuggerEnabled: true,
+    /** A past token that fell this many % from its peak within `serialRugWindowMin` of launch = rug. */
+    serialRugDropPct: 80,
+    serialRugWindowMin: 60,
+    /** Hard fail once a creator / funder has this many rugs on record. */
+    serialRugMinRugs: 1,
+    serialRugMemoryDays: 30,
+    // ---- Live insider dump watch (while we hold) ----
+    /** Insider wallets sold this % of their bag within `insiderDumpWindowSec` → rug exit. */
+    insiderDumpPct: 30,
+    insiderDumpWindowSec: 60,
+    /** Ignore the dump signal if insiders held less than this % of supply. */
+    insiderDumpMinClusterPct: 1,
+  },
+
   /** Copy trading: react when a wallet on your watch list buys. */
   copy: {
     /** Points added to the buy threshold for copy trades (negative = easier, e.g. 75 - 10 = 65). */
@@ -133,8 +179,9 @@ export const DEFAULT_CONFIG = {
       maxTrailPct: 35,
       /** Used until there's enough price history to measure volatility. */
       fallbackTrailPct: 25,
-      volWindowSec: 180,
-      volStepSec: 10,
+      /** Volatility = robust spread of `volStepSec`-second returns over the last `volWindowSec` seconds. */
+      volWindowSec: 240,
+      volStepSec: 15,
       /** After a really big peak, lock in more: the trail is never wider than this. */
       bigWinMultiple: 10,
       bigWinMaxTrailPct: 20,
@@ -149,6 +196,34 @@ export const DEFAULT_CONFIG = {
       { fromMultiple: 2, pct: 15 },
       { fromMultiple: 3, pct: 10 },
     ],
+    /**
+     * How the trailing stop is measured and triggered (both before initials and for the runner).
+     *  - Before initials the trail is `pre.volMultiplier × volatility`, kept between
+     *    `pre.minTrailPct` and the trailingStopPct/trailingTightening value above
+     *    (that value is also used while there's no volatility data yet).
+     *  - The runner trail (see `runner`) is capped tighter as the peak grows: `runnerProfitCaps`.
+     *  - A break only counts when confirmed: the price stays under the stop for
+     *    `confirmTicks` checks in a row AND at least `confirmSec` seconds, so a single
+     *    wick doesn't shake us out. A gap far below (more than `gapMultiple` × the
+     *    trail distance from the peak) exits immediately.
+     *  - Once the peak reached `breakEvenAfterMultiple`, the stop never sits below
+     *    break-even incl. fees for what's left.
+     *  - A live price more than `peakRefTolerancePct` away from the last real trade's
+     *    price is suspicious: it can't set a new peak (and is left out of volatility).
+     */
+    trail: {
+      pre: { volMultiplier: 2.5, minTrailPct: 10 },
+      runnerProfitCaps: [
+        { fromMultiple: 3, maxTrailPct: 30 },
+        { fromMultiple: 5, maxTrailPct: 25 },
+        { fromMultiple: 10, maxTrailPct: 20 },
+      ],
+      confirmTicks: 2,
+      confirmSec: 3,
+      gapMultiple: 1.5,
+      breakEvenAfterMultiple: 1.5,
+      peakRefTolerancePct: 25,
+    },
     /** After reaching `afterMultiple`, sell everything if it falls back to `floorMultiple` (before initials are out). */
     protectProfit: { afterMultiple: 1.3, floorMultiple: 1.05 },
     /**
@@ -250,6 +325,53 @@ export const DEFAULT_CONFIG = {
     safetyMinHolders: 10,
   },
 
+  /**
+   * Learning engine (Phase 7). Labels, weight tuning and learned pattern odds.
+   * Flat keys on purpose: the dashboard config merge is shallow.
+   */
+  learning: {
+    /** A labelled token is a WIN if it reached this multiple of the evaluation price… */
+    winMultiple: 1.8,
+    /** …BEFORE it ever fell to this multiple (otherwise you'd have been stopped out first). */
+    drawdownLossMultiple: 0.7,
+    /** Anything that "went" more than this within the hour is treated as bad price data and excluded. */
+    maxPlausibleMultiple: 25,
+    /** Weight tuning runs every N minutes… */
+    adjustEveryMinutes: 20,
+    /** …and again (at most once per N minutes) right after a position fully closes. */
+    minMinutesBetweenAdjustments: 5,
+    /** Look-back for labelled evaluations used to tune weights (never before the last paper reset). */
+    lookbackDays: 7,
+    /** Max relative change of one weight per run (0.04 = 4%). */
+    maxStep: 0.04,
+    /** How strongly a winner/loser difference turns into a weight change. */
+    sensitivity: 0.5,
+    /** Recency: an outcome this many hours old counts half as much as a fresh one. */
+    halfLifeHours: 24,
+    /** A feature that shows up on losers is cut this many times faster than one on winners is raised. */
+    lossWeight: 1.5,
+    /** Our own buys (realised trades) count this many times more than tokens we only watched. */
+    ownBuyWeight: 3,
+    /** Effective sample size (per class) at which a step reaches full size; less data = smaller steps. */
+    fullEvidenceAt: 150,
+    minSamples: 100,
+    minPerClass: 10,
+    /** Each weight stays within these multiples of its default. */
+    minWeightFactor: 0.4,
+    maxWeightFactor: 2.5,
+    /** Newest N labelled evaluations are held out: new weights must rank them at least as well (AUC) as the old. */
+    holdoutSize: 200,
+    minHoldoutPerClass: 5,
+    /** Learned pattern odds → score points. */
+    oddsEnabled: true,
+    oddsMinSamples: 15,
+    /** Pseudo-samples pulling a pattern's win rate toward the overall rate (shrinkage). */
+    oddsPriorStrength: 20,
+    oddsMaxPoints: 8,
+    /** Points per 1.0 of log-odds difference vs the overall rate. */
+    oddsPointsPerLogit: 6,
+  },
+
   /** How the regime detector nudges size and thresholds (Phase 7). */
   regimeAdjustments: {
     HOT: { sizeMultiplier: 1.2, scoreThresholdDelta: -3 },
@@ -289,6 +411,11 @@ export const SAFETY_PENALTIES = {
   suspiciousName: 10,
   missingMetadataUri: 15,
   unexpectedSupply: 30,
+  serialRugger: 100, // hard fail: creator / funder rugged before
+  hiddenDevWallets: 35, // wallets funded by (or funding) the creator hold supply
+  insiderBurst: 10, // several wallets bought near-identical sizes in a burst
+  transferRecipients: 10, // wallets hold tokens they never bought (transfers)
+  devSyncSells: 15, // wallets sold in the same slot as the dev
 } as const;
 
 /**

@@ -1,4 +1,6 @@
 /** App chrome pieces: logo + name, PAPER/LIVE pill, and the footer shown on every page. */
+import { useEffect, useState } from 'react';
+import { restartNote, type ConnStatus } from '../lib/reconnect';
 
 /** Small logo mark (same chart glyph as the app icon) + "Solbot". */
 export function Brand({ size = 'md' }: { size?: 'sm' | 'md' }) {
@@ -33,8 +35,22 @@ export function ModePill({ mode }: { mode: 'PAPER' | 'LIVE' | undefined }) {
  * Footer ("bottom text") on every page. On phones it sits at the end of the
  * page content, above the fixed bottom nav (the wrapper adds room for it).
  */
-export function AppFooter({ mode, connected, paused }: { mode: 'PAPER' | 'LIVE' | undefined; connected: boolean; paused?: boolean }) {
-  const status = !connected ? { dot: 'bg-critical', text: 'Offline — reconnecting…' } : paused ? { dot: 'bg-warning', text: 'Connected · bot paused' } : { dot: 'bg-good', text: 'Connected · updating live' };
+export function AppFooter({ mode, status, paused, uptimeSec }: { mode: 'PAPER' | 'LIVE' | undefined; status: ConnStatus; paused?: boolean; uptimeSec?: number | null }) {
+  // Re-render every 30s so "restarted Xm ago" stays current.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  const st =
+    status === 'offline'
+      ? { dot: 'bg-critical', text: 'Offline — trying to reconnect…' }
+      : status === 'reconnecting'
+        ? { dot: 'bg-warning', text: 'Reconnecting…' }
+        : paused
+          ? { dot: 'bg-warning', text: 'Connected · bot paused' }
+          : { dot: 'bg-good', text: 'Connected · updating live' };
+  const restarted = restartNote(uptimeSec);
   return (
     <footer className="mx-auto mt-10 w-full max-w-7xl border-t border-line px-4 pt-4 text-xs leading-relaxed text-muted sm:px-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -49,8 +65,9 @@ export function AppFooter({ mode, connected, paused }: { mode: 'PAPER' | 'LIVE' 
           Data: PumpPortal + Solana · Prices update every ~2s.
         </p>
         <p className="inline-flex items-center gap-2" role="status">
-          <span className={`h-2 w-2 rounded-full ${status.dot}`} aria-hidden="true" />
-          {status.text}
+          <span className={`h-2 w-2 shrink-0 rounded-full ${st.dot}`} aria-hidden="true" />
+          {st.text}
+          {restarted && <span className="text-ink-2">· {restarted}</span>}
         </p>
       </div>
       <p className="mt-1.5">Solbot · Pump.fun scanner, scorer &amp; trader · {new Date().getFullYear()}</p>

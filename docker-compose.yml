@@ -54,6 +54,16 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Docker marks the bot unhealthy if the API stops answering (shows in `docker compose ps`).
+    # node:22-slim has no curl, so use node's own fetch.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    # The bot's own graceful shutdown waits up to 15s; give it 20 before SIGKILL.
+    stop_grace_period: 20s
     logging:
       driver: json-file
       options: { max-size: "50m", max-file: "5" }
@@ -72,6 +82,9 @@ services:
       - caddydata:/data
     depends_on:
       - bot
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
   # Phase 8 — uncomment once ml/ has a real service.
   # ml-service:
