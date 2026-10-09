@@ -4,7 +4,7 @@ import { STRATEGIES } from '../src/config/strategies';
 import { marketFeatures, type MarketRaw } from '../src/evaluator/market-analyzer';
 import { checkEntryRules, decide, scoreFeatures } from '../src/evaluator/scorer';
 import { walletFeatures, type CreatorProfile } from '../src/evaluator/wallet-analyzer';
-import { computeRisk, decideExit, type ExitInput } from '../src/executor/sell-manager';
+import { computeRisk, decideExit, detectResistance, type ExitInput } from '../src/executor/sell-manager';
 import { quoteBuy, quoteSell } from '../src/lib/pumpfun';
 
 const V_SOL = 30_000_000_000n;
@@ -88,30 +88,35 @@ describe('exit rules', () => {
     entryPriceSol: 1, peakPriceSol: 1, remainingPct: 100, tpTiersHit: [], trailingActive: false, refPriceSol: 1, lastMoveAtMs: now,
     staleMinutes: 30, priceSol: 1, migratedNoMarket: false, bundlePctEntry: 8, bundlePctNow: 8, devHoldingPctEntry: 3, devHoldingPctNow: 3,
     top10PctEntry: 15, top10PctNow: 15, nowMs: now, copyWalletSold: false, risk: 0, riskWhy: '', openedAtMs: now, maxHoldMinutes: 45,
+    resistance: { hit: false, level: 0, touches: 0 },
   };
   const rules = DEFAULT_CONFIG.exit;
   const reasons = (i: Partial<ExitInput>) => decideExit({ ...base, ...i }, rules).sells.map((s) => `${s.reason}:${s.pct}`);
 
   it('holds when nothing happens', () => expect(reasons({})).toEqual([]));
   it('stop loss at -40%', () => expect(reasons({ priceSol: 0.59 })).toEqual(['STOP_LOSS:100']));
-  it('takes 40% at 1.8x and arms the trailing stop', () => {
-    const d = decideExit({ ...base, priceSol: 1.85, peakPriceSol: 1.85 }, rules);
-    expect(d.sells.map((s) => `${s.reason}:${s.pct}`)).toEqual(['TAKE_PROFIT:40']);
+  it('takes 30% at 1.3x and arms the trailing stop', () => {
+    const d = decideExit({ ...base, priceSol: 1.35, peakPriceSol: 1.35 }, rules);
+    expect(d.sells.map((s) => `${s.reason}:${s.pct}`)).toEqual(['TAKE_PROFIT:30']);
     expect(d.state.trailingActive).toBe(true);
   });
-  it('both tiers fire on a jump straight to 3x', () => expect(reasons({ priceSol: 3.2 })).toEqual(['TAKE_PROFIT:40', 'TAKE_PROFIT:30']));
-  it('does not re-fire a tier', () => expect(reasons({ priceSol: 2, peakPriceSol: 2, tpTiersHit: [1.8], remainingPct: 60, trailingActive: true })).toEqual([]));
-  it('trailing stop sells the rest 25% below peak', () =>
-    expect(reasons({ priceSol: 2.2, peakPriceSol: 3, tpTiersHit: [1.8], remainingPct: 60, trailingActive: true })).toEqual(['TRAILING_STOP:60']));
+  it('all tiers fire on a jump straight to 3x', () => expect(reasons({ priceSol: 3.2 })).toEqual(['TAKE_PROFIT:30', 'TAKE_PROFIT:40', 'TAKE_PROFIT:20']));
+  it('does not re-fire a tier', () => expect(reasons({ priceSol: 1.4, peakPriceSol: 1.4, tpTiersHit: [1.3], remainingPct: 70, trailingActive: true })).toEqual([]));
+  it('trail tightens to 10% after a 3x peak', () => {
+    expect(reasons({ priceSol: 2.65, peakPriceSol: 3, tpTiersHit: [1.3, 1.8, 3], remainingPct: 10, trailingActive: true })).toEqual(['TRAILING_STOP:10']);
+    expect(reasons({ priceSol: 2.75, peakPriceSol: 1.9 * 1.5, tpTiersHit: [1.3, 1.8], remainingPct: 30, trailingActive: true })).toEqual([]);
+  });
+  it('sells at resistance once in profit', () => expect(reasons({ priceSol: 1.25, peakPriceSol: 1.29, resistance: { hit: true, level: 1.29, touches: 3 } })).toEqual(['TAKE_PROFIT:100']));
+  it('ignores resistance below 1.2x', () => expect(reasons({ priceSol: 1.1, peakPriceSol: 1.15, resistance: { hit: true, level: 1.15, touches: 3 } })).toEqual([]));
   it('protects profit: peaked 1.6x, back to 1.04x → out', () => expect(reasons({ priceSol: 1.04, peakPriceSol: 1.6 })).toEqual(['TRAILING_STOP:100']));
-  it('in profit + risk rising → take profit early', () => expect(reasons({ priceSol: 1.3, peakPriceSol: 1.35, risk: 0.7, riskWhy: 'x' })).toEqual(['TAKE_PROFIT:100']));
-  it('in profit + low risk → keep holding', () => expect(reasons({ priceSol: 1.3, peakPriceSol: 1.35, risk: 0.3 })).toEqual([]));
+  it('in profit + risk rising → take profit early', () => expect(reasons({ priceSol: 1.2, peakPriceSol: 1.22, risk: 0.7, riskWhy: 'x' })).toEqual(['TAKE_PROFIT:100']));
+  it('in profit + low risk → keep holding', () => expect(reasons({ priceSol: 1.2, peakPriceSol: 1.22, risk: 0.3 })).toEqual([]));
   it('losing + risk rising → cut early at -15%', () => expect(reasons({ priceSol: 0.84, risk: 0.7, riskWhy: 'x' })).toEqual(['STOP_LOSS:100']));
   it('max hold time closes the trade', () => expect(reasons({ priceSol: 1.1, refPriceSol: 1.1, nowMs: now + 46 * 60_000, lastMoveAtMs: now + 40 * 60_000 })).toEqual(['TAKE_PROFIT:100']));
   it('copied wallet sold → out', () => expect(reasons({ copyWalletSold: true, priceSol: 1.4 })).toEqual(['COPY_EXIT:100']));
   it('rug: dev dumps', () => expect(reasons({ devHoldingPctNow: 1 })).toEqual(['RUG_DETECTED:100']));
   it('rug: concentration spike while underwater', () => expect(reasons({ top10PctNow: 31, priceSol: 0.9 })).toEqual(['RUG_DETECTED:100']));
-  it('whales concentrating a pump is not a rug', () => expect(reasons({ top10PctNow: 40, priceSol: 1.3, peakPriceSol: 1.3 })).toEqual([]));
+  it('whales concentrating a pump is not a rug', () => expect(reasons({ top10PctNow: 40, priceSol: 1.2, peakPriceSol: 1.2 })).toEqual([]));
   it('exits if migrated but no PumpSwap pool ever appeared', () => expect(reasons({ migratedNoMarket: true, priceSol: 3 })).toEqual(['MIGRATED:100']));
   it('rug: bundlers dumping', () => expect(reasons({ bundlePctNow: 2 })).toEqual(['RUG_DETECTED:100']));
   it('bundlers selling a little is fine', () => expect(reasons({ bundlePctNow: 5 })).toEqual([]));
@@ -155,5 +160,18 @@ describe('fee estimator', () => {
       meta: { fee: 105_000, preBalances: [5_000_000_000, 1_000], postBalances: [4_998_895_000, 1_001_000], err: null, loadedAddresses: { writable: [], readonly: [] } },
     } as unknown as VersionedTransactionResponse;
     expect(extraFeeLamports(tx)).toBe(105_000 + 1_000_000);
+  });
+});
+
+describe('detectResistance', () => {
+  const r = { minTouches: 2, bandPct: 3, rejectPct: 6, windowSec: 300 };
+  const series = (prices: number[]) => prices.map((p, i) => ({ t: i * 2000, buys: 0, sells: 0, holders: 0, priceSol: p }));
+  it('spots a double top that got rejected', () => {
+    const s = series([1, 1.1, 1.2, 1.3, 1.2, 1.15, 1.2, 1.29, 1.3, 1.2, 1.18, 1.17]);
+    expect(detectResistance(s, 22_000, r)).toMatchObject({ hit: true, touches: 2 });
+  });
+  it('a clean uptrend is not resistance', () => {
+    const s = series([1, 1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.4, 1.45, 1.5, 1.55]);
+    expect(detectResistance(s, 22_000, r).hit).toBe(false);
   });
 });

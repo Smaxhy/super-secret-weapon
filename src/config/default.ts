@@ -83,19 +83,40 @@ export const DEFAULT_CONFIG = {
   exit: {
     /** Tiered take-profit: sell `sellPct` of the ORIGINAL position at `multiple`x. */
     takeProfitTiers: [
+      { multiple: 1.3, sellPct: 30 },
       { multiple: 1.8, sellPct: 40 },
-      { multiple: 3, sellPct: 30 },
+      { multiple: 3, sellPct: 20 },
     ],
-    /** The remaining 30% rides with the trailing stop. */
-    trailingStopActivateMultiple: 1.5,
-    trailingStopPct: 25,
+    /** The remaining 10% rides with the trailing stop. */
+    trailingStopActivateMultiple: 1.25,
+    trailingStopPct: 20,
+    /** The higher the peak, the tighter the trail (locks in more of a big run). */
+    trailingTightening: [
+      { fromMultiple: 2, pct: 15 },
+      { fromMultiple: 3, pct: 10 },
+    ],
     /** After reaching `afterMultiple`, sell everything if it falls back to `floorMultiple`. */
-    protectProfit: { afterMultiple: 1.5, floorMultiple: 1.05 },
+    protectProfit: { afterMultiple: 1.3, floorMultiple: 1.05 },
+    /**
+     * Resistance: the price keeps hitting the same ceiling and getting knocked
+     * back. Once in profit, sell there instead of hoping it breaks through.
+     */
+    resistance: {
+      minProfitMultiple: 1.2,
+      /** Rejections at the ceiling needed (separate touches). */
+      minTouches: 2,
+      /** A "touch" = within this % of the recent high. */
+      bandPct: 3,
+      /** A rejection = falling at least this % below the high between touches. */
+      rejectPct: 6,
+      /** How far back to look (seconds). */
+      windowSec: 300,
+    },
     /** Momentum-based exits (risk 0-1 from recent sells / holders / price). */
     riskExit: {
-      threshold: 0.6,
+      threshold: 0.5,
       /** Take profit early on high risk once at least this multiple. */
-      minProfitMultiple: 1.2,
+      minProfitMultiple: 1.15,
       /** Cut a loser early on high risk once below this multiple (0.85 = −15%). */
       cutLossBelowMultiple: 0.85,
     },
@@ -127,8 +148,8 @@ export const DEFAULT_CONFIG = {
     curveFeeBps: 125,
     /** Extra adverse price movement assumed between decision and fill (latency). */
     slippagePct: 1.5,
-    /** Network + priority fee per transaction. */
-    txFeeSol: 0.0005,
+    /** Network + priority fee + Jito tip per transaction (realistic for fast Pump.fun fills). */
+    txFeeSol: 0.0015,
     /** PumpSwap pool fee (LP + protocol + creator), basis points per side. Approximate. */
     ammFeeBps: 30,
   },

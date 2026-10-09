@@ -121,6 +121,8 @@ export class Trader {
             devHoldingPct: req.market.devHoldingPct,
             earlyBuyerPct: req.market.earlyBuyerPct,
             copiedWallet: req.copiedWallet ?? null,
+            // Counted into each sell's cost basis so P&L includes the buy's gas/tip.
+            buyFeeSol: fill.feeSol,
             top10HolderPct: req.market.top10HolderPct,
             holders: req.market.holders,
             marketCapSol: req.market.marketCapSol,

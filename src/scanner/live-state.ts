@@ -31,6 +31,7 @@ import {
   marketCapSol,
   type CurveParams,
   WSOL_MINT,
+  PUMP_MIGRATION_POOL_TOKENS,
 } from '../lib/pumpfun';
 
 const log = moduleLogger('live-state');
@@ -256,11 +257,12 @@ export class LiveState {
     let base = ev.baseReserve;
     let quote = ev.quoteReserve;
     if (base <= 0n || quote <= 0n) {
-      // Source didn't give reserves: the pool starts with what was left in the curve.
-      const h = await this.r.hmget(key.live(mint), 'vSol', 'vTok', 'initVSol', 'initVTok', 'initRTok');
-      const [vSol, vTok, initVSol, initVTok, initRTok] = h.map((x) => BigInt(x ?? '0'));
-      base = vTok! - (initVTok! - initRTok!);
-      quote = vSol! - initVSol!;
+      // Source didn't give reserves: the pool starts with the SOL raised on the
+      // curve and the 206.9M tokens that were held back for liquidity — NOT the
+      // curve's remaining sellable tokens (≈0 at completion, which would fake a huge price).
+      const [vSol, initVSol] = (await this.r.hmget(key.live(mint), 'vSol', 'initVSol')).map((x) => BigInt(x ?? '0'));
+      base = PUMP_MIGRATION_POOL_TOKENS;
+      quote = vSol! - (initVSol! > 0n ? initVSol! : 30_000_000_000n);
     }
     await this.r
       .multi()
@@ -277,6 +279,14 @@ export class LiveState {
   }
 
   /** A buy or sell on PumpSwap. Same bookkeeping as curve trades, price from the pool. */
+  /** Which tracked token a PumpSwap pool belongs to (null if not ours). */
+  mintForPool(pool: string): string | null {
+    return this.pools.get(pool) ?? null;
+  }
+
+  /** Price-sanity rejections (garbled / mis-decoded pool events). */
+  rejectedAmmTrades = 0;
+
   async onAmmTrade(ev: AmmTradeEvent): Promise<string | null> {
     const mint = this.pools.get(ev.pool);
     if (!mint) return null;
@@ -289,6 +299,16 @@ export class LiveState {
       baseReserve = ev.isBuy ? b - ev.baseAmount : b + ev.baseAmount;
       quoteReserve = ev.isBuy ? q + ev.quoteAmount : q - ev.quoteAmount;
       if (baseReserve <= 0n || quoteReserve <= 0n) return mint;
+    }
+    // Sanity check: one trade can't move the price 2.5× either way. A jump like
+    // that means a mis-decoded event — applying it would fake huge profits.
+    const [pb, pq, vSol, vTok] = await this.r.hmget(key.live(mint), 'ammBase', 'ammQuote', 'vSol', 'vTok');
+    const prevPrice = pb && pq && BigInt(pb) > 0n ? Number(pq) / Number(pb) : vSol && vTok ? Number(vSol) / Number(vTok) : 0;
+    const newPrice = Number(quoteReserve) / Number(baseReserve);
+    if (prevPrice > 0 && (newPrice / prevPrice > 2.5 || newPrice / prevPrice < 0.4 || Number(quoteReserve) > 1e17)) {
+      this.rejectedAmmTrades++;
+      if (this.rejectedAmmTrades % 50 === 1) log.warn({ mint, prev: prevPrice, next: newPrice }, 'ignored implausible PumpSwap price jump');
+      return mint;
     }
     await this.r.hincrby(key.live(mint), 'ammTrades', 1);
     await this.applyTrade(mint, {

@@ -11,7 +11,8 @@
  */
 import { Worker } from 'bullmq';
 import { env } from '../config/env';
-import type { AmmPoolEvent, PumpCompleteEvent, PumpCreateEvent, PumpEventEnvelope } from '../config/types';
+import type { AmmPoolEvent, PumpCompleteEvent, PumpCreateEvent, PumpEventEnvelope, PumpTradeEvent } from '../config/types';
+import { PUMP_DEFAULT_INITIAL_REAL_TOKEN_RESERVES, PUMP_DEFAULT_INITIAL_VIRTUAL_SOL_RESERVES, PUMP_DEFAULT_INITIAL_VIRTUAL_TOKEN_RESERVES, PUMP_DEFAULT_TOTAL_SUPPLY } from '../lib/pumpfun';
 import { recordEvent } from '../lib/bot-events';
 import { bus } from '../lib/bus';
 import { moduleLogger } from '../lib/logger';
@@ -109,6 +110,32 @@ export class TokenRegistry {
       this.stats.createErrors++;
       log.error({ mint: ev.mint, err: (err as Error).message }, 'failed to register new token');
     }
+  }
+
+  /**
+   * Start tracking a curve token we never saw launch (e.g. a tracked wallet
+   * bought it). Name/symbol are filled in from its metadata later if possible.
+   */
+  async adopt(ev: PumpTradeEvent): Promise<void> {
+    if (this.liveState.isTracked(ev.mint)) return;
+    const create: PumpCreateEvent = {
+      kind: 'create',
+      name: '(joined late)',
+      symbol: ev.mint.slice(0, 5),
+      uri: '',
+      mint: ev.mint,
+      bondingCurve: '',
+      user: '',
+      creator: '',
+      timestamp: ev.timestamp,
+      virtualTokenReserves: PUMP_DEFAULT_INITIAL_VIRTUAL_TOKEN_RESERVES,
+      virtualSolReserves: PUMP_DEFAULT_INITIAL_VIRTUAL_SOL_RESERVES,
+      realTokenReserves: PUMP_DEFAULT_INITIAL_REAL_TOKEN_RESERVES,
+      tokenTotalSupply: PUMP_DEFAULT_TOTAL_SUPPLY,
+    };
+    await this.onCreate(create, { signature: `adopt:${ev.mint}`, slot: 0, event: create });
+    await this.liveState.onTrade(ev);
+    log.info({ mint: ev.mint }, '👀 now tracking a token a watched wallet bought');
   }
 
   /** A tracked token's PumpSwap pool appeared: it can be traded again → start migration checkpoints. */

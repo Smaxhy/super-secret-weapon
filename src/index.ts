@@ -86,6 +86,7 @@ async function main(): Promise<void> {
   registry.startSafetyWorker();
   // Copy trading: watch the wallets you added on the dashboard.
   const whales = new WhaleTracker(redis, liveState, evaluator);
+  whales.onAdopt = (ev) => registry.adopt(ev);
 
   // 4. Live data sources
   const { ws } = rpcEndpoints();

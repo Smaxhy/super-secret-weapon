@@ -8,9 +8,10 @@
  *   2. RUG_DETECTED   bundlers dumped / dev dumped / concentration spike while underwater
  *   3. COPY_EXIT      the tracked wallet we copied sold
  *   4. STOP_LOSS      hard −40%, or an early cut when risk is high and we're down 15%+
- *   5. TAKE_PROFIT    tiers: 40% at 1.8×, 30% at 3×
- *   6. TRAILING_STOP  after 1.5×, sell the rest 25% below the peak
- *   7. Protect profit once it reached 1.5×, never let it fall back below 1.05×
+ *   5. TAKE_PROFIT    tiers: 30% at 1.3×, 40% at 1.8×, 20% at 3×
+ *   6. TRAILING_STOP  after 1.25×, sell the rest 20% below the peak
+ *   7. Protect profit once it reached 1.3×, never let it fall back below 1.05×
+ *   7b. TAKE_PROFIT   resistance: rejected 2+ times at the same ceiling while ≥1.2× → sell
  *   8. TAKE_PROFIT    "risk rising": in profit (≥1.2×) and momentum is fading
  *                     (sells outnumber buys, holders leaving, falling from peak)
  *   9. Max hold time  don't sit in a trade forever (45m curve / 2h migration / 90m copy)
@@ -64,6 +65,8 @@ export interface ExitInput {
   riskWhy: string;
   openedAtMs: number;
   maxHoldMinutes: number;
+  /** Price keeps getting rejected at the same ceiling (see detectResistance). */
+  resistance: { hit: boolean; level: number; touches: number };
 }
 
 export interface ActivitySample {
@@ -72,6 +75,35 @@ export interface ActivitySample {
   sells: number;
   holders: number;
   priceSol: number;
+}
+
+/**
+ * Resistance: has the price touched the same high at least `minTouches`
+ * separate times, falling back `rejectPct`% between touches, and is it below
+ * that ceiling now? Pure — exported for tests.
+ */
+export function detectResistance(
+  samples: ActivitySample[],
+  now: number,
+  r: { minTouches: number; bandPct: number; rejectPct: number; windowSec: number },
+): { hit: boolean; level: number; touches: number } {
+  const win = samples.filter((x) => now - x.t <= r.windowSec * 1000 && x.priceSol > 0);
+  const cur = win[win.length - 1];
+  if (!cur || win.length < 10) return { hit: false, level: 0, touches: 0 };
+  const top = Math.max(...win.map((x) => x.priceSol));
+  const bandLow = top * (1 - r.bandPct / 100);
+  const rejectBelow = top * (1 - r.rejectPct / 100);
+  let touches = 0;
+  let inTouch = false;
+  for (const x of win) {
+    if (!inTouch && x.priceSol >= bandLow) {
+      touches++;
+      inTouch = true;
+    } else if (inTouch && x.priceSol <= rejectBelow) {
+      inTouch = false;
+    }
+  }
+  return { hit: touches >= r.minTouches && cur.priceSol <= rejectBelow, level: top, touches };
 }
 
 const clamp01 = (x: number) => (Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0);
@@ -153,14 +185,22 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   }
 
   if (state.peakPriceSol >= i.entryPriceSol * rules.trailingStopActivateMultiple) state.trailingActive = true;
-  if (state.trailingActive && remaining > 0 && i.priceSol <= state.peakPriceSol * (1 - rules.trailingStopPct / 100)) {
-    sells.push({ pct: remaining, reason: 'TRAILING_STOP', detail: `${(state.peakPriceSol / i.entryPriceSol).toFixed(2)}x peak, now ${multiple.toFixed(2)}x` });
+  const peakX = state.peakPriceSol / i.entryPriceSol;
+  const trailPct = rules.trailingTightening.reduce<number>((pct, t) => (peakX >= t.fromMultiple ? Math.min(pct, t.pct) : pct), rules.trailingStopPct);
+  if (state.trailingActive && remaining > 0 && i.priceSol <= state.peakPriceSol * (1 - trailPct / 100)) {
+    sells.push({ pct: remaining, reason: 'TRAILING_STOP', detail: `${peakX.toFixed(2)}x peak, fell ${trailPct}% to ${multiple.toFixed(2)}x` });
     return { sells, state };
   }
 
   // Once it reached e.g. 1.5×, a winner must not turn into a loser.
   if (remaining > 0 && state.peakPriceSol >= i.entryPriceSol * rules.protectProfit.afterMultiple && multiple <= rules.protectProfit.floorMultiple) {
     sells.push({ pct: remaining, reason: 'TRAILING_STOP', detail: `protecting profit: peaked ${(state.peakPriceSol / i.entryPriceSol).toFixed(2)}x, back to ${multiple.toFixed(2)}x` });
+    return { sells, state };
+  }
+
+  // Keeps failing at the same ceiling → take what's there.
+  if (remaining > 0 && i.resistance.hit && multiple >= rules.resistance.minProfitMultiple) {
+    sells.push({ pct: remaining, reason: 'TAKE_PROFIT', detail: `resistance at ${(i.resistance.level / i.entryPriceSol).toFixed(2)}x (${i.resistance.touches} rejections), sold at ${multiple.toFixed(2)}x` });
     return { sells, state };
   }
 
@@ -275,7 +315,7 @@ export class SellManager {
     const now = Date.now();
     const hist = this.samples.get(p.id) ?? [];
     hist.push({ t: now, buys: view.buys, sells: view.sells, holders: m.holderCount, priceSol: m.priceSol });
-    while (hist.length && now - hist[0]!.t > 180_000) hist.shift();
+    while (hist.length && now - hist[0]!.t > Math.max(180_000, cfg.exit.resistance.windowSec * 1000)) hist.shift();
     this.samples.set(p.id, hist);
     const { risk, why } = computeRisk(hist, Math.max(p.peakPriceSol, m.priceSol), now);
     {
@@ -319,6 +359,7 @@ export class SellManager {
         riskWhy: why,
         openedAtMs: p.openedAt.getTime(),
         maxHoldMinutes: cfg.exit.maxHoldMinutes[p.strategy],
+        resistance: detectResistance(hist, now, cfg.exit.resistance),
       },
       cfg.exit,
     );
@@ -343,7 +384,9 @@ export class SellManager {
       ? (p.tokenAmountRaw * BigInt(Math.round(p.remainingPct * 100))) / 10_000n
       : (p.tokenAmountRaw * BigInt(Math.round(pct * 100))) / 10_000n;
     const fill = await this.executor.sell({ mint: p.mint, tokenAmountRaw: tokens, maxSlippageBps: 2_500 });
-    const costBasis = (p.sizeSol * pct) / 100;
+    // Cost = what we paid for this slice, including its share of the buy's gas/priority/tip.
+    const buyFee = Number((p.entryContext as { buyFeeSol?: number } | null)?.buyFeeSol ?? 0);
+    const costBasis = ((p.sizeSol + buyFee) * pct) / 100;
     const pnl = fill.ok ? fill.solAmount - fill.feeSol - costBasis : 0;
 
     return prisma.$transaction(async (tx) => {

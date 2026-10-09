@@ -11,7 +11,7 @@
  * or remove on the dashboard take effect without a restart.
  */
 import type { Redis } from 'ioredis';
-import type { PumpEventEnvelope } from '../config/types';
+import type { PumpEventEnvelope, PumpTradeEvent } from '../config/types';
 import { getConfig } from '../config/runtime-config';
 import { recordEvent } from '../lib/bot-events';
 import { bus } from '../lib/bus';
@@ -33,6 +33,8 @@ export class WhaleTracker {
   onWalletsChanged: ((addresses: string[]) => void) | null = null;
   /** Called when a tracked wallet trades a token we should stream. */
   onWatchToken: ((mint: string) => void) | null = null;
+  /** Start tracking a token we never saw launch (a tracked wallet bought it). */
+  onAdopt: ((ev: PumpTradeEvent) => Promise<void>) | null = null;
 
   constructor(
     private readonly redis: Redis,
@@ -74,15 +76,25 @@ export class WhaleTracker {
     if (e.kind !== 'trade' && e.kind !== 'ammTrade') return;
     const w = this.wallets.get(e.user);
     if (!w) return;
-    void this.handle(e.kind === 'trade' ? e.mint : null, e.kind === 'ammTrade' ? e.pool : null, e.user, e.isBuy, e.kind === 'trade' ? e.solAmount : e.quoteAmount, w.label).catch((err: Error) =>
-      log.warn({ err: err.message }, 'whale trade handling failed'),
-    );
+    void this.handle(
+      e.kind === 'trade' ? e.mint : null,
+      e.kind === 'ammTrade' ? e.pool : null,
+      e.user,
+      e.isBuy,
+      e.kind === 'trade' ? e.solAmount : e.quoteAmount,
+      w.label,
+      e.kind === 'trade' ? e : null,
+    ).catch((err: Error) => log.warn({ err: err.message }, 'whale trade handling failed'));
   };
 
-  private async handle(curveMint: string | null, pool: string | null, wallet: string, isBuy: boolean, lamports: bigint, label: string | null): Promise<void> {
-    // PumpSwap trades are keyed by pool; PumpPortal pools are named "amm:<mint>".
-    const mint = curveMint ?? (pool?.startsWith('amm:') ? pool.slice(4) : null);
-    if (!mint) return;
+  private async handle(curveMint: string | null, pool: string | null, wallet: string, isBuy: boolean, lamports: bigint, label: string | null, curveTrade: PumpTradeEvent | null): Promise<void> {
+    // PumpSwap trades are keyed by pool address (or "amm:<mint>" from PumpPortal).
+    const mint = curveMint ?? (pool ? (this.liveState.mintForPool(pool) ?? (pool.startsWith('amm:') ? pool.slice(4) : null)) : null);
+    if (!mint) {
+      // A PumpSwap pool we don't follow — still record that the wallet is active.
+      await prisma.trackedWallet.update({ where: { address: wallet }, data: { lastSeenAt: new Date(), tradeCount: { increment: 1 } } }).catch(() => undefined);
+      return;
+    }
     const sol = Number(lamports) / 1e9;
     const name = label ?? `${wallet.slice(0, 4)}…${wallet.slice(-4)}`;
 
@@ -93,8 +105,12 @@ export class WhaleTracker {
       void recordEvent({ module: 'whale-tracker', type: 'wallet_buy', mint, message: `${name} bought ${sol.toFixed(3)} SOL`, data: { wallet, sol } });
       bus.publish({ type: 'stats', data: { whale: { wallet, label, mint, side: 'BUY', sol } } });
       if (!this.liveState.isTracked(mint)) {
-        log.debug({ mint }, 'tracked wallet bought a token we have no launch data for — skipping');
-        return;
+        // We never saw this launch — start tracking it now from the wallet's trade.
+        if (curveTrade && this.onAdopt) await this.onAdopt(curveTrade);
+        if (!this.liveState.isTracked(mint)) {
+          log.debug({ mint }, 'tracked wallet bought a token we cannot follow — skipping');
+          return;
+        }
       }
       this.onWatchToken?.(mint);
       await this.evaluator.scheduleCopy(mint, wallet);

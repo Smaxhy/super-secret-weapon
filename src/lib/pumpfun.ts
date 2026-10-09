@@ -58,6 +58,8 @@ export const PUMP_DEFAULT_TOTAL_SUPPLY = 1_000_000_000_000_000n;
 export const PUMP_DEFAULT_INITIAL_VIRTUAL_TOKEN_RESERVES = 1_073_000_000_000_000n;
 export const PUMP_DEFAULT_INITIAL_VIRTUAL_SOL_RESERVES = 30_000_000_000n; // 30 SOL
 export const PUMP_DEFAULT_INITIAL_REAL_TOKEN_RESERVES = 793_100_000_000_000n;
+/** Tokens that go into the PumpSwap pool when a curve completes (the 206.9M never sold on the curve). */
+export const PUMP_MIGRATION_POOL_TOKENS = 206_900_000_000_000n;
 
 // ---------------------------------------------------------------------------
 // Discriminators
