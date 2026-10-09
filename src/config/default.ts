@@ -35,6 +35,15 @@ export const DEFAULT_CONFIG = {
     minHoldersCurveSnipe: 20,
     minHoldersMigration: 50,
     maxDevHoldingPct: 10,
+    // ---- Anti-rug: hard limits, any one of them blocks a buy ----
+    /** Bundled / sniper wallets (bought within ~1s of launch, dev excluded) may hold at most this % of supply. */
+    maxBundlePct: 15,
+    /** Top 10 wallets combined may hold at most this % of supply. */
+    maxTop10Pct: 45,
+    /** No single wallet (dev excluded) may hold more than this % of supply. */
+    maxSingleHolderPct: 8,
+    /** Skip if the dev has already sold more than this share of what they bought (0-1). */
+    maxDevSoldFraction: 0.9,
     requireNoMintAuthority: true,
     requireNoFreezeAuthority: true,
     minLiquiditySol: 5,
@@ -43,6 +52,12 @@ export const DEFAULT_CONFIG = {
     minMarketCapUsd: 12_000,
     /** Total fees traders have paid on the token, in SOL (a proxy for real activity). */
     minTotalFeesSol: 1,
+    /**
+     * Total fees paid also includes priority fees + tips, which the live stream
+     * doesn't show. Until a token's transactions are sampled, assume this much
+     * per trade (SOL). Typical Pump.fun trades pay ~0.001-0.005.
+     */
+    assumedExtraFeePerTradeSol: 0.0015,
     /** Only buy tokens that link an X account / post / community in their metadata. */
     requireTwitter: false,
   },
@@ -66,6 +81,8 @@ export const DEFAULT_CONFIG = {
     trailingStopPct: 30,
     hardStopLossPct: 40,
     rugExit: {
+      /** Bundle wallets sold this many % of supply since we bought → exit. */
+      bundleDumpPct: 5,
       devDumpPct: 10,
       onLiquidityRemoved: true,
       holderConcentrationSpikePct: 15,
@@ -87,6 +104,8 @@ export const DEFAULT_CONFIG = {
     slippagePct: 1.5,
     /** Network + priority fee per transaction. */
     txFeeSol: 0.0005,
+    /** PumpSwap pool fee (LP + protocol + creator), basis points per side. Approximate. */
+    ammFeeBps: 30,
   },
 
   /** Runtime switches (dashboard-controlled in Phase 5). */
@@ -98,6 +117,8 @@ export const DEFAULT_CONFIG = {
   scoring: {
     /** Checkpoints (seconds after launch) at which a token is (re)evaluated. */
     checkpointsSec: [20, 45, 90, 180, 300, 480, 720, 900],
+    /** Checkpoints (seconds after migration to PumpSwap) for the migration strategy. */
+    migrationCheckpointsSec: [60, 180, 300, 600, 1200, 2400, 3600],
     /** Only run the RPC-heavy wallet analysis if the pre-score is within this many points of the threshold. */
     walletAnalysisMargin: 10,
     /** Evaluations scoring at least this are stored even when skipped ("interesting"). */

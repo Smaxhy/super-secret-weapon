@@ -26,7 +26,7 @@ describe('curve quotes', () => {
 const goodMarket: MarketRaw = {
   ageSec: 120, holders: 70, uniqueWallets: 80, buys: 120, sells: 30, buySellRatio: 4, volumeSol: 40,
   liquiditySol: 12, bondingCurvePct: 25, curveVelocity: 5, priceSol: 5e-8, marketCapSol: 50,
-  devHoldingPct: 2, devSoldFraction: 0, top10HolderPct: 14, earlyBuyerPct: 1, retention: 0.875, complete: false,
+  devHoldingPct: 2, devSoldFraction: 0, top10HolderPct: 14, earlyBuyerPct: 1, maxHolderPct: 3, retention: 0.875, complete: false, onAmm: false,
   totalFeesSol: 1.2, volumeUsd: 15_000, marketCapUsd: 13_000,
 };
 const goodWallet: CreatorProfile = { creator: 'c', balanceSol: 3, walletAgeHours: 24 * 60, veryActive: false, funder: 'f', funderBlacklisted: false, funderCreatorCount: 1, launches24h: 0, priorLaunches: 0, priorCompleted: 0 };
@@ -53,6 +53,16 @@ describe('scoring', () => {
 describe('entry rules', () => {
   const base = { safetyScore: 100, safetyHardFail: false, market: goodMarket, strategy: STRATEGIES.CURVE_SNIPE, entry: DEFAULT_CONFIG.entry };
   it('passes a good token', () => expect(checkEntryRules(base)).toEqual([]));
+  it('anti-rug limits: bundles, top 10, single wallet, dev dumping', () => {
+    const fails = checkEntryRules({ ...base, market: { ...goodMarket, earlyBuyerPct: 20, top10HolderPct: 50, maxHolderPct: 12, devSoldFraction: 0.95 } });
+    expect(fails).toEqual(['bundlers hold 20.0% > 15%', 'top 10 hold 50.0% > 45%', 'one wallet holds 12.0% > 8%', 'dev sold 95% of their bag']);
+  });
+  it('migration strategy accepts completed curves only once on PumpSwap', () => {
+    const mig = { ...base, strategy: STRATEGIES.MIGRATION_MOMENTUM, market: { ...goodMarket, holders: 80, complete: true, bondingCurvePct: 100 } };
+    expect(checkEntryRules(mig)).toEqual(['waiting for PumpSwap pool']);
+    expect(checkEntryRules({ ...mig, market: { ...mig.market, onAmm: true } })).toEqual([]);
+    expect(checkEntryRules({ ...base, market: { ...goodMarket, complete: true } })).toContain('curve already complete');
+  });
   it('lists every failed rule', () => {
     const fails = checkEntryRules({ ...base, safetyScore: 60, market: { ...goodMarket, holders: 5, devHoldingPct: 15, liquiditySol: 2 } });
     expect(fails).toHaveLength(4);
@@ -76,7 +86,7 @@ describe('exit rules', () => {
   const now = 10_000_000;
   const base: ExitInput = {
     entryPriceSol: 1, peakPriceSol: 1, remainingPct: 100, tpTiersHit: [], trailingActive: false, refPriceSol: 1, lastMoveAtMs: now,
-    staleMinutes: 30, priceSol: 1, complete: false, devHoldingPctEntry: 3, devHoldingPctNow: 3, top10PctEntry: 15, top10PctNow: 15, nowMs: now,
+    staleMinutes: 30, priceSol: 1, migratedNoMarket: false, bundlePctEntry: 8, bundlePctNow: 8, devHoldingPctEntry: 3, devHoldingPctNow: 3, top10PctEntry: 15, top10PctNow: 15, nowMs: now,
   };
   const rules = DEFAULT_CONFIG.exit;
   const reasons = (i: Partial<ExitInput>) => decideExit({ ...base, ...i }, rules).sells.map((s) => `${s.reason}:${s.pct}`);
@@ -95,7 +105,9 @@ describe('exit rules', () => {
   it('rug: dev dumps', () => expect(reasons({ devHoldingPctNow: 1 })).toEqual(['RUG_DETECTED:100']));
   it('rug: concentration spike while underwater', () => expect(reasons({ top10PctNow: 31, priceSol: 0.9 })).toEqual(['RUG_DETECTED:100']));
   it('whales concentrating a pump is not a rug', () => expect(reasons({ top10PctNow: 40, priceSol: 1.5 })).toEqual([]));
-  it('migration exits', () => expect(reasons({ complete: true, priceSol: 3 })).toEqual(['MIGRATED:100']));
+  it('exits if migrated but no PumpSwap pool ever appeared', () => expect(reasons({ migratedNoMarket: true, priceSol: 3 })).toEqual(['MIGRATED:100']));
+  it('rug: bundlers dumping', () => expect(reasons({ bundlePctNow: 2 })).toEqual(['RUG_DETECTED:100']));
+  it('bundlers selling a little is fine', () => expect(reasons({ bundlePctNow: 5 })).toEqual([]));
   it('stale after 30 flat minutes', () => expect(reasons({ priceSol: 1.02, nowMs: now + 31 * 60_000 })).toEqual(['STALE:100']));
   it('a real move resets the stale clock', () => {
     const d = decideExit({ ...base, priceSol: 1.2, nowMs: now + 31 * 60_000 }, rules);

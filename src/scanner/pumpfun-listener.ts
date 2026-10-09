@@ -22,7 +22,7 @@ import type { ParsedTransactionWithMeta, PartiallyDecodedInstruction } from '@so
 import { redactUrl } from '../config/env';
 import type { PumpEvent, PumpEventEnvelope } from '../config/types';
 import { moduleLogger } from '../lib/logger';
-import { decodeEventsFromInnerInstructions, parsePumpLogs, PUMP_PROGRAM_ID } from '../lib/pumpfun';
+import { decodeEventsFromInnerInstructions, parsePumpLogs, PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID } from '../lib/pumpfun';
 import { getConnection } from '../lib/solana';
 
 const log = moduleLogger('pumpfun-listener');
@@ -43,6 +43,8 @@ export interface ListenerStats {
   creates: number;
   trades: number;
   completes: number;
+  ammPools: number;
+  ammTrades: number;
   decodeErrors: number;
   truncatedLogs: number;
   fallbackFetches: number;
@@ -74,8 +76,11 @@ export class PumpFunListener extends EventEmitter {
   private pingTimer: NodeJS.Timeout | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private lastMessageAt = 0;
-  private subscribeRequestId = 1;
-  private subscriptionId: number | null = null;
+  /** One subscription for the bonding curve program, one for PumpSwap (post-migration trading). */
+  private readonly subscriptions: Array<{ id: number; program: string }> = [
+    { id: 1, program: PUMP_PROGRAM_ID },
+    { id: 2, program: PUMP_AMM_PROGRAM_ID },
+  ];
   private readonly recentSigs = new Set<string>();
   private readonly recentSigOrder: string[] = [];
 
@@ -87,6 +92,8 @@ export class PumpFunListener extends EventEmitter {
     creates: 0,
     trades: 0,
     completes: 0,
+    ammPools: 0,
+    ammTrades: 0,
     decodeErrors: 0,
     truncatedLogs: 0,
     fallbackFetches: 0,
@@ -151,7 +158,6 @@ export class PumpFunListener extends EventEmitter {
     ws.on('close', (code, reason) => {
       const downSince = this.stats.connectedSince ?? Date.now();
       this.stats.connected = false;
-      this.subscriptionId = null;
       this.clearTimers();
       if (this.stopped) return;
       log.warn({ code, reason: reason.toString() }, `websocket closed, reconnecting in ${this.backoffMs}ms`);
@@ -191,13 +197,9 @@ export class PumpFunListener extends EventEmitter {
   }
 
   private subscribe(): void {
-    const request = {
-      jsonrpc: '2.0',
-      id: this.subscribeRequestId,
-      method: 'logsSubscribe',
-      params: [{ mentions: [PUMP_PROGRAM_ID] }, { commitment: 'confirmed' }],
-    };
-    this.ws?.send(JSON.stringify(request));
+    for (const s of this.subscriptions) {
+      this.ws?.send(JSON.stringify({ jsonrpc: '2.0', id: s.id, method: 'logsSubscribe', params: [{ mentions: [s.program] }, { commitment: 'confirmed' }] }));
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -214,14 +216,14 @@ export class PumpFunListener extends EventEmitter {
     }
     const m = msg as Record<string, unknown>;
 
-    // Reply to our subscribe request.
-    if (m.id === this.subscribeRequestId) {
+    // Reply to one of our subscribe requests.
+    const sub = this.subscriptions.find((s) => s.id === m.id);
+    if (sub) {
       if (m.error) {
-        log.error({ error: m.error }, 'logsSubscribe was rejected');
+        log.error({ error: m.error, program: sub.program }, 'logsSubscribe was rejected');
         return;
       }
-      this.subscriptionId = m.result as number;
-      log.info({ subscriptionId: this.subscriptionId }, 'subscribed to Pump.fun logs');
+      log.info({ subscriptionId: m.result, program: sub.program === PUMP_PROGRAM_ID ? 'pump.fun' : 'pumpswap' }, 'subscribed');
       return;
     }
 
@@ -283,7 +285,9 @@ export class PumpFunListener extends EventEmitter {
   private dispatch(signature: string, slot: number, event: PumpEvent): void {
     if (event.kind === 'create') this.stats.creates++;
     else if (event.kind === 'trade') this.stats.trades++;
-    else this.stats.completes++;
+    else if (event.kind === 'complete') this.stats.completes++;
+    else if (event.kind === 'ammPool') this.stats.ammPools++;
+    else this.stats.ammTrades++;
     this.stats.lastEventAt = Date.now();
     this.emit('event', { signature, slot, event } satisfies PumpEventEnvelope);
   }

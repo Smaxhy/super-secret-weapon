@@ -5,8 +5,10 @@
  * and asks `decideExit()` (a pure function — easy to test, no side effects)
  * what to do. Rules, checked in this order:
  *
- *   1. MIGRATED      curve completed → exit (post-migration tracking is Phase 6)
- *   2. RUG_DETECTED  dev sold ≥10% of what they held at our entry, or top-10
+ *   1. MIGRATED      curve completed but no PumpSwap pool appeared within 10 min
+ *                    (positions otherwise keep running on PumpSwap after migration)
+ *   2. RUG_DETECTED  bundle/sniper wallets dumped ≥5% of supply since entry, or
+ *                    dev sold ≥10% of what they held at our entry, or top-10
  *                    concentration jumped ≥15 points while we're underwater
  *                    (whales buying a pump also raises concentration — that's
  *                    not a rug, so it only counts when price is below entry)
@@ -23,7 +25,6 @@ import { getConfig } from '../config/runtime-config';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import { logTrade } from '../learner/trade-logger';
-import { curvePriceSol } from '../lib/pumpfun';
 import { deriveMetrics, type LiveState } from '../scanner/live-state';
 import type { Executor } from './types';
 
@@ -42,7 +43,10 @@ export interface ExitInput {
   lastMoveAtMs: number;
   staleMinutes: number;
   priceSol: number;
-  complete: boolean;
+  /** Curve completed, no PumpSwap pool seen for 10+ minutes — nowhere left to price it. */
+  migratedNoMarket: boolean;
+  bundlePctEntry: number;
+  bundlePctNow: number;
   devHoldingPctEntry: number;
   devHoldingPctNow: number;
   top10PctEntry: number;
@@ -67,7 +71,11 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   const all = (reason: ExitReason, detail: string): ExitDecision => ({ sells: [{ pct: i.remainingPct, reason, detail }], state });
   const multiple = i.priceSol / i.entryPriceSol;
 
-  if (i.complete) return all('MIGRATED', 'bonding curve completed');
+  if (i.migratedNoMarket) return all('MIGRATED', 'migrated, no PumpSwap pool found');
+
+  if (i.bundlePctEntry - i.bundlePctNow >= rules.rugExit.bundleDumpPct) {
+    return all('RUG_DETECTED', `bundlers dumped ${(i.bundlePctEntry - i.bundlePctNow).toFixed(1)}% of supply`);
+  }
 
   if (i.devHoldingPctEntry > 0.1) {
     const devSoldPct = ((i.devHoldingPctEntry - i.devHoldingPctNow) / i.devHoldingPctEntry) * 100;
@@ -158,7 +166,9 @@ export class SellManager {
       return;
     }
     const m = deriveMetrics(view);
-    const entry = (p.entryContext ?? {}) as { devHoldingPct?: number; top10HolderPct?: number };
+    const entry = (p.entryContext ?? {}) as { devHoldingPct?: number; top10HolderPct?: number; earlyBuyerPct?: number };
+    // Migrated but no PumpSwap trades seen 10 min later → we can't price it anymore.
+    const completedLongAgo = view.complete && view.ammTrades === 0 && Date.now() - (view.migratedAtMs ?? view.lastTradeAtMs ?? 0) > 10 * 60_000;
     const decision = decideExit(
       {
         entryPriceSol: p.entryPriceSol,
@@ -169,8 +179,10 @@ export class SellManager {
         refPriceSol: p.refPriceSol ?? p.entryPriceSol,
         lastMoveAtMs: (p.lastMoveAt ?? p.openedAt).getTime(),
         staleMinutes: cfg.exit.staleMinutes[p.strategy],
-        priceSol: curvePriceSol(view.virtualSolReserves, view.virtualTokenReserves),
-        complete: view.complete,
+        priceSol: m.priceSol,
+        migratedNoMarket: completedLongAgo,
+        bundlePctEntry: entry.earlyBuyerPct ?? m.earlyBuyerPct,
+        bundlePctNow: m.earlyBuyerPct,
         devHoldingPctEntry: entry.devHoldingPct ?? 0,
         devHoldingPctNow: m.devHoldingPct,
         top10PctEntry: entry.top10HolderPct ?? m.top10HolderPct,

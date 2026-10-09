@@ -22,6 +22,8 @@ export interface EvaluateJob {
   checkpointSec: number;
   /** True for the last checkpoint — always store the evaluation (training data). */
   final: boolean;
+  /** Which strategy this checkpoint evaluates for (default CURVE_SNIPE). */
+  strategy?: 'CURVE_SNIPE' | 'MIGRATION_MOMENTUM';
 }
 
 export interface SafetyJob {

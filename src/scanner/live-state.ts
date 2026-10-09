@@ -22,7 +22,7 @@
  */
 import type { Redis } from 'ioredis';
 import { LIVE_STATE_TTL_SECONDS } from '../config/default';
-import type { PumpCompleteEvent, PumpCreateEvent, PumpTradeEvent } from '../config/types';
+import type { AmmPoolEvent, AmmTradeEvent, PumpCompleteEvent, PumpCreateEvent, PumpTradeEvent } from '../config/types';
 import { moduleLogger } from '../lib/logger';
 import {
   bondingCurvePct,
@@ -30,11 +30,14 @@ import {
   curvePriceSol,
   marketCapSol,
   type CurveParams,
+  WSOL_MINT,
 } from '../lib/pumpfun';
 
 const log = moduleLogger('live-state');
 
 const TRACKED_KEY = 'tracked';
+/** HASH pool → mint for PumpSwap pools of tokens we track. */
+const POOLS_KEY = 'amm:pools';
 const key = {
   live: (mint: string) => `tok:${mint}:live`,
   bal: (mint: string) => `tok:${mint}:bal`,
@@ -54,6 +57,12 @@ const BALANCE_DELTA_LUA = `
 local v = redis.call('HINCRBY', KEYS[1], ARGV[1], ARGV[2])
 if v <= 0 then redis.call('HDEL', KEYS[1], ARGV[1]) end
 return v
+`;
+
+/** Set a wallet's exact balance (from sources that report it); remove at zero. */
+const BALANCE_SET_LUA = `
+if tonumber(ARGV[2]) <= 0 then redis.call('HDEL', KEYS[1], ARGV[1]) else redis.call('HSET', KEYS[1], ARGV[1], ARGV[2]) end
+return 1
 `;
 
 type RedisWithBalance = Redis & {
@@ -76,6 +85,12 @@ export interface LiveTokenView {
   complete: boolean;
   lastTradeAtMs: number | null;
   curve: CurveParams;
+  /** PumpSwap pool reserves once migrated (null while on the curve). */
+  ammBaseReserve: bigint | null;
+  ammQuoteReserve: bigint | null;
+  migratedAtMs: number | null;
+  /** PumpSwap trades seen — 0 means we have no live post-migration price yet. */
+  ammTrades: number;
   balances: Map<string, bigint>;
   uniqueWallets: number;
   earlyBuyers: string[];
@@ -98,15 +113,20 @@ export interface DerivedMetrics {
   earlyBuyerPct: number;
   /** Fraction of the dev's purchased tokens they've sold (0-1). */
   devSoldFraction: number;
+  /** % of supply held by the single biggest wallet other than the dev. */
+  maxHolderPct: number;
 }
 
 export class LiveState {
   /** In-memory mirror of `tracked` (mint → creation time + dev) so trade filtering never waits on Redis. */
   private readonly tracked = new Map<string, { createdSec: number; creator: string | null }>();
+  /** PumpSwap pool → mint, for tracked tokens that migrated. */
+  private readonly pools = new Map<string, string>();
   private readonly r: RedisWithBalance;
 
   constructor(redis: Redis) {
     redis.defineCommand('balanceDelta', { numberOfKeys: 1, lua: BALANCE_DELTA_LUA });
+    redis.defineCommand('balanceSet', { numberOfKeys: 1, lua: BALANCE_SET_LUA });
     this.r = redis as RedisWithBalance;
   }
 
@@ -120,6 +140,11 @@ export class LiveState {
       mints.push(flat[i]!);
       this.tracked.set(flat[i]!, { createdSec: Math.floor(Number(flat[i + 1]) / 1000), creator: null });
     }
+    // Recover PumpSwap pools of tracked tokens.
+    for (const [pool, mint] of Object.entries(await this.r.hgetall(POOLS_KEY))) {
+      if (this.tracked.has(mint)) this.pools.set(pool, mint);
+      else await this.r.hdel(POOLS_KEY, pool);
+    }
     // Recover each token's dev so dev buy/sell tracking keeps working after a restart.
     const p = this.r.pipeline();
     for (const m of mints) p.hget(key.live(m), 'creator');
@@ -130,6 +155,30 @@ export class LiveState {
     });
     log.info({ restored: mints.length }, 'restored tracked tokens from redis');
     return mints.length;
+  }
+
+  /** Called with each mint we stop tracking (used to unsubscribe its trades). */
+  readonly onForget: Array<(mint: string) => void> = [];
+
+  trackedMints(): string[] {
+    return [...this.tracked.keys()];
+  }
+
+  /**
+   * Tokens older than `minAgeSec` that never reached `minHolders` and haven't
+   * migrated — i.e. dead launches. Used to stop streaming their trades.
+   */
+  async dormantMints(minAgeSec: number, minHolders: number): Promise<string[]> {
+    const cutoff = Date.now() / 1000 - minAgeSec;
+    const candidates = [...this.tracked.entries()].filter(([, t]) => t.createdSec < cutoff).map(([m]) => m);
+    if (!candidates.length) return [];
+    const p = this.r.pipeline();
+    for (const m of candidates) {
+      p.hlen(key.bal(m));
+      p.hget(key.live(m), 'complete');
+    }
+    const res = (await p.exec()) ?? [];
+    return candidates.filter((_, i) => Number(res[i * 2]?.[1] ?? 0) < minHolders && res[i * 2 + 1]?.[1] !== '1');
   }
 
   isTracked(mint: string): boolean {
@@ -168,40 +217,110 @@ export class LiveState {
       .exec();
   }
 
-  /** Apply one buy or sell. Ignores tokens we didn't see being created. */
+  /** Apply one bonding-curve buy or sell. Ignores tokens we didn't see being created. */
   async onTrade(ev: PumpTradeEvent): Promise<void> {
-    const t = this.tracked.get(ev.mint);
-    if (!t) return;
-    const live = key.live(ev.mint);
-    const bal = key.bal(ev.mint);
-    const hll = key.hll(ev.mint);
-    const delta = ev.isBuy ? ev.tokenAmount : -ev.tokenAmount;
+    await this.applyTrade(ev.mint, {
+      user: ev.user,
+      isBuy: ev.isBuy,
+      tokens: ev.tokenAmount,
+      lamports: ev.solAmount,
+      // Older events lack the fee field → estimate at 1.25%.
+      feeLamports: ev.feeLamports ?? (ev.solAmount * 125n) / 10_000n,
+      timestamp: ev.timestamp,
+      reserves: { vSol: ev.virtualSolReserves.toString(), vTok: ev.virtualTokenReserves.toString() },
+      balanceAfter: ev.balanceAfter,
+    });
+  }
+
+  /** A PumpSwap pool was created. If it's for a token we track, start following its trades there. */
+  async onAmmPool(ev: AmmPoolEvent): Promise<string | null> {
+    const mint = this.tracked.has(ev.baseMint) && ev.quoteMint === WSOL_MINT ? ev.baseMint : null;
+    if (!mint) return null;
+    this.pools.set(ev.pool, mint);
+    let base = ev.baseReserve;
+    let quote = ev.quoteReserve;
+    if (base <= 0n || quote <= 0n) {
+      // Source didn't give reserves: the pool starts with what was left in the curve.
+      const h = await this.r.hmget(key.live(mint), 'vSol', 'vTok', 'initVSol', 'initVTok', 'initRTok');
+      const [vSol, vTok, initVSol, initVTok, initRTok] = h.map((x) => BigInt(x ?? '0'));
+      base = vTok! - (initVTok! - initRTok!);
+      quote = vSol! - initVSol!;
+    }
+    await this.r
+      .multi()
+      .hset(POOLS_KEY, ev.pool, mint)
+      .hset(key.live(mint), {
+        complete: '1',
+        ammPool: ev.pool,
+        ammBase: base.toString(),
+        ammQuote: quote.toString(),
+        migratedAt: String((ev.timestamp || Math.floor(Date.now() / 1000)) * 1000),
+      })
+      .exec();
+    return mint;
+  }
+
+  /** A buy or sell on PumpSwap. Same bookkeeping as curve trades, price from the pool. */
+  async onAmmTrade(ev: AmmTradeEvent): Promise<string | null> {
+    const mint = this.pools.get(ev.pool);
+    if (!mint) return null;
+    let baseReserve = ev.baseReserve;
+    let quoteReserve = ev.quoteReserve;
+    if (baseReserve === undefined || quoteReserve === undefined) {
+      // Derive the pool's new reserves from the old ones and this trade.
+      const [b, q] = (await this.r.hmget(key.live(mint), 'ammBase', 'ammQuote')).map((x) => BigInt(x ?? '0'));
+      if (!b || !q) return mint;
+      baseReserve = ev.isBuy ? b - ev.baseAmount : b + ev.baseAmount;
+      quoteReserve = ev.isBuy ? q + ev.quoteAmount : q - ev.quoteAmount;
+      if (baseReserve <= 0n || quoteReserve <= 0n) return mint;
+    }
+    await this.r.hincrby(key.live(mint), 'ammTrades', 1);
+    await this.applyTrade(mint, {
+      user: ev.user,
+      isBuy: ev.isBuy,
+      tokens: ev.baseAmount,
+      lamports: ev.quoteAmount,
+      feeLamports: ev.feeLamports,
+      timestamp: ev.timestamp,
+      reserves: { ammBase: baseReserve.toString(), ammQuote: quoteReserve.toString() },
+      balanceAfter: ev.balanceAfter,
+    });
+    return mint;
+  }
+
+  private async applyTrade(
+    mint: string,
+    t: { user: string; isBuy: boolean; tokens: bigint; lamports: bigint; feeLamports: bigint; timestamp: number; reserves: Record<string, string>; balanceAfter?: bigint },
+  ): Promise<void> {
+    const info = this.tracked.get(mint);
+    if (!info) return;
+    const live = key.live(mint);
+    const bal = key.bal(mint);
+    const hll = key.hll(mint);
+    const delta = t.isBuy ? t.tokens : -t.tokens;
 
     const p = this.r.pipeline();
-    p.hincrby(live, ev.isBuy ? 'buys' : 'sells', 1);
-    p.hincrby(live, ev.isBuy ? 'buyVol' : 'sellVol', ev.solAmount.toString());
-    // Fees traders paid on this token. Older events lack the field → estimate at 1.25%.
-    p.hincrby(live, 'fees', (ev.feeLamports ?? (ev.solAmount * 125n) / 10_000n).toString());
-    p.hset(live, {
-      vSol: ev.virtualSolReserves.toString(),
-      vTok: ev.virtualTokenReserves.toString(),
-      lastTradeAt: String(ev.timestamp * 1000),
-    });
+    p.hincrby(live, t.isBuy ? 'buys' : 'sells', 1);
+    p.hincrby(live, t.isBuy ? 'buyVol' : 'sellVol', t.lamports.toString());
+    p.hincrby(live, 'fees', t.feeLamports.toString());
+    p.hset(live, { ...t.reserves, lastTradeAt: String(t.timestamp * 1000) });
     // ioredis pipelines support custom commands; typed loosely here.
-    (p as unknown as { balanceDelta(k: string, w: string, d: string): void }).balanceDelta(bal, ev.user, delta.toString());
-    p.pfadd(hll, ev.user);
-    if (t.creator && ev.user === t.creator) {
-      p.hincrby(live, ev.isBuy ? 'devBought' : 'devSold', ev.tokenAmount.toString());
-    } else if (ev.isBuy && ev.timestamp - t.createdSec <= EARLY_WINDOW_SECONDS) {
-      p.sadd(key.early(ev.mint), ev.user);
-      p.expire(key.early(ev.mint), LIVE_STATE_TTL_SECONDS);
+    const pp = p as unknown as { balanceDelta(k: string, w: string, d: string): void; balanceSet(k: string, w: string, v: string): void };
+    if (t.balanceAfter !== undefined) pp.balanceSet(bal, t.user, t.balanceAfter.toString());
+    else pp.balanceDelta(bal, t.user, delta.toString());
+    p.pfadd(hll, t.user);
+    if (info.creator && t.user === info.creator) {
+      p.hincrby(live, t.isBuy ? 'devBought' : 'devSold', t.tokens.toString());
+    } else if (t.isBuy && t.timestamp - info.createdSec <= EARLY_WINDOW_SECONDS) {
+      p.sadd(key.early(mint), t.user);
+      p.expire(key.early(mint), LIVE_STATE_TTL_SECONDS);
     }
     p.expire(live, LIVE_STATE_TTL_SECONDS);
     p.expire(bal, LIVE_STATE_TTL_SECONDS);
     p.expire(hll, LIVE_STATE_TTL_SECONDS);
     const results = await p.exec();
     const failed = results?.find(([err]) => err);
-    if (failed) log.warn({ mint: ev.mint, err: failed[0]?.message }, 'trade pipeline had an error');
+    if (failed) log.warn({ mint, err: failed[0]?.message }, 'trade pipeline had an error');
   }
 
   async onComplete(ev: PumpCompleteEvent): Promise<void> {
@@ -243,6 +362,10 @@ export class LiveState {
       virtualSolReserves: big(h.vSol),
       virtualTokenReserves: big(h.vTok),
       complete: h.complete === '1',
+      ammBaseReserve: h.ammBase ? BigInt(h.ammBase) : null,
+      ammQuoteReserve: h.ammQuote ? BigInt(h.ammQuote) : null,
+      migratedAtMs: h.migratedAt ? Number(h.migratedAt) : null,
+      ammTrades: Number(h.ammTrades ?? 0),
       lastTradeAtMs: h.lastTradeAt ? Number(h.lastTradeAt) : null,
       curve: {
         initialVirtualSolReserves: big(h.initVSol),
@@ -261,25 +384,31 @@ export class LiveState {
   /** Stop tracking a token and free its Redis memory. */
   async forget(mint: string): Promise<void> {
     this.tracked.delete(mint);
+    for (const f of this.onForget) f(mint);
+    for (const [pool, m] of this.pools) if (m === mint) this.pools.delete(pool);
     await this.r.multi().del(key.live(mint), key.bal(mint), key.hll(mint), key.early(mint)).zrem(TRACKED_KEY, mint).exec();
   }
 }
 
 /** Turn raw live state into the numbers we actually care about. Pure function. */
 export function deriveMetrics(v: LiveTokenView): DerivedMetrics {
-  const price = curvePriceSol(v.virtualSolReserves, v.virtualTokenReserves);
+  const onAmm = v.ammBaseReserve !== null && v.ammQuoteReserve !== null && v.ammBaseReserve > 0n;
+  // After migration the price comes from the PumpSwap pool (same x*y=k maths).
+  const price = onAmm ? curvePriceSol(v.ammQuoteReserve!, v.ammBaseReserve!) : curvePriceSol(v.virtualSolReserves, v.virtualTokenReserves);
   const supply = Number(v.curve.totalSupply) || 1;
 
   const balances = [...v.balances.values()].sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
   const top10 = balances.slice(0, 10).reduce((s, b) => s + Number(b), 0);
   const dev = Number(v.balances.get(v.creator) ?? 0n);
   const early = v.earlyBuyers.reduce((s, w) => s + Number(v.balances.get(w) ?? 0n), 0);
+  let maxHolder = 0n;
+  for (const [w, b] of v.balances) if (w !== v.creator && b > maxHolder) maxHolder = b;
 
   return {
     priceSol: price,
     marketCapSol: marketCapSol(price, v.curve.totalSupply),
     bondingCurvePct: v.complete ? 100 : bondingCurvePct(v.virtualTokenReserves, v.curve),
-    liquiditySol: curveLiquiditySol(v.virtualSolReserves, v.curve),
+    liquiditySol: onAmm ? Number(v.ammQuoteReserve) / 1e9 : curveLiquiditySol(v.virtualSolReserves, v.curve),
     holderCount: v.balances.size,
     devHoldingPct: (dev / supply) * 100,
     top10HolderPct: (top10 / supply) * 100,
@@ -288,5 +417,6 @@ export function deriveMetrics(v: LiveTokenView): DerivedMetrics {
     volumeSol: v.buyVolumeSol + v.sellVolumeSol,
     earlyBuyerPct: (early / supply) * 100,
     devSoldFraction: v.devBought > 0n ? Math.min(1, Number(v.devSold) / Number(v.devBought)) : 0,
+    maxHolderPct: (Number(maxHolder) / supply) * 100,
   };
 }

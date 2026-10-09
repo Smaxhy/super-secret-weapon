@@ -41,6 +41,13 @@ const EnvSchema = z.object({
   JWT_SECRET: optionalString,
   CORS_ORIGINS: z.string().default('http://localhost:5173'),
 
+  /**
+   * Where live launches/trades come from:
+   *   pumpportal (default) — free, no Helius credits
+   *   helius               — logsSubscribe on your Helius key (uses LOTS of credits)
+   */
+  DATA_SOURCE: z.enum(['pumpportal', 'helius']).default('pumpportal'),
+  PUMPPORTAL_API_KEY: optionalString,
   ENABLE_SCANNER: bool(true),
   ENABLE_SAFETY_CHECKS: bool(true),
   ENABLE_OBSERVATIONS: bool(true),

@@ -36,8 +36,6 @@ import { NEUTRAL_WALLET_FEATURES, walletFeatures, type CreatorProfile, type Wall
 const log = moduleLogger('evaluator');
 const STATE_TTL_SECONDS = 60 * 60;
 
-/** Phase 2 runs the curve-snipe strategy; the other two arrive in Phase 6. */
-const STRATEGY = STRATEGIES.CURVE_SNIPE;
 
 export class Evaluator {
   private worker: Worker<EvaluateJob> | null = null;
@@ -68,6 +66,19 @@ export class Evaluator {
     );
   }
 
+  /** Queue checkpoints after a token migrates to PumpSwap (migration-momentum strategy). */
+  async scheduleMigration(mint: string, migratedAtMs: number): Promise<void> {
+    const cps = getConfig().scoring.migrationCheckpointsSec;
+    const now = Date.now();
+    await evaluateQueue.addBulk(
+      cps.map((sec, i) => ({
+        name: `mig+${sec}s`,
+        data: { mint, checkpointSec: sec, final: i === cps.length - 1, strategy: 'MIGRATION_MOMENTUM' as const },
+        opts: { jobId: `${mint}-mig-${sec}`, delay: Math.max(0, migratedAtMs + sec * 1000 - now) },
+      })),
+    );
+  }
+
   start(concurrency = 8): void {
     this.worker = new Worker<EvaluateJob>(QUEUE_NAMES.evaluate, (job) => this.process(job), { connection: bullConnection(), concurrency });
     this.worker.on('failed', (job, err) => log.warn({ mint: job?.data.mint, err: err.message }, 'evaluation failed'));
@@ -79,7 +90,8 @@ export class Evaluator {
 
   private async process(job: Job<EvaluateJob>): Promise<void> {
     const { mint, checkpointSec, final } = job.data;
-    const doneKey = `eval:${mint}:done`;
+    const STRATEGY = STRATEGIES[job.data.strategy ?? 'CURVE_SNIPE'];
+    const doneKey = `eval:${mint}:${STRATEGY.name}:done`;
     if (await this.redis.exists(doneKey)) return;
     const markDone = () => this.redis.set(doneKey, '1', 'EX', STATE_TTL_SECONDS);
 
@@ -103,12 +115,12 @@ export class Evaluator {
 
     const cfg = getConfig();
     const { weights, version } = getWeights();
-    const prevKey = `eval:${mint}:prev`;
+    const prevKey = `eval:${mint}:${STRATEGY.name}:prev`;
     const prevRaw = await this.redis.get(prevKey);
     const prev = prevRaw ? (JSON.parse(prevRaw) as PrevCheckpoint) : null;
 
-    const market = analyzeMarket(view, prev, await getSolUsd());
-    await this.redis.set(prevKey, JSON.stringify({ atMs: Date.now(), bondingCurvePct: market.raw.bondingCurvePct } satisfies PrevCheckpoint), 'EX', STATE_TTL_SECONDS);
+    const market = analyzeMarket(view, prev, await getSolUsd(), Date.now(), cfg.entry.assumedExtraFeePerTradeSol);
+    await this.redis.set(prevKey, JSON.stringify({ atMs: Date.now(), bondingCurvePct: market.raw.bondingCurvePct, priceSol: market.raw.priceSol } satisfies PrevCheckpoint), 'EX', STATE_TTL_SECONDS);
     this.stats.evaluated++;
 
     const threshold = cfg.entry.minCombinedScore;
@@ -130,11 +142,11 @@ export class Evaluator {
     const rules = () => checkEntryRules({ safetyScore: token.safetyScore!, safetyHardFail: token.safetyHardFail!, market: market.raw, strategy: STRATEGY, entry: cfg.entry, social: socialInfo });
     let ruleFails = rules();
 
-    // The event stream only has Pump.fun's own fee. If fees are the ONLY thing
-    // standing in the way, measure the full "total fees paid" (priority fees +
-    // Jito tips too) by sampling recent transactions, then re-check.
+    // Total fees so far use an ASSUMED priority fee + tip per trade. If fees are
+    // the ONLY thing standing in the way, measure the real figure by sampling
+    // recent transactions (~25 credits), then re-check.
     if (!token.safetyHardFail && ruleFails.length > 0 && ruleFails.every((f) => f.startsWith('fees '))) {
-      const est = await this.fees.estimate(mint, token.bondingCurve, market.raw.buys + market.raw.sells, market.raw.totalFeesSol);
+      const est = await this.fees.estimate(mint, token.bondingCurve, market.raw.buys + market.raw.sells, view.feesSol);
       this.stats.feeSamples++;
       market.raw.totalFeesSol = est.totalFeesSol;
       ruleFails = rules();
@@ -180,7 +192,8 @@ export class Evaluator {
       await markDone();
       return;
     }
-    if (market.raw.complete) return void (await markDone());
+    // Curve snipes stop at migration (the migration strategy takes over from there).
+    if (market.raw.complete && STRATEGY.name === 'CURVE_SNIPE') return void (await markDone());
 
     if (decision === 'BUY') {
       this.stats.buys++;

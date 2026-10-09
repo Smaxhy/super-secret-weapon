@@ -55,13 +55,19 @@ export function checkEntryRules(i: EntryCheckInput): string[] {
   if (i.safetyScore < e.minSafetyScore) fails.push(`safety ${i.safetyScore} < ${e.minSafetyScore}`);
   if (m.holders < s.minHolders) fails.push(`holders ${m.holders} < ${s.minHolders}`);
   if (m.devHoldingPct > e.maxDevHoldingPct) fails.push(`dev holds ${m.devHoldingPct.toFixed(1)}% > ${e.maxDevHoldingPct}%`);
+  // Anti-rug: concentrated supply means a few wallets can crash the price at will.
+  if (m.earlyBuyerPct > e.maxBundlePct) fails.push(`bundlers hold ${m.earlyBuyerPct.toFixed(1)}% > ${e.maxBundlePct}%`);
+  if (m.top10HolderPct > e.maxTop10Pct) fails.push(`top 10 hold ${m.top10HolderPct.toFixed(1)}% > ${e.maxTop10Pct}%`);
+  if (m.maxHolderPct > e.maxSingleHolderPct) fails.push(`one wallet holds ${m.maxHolderPct.toFixed(1)}% > ${e.maxSingleHolderPct}%`);
+  if (m.devSoldFraction > e.maxDevSoldFraction) fails.push(`dev sold ${(m.devSoldFraction * 100).toFixed(0)}% of their bag`);
   if (m.liquiditySol < e.minLiquiditySol) fails.push(`liquidity ${m.liquiditySol.toFixed(2)} SOL < ${e.minLiquiditySol}`);
   const ageMin = m.ageSec / 60;
   if (ageMin < s.entryWindowMinutes.min || ageMin > s.entryWindowMinutes.max) fails.push(`age ${ageMin.toFixed(1)}m outside entry window`);
   if (m.bondingCurvePct < s.curveProgressRange.min || m.bondingCurvePct > s.curveProgressRange.max) {
     fails.push(`curve ${m.bondingCurvePct.toFixed(1)}% outside ${s.curveProgressRange.min}-${s.curveProgressRange.max}%`);
   }
-  if (m.complete) fails.push('curve already complete');
+  if (m.complete && s.name !== 'MIGRATION_MOMENTUM') fails.push('curve already complete');
+  if (s.name === 'MIGRATION_MOMENTUM' && !m.onAmm) fails.push('waiting for PumpSwap pool');
   if (i.social?.blockedKeyword) fails.push(`blocked keyword "${i.social.blockedKeyword}"`);
   if (e.requireTwitter && !i.social?.hasTwitter) fails.push(i.social ? 'no X link' : 'socials not checked yet');
   if (m.totalFeesSol < e.minTotalFeesSol) fails.push(`fees ${m.totalFeesSol.toFixed(2)} SOL < ${e.minTotalFeesSol}`);

@@ -25,13 +25,16 @@
 import { createHash } from 'node:crypto';
 import { PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
-import type { PumpCompleteEvent, PumpCreateEvent, PumpEvent, PumpTradeEvent } from '../config/types';
+import type { AmmPoolEvent, AmmTradeEvent, PumpCompleteEvent, PumpCreateEvent, PumpEvent, PumpTradeEvent } from '../config/types';
 
 // ---------------------------------------------------------------------------
 // Addresses
 // ---------------------------------------------------------------------------
 
 export const PUMP_PROGRAM_ID = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
+/** PumpSwap — Pump.fun's AMM, where tokens trade after their curve completes. */
+export const PUMP_AMM_PROGRAM_ID = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA';
+export const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 export const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 export const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 
@@ -58,6 +61,9 @@ export const DISCRIMINATORS = {
   create: eventDiscriminator('CreateEvent'),
   trade: eventDiscriminator('TradeEvent'),
   complete: eventDiscriminator('CompleteEvent'),
+  ammCreatePool: eventDiscriminator('CreatePoolEvent'),
+  ammBuy: eventDiscriminator('BuyEvent'),
+  ammSell: eventDiscriminator('SellEvent'),
 } as const;
 
 /** Anchor prefixes emit_cpi instruction data with this tag. */
@@ -97,6 +103,12 @@ export class BorshReader {
     this.need(8);
     const v = this.buf.readBigUInt64LE(this.offset);
     this.offset += 8;
+    return v;
+  }
+  u16(): number {
+    this.need(2);
+    const v = this.buf.readUInt16LE(this.offset);
+    this.offset += 2;
     return v;
   }
   i64(): bigint {
@@ -210,6 +222,74 @@ function decodeComplete(r: BorshReader): PumpCompleteEvent {
   };
 }
 
+// --- PumpSwap (AMM) events ---------------------------------------------------
+
+function decodeAmmCreatePool(r: BorshReader): AmmPoolEvent {
+  const timestamp = Number(r.i64());
+  r.u16(); // index
+  r.pubkey(); // creator
+  const baseMint = r.pubkey();
+  const quoteMint = r.pubkey();
+  r.u8(); // base decimals
+  r.u8(); // quote decimals
+  r.u64(); // base_amount_in
+  r.u64(); // quote_amount_in
+  const baseReserve = r.u64(); // pool_base_amount
+  const quoteReserve = r.u64(); // pool_quote_amount
+  r.u64(); // minimum_liquidity
+  r.u64(); // initial_liquidity
+  r.u64(); // lp_token_amount_out
+  r.u8(); // pool_bump
+  const pool = r.pubkey();
+  return { kind: 'ammPool', pool, baseMint, quoteMint, baseReserve, quoteReserve, timestamp };
+}
+
+function decodeAmmTrade(r: BorshReader, isBuy: boolean): AmmTradeEvent {
+  const timestamp = Number(r.i64());
+  const baseAmount = r.u64(); // base_amount_out (buy) / base_amount_in (sell)
+  r.u64(); // max_quote_amount_in / min_quote_amount_out
+  r.u64(); // user_base_token_reserves
+  r.u64(); // user_quote_token_reserves
+  const poolBase = r.u64(); // pool reserves BEFORE the trade
+  const poolQuote = r.u64();
+  const quoteAmount = r.u64(); // quote_amount_in (buy) / quote_amount_out (sell)
+  r.u64(); // lp_fee_basis_points
+  const lpFee = r.u64();
+  r.u64(); // protocol_fee_basis_points
+  const protocolFee = r.u64();
+  r.u64(); // quote_amount_in_with_lp_fee / quote_amount_out_without_lp_fee
+  r.u64(); // user_quote_amount_in / user_quote_amount_out
+  const pool = r.pubkey();
+  const user = r.pubkey();
+  return {
+    kind: 'ammTrade',
+    pool,
+    user,
+    isBuy,
+    baseAmount,
+    quoteAmount,
+    baseReserve: isBuy ? poolBase - baseAmount : poolBase + baseAmount,
+    quoteReserve: isBuy ? poolQuote + quoteAmount : poolQuote - quoteAmount,
+    feeLamports: lpFee + protocolFee,
+    timestamp,
+  };
+}
+
+/** Decode one PumpSwap event. null for events we don't use / bytes that don't parse. */
+export function decodeAmmEventBytes(data: Buffer): PumpEvent | null {
+  if (data.length < 8) return null;
+  const disc = data.subarray(0, 8);
+  const r = new BorshReader(data.subarray(8));
+  try {
+    if (disc.equals(DISCRIMINATORS.ammCreatePool)) return decodeAmmCreatePool(r);
+    if (disc.equals(DISCRIMINATORS.ammBuy)) return decodeAmmTrade(r, true);
+    if (disc.equals(DISCRIMINATORS.ammSell)) return decodeAmmTrade(r, false);
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 /**
  * Decode one event from raw bytes ([discriminator][fields]).
  * Returns null for events we don't care about or bytes that don't parse.
@@ -276,7 +356,20 @@ export function parsePumpLogs(logs: readonly string[]): ParsedLogs {
       truncated = true;
       continue;
     }
-    if (stack[stack.length - 1] !== PUMP_PROGRAM_ID) continue;
+    const top = stack[stack.length - 1];
+    if (top === PUMP_AMM_PROGRAM_ID) {
+      if (line.startsWith(DATA_PREFIX)) {
+        const bytes = Buffer.from(line.slice(DATA_PREFIX.length), 'base64');
+        const d = bytes.subarray(0, 8);
+        if (d.equals(DISCRIMINATORS.ammCreatePool) || d.equals(DISCRIMINATORS.ammBuy) || d.equals(DISCRIMINATORS.ammSell)) {
+          const ev = decodeAmmEventBytes(bytes);
+          if (ev) events.push(ev);
+          else decodeErrors++;
+        }
+      }
+      continue;
+    }
+    if (top !== PUMP_PROGRAM_ID) continue;
 
     if (line === 'Program log: Instruction: Create' || line === 'Program log: Instruction: CreateV2') {
       sawCreateInstruction = true;

@@ -28,6 +28,7 @@ import { closeRedis, redis } from './lib/redis';
 import { rpcLimiter } from './lib/solana';
 import { LiveState } from './scanner/live-state';
 import { PumpFunListener } from './scanner/pumpfun-listener';
+import { PumpPortalListener } from './scanner/pumpportal-listener';
 import { TokenRegistry } from './scanner/token-registry';
 
 const log = logger.child({ module: 'main' });
@@ -77,15 +78,44 @@ async function main(): Promise<void> {
 
   // 4. Listener
   const { ws } = rpcEndpoints();
-  let listener: PumpFunListener | null = null;
+  let listener: PumpFunListener | PumpPortalListener | null = null;
   if (!env.ENABLE_SCANNER) {
     log.warn('scanner disabled (ENABLE_SCANNER=false)');
+  } else if (env.DATA_SOURCE === 'pumpportal') {
+    // Free stream. Trades are per-mint subscriptions, so follow every token we track.
+    const portal = new PumpPortalListener(env.PUMPPORTAL_API_KEY ? `wss://pumpportal.fun/api/data?api-key=${env.PUMPPORTAL_API_KEY}` : undefined);
+    portal.on('event', (e) => {
+      if (e.event.kind === 'create') portal.watch(e.event.mint);
+      registry.handle(e);
+    });
+    for (const m of liveState.trackedMints()) portal.watch(m);
+    liveState.onForget.push((m) => portal.unwatch(m));
+    portal.start();
+    // Most launches die within minutes. Stop streaming trades for tokens that
+    // are 20+ min old with < 10 holders (their snapshots continue; a later
+    // migration is still caught by the global migration feed).
+    const dormant = new Set<string>();
+    setInterval(async () => {
+      try {
+        for (const m of await liveState.dormantMints(20 * 60, 10)) {
+          if (dormant.has(m)) continue;
+          dormant.add(m);
+          portal.unwatch(m);
+        }
+        if (dormant.size > 100_000) dormant.clear();
+      } catch (err) {
+        log.warn({ err: (err as Error).message }, 'dormant sweep failed');
+      }
+    }, 60_000).unref();
+    listener = portal;
+    log.info('data source: PumpPortal (free) — Helius is only used for RPC checks');
   } else if (!ws) {
     log.error('no WebSocket endpoint — set HELIUS_API_KEY in .env. Scanner not started.');
   } else {
     listener = new PumpFunListener(ws);
     listener.on('event', registry.handle);
     listener.start();
+    log.warn('data source: Helius logsSubscribe — this uses a lot of Helius credits');
   }
 
   // 5. Dashboard API + WebSocket

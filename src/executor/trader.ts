@@ -114,6 +114,7 @@ export class Trader {
           lastMoveAt: new Date(),
           entryContext: {
             devHoldingPct: req.market.devHoldingPct,
+            earlyBuyerPct: req.market.earlyBuyerPct,
             top10HolderPct: req.market.top10HolderPct,
             holders: req.market.holders,
             marketCapSol: req.market.marketCapSol,

@@ -11,7 +11,7 @@
  */
 import { Worker } from 'bullmq';
 import { env } from '../config/env';
-import type { PumpCompleteEvent, PumpCreateEvent, PumpEventEnvelope } from '../config/types';
+import type { AmmPoolEvent, PumpCompleteEvent, PumpCreateEvent, PumpEventEnvelope } from '../config/types';
 import { recordEvent } from '../lib/bot-events';
 import { bus } from '../lib/bus';
 import { moduleLogger } from '../lib/logger';
@@ -51,6 +51,15 @@ export class TokenRegistry {
         break;
       case 'complete':
         void this.onComplete(event);
+        break;
+      case 'ammPool':
+        void this.onAmmPool(event);
+        break;
+      case 'ammTrade':
+        this.liveState.onAmmTrade(event).catch((err: Error) => {
+          this.stats.tradeErrors++;
+          if (this.stats.tradeErrors % 100 === 1) log.warn({ err: err.message }, 'pumpswap trade update failed');
+        });
         break;
     }
   };
@@ -99,6 +108,19 @@ export class TokenRegistry {
     } catch (err) {
       this.stats.createErrors++;
       log.error({ mint: ev.mint, err: (err as Error).message }, 'failed to register new token');
+    }
+  }
+
+  /** A tracked token's PumpSwap pool appeared: it can be traded again → start migration checkpoints. */
+  private async onAmmPool(ev: AmmPoolEvent): Promise<void> {
+    try {
+      const mint = await this.liveState.onAmmPool(ev);
+      if (!mint) return;
+      await prisma.token.updateMany({ where: { mint, status: { not: 'COMPLETED' } }, data: { status: 'COMPLETED', completedAt: new Date(ev.timestamp * 1000) } });
+      log.info({ mint, pool: ev.pool, liquiditySol: Number(ev.quoteReserve) / 1e9 }, '🌊 migrated to PumpSwap');
+      await this.evaluator?.scheduleMigration(mint, ev.timestamp > 0 ? ev.timestamp * 1000 : Date.now());
+    } catch (err) {
+      log.error({ pool: ev.pool, err: (err as Error).message }, 'failed to handle PumpSwap pool');
     }
   }
 

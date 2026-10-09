@@ -98,3 +98,27 @@ describe('curve maths', () => {
     expect(bondingCurvePct(1_073_000_000_000_000n - 396_550_000_000_000n)).toBeCloseTo(50, 5);
   });
 });
+
+import { DISCRIMINATORS as D, PUMP_AMM_PROGRAM_ID, WSOL_MINT } from '../src/lib/pumpfun';
+import bs58 from 'bs58';
+
+describe('PumpSwap events', () => {
+  const u64 = (v: bigint) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(v); return b; };
+  const key = (k: string) => Buffer.from(bs58.decode(k));
+  const ammLine = (b: Buffer) => `Program data: ${b.toString('base64')}`;
+  const pool = randomKey();
+  const token = randomKey();
+  const user = randomKey();
+
+  it('decodes CreatePoolEvent and buy/sell with post-trade reserves', () => {
+    const create = Buffer.concat([D.ammCreatePool, u64(1_760_000_000n), Buffer.from([0, 0]), key(randomKey()), key(token), key(WSOL_MINT), Buffer.from([6, 9]),
+      u64(1n), u64(1n), u64(206_900_000_000_000n), u64(84_990_000_000n), u64(0n), u64(0n), u64(0n), Buffer.from([255]), key(pool), key(randomKey()), key(randomKey()), key(randomKey())]);
+    const tradeBody = (isBuy: boolean) => Buffer.concat([isBuy ? D.ammBuy : D.ammSell, u64(1_760_000_100n), u64(1_000_000_000_000n), u64(0n), u64(0n), u64(0n),
+      u64(206_900_000_000_000n), u64(84_990_000_000n), u64(500_000_000n), u64(20n), u64(1_000_000n), u64(5n), u64(250_000n), u64(0n), u64(0n), key(pool), key(user), key(randomKey())]);
+    const logs = [`Program ${PUMP_AMM_PROGRAM_ID} invoke [1]`, ammLine(create), ammLine(tradeBody(true)), ammLine(tradeBody(false)), `Program ${PUMP_AMM_PROGRAM_ID} success`];
+    const evs = parsePumpLogs(logs).events;
+    expect(evs[0]).toMatchObject({ kind: 'ammPool', pool, baseMint: token, quoteMint: WSOL_MINT, baseReserve: 206_900_000_000_000n, quoteReserve: 84_990_000_000n });
+    expect(evs[1]).toMatchObject({ kind: 'ammTrade', pool, user, isBuy: true, baseAmount: 1_000_000_000_000n, quoteAmount: 500_000_000n, baseReserve: 205_900_000_000_000n, quoteReserve: 85_490_000_000n, feeLamports: 1_250_000n });
+    expect(evs[2]).toMatchObject({ kind: 'ammTrade', isBuy: false, baseReserve: 207_900_000_000_000n, quoteReserve: 84_490_000_000n });
+  });
+});

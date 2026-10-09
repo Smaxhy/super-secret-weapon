@@ -61,6 +61,8 @@ export interface PumpTradeEvent {
   realTokenReserves?: bigint;
   /** Protocol + creator fee paid on this trade (lamports). Newer program versions only. */
   feeLamports?: bigint;
+  /** The trader's exact token balance after the trade (raw), when the source provides it. */
+  balanceAfter?: bigint;
 }
 
 /** Emitted when a bonding curve fills up (token is about to migrate). */
@@ -72,7 +74,35 @@ export interface PumpCompleteEvent {
   timestamp: number;
 }
 
-export type PumpEvent = PumpCreateEvent | PumpTradeEvent | PumpCompleteEvent;
+/** PumpSwap (Pump.fun's AMM) pool created — this is where a token goes after its curve completes. */
+export interface AmmPoolEvent {
+  kind: 'ammPool';
+  pool: string;
+  baseMint: string; // the token
+  quoteMint: string; // normally wrapped SOL
+  /** 0 = unknown → derived from the token's final bonding-curve state. */
+  baseReserve: bigint; // raw token units
+  quoteReserve: bigint; // lamports
+  timestamp: number;
+}
+
+/** A buy or sell on a PumpSwap pool. Reserves are the pool's state AFTER the trade. */
+export interface AmmTradeEvent {
+  kind: 'ammTrade';
+  pool: string;
+  user: string;
+  isBuy: boolean;
+  baseAmount: bigint; // tokens bought / sold
+  quoteAmount: bigint; // lamports paid / received
+  /** Pool reserves after the trade. Omitted by some sources → derived from the previous reserves. */
+  baseReserve?: bigint;
+  quoteReserve?: bigint;
+  feeLamports: bigint;
+  timestamp: number;
+  balanceAfter?: bigint;
+}
+
+export type PumpEvent = PumpCreateEvent | PumpTradeEvent | PumpCompleteEvent | AmmPoolEvent | AmmTradeEvent;
 
 /** One decoded event plus the transaction it came from. */
 export interface PumpEventEnvelope {

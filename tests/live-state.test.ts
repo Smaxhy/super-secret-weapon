@@ -15,6 +15,9 @@ const view: LiveTokenView = {
   virtualSolReserves: 32_000_000_000n,
   virtualTokenReserves: 1_005_937_500_000_000n,
   complete: false,
+  ammBaseReserve: null,
+  ammQuoteReserve: null,
+  migratedAtMs: null,
   lastTradeAtMs: 1_050_000,
   curve: DEFAULT_CURVE_PARAMS,
   balances: new Map([
@@ -40,6 +43,13 @@ describe('deriveMetrics / buildSnapshot', () => {
     expect(m.bondingCurvePct).toBeGreaterThan(8);
     expect(m.earlyBuyerPct).toBeCloseTo(0.7);
     expect(m.devSoldFraction).toBeCloseTo(1 / 6);
+    expect(m.maxHolderPct).toBeCloseTo(1); // biggest non-dev wallet
+  });
+  it('prices from the PumpSwap pool after migration', () => {
+    const m = deriveMetrics({ ...view, complete: true, ammBaseReserve: 200_000_000_000_000n, ammQuoteReserve: 85_000_000_000n });
+    expect(m.priceSol).toBeCloseTo(85 / 200_000_000);
+    expect(m.liquiditySol).toBeCloseTo(85);
+    expect(m.bondingCurvePct).toBe(100);
   });
   it('builds a snapshot with age relative to creation', () => {
     const s = buildSnapshot(view, 'M1', 1_060_000);

@@ -22,7 +22,7 @@ export interface MarketRaw {
   volumeSol: number;
   liquiditySol: number;
   bondingCurvePct: number;
-  /** Curve % gained per minute (recent if we have a previous checkpoint, else since launch). */
+  /** Curve % gained per minute (recent if we have a previous checkpoint, else since launch). After migration: price % change per minute. */
   curveVelocity: number;
   priceSol: number;
   marketCapSol: number;
@@ -30,9 +30,13 @@ export interface MarketRaw {
   devSoldFraction: number;
   top10HolderPct: number;
   earlyBuyerPct: number;
+  /** Biggest single wallet (dev excluded), % of supply. */
+  maxHolderPct: number;
   /** Current holders / every wallet that ever traded. Low = lots of flipping. */
   retention: number;
   complete: boolean;
+  /** Trading on PumpSwap (migrated) rather than the bonding curve. */
+  onAmm: boolean;
   /** Total fees traders paid, in SOL. Pump.fun fees only, until the fee estimator adds priority fees + tips. */
   totalFeesSol: number;
   /** USD values — null if the SOL price is unknown. */
@@ -44,6 +48,7 @@ export interface MarketRaw {
 export interface PrevCheckpoint {
   atMs: number;
   bondingCurvePct: number;
+  priceSol?: number;
 }
 
 export type MarketFeatures = Pick<
@@ -58,13 +63,17 @@ export function analyzeMarket(
   prev: PrevCheckpoint | null,
   solUsd: number | null,
   now = Date.now(),
+  extraFeePerTradeSol = 0,
 ): { raw: MarketRaw; features: MarketFeatures } {
   const m = deriveMetrics(view);
   const ageSec = Math.max(1, (now - view.createdAtMs) / 1000);
 
   // Prefer momentum since the last checkpoint (needs ≥ 15s of history).
   let curveVelocity = (m.bondingCurvePct / ageSec) * 60;
-  if (prev && now - prev.atMs >= 15_000) {
+  if (view.complete) {
+    // After migration the curve is full, so use price momentum instead: % price change per minute.
+    curveVelocity = prev?.priceSol && now - prev.atMs >= 15_000 && m.priceSol > 0 ? ((m.priceSol / prev.priceSol - 1) * 100) / ((now - prev.atMs) / 60_000) : 0;
+  } else if (prev && now - prev.atMs >= 15_000) {
     curveVelocity = ((m.bondingCurvePct - prev.bondingCurvePct) / ((now - prev.atMs) / 1000)) * 60;
   }
 
@@ -85,9 +94,12 @@ export function analyzeMarket(
     devSoldFraction: m.devSoldFraction,
     top10HolderPct: m.top10HolderPct,
     earlyBuyerPct: m.earlyBuyerPct,
+    maxHolderPct: m.maxHolderPct,
     retention: view.uniqueWallets > 0 ? m.holderCount / view.uniqueWallets : 0,
     complete: view.complete,
-    totalFeesSol: view.feesSol,
+    onAmm: view.ammBaseReserve !== null && view.ammBaseReserve > 0n && view.ammTrades > 0,
+    // Pump.fun/PumpSwap fees (exact) + assumed priority fees & tips per trade.
+    totalFeesSol: view.feesSol + extraFeePerTradeSol * (view.buys + view.sells),
     volumeUsd: solUsd ? m.volumeSol * solUsd : null,
     marketCapUsd: solUsd ? m.marketCapSol * solUsd : null,
   };
