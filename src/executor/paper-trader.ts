@@ -8,15 +8,27 @@
  * a random 0.4–1.2s (like a real tx landing), so the fill uses the price
  * *after* the delay, then applies a small extra adverse slippage on top.
  *
+ * Sanity guard: every fill is also checked against an INDEPENDENT reference —
+ * the price the token's most recent real trade executed at (live-state keeps
+ * it). A sell quoted > `paper.maxFillVsRefMultiple`× above it, or a buy that
+ * many times below it, can only be a pricing bug (bad pool, drifted reserves),
+ * so it's clamped to the reference price minus fees/slippage and logged as a
+ * WARN 'suspicious_fill' bot event. Real runs still pay: the reference moves
+ * with every real trade.
+ *
  * Balance = starting balance − SOL spent on buys − tx fees + SOL from sells,
  * all from the PAPER trades in the database, so it survives restarts.
  */
 import { getConfig } from '../config/runtime-config';
+import { recordEvent } from '../lib/bot-events';
+import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import { curvePriceSol, PUMP_TOKEN_DECIMALS, quoteBuy, quoteSell } from '../lib/pumpfun';
 import { lamportsToSol, solToLamports } from '../lib/solana';
 import type { LiveState, LiveTokenView } from '../scanner/live-state';
 import type { BuyRequest, Executor, Fill, SellRequest } from './types';
+
+const log = moduleLogger('paper-trader');
 
 export class PaperExecutor implements Executor {
   readonly mode = 'PAPER' as const;
@@ -43,8 +55,20 @@ export class PaperExecutor implements Executor {
     const lamports = solToLamports(req.solAmount);
     const { tokensOut } = quoteBuy(lamports, pool.sol, pool.tokens, pool.feeBps);
     // Latency slippage: assume we get slightly fewer tokens than the quote.
-    const filled = (tokensOut * BigInt(Math.round((100 - p.slippagePct) * 100))) / 10_000n;
+    let filled = (tokensOut * BigInt(Math.round((100 - p.slippagePct) * 100))) / 10_000n;
     if (filled <= 0n) return failed('quote returned zero tokens');
+
+    // Sanity guard: far more tokens than the last real trade price allows → clamp.
+    const ref = referencePrice(view);
+    const factor = p.maxFillVsRefMultiple ?? 3;
+    const quotedPx = req.solAmount / (Number(filled) / 10 ** PUMP_TOKEN_DECIMALS);
+    if (ref && factor > 0 && quotedPx < ref.priceSol / factor) {
+      const netSol = req.solAmount * (1 - pool.feeBps / 10_000) * (1 - p.slippagePct / 100);
+      const clamped = BigInt(Math.floor((netSol / ref.priceSol) * 10 ** PUMP_TOKEN_DECIMALS));
+      await suspicious('BUY', req.mint, quotedPx, ref, factor);
+      if (clamped <= 0n) return failed('reference price unusable');
+      filled = clamped;
+    }
 
     return {
       ok: true,
@@ -66,8 +90,19 @@ export class PaperExecutor implements Executor {
     const pool = poolOf(view, p) ?? { sol: view.virtualSolReserves, tokens: view.virtualTokenReserves, feeBps: p.curveFeeBps };
 
     const { solOutLamports } = quoteSell(req.tokenAmountRaw, pool.sol, pool.tokens, pool.feeBps);
-    const received = lamportsToSol(solOutLamports) * (1 - p.slippagePct / 100);
+    let received = lamportsToSol(solOutLamports) * (1 - p.slippagePct / 100);
     const tokens = Number(req.tokenAmountRaw) / 10 ** PUMP_TOKEN_DECIMALS;
+
+    // Sanity guard: never sell far above where the token last really traded.
+    const ref = referencePrice(view);
+    const factor = p.maxFillVsRefMultiple ?? 3;
+    if (ref && factor > 0 && tokens > 0) {
+      const grossPx = lamportsToSol(solOutLamports) / (1 - pool.feeBps / 10_000) / tokens;
+      if (grossPx > ref.priceSol * factor) {
+        received = tokens * ref.priceSol * (1 - pool.feeBps / 10_000) * (1 - p.slippagePct / 100);
+        await suspicious('SELL', req.mint, grossPx, ref, factor);
+      }
+    }
     return {
       ok: true,
       status: 'SIMULATED',
@@ -78,6 +113,30 @@ export class PaperExecutor implements Executor {
       feeSol: p.txFeeSol,
     };
   }
+}
+
+/**
+ * The independent price a fill is checked against: the last real trade's
+ * execution price. A stale one is still right — without trades the price
+ * can't have moved. If a migrated token has none yet, the final curve price
+ * (≈ the migration price) stands in. On the curve without one: no check.
+ */
+function referencePrice(view: LiveTokenView): { priceSol: number; source: string; ageSec: number | null } | null {
+  if (view.refPriceSol && view.refPriceSol > 0) {
+    return { priceSol: view.refPriceSol, source: 'last trade', ageSec: view.refPriceAtMs ? Math.round((Date.now() - view.refPriceAtMs) / 1000) : null };
+  }
+  if (view.ammBaseReserve || view.complete) {
+    const px = curvePriceSol(view.virtualSolReserves, view.virtualTokenReserves);
+    if (px > 0) return { priceSol: px, source: 'final curve price', ageSec: null };
+  }
+  return null;
+}
+
+async function suspicious(side: 'BUY' | 'SELL', mint: string, quotedPx: number, ref: { priceSol: number; source: string; ageSec: number | null }, factor: number): Promise<void> {
+  const x = side === 'SELL' ? quotedPx / ref.priceSol : ref.priceSol / quotedPx;
+  const message = `paper ${side} quoted ${x.toFixed(1)}x ${side === 'SELL' ? 'above' : 'below'} the ${ref.source} price (limit ${factor}x) — clamped to the reference price`;
+  log.warn({ mint, side, quotedPx, refPx: ref.priceSol, refSource: ref.source, refAgeSec: ref.ageSec }, message);
+  await recordEvent({ level: 'WARN', module: 'paper', type: 'suspicious_fill', mint, message, data: { side, quotedPx, refPx: ref.priceSol, refSource: ref.source, refAgeSec: ref.ageSec, factor } });
 }
 
 /** Wait as long as a real transaction would take to land (random within the configured range). */

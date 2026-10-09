@@ -4,11 +4,11 @@ import { pnl } from '../lib/format';
 
 export function Card({ title, action, children, className = '' }: { title?: ReactNode; action?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={`rounded-2xl border border-line bg-surface p-4 shadow-card sm:p-5 ${className}`}>
+    <section className={`min-w-0 rounded-2xl border border-line bg-surface p-4 shadow-card sm:p-5 ${className}`}>
       {(title || action) && (
         <div className="mb-3 flex items-center justify-between gap-3">
-          {title && <h2 className="text-base font-semibold text-ink">{title}</h2>}
-          {action}
+          {title && <h2 className="min-w-0 break-words text-base font-semibold text-ink">{title}</h2>}
+          {action && <div className="shrink-0">{action}</div>}
         </div>
       )}
       {children}
@@ -20,9 +20,9 @@ export function Card({ title, action, children, className = '' }: { title?: Reac
 export function StatTile({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: 'up' | 'down' }) {
   const color = tone === 'up' ? 'text-up' : tone === 'down' ? 'text-down' : 'text-ink';
   return (
-    <div className="rounded-2xl border border-line bg-surface p-4 shadow-card">
-      <div className="text-sm text-ink-2">{label}</div>
-      <div className={`mt-1 whitespace-nowrap text-xl font-semibold sm:text-2xl ${color}`}>{value}</div>
+    <div className="min-w-0 rounded-2xl border border-line bg-surface p-4 shadow-card">
+      <div className="break-words text-sm leading-snug text-ink-2">{label}</div>
+      <div className={`tabular mt-1 break-words text-lg font-semibold leading-tight sm:text-2xl ${color}`}>{value}</div>
       {sub && <div className="mt-1 text-sm text-muted">{sub}</div>}
     </div>
   );
@@ -34,19 +34,19 @@ export function Pnl({ value, dp = 3, className = '' }: { value: number | null | 
   const tone = value > 0 ? 'text-up' : value < 0 ? 'text-down' : 'text-ink-2';
   const arrow = value > 0 ? '▲' : value < 0 ? '▼' : '';
   return (
-    <span className={`tabular font-medium ${tone} ${className}`}>
+    <span className={`tabular whitespace-nowrap font-medium ${tone} ${className}`}>
       {arrow && <span aria-hidden="true" className="mr-1 text-[0.7em]">{arrow}</span>}
       {pnl(value, dp)}
     </span>
   );
 }
 
-export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
+export function PageHeader({ title, subtitle, action }: { title: string; subtitle?: ReactNode; action?: ReactNode }) {
   return (
     <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">{title}</h1>
-        {subtitle && <p className="mt-1 text-ink-2">{subtitle}</p>}
+      <div className="min-w-0 max-w-full">
+        <h1 className="break-words text-2xl font-bold tracking-tight text-ink sm:text-3xl">{title}</h1>
+        {subtitle && <p className="mt-1 text-pretty text-ink-2">{subtitle}</p>}
       </div>
       {action}
     </div>

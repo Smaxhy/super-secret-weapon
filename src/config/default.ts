@@ -213,6 +213,15 @@ export const DEFAULT_CONFIG = {
     txFeeSol: 0.0015,
     /** PumpSwap pool fee (LP + protocol + creator), basis points per side. Approximate. */
     ammFeeBps: 30,
+    /**
+     * Sanity guard: a paper fill is checked against the price the most recent REAL
+     * trade of that token happened at. A sell quoted more than this many times
+     * above it (or a buy this many times below it) is a pricing bug, not a win:
+     * the fill is clamped to the reference price (minus fees/slippage) and a
+     * WARN 'suspicious_fill' event is logged. Real runs still pay — the reference
+     * moves with every real trade.
+     */
+    maxFillVsRefMultiple: 3,
   },
 
   /** Runtime switches (dashboard-controlled in Phase 5). */

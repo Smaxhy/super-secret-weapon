@@ -3,7 +3,7 @@ export function ScoreGauge({ score, threshold = 70, size = 'sm' }: { score: numb
   if (score === null || score === undefined) return <span className="text-muted">—</span>;
   const w = Math.max(0, Math.min(100, score));
   return (
-    <div className={size === 'lg' ? 'w-full' : 'w-24'} title={`Score ${score.toFixed(1)} (buy threshold ${threshold})`}>
+    <div className={size === 'lg' ? 'w-full' : 'w-16 shrink-0 sm:w-24'} title={`Score ${score.toFixed(1)} (buy threshold ${threshold})`}>
       <div className={`tabular font-semibold text-ink ${size === 'lg' ? 'text-3xl' : 'text-sm'}`}>
         {score.toFixed(size === 'lg' ? 1 : 0)}
         <span className="text-muted font-normal">/100</span>

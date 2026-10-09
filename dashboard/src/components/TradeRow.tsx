@@ -69,24 +69,24 @@ export function TradeCard({ t }: { t: TradeRowData }) {
     <li className="rounded-xl border border-line bg-surface p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <Link to={`/token/${t.mint}`} className="font-semibold text-ink">
+          <Link to={`/token/${t.mint}`} className="block truncate font-semibold text-ink">
             {t.symbol}
           </Link>
-          <div className="text-xs text-muted">
+          <div className="truncate text-xs text-muted">
             {STRATEGY_LABEL[t.strategy] ?? t.strategy} · {t.exitReason ? (EXIT_LABEL[t.exitReason] ?? t.exitReason) : '—'} · {duration(t.holdSeconds)}
           </div>
         </div>
-        <div className="text-right">
+        <div className="shrink-0 whitespace-nowrap text-right">
           <Pnl value={t.pnlSol} />
           <div className={`text-xs ${t.pnlPct >= 0 ? 'text-up' : 'text-down'}`}>{pct(t.pnlPct, 1, true)}</div>
         </div>
       </div>
-      <div className="mt-2 flex items-center justify-between text-xs text-ink-2">
-        <span>
+      <div className="mt-2 flex items-center justify-between gap-2 text-xs text-ink-2">
+        <span className="tabular min-w-0">
           {sol(t.sizeSol, 2)} · peak {t.peakMultiple.toFixed(2)}× · score {t.scoreAtEntry?.toFixed(0) ?? '—'}
         </span>
         {(t.buyReason || t.sellReasons.length > 0) && (
-          <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="rounded-md border border-line px-2 py-1 text-ink">
+          <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="shrink-0 rounded-md border border-line px-2 py-1 text-ink">
             {open ? 'Hide' : 'Why?'}
           </button>
         )}

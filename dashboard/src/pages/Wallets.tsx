@@ -109,7 +109,7 @@ export function Wallets() {
                 </div>
                 <div>
                   <dt className="text-muted">Trades seen</dt>
-                  <dd className="tabular text-ink">{w.tradesSeen}</dd>
+                  <dd className="tabular text-ink">{w.tradesSeen.toLocaleString()}</dd>
                 </div>
                 <div>
                   <dt className="text-muted">Copied</dt>

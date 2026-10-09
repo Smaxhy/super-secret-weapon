@@ -406,7 +406,26 @@ export class SellManager {
   async closeNow(positionId: string, reason: ExitReason): Promise<void> {
     const p = await prisma.position.findUnique({ where: { id: positionId }, include: { token: { select: { symbol: true } } } });
     if (!p || p.status !== 'OPEN') return;
-    await this.executeSell(p, p.token.symbol, p.remainingPct, reason, 'forced');
+    // 'all' = whatever is left at the moment the sell actually runs (another sell may finish first).
+    await this.executeSell(p, p.token.symbol, 'all', reason, 'forced');
+  }
+
+  /**
+   * One sell at a time per position. A paper (or live) fill takes 0.4–1.2s to
+   * land, so without this a manual "sell now" and the exit tick could both sell
+   * the same tokens and BOTH get paid — double-counted proceeds, fake profit.
+   */
+  private readonly sellLocks = new Map<string, Promise<unknown>>();
+  private async withSellLock<T>(positionId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.sellLocks.get(positionId) ?? Promise.resolve();
+    const run = prev.catch(() => undefined).then(fn);
+    const tail = run.catch(() => undefined);
+    this.sellLocks.set(positionId, tail);
+    try {
+      return await run;
+    } finally {
+      if (this.sellLocks.get(positionId) === tail) this.sellLocks.delete(positionId);
+    }
   }
 
   private async manage(p: Position, symbol: string): Promise<void> {
@@ -498,67 +517,93 @@ export class SellManager {
 
     let current: Position = { ...p, peakPriceSol: s.peakPriceSol };
     for (const sell of decision.sells) {
+      const before = current.remainingPct;
       current = await this.executeSell(current, symbol, sell.pct, sell.reason, sell.detail);
-      if (current.status !== 'OPEN') break;
+      // Closed, or someone else sold in the meantime (our decision is stale) → stop.
+      if (current.status !== 'OPEN' || current.remainingPct === before) break;
     }
   }
 
-  private async executeSell(p: Position, symbol: string, pct: number, reason: ExitReason, detail: string): Promise<Position> {
-    const closing = p.remainingPct - pct <= 0.01;
-    // On the final sell, sell exactly what's left (avoids rounding dust).
-    const tokens = closing
-      ? (p.tokenAmountRaw * BigInt(Math.round(p.remainingPct * 100))) / 10_000n
-      : (p.tokenAmountRaw * BigInt(Math.round(pct * 100))) / 10_000n;
-    const fill = await this.executor.sell({ mint: p.mint, tokenAmountRaw: tokens, maxSlippageBps: 2_500 });
-    // Cost = what we paid for this slice, including its share of the buy's gas/priority/tip.
-    const buyFee = Number((p.entryContext as { buyFeeSol?: number } | null)?.buyFeeSol ?? 0);
-    const costBasis = ((p.sizeSol + buyFee) * pct) / 100;
-    const pnl = fill.ok ? fill.solAmount - fill.feeSol - costBasis : 0;
+  /**
+   * Sell `pct`% of the ORIGINAL position ('all' = everything left). Serialised per
+   * position; re-reads the position first and skips if another sell changed it
+   * since this one was decided, and the DB update only applies if nothing changed
+   * in between (so proceeds are never counted twice). Returns the position after.
+   */
+  private async executeSell(p0: Position, symbol: string, pctIn: number | 'all', reason: ExitReason, detail: string): Promise<Position> {
+    return this.withSellLock(p0.id, async () => {
+      const fresh = await prisma.position.findUnique({ where: { id: p0.id } });
+      if (!fresh || fresh.status !== 'OPEN' || fresh.remainingPct <= 0) return fresh ?? p0;
+      if (pctIn !== 'all' && Math.abs(fresh.remainingPct - p0.remainingPct) > 1e-9) {
+        log.warn({ positionId: p0.id, reason }, 'position changed by another sell while deciding — skipping this sell');
+        return fresh;
+      }
+      const p: Position = { ...fresh, peakPriceSol: Math.max(fresh.peakPriceSol, p0.peakPriceSol) };
+      const pct = pctIn === 'all' ? p.remainingPct : Math.min(pctIn, p.remainingPct);
+      const closing = p.remainingPct - pct <= 0.01;
+      // On the final sell, sell exactly what's left (avoids rounding dust).
+      const tokens = closing
+        ? (p.tokenAmountRaw * BigInt(Math.round(p.remainingPct * 100))) / 10_000n
+        : (p.tokenAmountRaw * BigInt(Math.round(pct * 100))) / 10_000n;
+      const fill = await this.executor.sell({ mint: p.mint, tokenAmountRaw: tokens, maxSlippageBps: 2_500 });
+      // Cost = what we paid for this slice, including its share of the buy's gas/priority/tip.
+      const buyFee = Number((p.entryContext as { buyFeeSol?: number } | null)?.buyFeeSol ?? 0);
+      const costBasis = ((p.sizeSol + buyFee) * pct) / 100;
+      const pnl = fill.ok ? fill.solAmount - fill.feeSol - costBasis : 0;
 
-    return prisma.$transaction(async (tx) => {
-      await logTrade(
-        {
-          positionId: p.id,
-          mint: p.mint,
-          symbol,
-          side: 'SELL',
-          mode: p.mode,
-          strategy: p.strategy,
-          fill,
-          reason: `${reason}: ${detail}`,
-          context: {
-            pct,
-            costBasis,
-            multiple: fill.priceSol / p.entryPriceSol,
-            peakMultiple: p.peakPriceSol / p.entryPriceSol,
-            explanation: explainSell({
-              symbol,
-              reason,
-              detail,
+      return prisma.$transaction(async (tx) => {
+        if (fill.ok) {
+          // Only applies if the position is exactly as we read it (guards against any other writer).
+          const upd = await tx.position.updateMany({
+            where: { id: p.id, status: 'OPEN', remainingPct: p.remainingPct },
+            data: {
+              remainingPct: closing ? 0 : p.remainingPct - pct,
+              realizedPnlSol: { increment: pnl },
+              ...(closing ? { status: 'CLOSED' as const, closedAt: new Date(), exitReason: reason } : {}),
+            },
+          });
+          if (upd.count === 0) {
+            log.warn({ positionId: p.id, reason }, 'position changed during the sell — not counting it twice');
+            return (await tx.position.findUnique({ where: { id: p.id } })) ?? p;
+          }
+        }
+        await logTrade(
+          {
+            positionId: p.id,
+            mint: p.mint,
+            symbol,
+            side: 'SELL',
+            mode: p.mode,
+            strategy: p.strategy,
+            fill,
+            reason: `${reason}: ${detail}`,
+            context: {
+              pct,
+              costBasis,
               multiple: fill.priceSol / p.entryPriceSol,
               peakMultiple: p.peakPriceSol / p.entryPriceSol,
-              pct,
-              closing,
-              heldMinutes: (Date.now() - p.openedAt.getTime()) / 60_000,
-              pnlSol: pnl,
-            }),
+              explanation: explainSell({
+                symbol,
+                reason,
+                detail,
+                multiple: fill.priceSol / p.entryPriceSol,
+                peakMultiple: p.peakPriceSol / p.entryPriceSol,
+                pct,
+                closing,
+                heldMinutes: (Date.now() - p.openedAt.getTime()) / 60_000,
+                pnlSol: pnl,
+              }),
+            },
+            pnlSol: fill.ok ? pnl : undefined,
+            peakMultiple: p.peakPriceSol / p.entryPriceSol,
+            closed: fill.ok && closing,
+            totalPnlSol: fill.ok ? p.realizedPnlSol + pnl : undefined,
           },
-          pnlSol: fill.ok ? pnl : undefined,
-          peakMultiple: p.peakPriceSol / p.entryPriceSol,
-          closed: fill.ok && closing,
-          totalPnlSol: fill.ok ? p.realizedPnlSol + pnl : undefined,
-        },
-        tx,
-      );
-      if (!fill.ok) return p;
-      if (closing && reason === 'RUG_DETECTED') await tx.token.update({ where: { mint: p.mint }, data: { status: 'RUGGED' } });
-      return tx.position.update({
-        where: { id: p.id },
-        data: {
-          remainingPct: closing ? 0 : p.remainingPct - pct,
-          realizedPnlSol: { increment: pnl },
-          ...(closing ? { status: 'CLOSED' as const, closedAt: new Date(), exitReason: reason } : {}),
-        },
+          tx,
+        );
+        if (!fill.ok) return p;
+        if (closing && reason === 'RUG_DETECTED') await tx.token.update({ where: { mint: p.mint }, data: { status: 'RUGGED' } });
+        return tx.position.findUniqueOrThrow({ where: { id: p.id } });
       });
     });
   }

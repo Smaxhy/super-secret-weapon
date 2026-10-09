@@ -32,7 +32,7 @@ export function TokenCard({ d }: { d: Detection }) {
       aria-label={`${d.symbol} details`}
       onClick={open}
       onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), open())}
-      className={`flex cursor-pointer items-center gap-4 rounded-xl border border-l-4 border-line bg-surface p-3 hover:bg-surface-2 ${EDGE[d.feedStatus]}`}
+      className={`flex cursor-pointer items-center gap-3 rounded-xl sm:gap-4 border border-l-4 border-line bg-surface p-3 hover:bg-surface-2 ${EDGE[d.feedStatus]}`}
     >
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -42,7 +42,7 @@ export function TokenCard({ d }: { d: Detection }) {
           <SocialLinks twitter={d.twitter} telegram={d.telegram} website={d.website} />
         </div>
         <div className="mt-1 truncate text-sm text-ink-2">{d.name}</div>
-        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-sm tabular">
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-sm tabular">
           {metrics.map(([k, v]) => (
             <span key={k}>
               <span className="text-muted">{k} </span>

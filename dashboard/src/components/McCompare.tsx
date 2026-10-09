@@ -18,17 +18,22 @@ export function McChange({ value, className = '' }: { value: number | null; clas
 
 export function McCompare({ p }: { p: LivePosition }) {
   return (
-    <div className="grid grid-cols-[1fr_auto_1fr] items-stretch gap-2">
-      <div className="rounded-xl bg-surface-2 px-3 py-2.5">
-        <div className="text-xs font-medium uppercase tracking-wide text-muted">Bought at MC</div>
+    <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-stretch gap-1.5 sm:gap-2">
+      <div className="min-w-0 rounded-xl bg-surface-2 px-3 py-2.5">
+        <div className="truncate text-xs font-medium uppercase tracking-wide text-muted">
+          Bought at<span className="hidden sm:inline"> MC</span>
+        </div>
         <McValue usdValue={p.mcEntryUsd} solValue={p.entryMarketCapSol} />
       </div>
-      <div className="flex flex-col items-center justify-center px-1 text-center">
+      <div className="flex flex-col items-center justify-center px-0.5 text-center">
         <span aria-hidden="true" className="text-muted">→</span>
         <McChange value={p.mcChangePct} className="text-sm" />
       </div>
-      <div className="rounded-xl bg-surface-2 px-3 py-2.5">
-        <div className="text-xs font-medium uppercase tracking-wide text-muted">Market cap now</div>
+      <div className="min-w-0 rounded-xl bg-surface-2 px-3 py-2.5">
+        <div className="truncate text-xs font-medium uppercase tracking-wide text-muted">
+          <span className="hidden sm:inline">Market cap </span>
+          <span className="sm:hidden">MC </span>now
+        </div>
         <McValue usdValue={p.mcNowUsd} solValue={p.mcNowSol} />
       </div>
     </div>
@@ -40,8 +45,8 @@ function McValue({ usdValue, solValue }: { usdValue: number | null; solValue: nu
   const hasUsd = usdValue !== null && Number.isFinite(usdValue);
   return (
     <>
-      <div className="tabular mt-0.5 text-lg font-semibold text-ink sm:text-xl">{hasUsd ? usd(usdValue) : mcSol(solValue)}</div>
-      <div className="tabular text-sm text-ink-2">{hasUsd ? mcSol(solValue) : 'USD price unavailable'}</div>
+      <div className="tabular mt-0.5 truncate text-lg font-semibold text-ink sm:text-xl">{hasUsd ? usd(usdValue) : mcSol(solValue)}</div>
+      <div className="tabular truncate text-sm text-ink-2">{hasUsd ? mcSol(solValue) : 'USD price unavailable'}</div>
     </>
   );
 }

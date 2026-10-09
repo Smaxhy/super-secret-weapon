@@ -46,6 +46,33 @@ const key = {
   early: (mint: string) => `tok:${mint}:early`,
 };
 
+/** A PumpSwap pool's opening price must be within this factor of the final curve price. */
+const POOL_OPEN_MAX_DEVIATION = 3;
+/** Event reserves must agree with the trade's own execution price within this factor. */
+const EVENT_EXEC_TOLERANCE = 2;
+/** Derived reserves are re-anchored when they drift this far from the traded price. */
+const DERIVED_REANCHOR_FACTOR = 1.5;
+/** Trades smaller than this (0.001 SOL) are too small to read a reliable price from. */
+const MIN_PRICED_TRADE_LAMPORTS = 1_000_000n;
+
+/**
+ * Reference price (SOL per whole token) from a curve trade's own amounts, if it
+ * agrees with the reserves the event reports (exec price = geometric mean of
+ * the price before and after on x*y=k). undefined = not usable.
+ */
+export function curveTradeRefPx(ev: PumpTradeEvent): number | undefined {
+  if (ev.solAmount < MIN_PRICED_TRADE_LAMPORTS || ev.tokenAmount <= 0n) return undefined;
+  const exec = Number(ev.solAmount) / Number(ev.tokenAmount);
+  const post = ev.virtualTokenReserves > 0n ? Number(ev.virtualSolReserves) / Number(ev.virtualTokenReserves) : 0;
+  const preSol = ev.isBuy ? ev.virtualSolReserves - ev.solAmount : ev.virtualSolReserves + ev.solAmount;
+  const preTok = ev.isBuy ? ev.virtualTokenReserves + ev.tokenAmount : ev.virtualTokenReserves - ev.tokenAmount;
+  const pre = preSol > 0n && preTok > 0n ? Number(preSol) / Number(preTok) : 0;
+  if (!(post > 0) || !(pre > 0)) return undefined;
+  const mid = Math.sqrt(pre * post);
+  if (Math.max(mid / exec, exec / mid) > EVENT_EXEC_TOLERANCE) return undefined;
+  return exec * 1e-3; // lamports per raw token → SOL per whole token
+}
+
 /** Buys within this many seconds of the create are counted as snipes / bundles. */
 const EARLY_WINDOW_SECONDS = 1;
 
@@ -107,6 +134,13 @@ export interface LiveTokenView {
   migratedAtMs: number | null;
   /** PumpSwap trades seen — 0 means we have no live post-migration price yet. */
   ammTrades: number;
+  /**
+   * Independent reference price (SOL per whole token): what the most recent real
+   * trade actually executed at (or the on-chain poll / pool opening price). Paper
+   * fills far from it are treated as pricing bugs. null = none seen yet.
+   */
+  refPriceSol?: number | null;
+  refPriceAtMs?: number | null;
   balances: Map<string, bigint>;
   uniqueWallets: number;
   earlyBuyers: string[];
@@ -256,6 +290,7 @@ export class LiveState {
   /** Apply one bonding-curve buy or sell. Ignores tokens we didn't see being created. */
   async onTrade(ev: PumpTradeEvent): Promise<void> {
     await this.applyTrade(ev.mint, {
+      refPx: curveTradeRefPx(ev),
       user: ev.user,
       isBuy: ev.isBuy,
       tokens: ev.tokenAmount,
@@ -268,21 +303,71 @@ export class LiveState {
     });
   }
 
-  /** A PumpSwap pool was created. If it's for a token we track, start following its trades there. */
+  /**
+   * A PumpSwap pool was created. If it's THE market for a token we track, start
+   * following its trades there.
+   *
+   * Anyone can create a PumpSwap pool for any mint, at any price. Pricing our
+   * paper fills against such a pool is how a 0.5 SOL position "sold" for 30+ SOL
+   * (selling into a pool returns up to all the SOL in it). So a real pool is only
+   * accepted if:
+   *   - the token's curve is complete (or ~fully sold) — it really migrated,
+   *   - its opening price is within POOL_OPEN_MAX_DEVIATION of the final curve price,
+   *   - no other real pool was accepted for the token before (first one wins; the
+   *     PumpPortal placeholder `amm:<mint>` is replaced by the real pool).
+   * Returns the mint when the pool became the token's market, else null.
+   */
   async onAmmPool(ev: AmmPoolEvent): Promise<string | null> {
     const mint = this.tracked.has(ev.baseMint) && ev.quoteMint === WSOL_MINT ? ev.baseMint : null;
     if (!mint) return null;
-    this.pools.set(ev.pool, mint);
+    const placeholder = ev.pool.startsWith('amm:');
+    const [current, vSolS, vTokS, initVSolS, initVTokS, initRTokS, completeS] = await this.r.hmget(key.live(mint), 'ammPool', 'vSol', 'vTok', 'initVSol', 'initVTok', 'initRTok', 'complete');
+    if (current === ev.pool) return null; // duplicate notification
+    if (current && !current.startsWith('amm:')) {
+      // Already following a real pool — never let another pool (or the placeholder) take over.
+      this.rejectedAmmPools++;
+      return null;
+    }
+    const vSol = BigInt(vSolS ?? '0');
+    const vTok = BigInt(vTokS ?? '0');
     let base = ev.baseReserve;
     let quote = ev.quoteReserve;
-    if (base <= 0n || quote <= 0n) {
-      // Source didn't give reserves: the pool starts with the SOL raised on the
-      // curve and the 206.9M tokens that were held back for liquidity — NOT the
-      // curve's remaining sellable tokens (≈0 at completion, which would fake a huge price).
-      const [vSol, initVSol] = (await this.r.hmget(key.live(mint), 'vSol', 'initVSol')).map((x) => BigInt(x ?? '0'));
-      base = PUMP_MIGRATION_POOL_TOKENS;
-      quote = vSol! - (initVSol! > 0n ? initVSol! : 30_000_000_000n);
+    if (placeholder) {
+      if (current) return null; // placeholder already in place
+      if (base <= 0n || quote <= 0n) {
+        // Source didn't give reserves: the pool starts with the SOL raised on the
+        // curve and the 206.9M tokens that were held back for liquidity — NOT the
+        // curve's remaining sellable tokens (≈0 at completion, which would fake a huge price).
+        const initVSol = BigInt(initVSolS ?? '0');
+        base = PUMP_MIGRATION_POOL_TOKENS;
+        quote = vSol - (initVSol > 0n ? initVSol : 30_000_000_000n);
+      }
+      if (base <= 0n || quote <= 0n) return null;
+    } else {
+      if (base <= 0n || quote <= 0n) return null;
+      const params: CurveParams = {
+        initialVirtualSolReserves: BigInt(initVSolS ?? '0'),
+        initialVirtualTokenReserves: BigInt(initVTokS ?? '0'),
+        initialRealTokenReserves: BigInt(initRTokS ?? '0'),
+        totalSupply: 0n,
+      };
+      const migrated = completeS === '1' || (params.initialRealTokenReserves > 0n && bondingCurvePct(vTok, params) >= 95);
+      const curvePx = vTok > 0n ? Number(vSol) / Number(vTok) : 0;
+      const poolPx = Number(quote) / Number(base);
+      const off = curvePx > 0 ? Math.max(poolPx / curvePx, curvePx / poolPx) : 1;
+      if (!migrated || off > POOL_OPEN_MAX_DEVIATION) {
+        this.rejectedAmmPools++;
+        log.warn({ mint, pool: ev.pool, migrated, priceVsCurve: +off.toFixed(2) }, 'ignored PumpSwap pool that is not the token\'s migration pool');
+        return null;
+      }
     }
+    if (current) {
+      // The real pool replaces the PumpPortal placeholder.
+      this.pools.delete(current);
+      await this.r.hdel(POOLS_KEY, current);
+    }
+    this.pools.set(ev.pool, mint);
+    const px = Number(quote) / 1e9 / (Number(base) / 1e6);
     await this.r
       .multi()
       .hset(POOLS_KEY, ev.pool, mint)
@@ -291,13 +376,14 @@ export class LiveState {
         ammPool: ev.pool,
         ammBase: base.toString(),
         ammQuote: quote.toString(),
+        refPx: String(px),
+        refAt: String(Date.now()),
         migratedAt: String((ev.timestamp || Math.floor(Date.now() / 1000)) * 1000),
       })
       .exec();
     return mint;
   }
 
-  /** A buy or sell on PumpSwap. Same bookkeeping as curve trades, price from the pool. */
   /** Which tracked token a PumpSwap pool belongs to (null if not ours). */
   mintForPool(pool: string): string | null {
     return this.pools.get(pool) ?? null;
@@ -305,29 +391,70 @@ export class LiveState {
 
   /** Price-sanity rejections (garbled / mis-decoded pool events). */
   rejectedAmmTrades = 0;
+  /** PumpSwap pools ignored because they aren't the token's real migration pool. */
+  rejectedAmmPools = 0;
+  /** Times derived (PumpPortal) pool reserves were re-anchored to the trades' own price. */
+  reanchoredAmm = 0;
 
+  /**
+   * A buy or sell on PumpSwap. Same bookkeeping as curve trades, price from the pool.
+   *
+   * Every trade carries its own execution price (SOL paid ÷ tokens). On a
+   * constant-product pool that price is exactly the geometric mean of the price
+   * before and after the trade, so the reserves we store must agree with it:
+   *   - reserves from the event (logs): disagree by >2x → mis-decoded → ignored.
+   *     Agree → accepted even if the price moved a lot since our last update
+   *     (a real whale buy, or trades we missed), so a genuine run is never frozen out.
+   *   - reserves we derive ourselves (PumpPortal gives only amounts): if our model
+   *     has drifted >1.5x from where trades actually happen (missed trades,
+   *     duplicates), re-anchor it to the trade's price before applying it. This
+   *     stops a chain of small steps walking the price up 50x.
+   */
   async onAmmTrade(ev: AmmTradeEvent): Promise<string | null> {
     const mint = this.pools.get(ev.pool);
     if (!mint) return null;
+    const [primary, pb, pq] = await this.r.hmget(key.live(mint), 'ammPool', 'ammBase', 'ammQuote');
+    // Only the token's own market moves its price (old pools / stale mappings are ignored).
+    if (primary && primary !== ev.pool) return null;
+    const b0 = BigInt(pb ?? '0');
+    const q0 = BigInt(pq ?? '0');
+    const priced = ev.quoteAmount >= MIN_PRICED_TRADE_LAMPORTS && ev.baseAmount > 0n;
+    const exec = priced ? Number(ev.quoteAmount) / Number(ev.baseAmount) : 0; // lamports per raw token
+    const ratio = (a: number, b: number) => (a > 0 && b > 0 ? Math.max(a / b, b / a) : Infinity);
+
     let baseReserve = ev.baseReserve;
     let quoteReserve = ev.quoteReserve;
     if (baseReserve === undefined || quoteReserve === undefined) {
       // Derive the pool's new reserves from the old ones and this trade.
-      const [b, q] = (await this.r.hmget(key.live(mint), 'ammBase', 'ammQuote')).map((x) => BigInt(x ?? '0'));
-      if (!b || !q) return mint;
-      baseReserve = ev.isBuy ? b - ev.baseAmount : b + ev.baseAmount;
-      quoteReserve = ev.isBuy ? q + ev.quoteAmount : q - ev.quoteAmount;
+      if (!b0 || !q0) return mint;
+      let base = b0;
+      if (priced) {
+        const after = ev.isBuy ? [b0 - ev.baseAmount, q0 + ev.quoteAmount] : [b0 + ev.baseAmount, q0 - ev.quoteAmount];
+        const mid = after[0]! > 0n && after[1]! > 0n ? Math.sqrt((Number(q0) / Number(b0)) * (Number(after[1]) / Number(after[0]))) : Infinity;
+        if (ratio(mid, exec) > DERIVED_REANCHOR_FACTOR) {
+          // Our model drifted from the real market: put the price back where this trade happened.
+          base = BigInt(Math.max(1, Math.round(Number(q0) / exec)));
+          this.reanchoredAmm++;
+          if (this.reanchoredAmm % 50 === 1) log.warn({ mint, model: Number(q0) / Number(b0), trade: exec }, 're-anchored derived PumpSwap reserves to the traded price');
+        }
+      }
+      baseReserve = ev.isBuy ? base - ev.baseAmount : base + ev.baseAmount;
+      quoteReserve = ev.isBuy ? q0 + ev.quoteAmount : q0 - ev.quoteAmount;
       if (baseReserve <= 0n || quoteReserve <= 0n) return mint;
-    }
-    // Sanity check: one trade can't move the price 2.5× either way. A jump like
-    // that means a mis-decoded event — applying it would fake huge profits.
-    const [pb, pq, vSol, vTok] = await this.r.hmget(key.live(mint), 'ammBase', 'ammQuote', 'vSol', 'vTok');
-    const prevPrice = pb && pq && BigInt(pb) > 0n ? Number(pq) / Number(pb) : vSol && vTok ? Number(vSol) / Number(vTok) : 0;
-    const newPrice = Number(quoteReserve) / Number(baseReserve);
-    if (prevPrice > 0 && (newPrice / prevPrice > 2.5 || newPrice / prevPrice < 0.4 || Number(quoteReserve) > 1e17)) {
-      this.rejectedAmmTrades++;
-      if (this.rejectedAmmTrades % 50 === 1) log.warn({ mint, prev: prevPrice, next: newPrice }, 'ignored implausible PumpSwap price jump');
-      return mint;
+    } else {
+      if (baseReserve <= 0n || quoteReserve <= 0n || Number(quoteReserve) > 1e17) return this.rejectAmm(mint, 'bad reserves');
+      const newPrice = Number(quoteReserve) / Number(baseReserve);
+      if (priced) {
+        // Pool state before this trade, from the event itself.
+        const preB = ev.isBuy ? baseReserve + ev.baseAmount : baseReserve - ev.baseAmount;
+        const preQ = ev.isBuy ? quoteReserve - ev.quoteAmount : quoteReserve + ev.quoteAmount;
+        const mid = preB > 0n && preQ > 0n ? Math.sqrt((Number(preQ) / Number(preB)) * newPrice) : Infinity;
+        if (ratio(mid, exec) > EVENT_EXEC_TOLERANCE) return this.rejectAmm(mint, 'reserves disagree with the trade', { mid, exec });
+      } else {
+        // Dust trade: no usable price of its own → only allow small moves.
+        const prev = b0 > 0n && q0 > 0n ? Number(q0) / Number(b0) : 0;
+        if (prev > 0 && ratio(newPrice, prev) > 2.5) return this.rejectAmm(mint, 'dust trade with a big price jump', { prev, next: newPrice });
+      }
     }
     await this.r.hincrby(key.live(mint), 'ammTrades', 1);
     await this.applyTrade(mint, {
@@ -339,13 +466,20 @@ export class LiveState {
       timestamp: ev.timestamp,
       reserves: { ammBase: baseReserve.toString(), ammQuote: quoteReserve.toString() },
       balanceAfter: ev.balanceAfter,
+      refPx: priced ? exec * 1e-3 : undefined, // lamports/raw → SOL per whole token (1e6 / 1e9)
     });
+    return mint;
+  }
+
+  private rejectAmm(mint: string, why: string, data: Record<string, number> = {}): string {
+    this.rejectedAmmTrades++;
+    if (this.rejectedAmmTrades % 50 === 1) log.warn({ mint, why, ...data }, 'ignored implausible PumpSwap trade');
     return mint;
   }
 
   private async applyTrade(
     mint: string,
-    t: { user: string; isBuy: boolean; tokens: bigint; lamports: bigint; feeLamports: bigint; timestamp: number; reserves: Record<string, string>; balanceAfter?: bigint },
+    t: { user: string; isBuy: boolean; tokens: bigint; lamports: bigint; feeLamports: bigint; timestamp: number; reserves: Record<string, string>; balanceAfter?: bigint; refPx?: number },
   ): Promise<void> {
     const info = this.tracked.get(mint);
     if (!info) return;
@@ -359,6 +493,8 @@ export class LiveState {
     p.hincrby(live, t.isBuy ? 'buyVol' : 'sellVol', t.lamports.toString());
     p.hincrby(live, 'fees', t.feeLamports.toString());
     p.hset(live, { ...t.reserves, lastTradeAt: String(t.timestamp * 1000) });
+    // The price this trade actually happened at: the independent reference paper fills are checked against.
+    if (t.refPx !== undefined && Number.isFinite(t.refPx) && t.refPx > 0) p.hset(live, { refPx: String(t.refPx), refAt: String(Date.now()) });
     // ioredis pipelines support custom commands; typed loosely here.
     const pp = p as unknown as { balanceDelta(k: string, w: string, d: string): void; balanceSet(k: string, w: string, v: string): void; trackOutcome(k: string, price: string): void };
     // Price after this trade, for the learning outcome window.
@@ -397,10 +533,21 @@ export class LiveState {
     return { base: Number(base), max: Number(max), min: Number(min), current };
   }
 
-  /** Price refresh read straight from the chain (used when the stream goes quiet on a token we hold). */
+  /**
+   * Price refresh read straight from the chain (used when the stream goes quiet on a token we hold).
+   * A completed (migrated) curve account no longer describes the market, so its
+   * reserves are ignored — only the flag is taken. Empty reserves are ignored too.
+   */
   async applyCurveState(mint: string, s: { virtualSolReserves: bigint; virtualTokenReserves: bigint; complete: boolean }): Promise<void> {
     if (!this.tracked.has(mint)) return;
-    await this.r.hset(key.live(mint), { vSol: s.virtualSolReserves.toString(), vTok: s.virtualTokenReserves.toString(), ...(s.complete ? { complete: '1' } : {}), polledAt: String(Date.now()) });
+    const polledAt = String(Date.now());
+    if (s.complete || s.virtualSolReserves <= 0n || s.virtualTokenReserves <= 0n) {
+      await this.r.hset(key.live(mint), { ...(s.complete ? { complete: '1' } : {}), polledAt });
+      return;
+    }
+    // Chain state is the truth → it is also the new reference price.
+    const px = curvePriceSol(s.virtualSolReserves, s.virtualTokenReserves);
+    await this.r.hset(key.live(mint), { vSol: s.virtualSolReserves.toString(), vTok: s.virtualTokenReserves.toString(), refPx: String(px), refAt: polledAt, polledAt });
   }
 
   async onComplete(ev: PumpCompleteEvent): Promise<void> {
@@ -446,6 +593,8 @@ export class LiveState {
       ammQuoteReserve: h.ammQuote ? BigInt(h.ammQuote) : null,
       migratedAtMs: h.migratedAt ? Number(h.migratedAt) : null,
       ammTrades: Number(h.ammTrades ?? 0),
+      refPriceSol: h.refPx && Number(h.refPx) > 0 ? Number(h.refPx) : null,
+      refPriceAtMs: h.refAt ? Number(h.refAt) : null,
       lastTradeAtMs: h.lastTradeAt ? Number(h.lastTradeAt) : null,
       curve: {
         initialVirtualSolReserves: big(h.initVSol),

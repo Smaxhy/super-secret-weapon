@@ -109,8 +109,8 @@ export function Learning() {
                 {[...d.weights].sort((a, b) => b.weight - a.weight).map((w) => {
                   const diff = w.weight - w.default;
                   return (
-                    <li key={w.feature} className="grid grid-cols-[9rem_1fr_4.5rem] items-center gap-3 text-sm">
-                      <span className="text-ink-2">{FEATURE_LABEL[w.feature] ?? w.feature}</span>
+                    <li key={w.feature} className="grid grid-cols-[minmax(0,9rem)_1fr_4.5rem] items-center gap-3 text-sm">
+                      <span className="truncate text-ink-2">{FEATURE_LABEL[w.feature] ?? w.feature}</span>
                       <span className="relative h-2 rounded-full bg-[color-mix(in_srgb,var(--series-1)_15%,transparent)]">
                         <span className="block h-2 rounded-full bg-[var(--series-1)]" style={{ width: `${(w.weight / maxW) * 100}%` }} />
                         <span className="absolute top-[-3px] h-[14px] w-[2px] bg-ink-2" style={{ left: `${(w.default / maxW) * 100}%` }} title="default" aria-hidden="true" />
@@ -130,12 +130,12 @@ export function Learning() {
               {d.beliefs.length ? (
                 <ul className="space-y-2">
                   {d.beliefs.map((b) => (
-                    <li key={b.pattern} className="grid grid-cols-[minmax(9rem,13rem)_1fr_6rem] items-center gap-3 text-sm">
-                      <span className="text-ink-2">{b.pattern}</span>
-                      <span className="h-2 rounded-full bg-[color-mix(in_srgb,var(--series-1)_15%,transparent)]">
+                    <li key={b.pattern} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-sm sm:grid-cols-[minmax(9rem,13rem)_1fr_6rem]">
+                      <span className="min-w-0 break-words text-ink-2">{b.pattern}</span>
+                      <span className="col-span-2 row-start-2 h-2 rounded-full bg-[color-mix(in_srgb,var(--series-1)_15%,transparent)] sm:col-span-1 sm:col-start-2 sm:row-start-1">
                         <span className="block h-2 rounded-full bg-[var(--series-1)]" style={{ width: `${Math.min(100, b.winRate)}%` }} />
                       </span>
-                      <span className="tabular text-right text-ink">
+                      <span className="tabular whitespace-nowrap text-right text-ink">
                         {b.winRate.toFixed(1)}% <span className="text-muted">n={b.observations}</span>
                       </span>
                     </li>

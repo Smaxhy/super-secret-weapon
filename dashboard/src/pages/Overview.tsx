@@ -19,24 +19,32 @@ export function Overview() {
     <>
       <PageHeader
         title="Overview"
-        subtitle={d ? `${d.mode === 'PAPER' ? '📝 Paper trading (fake money)' : '💸 LIVE trading'} · running for ${duration(d.uptimeSec)}` : undefined}
+        subtitle={
+          d ? (
+            <>
+              <span className="whitespace-nowrap">{d.mode === 'PAPER' ? '📝 Paper trading (fake money)' : '💸 LIVE trading'}</span>{' '}
+              <span className="whitespace-nowrap">· running for {duration(d.uptimeSec)}</span>
+            </>
+          ) : undefined
+        }
       />
       {o.error && <ErrorBox message={o.error} />}
       {d && (
         <>
           {/* Hero: the one number that matters most, then the supporting stats, then the curve. */}
           <section className="hero-glow rounded-2xl border border-line bg-surface p-4 shadow-card sm:p-6" aria-label="Profit summary">
-            <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
-              <div>
+            {/* Phones: big number on top, stats in a 2x2 grid below. Wide screens: side by side. */}
+            <div className="grid gap-x-10 gap-y-5 xl:grid-cols-[auto_minmax(0,1fr)] xl:items-end">
+              <div className="min-w-0">
                 <div className="text-sm font-medium text-ink-2">Total profit</div>
-                <div className="mt-1 text-4xl font-bold tracking-tight sm:text-5xl">
+                <div className="mt-1 break-words text-4xl font-bold leading-tight tracking-tight sm:text-5xl">
                   <Pnl value={d.totalPnlSol} />
                 </div>
                 <div className="mt-1 text-sm text-muted">
                   {pct((d.totalPnlSol / d.startingBalanceSol) * 100, 1, true)} of the {sol(d.startingBalanceSol, 0)} start
                 </div>
               </div>
-              <dl className="grid flex-1 grid-cols-2 gap-x-6 gap-y-3 sm:max-w-xl sm:grid-cols-4">
+              <dl className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-4 border-t border-line pt-4 sm:gap-x-6 lg:grid-cols-4 xl:grid-cols-2 xl:border-t-0 xl:pt-0 2xl:grid-cols-4">
                 <HeroStat label="Today" value={<Pnl value={d.todayPnlSol} />} sub="since 00:00 UTC" />
                 <HeroStat label="Win rate" value={pct(d.winRate, 0)} sub={`${d.trades} closed trades`} />
                 <HeroStat label={d.mode === 'PAPER' ? 'Paper balance' : 'Balance'} value={sol(d.balanceSol, 2)} />
@@ -67,11 +75,11 @@ export function Overview() {
                   <Link to={`/token/${t.mint}`} className="flex items-center justify-between gap-3 py-2.5 hover:bg-surface-2">
                     <div className="min-w-0">
                       <div className="truncate font-semibold text-ink">{t.symbol}</div>
-                      <div className="text-sm text-muted">
+                      <div className="truncate text-sm text-muted">
                         {EXIT_LABEL[t.exitReason ?? ''] ?? t.exitReason} · peak {t.peakMultiple.toFixed(2)}× · {ago(t.closedAt)}
                       </div>
                     </div>
-                    <div className="text-right">
+                    <div className="shrink-0 whitespace-nowrap text-right">
                       <Pnl value={t.pnlSol} />
                       <div className={`text-sm ${t.pnlPct >= 0 ? 'text-up' : 'text-down'}`}>{pct(t.pnlPct, 1, true)}</div>
                     </div>
@@ -94,10 +102,10 @@ export function Overview() {
 
 function HeroStat({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
   return (
-    <div>
-      <dt className="text-xs font-medium uppercase tracking-wide text-muted">{label}</dt>
-      <dd className="tabular mt-0.5 whitespace-nowrap text-lg font-semibold text-ink">{value}</dd>
-      {sub && <dd className="text-xs text-muted">{sub}</dd>}
+    <div className="min-w-0">
+      <dt className="truncate text-xs font-medium uppercase tracking-wide text-muted">{label}</dt>
+      <dd className="tabular mt-0.5 break-words text-lg font-semibold leading-snug text-ink sm:text-xl [&>span]:whitespace-normal">{value}</dd>
+      {sub && <dd className="truncate text-xs text-muted">{sub}</dd>}
     </div>
   );
 }

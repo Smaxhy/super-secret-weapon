@@ -23,12 +23,13 @@ export function Positions() {
             <Card
               key={p.id}
               title={
-                <Link to={`/token/${p.mint}`} className="hover:underline">
-                  {p.symbol} <span className="font-normal text-ink-2">· {STRATEGY_LABEL[p.strategy] ?? p.strategy}</span>
+                <Link to={`/token/${p.mint}`} className="flex min-w-0 items-baseline gap-1 hover:underline">
+                  <span className="truncate">{p.symbol}</span>
+                  <span className="shrink-0 font-normal text-ink-2">· {STRATEGY_LABEL[p.strategy] ?? p.strategy}</span>
                 </Link>
               }
               action={
-                <span className="flex items-center gap-2 text-sm text-muted">
+                <span className="flex items-center gap-2 whitespace-nowrap text-sm text-muted">
                   {u && Date.now() - u.at < 6_000 && (
                     <span className="inline-flex items-center gap-1 text-up">
                       <span className="h-2 w-2 animate-pulse rounded-full bg-good" aria-hidden="true" />
@@ -113,9 +114,9 @@ export function Positions() {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
-      <div className="text-sm text-muted">{label}</div>
-      <div className="tabular text-ink">{children}</div>
+    <div className="min-w-0">
+      <div className="truncate text-sm text-muted">{label}</div>
+      <div className="tabular break-words text-ink">{children}</div>
     </div>
   );
 }

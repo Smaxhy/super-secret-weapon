@@ -118,6 +118,26 @@ export function PositionChart({ position, height = 180 }: { position: LivePositi
 
   const label = (value: string, fill: string, pos: 'insideTopLeft' | 'insideBottomLeft' | 'insideTopRight' = 'insideTopLeft') => ({ value, position: pos, fill, fontSize: 11 });
 
+  // Levels close together (e.g. entry vs stop, or several hit take-profits squashed at the bottom on a
+  // 40× runner) would print their labels on top of each other. Keep the line, but only label a level
+  // when it is at least ~13px from every label already placed, most important first.
+  const plotH = Math.max(1, height - 36);
+  const toPx = (v: number) => ((v - domain[0]) / (domain[1] - domain[0] || 1)) * plotH;
+  const placed: number[] = [];
+  const showLabel = (v: number | null): boolean => {
+    if (v === null || v < domain[0] || v > domain[1]) return false;
+    const px = toPx(v);
+    if (placed.some((q) => Math.abs(q - px) < 13)) return false;
+    placed.push(px);
+    return true;
+  };
+  const labelled = {
+    trail: showLabel(trailMc),
+    entry: showLabel(entryMc),
+    stop: stopMc > 0 && showLabel(stopMc),
+    tps: [...tps].sort((a, b) => Number(a.hit) - Number(b.hit)).filter((tp) => showLabel(tp.mc)).map((tp) => tp.multiple),
+  };
+
   return (
     <div>
       <div className="mb-1 flex items-center justify-between gap-2">
@@ -145,12 +165,12 @@ export function PositionChart({ position, height = 180 }: { position: LivePositi
               <CartesianGrid stroke={c.grid} vertical={false} />
               <XAxis dataKey="t" type="number" scale="time" domain={['dataMin', 'dataMax']} ticks={ticks} tickFormatter={fmtTick} stroke={c.axis} tick={{ fill: c.muted, fontSize: 11 }} tickLine={false} axisLine={{ stroke: c.axis }} />
               <YAxis domain={domain} tickFormatter={(v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(v >= 100 ? 0 : 1))} width={44} stroke={c.axis} tick={{ fill: c.muted, fontSize: 11 }} tickLine={false} axisLine={{ stroke: c.axis }} />
-              <ReferenceLine y={entryMc} stroke={c['ink-2']} strokeDasharray="4 4" label={label('Entry', c['ink-2'], 'insideBottomLeft')} />
+              <ReferenceLine y={entryMc} stroke={c['ink-2']} strokeDasharray="4 4" label={labelled.entry ? label('Entry', c['ink-2'], 'insideBottomLeft') : undefined} />
               {tps.map((tp) => (
-                <ReferenceLine key={tp.multiple} y={tp.mc} stroke={c.good} strokeOpacity={tp.hit ? 0.9 : 0.55} strokeDasharray={tp.hit ? undefined : '2 4'} label={label(`${tp.hit ? '✓ ' : ''}TP ${tp.multiple}×`, c.muted, 'insideTopRight')} />
+                <ReferenceLine key={tp.multiple} y={tp.mc} stroke={c.good} strokeOpacity={tp.hit ? 0.9 : 0.55} strokeDasharray={tp.hit ? undefined : '2 4'} label={labelled.tps.includes(tp.multiple) ? label(`${tp.hit ? '✓ ' : ''}TP ${tp.multiple}×`, c.muted, 'insideTopRight') : undefined} />
               ))}
-              {stopMc > 0 && <ReferenceLine y={stopMc} stroke={c.critical} strokeOpacity={0.7} strokeDasharray="2 4" label={label('Stop', c.muted, 'insideBottomLeft')} />}
-              {trailMc && <ReferenceLine y={trailMc} stroke={c.warning} strokeOpacity={0.8} strokeDasharray="6 3" label={label('Trail stop', c.muted, 'insideTopLeft')} />}
+              {stopMc > 0 && <ReferenceLine y={stopMc} stroke={c.critical} strokeOpacity={0.7} strokeDasharray="2 4" label={labelled.stop ? label('Stop', c.muted, 'insideBottomLeft') : undefined} />}
+              {trailMc && <ReferenceLine y={trailMc} stroke={c.warning} strokeOpacity={0.8} strokeDasharray="6 3" label={labelled.trail ? label('Trail stop', c.muted, 'insideTopLeft') : undefined} />}
               <Tooltip
                 cursor={{ stroke: c['ink-2'], strokeDasharray: '3 3' }}
                 content={({ active, payload }) => {

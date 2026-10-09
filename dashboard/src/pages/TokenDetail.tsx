@@ -140,8 +140,8 @@ export function TokenDetail() {
             {contributions.map(([k, v]) => {
               const f = evaluation?.features?.features?.[k] ?? 0;
               return (
-                <li key={k} className="grid grid-cols-[10rem_1fr_3.5rem] items-center gap-3 text-sm">
-                  <span className="text-ink-2">{FEATURE_LABEL[k] ?? k}</span>
+                <li key={k} className="grid grid-cols-[minmax(0,10rem)_1fr_3.5rem] items-center gap-3 text-sm">
+                  <span className="truncate text-ink-2">{FEATURE_LABEL[k] ?? k}</span>
                   <span className="h-2 rounded-full bg-[color-mix(in_srgb,var(--series-1)_15%,transparent)]">
                     <span className="block h-2 rounded-full bg-[var(--series-1)]" style={{ width: `${Math.round(f * 100)}%` }} />
                   </span>
