@@ -1,47 +1,22 @@
-import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useBotEvents, type BotEvent } from '../hooks/useWebSocket';
 import { api } from '../lib/api';
 import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl } from '../components/ui';
-import { useApi } from '../hooks/useApi';
+import { McCompare } from '../components/McCompare';
+import { PositionChart } from '../components/PositionChart';
+import { useLivePositions } from '../hooks/useLivePositions';
 import { ago, multiple, num, pct, price, sol, STRATEGY_LABEL } from '../lib/format';
-import type { OpenPosition } from '../lib/types';
-
-interface LiveUpdate {
-  id: string;
-  priceSol: number;
-  multiple: number;
-  peakMultiple: number;
-  unrealizedPnlSol: number;
-  risk: number;
-  holders: number;
-  ownSupplyPct: number;
-  exitImpactPct: number;
-}
 
 export function Positions() {
-  const { data, error, loading, reload } = useApi<OpenPosition[]>('/api/positions', 10_000, ['trade']);
-  // The bot pushes every open position's price every ~2s; overlay it on the last full load.
-  const [live, setLive] = useState<Record<string, LiveUpdate & { at: number }>>({});
-  const onEvent = useCallback((e: BotEvent) => {
-    if (e.type !== 'positions') return;
-    const now = Date.now();
-    const next: Record<string, LiveUpdate & { at: number }> = {};
-    for (const u of (e.data as { updates: LiveUpdate[] }).updates) next[u.id] = { ...u, at: now };
-    setLive((prev) => ({ ...prev, ...next }));
-  }, []);
-  useBotEvents(onEvent);
+  // API data + live WebSocket prices (every ~2s), merged in one hook.
+  const { positions: data, error, loading, reload } = useLivePositions();
   return (
     <>
-      <PageHeader title="Open positions" subtitle="Prices stream live every ~2 seconds. Tap Sell now to exit manually." />
+      <PageHeader title="Open positions" subtitle="Prices and market caps stream live every ~2 seconds. Tap Sell now to exit manually." />
       {error && <ErrorBox message={error} />}
       {loading && !data ? <Loading /> : !data?.length ? <Empty>No open positions right now.</Empty> : null}
       <div className="grid gap-4 lg:grid-cols-2">
-        {data?.map((base) => {
-          const u = live[base.id];
-          const p = u
-            ? { ...base, currentPriceSol: u.priceSol, multiple: u.multiple, unrealizedPnlSol: u.unrealizedPnlSol, peakPriceSol: Math.max(base.peakPriceSol, u.peakMultiple * base.entryPriceSol), health: base.health ? { ...base.health, holders: u.holders } : base.health }
-            : base;
+        {data?.map((p) => {
+          const u = p.live;
           const m = p.multiple ?? 0;
           const risk = u?.risk;
           return (
@@ -64,7 +39,13 @@ export function Positions() {
                 </span>
               }
             >
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <McCompare p={p} />
+
+              <div className="mt-4">
+                <PositionChart position={p} />
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
                 <Field label="Now">
                   <span className={`text-2xl font-semibold ${m >= 1 ? 'text-up' : 'text-down'}`}>{multiple(p.multiple)}</span>
                 </Field>
@@ -94,7 +75,7 @@ export function Positions() {
                       {t.hit ? '✓' : '○'} Sell {t.sellPct}% at {t.multiple}×
                     </li>
                   ))}
-                  <li>{p.trailingActive ? `Trailing stop at ${price(p.targets.trailingStopPrice)}` : 'Trailing stop starts at 2×'}</li>
+                  <li>{p.targets.trailingStopPrice !== null ? `Trailing stop at ${price(p.targets.trailingStopPrice)}` : 'Trailing stop not active yet'}</li>
                 </ul>
               </div>
 

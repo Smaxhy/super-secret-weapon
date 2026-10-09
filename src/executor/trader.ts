@@ -133,6 +133,12 @@ export class Trader {
             top10HolderPct: req.market.top10HolderPct,
             holders: req.market.holders,
             marketCapSol: req.market.marketCapSol,
+            // For the dashboard's "bought at" market cap + price chart.
+            marketCapUsd: req.market.marketCapUsd,
+            priceSol: fill.priceSol,
+            // Whole tokens in existence (pump.fun = 1 billion). Worked out from the
+            // evaluator's market cap ÷ price; falls back to 1e9 if that's unusable.
+            totalSupplyTokens: supplyTokensFrom(req.market.marketCapSol, req.market.priceSol),
           },
         },
       });
@@ -152,6 +158,12 @@ export async function realisedPnlToday(mode: 'PAPER' | 'LIVE'): Promise<number> 
     select: { context: true },
   });
   return sells.reduce((s, t) => s + Number((t.context as { pnlSol?: number } | null)?.pnlSol ?? 0), 0);
+}
+
+/** Total supply in whole tokens = market cap ÷ price (pump.fun default 1e9 if unknown). */
+function supplyTokensFrom(marketCapSol: number, priceSol: number): number {
+  const s = priceSol > 0 ? marketCapSol / priceSol : 0;
+  return Number.isFinite(s) && s > 0 ? Math.round(s) : 1_000_000_000;
 }
 
 function round4(x: number): number {

@@ -4,8 +4,8 @@ import { STRATEGIES } from '../src/config/strategies';
 import { marketFeatures, type MarketRaw } from '../src/evaluator/market-analyzer';
 import { checkEntryRules, decide, scoreFeatures } from '../src/evaluator/scorer';
 import { walletFeatures, type CreatorProfile } from '../src/evaluator/wallet-analyzer';
-import { computeRisk, decideExit, detectResistance, type ExitInput } from '../src/executor/sell-manager';
-import { quoteBuy, quoteSell } from '../src/lib/pumpfun';
+import { computeRisk, computeVolatilityPct, decideExit, detectResistance, INITIALS_MARKER, runnerTrailPct, type ExitInput } from '../src/executor/sell-manager';
+import { curvePriceSol, quoteBuy, quoteSell } from '../src/lib/pumpfun';
 
 const V_SOL = 30_000_000_000n;
 const V_TOK = 1_073_000_000_000_000n;
@@ -89,22 +89,23 @@ describe('exit rules', () => {
     staleMinutes: 30, priceSol: 1, migratedNoMarket: false, bundlePctEntry: 8, bundlePctNow: 8, devHoldingPctEntry: 3, devHoldingPctNow: 3,
     top10PctEntry: 15, top10PctNow: 15, nowMs: now, copyWalletSold: false, risk: 0, riskWhy: '', openedAtMs: now, maxHoldMinutes: 45,
     resistance: { hit: false, level: 0, touches: 0 },
+    sizeSol: 1, costSol: 1.0015, proceedsSol: 0, volatilityPct: null, txFeeSol: 0.0015,
   };
   const rules = DEFAULT_CONFIG.exit;
   const reasons = (i: Partial<ExitInput>) => decideExit({ ...base, ...i }, rules).sells.map((s) => `${s.reason}:${s.pct}`);
 
   it('holds when nothing happens', () => expect(reasons({})).toEqual([]));
   it('stop loss at -40%', () => expect(reasons({ priceSol: 0.59 })).toEqual(['STOP_LOSS:100']));
-  it('takes 30% at 1.3x and arms the trailing stop', () => {
+  it('takes 25% at 1.3x and arms the trailing stop', () => {
     const d = decideExit({ ...base, priceSol: 1.35, peakPriceSol: 1.35 }, rules);
-    expect(d.sells.map((s) => `${s.reason}:${s.pct}`)).toEqual(['TAKE_PROFIT:30']);
+    expect(d.sells.map((s) => `${s.reason}:${s.pct}`)).toEqual(['TAKE_PROFIT:25']);
     expect(d.state.trailingActive).toBe(true);
   });
-  it('all tiers fire on a jump straight to 3x', () => expect(reasons({ priceSol: 3.2 })).toEqual(['TAKE_PROFIT:30', 'TAKE_PROFIT:40', 'TAKE_PROFIT:20']));
-  it('does not re-fire a tier', () => expect(reasons({ priceSol: 1.4, peakPriceSol: 1.4, tpTiersHit: [1.3], remainingPct: 70, trailingActive: true })).toEqual([]));
-  it('trail tightens to 10% after a 3x peak', () => {
-    expect(reasons({ priceSol: 2.65, peakPriceSol: 3, tpTiersHit: [1.3, 1.8, 3], remainingPct: 10, trailingActive: true })).toEqual(['TRAILING_STOP:10']);
-    expect(reasons({ priceSol: 2.75, peakPriceSol: 1.9 * 1.5, tpTiersHit: [1.3, 1.8], remainingPct: 30, trailingActive: true })).toEqual([]);
+  it('does not re-fire a tier', () => expect(reasons({ priceSol: 1.4, peakPriceSol: 1.4, tpTiersHit: [1.3], remainingPct: 75, trailingActive: true })).toEqual([]));
+  it('before initials the trail tightens to 15% after a 2x-ish peak', () => {
+    // peak 1.9x (no initials yet) → 20% trail: 1.55 holds, 1.5 sells
+    expect(reasons({ priceSol: 1.55, peakPriceSol: 1.9, tpTiersHit: [1.3], remainingPct: 75, trailingActive: true })).toEqual([]);
+    expect(reasons({ priceSol: 1.5, peakPriceSol: 1.9, tpTiersHit: [1.3], remainingPct: 75, trailingActive: true })).toEqual(['TRAILING_STOP:75']);
   });
   it('sells at resistance once in profit', () => expect(reasons({ priceSol: 1.25, peakPriceSol: 1.29, resistance: { hit: true, level: 1.29, touches: 3 } })).toEqual(['TAKE_PROFIT:100']));
   it('ignores resistance below 1.2x', () => expect(reasons({ priceSol: 1.1, peakPriceSol: 1.15, resistance: { hit: true, level: 1.15, touches: 3 } })).toEqual([]));
@@ -125,6 +126,129 @@ describe('exit rules', () => {
     const d = decideExit({ ...base, priceSol: 1.12, peakPriceSol: 1.12, nowMs: now + 31 * 60_000, maxHoldMinutes: 120 }, rules);
     expect(d.sells).toEqual([]);
     expect(d.state.lastMoveAtMs).toBe(now + 31 * 60_000);
+  });
+});
+
+describe('take initials + runner', () => {
+  const now = 10_000_000;
+  const base: ExitInput = {
+    entryPriceSol: 1, peakPriceSol: 1, remainingPct: 100, tpTiersHit: [], trailingActive: false, refPriceSol: 1, lastMoveAtMs: now,
+    staleMinutes: 30, priceSol: 1, migratedNoMarket: false, bundlePctEntry: 8, bundlePctNow: 8, devHoldingPctEntry: 3, devHoldingPctNow: 3,
+    top10PctEntry: 15, top10PctNow: 15, nowMs: now, copyWalletSold: false, risk: 0, riskWhy: '', openedAtMs: now, maxHoldMinutes: 45,
+    resistance: { hit: false, level: 0, touches: 0 },
+    sizeSol: 1, costSol: 1.0015, proceedsSol: 0, volatilityPct: null, txFeeSol: 0.0015,
+  };
+  const rules = DEFAULT_CONFIG.exit;
+  // After the 1.3x tier: 25% sold at ~1.3x minus fees.
+  const afterTier = { ...base, tpTiersHit: [1.3], remainingPct: 75, trailingActive: true, proceedsSol: 0.25 * 1.3 * 0.985 - 0.0015 };
+  const runner = { ...afterTier, tpTiersHit: [1.3, INITIALS_MARKER], remainingPct: 40, peakPriceSol: 2.5, priceSol: 2.4, proceedsSol: 1.01 };
+
+  it('sells just enough at 2x so proceeds cover the full cost', () => {
+    const d = decideExit({ ...afterTier, priceSol: 2.05, peakPriceSol: 2.05 }, rules);
+    expect(d.sells).toHaveLength(1);
+    const sell = d.sells[0]!;
+    expect(sell.reason).toBe('TAKE_PROFIT');
+    expect(sell.detail).toContain('initials out at 2.05x');
+    // Realistic fill: price × (1 − 1.25% curve fee − 1.5% slippage) − tx fee.
+    const got = afterTier.proceedsSol + (sell.pct / 100) * 2.05 * (1 - 0.0275) - 0.0015;
+    expect(got).toBeGreaterThanOrEqual(base.costSol);
+    expect(sell.pct).toBeLessThan(40); // didn't dump much more than needed
+    expect(d.state.tpTiersHit).toContain(INITIALS_MARKER);
+  });
+  it('initials really pay back the full cost through the paper fill maths (fees, slippage, impact, tx fee)', () => {
+    const paper = DEFAULT_CONFIG.paper;
+    /** Run one position through the same quote maths as the paper trader. Returns SOL received − cost. */
+    const simulate = (sizeSol: number, pricePath: number[]): number => {
+      let sol = 40_000_000_000n;
+      let tok = (sol * V_TOK) / V_SOL;
+      const k = sol * tok;
+      const { tokensOut } = quoteBuy(BigInt(Math.round(sizeSol * 1e9)), sol, tok, paper.curveFeeBps);
+      const tokens = (tokensOut * BigInt(Math.round((100 - paper.slippagePct) * 100))) / 10_000n;
+      sol += BigInt(Math.round(sizeSol * 1e9 * (1 - paper.curveFeeBps / 10_000)));
+      tok = k / sol;
+      const entryPriceSol = sizeSol / (Number(tokens) / 1e6);
+      const costSol = sizeSol + paper.txFeeSol;
+      let state = { ...base, entryPriceSol, peakPriceSol: entryPriceSol, refPriceSol: entryPriceSol, sizeSol, costSol, proceedsSol: 0, txFeeSol: paper.txFeeSol };
+      let received = 0;
+      for (const multiple of pricePath) {
+        // Other buyers push the curve price to `multiple`× our entry (price ∝ sol² / k).
+        sol = BigInt(Math.round(Number(sol) * Math.sqrt((multiple * entryPriceSol) / curvePriceSol(sol, tok))));
+        tok = k / sol;
+        const d = decideExit({ ...state, priceSol: curvePriceSol(sol, tok), peakPriceSol: Math.max(state.peakPriceSol, curvePriceSol(sol, tok)) }, rules);
+        for (const sell of d.sells) {
+          const amount = (tokens * BigInt(Math.round(sell.pct * 100))) / 10_000n;
+          const out = (Number(quoteSell(amount, sol, tok, paper.curveFeeBps).solOutLamports) / 1e9) * (1 - paper.slippagePct / 100) - paper.txFeeSol;
+          received += out;
+          sol -= BigInt(Math.round(Number(quoteSell(amount, sol, tok, 0).solOutLamports)));
+          tok += amount;
+          state = { ...state, remainingPct: state.remainingPct - sell.pct };
+        }
+        state = { ...state, ...d.state, proceedsSol: received };
+        if (multiple >= 2) expect(d.state.tpTiersHit).toContain(INITIALS_MARKER);
+      }
+      return received - costSol;
+    };
+    for (const size of [0.025, 0.05, 0.1, 0.2]) {
+      expect(simulate(size, [2.05])).toBeGreaterThanOrEqual(0); // tier + initials in the same tick
+      expect(simulate(size, [1.32, 2.05])).toBeGreaterThanOrEqual(0); // tier first, initials later
+    }
+  });
+  it('initials never repeat', () => {
+    expect(decideExit({ ...afterTier, tpTiersHit: [1.3, INITIALS_MARKER], remainingPct: 40, priceSol: 2.3, peakPriceSol: 2.3 }, rules).sells).toEqual([]);
+  });
+  it('jumping straight to 5x: tiers already cover the cost → marker only, no extra sell', () => {
+    const d = decideExit({ ...base, priceSol: 5.2, peakPriceSol: 5.2 }, rules);
+    expect(d.sells.map((s) => `${s.reason}:${s.pct}`)).toEqual(['TAKE_PROFIT:25', 'TAKE_PROFIT:15']);
+    expect(d.state.tpTiersHit).toContain(INITIALS_MARKER);
+  });
+  it('runner ignores resistance and risk-rising exits', () => {
+    expect(decideExit({ ...runner, resistance: { hit: true, level: 2.5, touches: 3 } }, rules).sells).toEqual([]);
+    expect(decideExit({ ...runner, risk: 0.9, riskWhy: 'x' }, rules).sells).toEqual([]);
+  });
+  it('runner still exits on rug, copy exit and stop loss', () => {
+    expect(decideExit({ ...runner, devHoldingPctNow: 0 }, rules).sells[0]!.reason).toBe('RUG_DETECTED');
+    expect(decideExit({ ...runner, copyWalletSold: true }, rules).sells[0]!.reason).toBe('COPY_EXIT');
+    expect(decideExit({ ...runner, priceSol: 0.5 }, rules).sells[0]!.reason).toBe('STOP_LOSS');
+  });
+  it('runner trail follows volatility', () => {
+    // 2.5x peak, at 2.0x = 20% off the peak
+    const at2 = { ...runner, priceSol: 2.0 };
+    expect(decideExit({ ...at2, volatilityPct: 4 }, rules).sells.map((s) => s.reason)).toEqual(['TRAILING_STOP']); // 12% trail
+    expect(decideExit({ ...at2, volatilityPct: 10 }, rules).sells).toEqual([]); // 30% trail
+  });
+  it('runner gets twice the max hold', () => {
+    expect(decideExit({ ...runner, nowMs: now + 60 * 60_000, lastMoveAtMs: now + 59 * 60_000 }, rules).sells).toEqual([]);
+    expect(decideExit({ ...runner, nowMs: now + 91 * 60_000, lastMoveAtMs: now + 90 * 60_000 }, rules).sells[0]!.reason).toBe('TAKE_PROFIT');
+  });
+  it('runnerTrailPct widens with volatility and is clamped', () => {
+    const r = rules.runner;
+    expect(runnerTrailPct(1, 3, r)).toBe(12);
+    expect(runnerTrailPct(6, 3, r)).toBe(18);
+    expect(runnerTrailPct(9, 3, r)).toBeGreaterThan(runnerTrailPct(6, 3, r));
+    expect(runnerTrailPct(50, 3, r)).toBe(35);
+    expect(runnerTrailPct(null, 3, r)).toBe(25);
+  });
+  it('caps the trail at 20% after a 10x peak', () => {
+    expect(runnerTrailPct(50, 10, rules.runner)).toBe(20);
+    expect(decideExit({ ...runner, tpTiersHit: [1.3, INITIALS_MARKER, 5], peakPriceSol: 12, priceSol: 9.5, volatilityPct: 50 }, rules).sells.map((s) => s.reason)).toEqual(['TRAILING_STOP']);
+  });
+});
+
+describe('computeVolatilityPct', () => {
+  const series = (prices: number[], every = 2000) => prices.map((p, i) => ({ t: i * every, buys: 0, sells: 0, holders: 0, priceSol: p }));
+  it('needs enough history', () => expect(computeVolatilityPct(series([1, 1.1, 1.2]), 4000)).toBeNull());
+  it('a steady climb has ~0 volatility', () => {
+    const s = series(Array.from({ length: 10 }, (_, k) => 1.05 ** k), 10_000);
+    expect(computeVolatilityPct(s, 90_000)).toBeCloseTo(0, 6);
+  });
+  it('a choppy chart has higher volatility than a calm one', () => {
+    const calm = series(Array.from({ length: 10 }, (_, k) => (k % 2 ? 1.01 : 1)), 10_000);
+    const wild = series(Array.from({ length: 10 }, (_, k) => (k % 2 ? 1.2 : 1)), 10_000);
+    expect(computeVolatilityPct(wild, 90_000)!).toBeGreaterThan(computeVolatilityPct(calm, 90_000)! * 5);
+  });
+  it('re-samples 2s ticks into ~10s steps and ignores old samples', () => {
+    const s = series(Array.from({ length: 200 }, () => 1)); // 400s of flat price
+    expect(computeVolatilityPct(s, 398_000)).toBe(0);
   });
 });
 

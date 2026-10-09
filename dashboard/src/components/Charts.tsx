@@ -15,7 +15,7 @@ const axisProps = (c: ThemeColors) => ({
   axisLine: { stroke: c.axis },
 });
 
-function TooltipBox({ title, rows }: { title: string; rows: Array<[string, ReactNode]> }) {
+export function TooltipBox({ title, rows }: { title: string; rows: Array<[string, ReactNode]> }) {
   return (
     <div className="rounded-lg border border-line bg-surface px-3 py-2 text-sm shadow-lg">
       <div className="mb-1 font-semibold text-ink">{title}</div>

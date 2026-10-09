@@ -57,6 +57,46 @@ export interface OpenPosition {
   buyReason: string | null;
   targets: { stopLossPrice: number; takeProfits: Array<{ multiple: number; sellPct: number; hit: boolean }>; trailingStopPrice: number | null };
   health: { holders: number; devHoldingPct: number; top10HolderPct: number; curvePct: number } | null;
+  /** Market cap in SOL at the moment we bought. */
+  entryMarketCapSol: number;
+  /** Same in USD at buy time (null for positions opened before this was recorded). */
+  entryMarketCapUsd: number | null;
+  /** Market cap now, in SOL and USD (USD uses the current SOL price). */
+  currentMarketCapSol: number | null;
+  currentMarketCapUsd: number | null;
+  /** Current SOL/USD price used for the conversions above. */
+  solUsd: number | null;
+  /** Whole tokens in supply (normally 1 billion): market cap = priceSol × totalSupplyTokens. */
+  totalSupplyTokens: number;
+}
+
+/** GET /api/positions/:id/chart — price history for one position. */
+export interface PositionChartData {
+  positionId: string;
+  symbol: string;
+  openedAt: string;
+  closedAt: string | null;
+  entryPriceSol: number;
+  entryMarketCapSol: number;
+  /** Oldest → newest; the first point is the entry. t = unix ms. */
+  points: Array<{ t: number; priceSol: number; marketCapSol: number }>;
+  takeProfits: Array<{ multiple: number; sellPct: number; hit: boolean }>;
+  stopLossPriceSol: number;
+  trailingStopPriceSol: number | null;
+  peakPriceSol: number;
+}
+
+/** One entry of the WebSocket 'positions' event (sent every ~2s). */
+export interface LivePositionUpdate {
+  id: string;
+  priceSol: number;
+  multiple: number;
+  peakMultiple: number;
+  unrealizedPnlSol: number;
+  risk: number;
+  holders: number;
+  ownSupplyPct: number;
+  exitImpactPct: number;
 }
 
 export interface TradeRowData {

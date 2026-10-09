@@ -102,21 +102,54 @@ export const DEFAULT_CONFIG = {
   },
 
   exit: {
-    /** Tiered take-profit: sell `sellPct` of the ORIGINAL position at `multiple`x. */
+    /**
+     * Tiered take-profit: sell `sellPct` of the ORIGINAL position at `multiple`x.
+     *  - 25% at 1.3x: a small "de-risk" sale so every winner banks something early.
+     *  - 15% at 5x:   a bonus slice off the runner on a big move (the rest keeps riding).
+     * The big sale in between is "take initials" below.
+     */
     takeProfitTiers: [
-      { multiple: 1.3, sellPct: 30 },
-      { multiple: 1.8, sellPct: 40 },
-      { multiple: 3, sellPct: 20 },
+      { multiple: 1.3, sellPct: 25 },
+      { multiple: 5, sellPct: 15 },
     ],
-    /** The remaining 10% rides with the trailing stop. */
+    /**
+     * Take initials: at `atMultiple`x, sell exactly enough that everything we
+     * got back (after fees) covers everything we paid. What's left is "house
+     * money" — the runner. `feeBufferPct` is a safety margin for the sell fee,
+     * slippage and our own price impact (so we don't come up a little short).
+     */
+    initials: { atMultiple: 2, feeBufferPct: 4 },
+    /**
+     * The runner (what's left after initials) uses a trailing stop that follows
+     * how wild the chart is: calm chart → tighter trail, wild chart → wider
+     * trail, so normal wicks don't shake us out of a 5-20x move.
+     *   trail % = volMultiplier × volatility, kept between minTrailPct and maxTrailPct.
+     * Volatility = how much the price typically moves per `volStepSec` seconds,
+     * measured over the last `volWindowSec` seconds.
+     */
+    runner: {
+      volMultiplier: 3,
+      minTrailPct: 12,
+      maxTrailPct: 35,
+      /** Used until there's enough price history to measure volatility. */
+      fallbackTrailPct: 25,
+      volWindowSec: 180,
+      volStepSec: 10,
+      /** After a really big peak, lock in more: the trail is never wider than this. */
+      bigWinMultiple: 10,
+      bigWinMaxTrailPct: 20,
+      /** The runner may stay this many times the strategy's normal max hold. */
+      maxHoldMultiplier: 2,
+    },
+    /** Before initials are out, the trailing stop arms here and trails this far below the peak. */
     trailingStopActivateMultiple: 1.25,
     trailingStopPct: 20,
-    /** The higher the peak, the tighter the trail (locks in more of a big run). */
+    /** The higher the peak, the tighter the trail (only before initials are out). */
     trailingTightening: [
       { fromMultiple: 2, pct: 15 },
       { fromMultiple: 3, pct: 10 },
     ],
-    /** After reaching `afterMultiple`, sell everything if it falls back to `floorMultiple`. */
+    /** After reaching `afterMultiple`, sell everything if it falls back to `floorMultiple` (before initials are out). */
     protectProfit: { afterMultiple: 1.3, floorMultiple: 1.05 },
     /**
      * Resistance: the price keeps hitting the same ceiling and getting knocked

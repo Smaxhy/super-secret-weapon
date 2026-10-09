@@ -1,9 +1,11 @@
 import { Link } from 'react-router-dom';
 import { PnlChart } from '../components/Charts';
 import { TokenCard } from '../components/TokenCard';
-import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl, StatTile } from '../components/ui';
+import { McChange } from '../components/McCompare';
+import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl } from '../components/ui';
 import { useApi } from '../hooks/useApi';
-import { ago, duration, EXIT_LABEL, pct, sol } from '../lib/format';
+import { useLivePositions } from '../hooks/useLivePositions';
+import { ago, duration, EXIT_LABEL, mcSol, multiple, pct, pnl, sol, usd } from '../lib/format';
 import type { Detection, Overview as OverviewData, TradeRowData } from '../lib/types';
 
 export function Overview() {
@@ -22,19 +24,39 @@ export function Overview() {
       {o.error && <ErrorBox message={o.error} />}
       {d && (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-            <StatTile label={d.mode === 'PAPER' ? 'Paper balance' : 'Wallet balance'} value={sol(d.balanceSol, 2)} sub={`started with ${sol(d.startingBalanceSol, 0)}`} />
-            <StatTile label="Total profit" value={<Pnl value={d.totalPnlSol} />} sub={pct((d.totalPnlSol / d.startingBalanceSol) * 100, 1, true) + ' of start'} />
-            <StatTile label="Today" value={<Pnl value={d.todayPnlSol} />} sub="since 00:00 UTC" />
-            <StatTile label="Win rate" value={pct(d.winRate, 0)} sub={`${d.trades} closed trades`} />
-            <StatTile label="Open positions" value={`${d.openPositions} / ${d.maxPositions}`} sub={`${d.launchesToday.toLocaleString()} launches today`} />
-          </div>
-
-          <Card title="Profit over time" className="mt-4" action={<Link to="/performance" className="text-sm text-accent hover:underline">All charts →</Link>}>
-            {d.cumulative.length ? <PnlChart points={d.cumulative} /> : <Empty>No closed trades yet. The chart fills in as the bot paper trades.</Empty>}
-          </Card>
+          {/* Hero: the one number that matters most, then the supporting stats, then the curve. */}
+          <section className="hero-glow rounded-2xl border border-line bg-surface p-4 shadow-card sm:p-6" aria-label="Profit summary">
+            <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
+              <div>
+                <div className="text-sm font-medium text-ink-2">Total profit</div>
+                <div className="mt-1 text-4xl font-bold tracking-tight sm:text-5xl">
+                  <Pnl value={d.totalPnlSol} />
+                </div>
+                <div className="mt-1 text-sm text-muted">
+                  {pct((d.totalPnlSol / d.startingBalanceSol) * 100, 1, true)} of the {sol(d.startingBalanceSol, 0)} start
+                </div>
+              </div>
+              <dl className="grid flex-1 grid-cols-2 gap-x-6 gap-y-3 sm:max-w-xl sm:grid-cols-4">
+                <HeroStat label="Today" value={<Pnl value={d.todayPnlSol} />} sub="since 00:00 UTC" />
+                <HeroStat label="Win rate" value={pct(d.winRate, 0)} sub={`${d.trades} closed trades`} />
+                <HeroStat label={d.mode === 'PAPER' ? 'Paper balance' : 'Balance'} value={sol(d.balanceSol, 2)} />
+                <HeroStat label="Open" value={`${d.openPositions} / ${d.maxPositions}`} sub={`${d.launchesToday.toLocaleString()} launches today`} />
+              </dl>
+            </div>
+            <div className="mt-5 border-t border-line pt-4">
+              <div className="mb-2 flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-ink">Profit over time</h2>
+                <Link to="/performance" className="text-sm text-accent hover:underline">
+                  All charts →
+                </Link>
+              </div>
+              {d.cumulative.length ? <PnlChart points={d.cumulative} height={240} /> : <Empty>No closed trades yet. The chart fills in as the bot paper trades.</Empty>}
+            </div>
+          </section>
         </>
       )}
+
+      <OpenPreview />
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Card title="Latest trades" action={<Link to="/history" className="text-sm text-accent hover:underline">History →</Link>}>
@@ -67,5 +89,67 @@ export function Overview() {
         </Card>
       </div>
     </>
+  );
+}
+
+function HeroStat({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
+  return (
+    <div>
+      <dt className="text-xs font-medium uppercase tracking-wide text-muted">{label}</dt>
+      <dd className="tabular mt-0.5 whitespace-nowrap text-lg font-semibold text-ink">{value}</dd>
+      {sub && <dd className="text-xs text-muted">{sub}</dd>}
+    </div>
+  );
+}
+
+/** Open positions at a glance: bought-at MC → MC now, live multiple and P&L. */
+function OpenPreview() {
+  const { positions } = useLivePositions();
+  if (!positions?.length) return null;
+  return (
+    <Card
+      title={
+        <span className="inline-flex items-center gap-2">
+          Open positions
+          <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs font-semibold text-ink-2">{positions.length}</span>
+        </span>
+      }
+      className="mt-4"
+      action={
+        <Link to="/positions" className="text-sm text-accent hover:underline">
+          Charts &amp; details →
+        </Link>
+      }
+    >
+      <ul className="divide-y divide-line">
+        {positions.map((p) => {
+          const m = p.multiple;
+          const fresh = p.live && Date.now() - p.live.at < 6_000;
+          return (
+            <li key={p.id}>
+              <Link to="/positions" className="-mx-2 flex items-center justify-between gap-3 rounded-xl px-2 py-2.5 hover:bg-surface-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 truncate font-semibold text-ink">
+                    {p.symbol}
+                    {fresh && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-good" aria-label="live" />}
+                  </div>
+                  <div className="tabular truncate text-sm text-muted">
+                    <span className="sr-only">Market cap bought at </span>
+                    {p.mcEntryUsd !== null ? usd(p.mcEntryUsd) : mcSol(p.entryMarketCapSol)}
+                    <span aria-hidden="true"> → </span>
+                    <span className="sr-only"> now </span>
+                    <span className="text-ink">{p.mcNowUsd !== null ? usd(p.mcNowUsd) : mcSol(p.mcNowSol)}</span> <McChange value={p.mcChangePct} className="text-xs" />
+                  </div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className={`tabular text-lg font-semibold ${m !== null && m >= 1 ? 'text-up' : 'text-down'}`}>{multiple(m)}</div>
+                  <div className="tabular text-xs text-muted">{pnl(p.unrealizedPnlSol)}</div>
+                </div>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
   );
 }

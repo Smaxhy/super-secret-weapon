@@ -33,9 +33,13 @@ smart money → learning engine → ML → social). See README.md.
   only concentration limits (within 30/65/15%) are bought at half size; near-misses go on a watchlist;
   volume spikes trigger immediate checks; X hot keywords (needs TWITTER_BEARER_TOKEN) boost narrative.
   All editable on the dashboard Controls page (BotConfig).
-- Exits: 30% at 1.3x, 40% at 1.8x, 20% at 3x, trailing from 1.25x tightening 20→15→10%, protect profit
-  (1.3x → floor 1.05x), resistance exit (2+ rejections, ≥1.2x), momentum-risk exits, max hold, rug/copy exits.
+- Exits: tiers (30% at 1.3x, 40% at 1.8x, 20% at 3x), then **initials** at 2x (sell enough to get the
+  stake + fees back → "house money"), the rest rides as a **runner** with a volatility-adaptive trail
+  (ignores resistance/risk exits, max hold 2× normal). Protect profit (1.3x → floor 1.05x), resistance exit,
+  momentum-risk exits, rug/copy exits. Old stored exit configs without `initials` auto-upgrade to defaults.
   Fees: curve 1.25%, PumpSwap 0.3%, 0.0015 SOL gas+tip per tx, 1.5% slippage. Every trade stores an explanation.
+- Dashboard: positions show entry MC vs current MC (SOL + USD), a live price chart per position
+  (Redis `pos:hist:<id>`, 5s points, 3-day TTL) with TP/stop/trail lines; redesigned layout + footer.
 - Learning re-weights every 2h (own trades weighted 3x); per-hour size factor; regime every 15 min.
 - Fixed bug: PumpSwap pool reserves derived from curve used ~0 tokens → fake 20x profits (now 206.9M LP tokens).
 

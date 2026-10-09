@@ -15,6 +15,24 @@ export const num = (v: number | null | undefined, dp = 0) =>
 /** Tiny prices like 0.0000000412 → "4.12e-8". */
 export const price = (v: number | null | undefined) => (v === null || v === undefined || !Number.isFinite(v) ? '—' : v < 0.0001 ? v.toExponential(2) : v.toFixed(6));
 
+/** Dollars, compact: $950, $12.4k, $1.25M. */
+export const usd = (v: number | null | undefined) => {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '—';
+  const a = Math.abs(v);
+  const sign = v < 0 ? '−' : '';
+  if (a >= 1e9) return `${sign}$${(a / 1e9).toFixed(2)}B`;
+  if (a >= 1e6) return `${sign}$${(a / 1e6).toFixed(2)}M`;
+  if (a >= 1e3) return `${sign}$${(a / 1e3).toFixed(a >= 1e5 ? 0 : 1)}k`;
+  return `${sign}$${a.toFixed(0)}`;
+};
+
+/** Market cap in SOL, short: "84.2 SOL", "1.25k SOL". */
+export const mcSol = (v: number | null | undefined) => {
+  if (v === null || v === undefined || !Number.isFinite(v)) return '—';
+  if (Math.abs(v) >= 1e3) return `${(v / 1e3).toFixed(2)}k SOL`;
+  return `${v.toFixed(v >= 100 ? 0 : 1)} SOL`;
+};
+
 export const multiple = (v: number | null | undefined) => (v === null || v === undefined || !Number.isFinite(v) ? '—' : `${v.toFixed(2)}×`);
 
 export function ago(iso: string | Date | null | undefined): string {

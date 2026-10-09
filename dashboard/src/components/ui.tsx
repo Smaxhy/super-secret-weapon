@@ -4,7 +4,7 @@ import { pnl } from '../lib/format';
 
 export function Card({ title, action, children, className = '' }: { title?: ReactNode; action?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={`rounded-xl border border-line bg-surface p-4 sm:p-5 ${className}`}>
+    <section className={`rounded-2xl border border-line bg-surface p-4 shadow-card sm:p-5 ${className}`}>
       {(title || action) && (
         <div className="mb-3 flex items-center justify-between gap-3">
           {title && <h2 className="text-base font-semibold text-ink">{title}</h2>}
@@ -20,7 +20,7 @@ export function Card({ title, action, children, className = '' }: { title?: Reac
 export function StatTile({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: 'up' | 'down' }) {
   const color = tone === 'up' ? 'text-up' : tone === 'down' ? 'text-down' : 'text-ink';
   return (
-    <div className="rounded-xl border border-line bg-surface p-4">
+    <div className="rounded-2xl border border-line bg-surface p-4 shadow-card">
       <div className="text-sm text-ink-2">{label}</div>
       <div className={`mt-1 whitespace-nowrap text-xl font-semibold sm:text-2xl ${color}`}>{value}</div>
       {sub && <div className="mt-1 text-sm text-muted">{sub}</div>}
@@ -45,7 +45,7 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
   return (
     <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 className="text-2xl font-bold text-ink">{title}</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">{title}</h1>
         {subtitle && <p className="mt-1 text-ink-2">{subtitle}</p>}
       </div>
       {action}
@@ -54,7 +54,7 @@ export function PageHeader({ title, subtitle, action }: { title: string; subtitl
 }
 
 export function Empty({ children }: { children: ReactNode }) {
-  return <div className="rounded-lg border border-dashed border-line px-4 py-10 text-center text-ink-2">{children}</div>;
+  return <div className="rounded-2xl border border-dashed border-line px-4 py-10 text-center text-ink-2">{children}</div>;
 }
 
 export function ErrorBox({ message }: { message: string }) {

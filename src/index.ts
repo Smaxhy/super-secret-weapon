@@ -17,6 +17,7 @@ import { Evaluator } from './evaluator/evaluator';
 import { WalletAnalyzer } from './evaluator/wallet-analyzer';
 import { PaperExecutor } from './executor/paper-trader';
 import { SellManager } from './executor/sell-manager';
+import { startPositionHistory, stopPositionHistory } from './executor/position-history';
 import { Trader } from './executor/trader';
 import { ensureTimescale } from './db/timescale';
 import { SafetyChecker } from './evaluator/safety-checker';
@@ -173,6 +174,8 @@ async function main(): Promise<void> {
 
   await whales.start();
   const spikeTimer = startSpikeWatcher(liveState, evaluator);
+  // Saves each open position's price every 5s (Redis) for the dashboard chart.
+  startPositionHistory();
   const xTimer = startXWatcher(redis, (word, mints) => {
     for (const m of mints) void evaluator.checkNow(m, 'CURVE_SNIPE', `x:${word}`);
   });
@@ -242,6 +245,7 @@ async function main(): Promise<void> {
       void nightly.stop();
       clearInterval(regimeTimer);
       clearInterval(spikeTimer);
+      stopPositionHistory();
       if (xTimer) clearInterval(xTimer);
       await outcomes.stop();
       await evaluator.stop();
