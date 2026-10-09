@@ -206,6 +206,22 @@ export const DEFAULT_CONFIG = {
     },
   },
 
+  /**
+   * DexScreener (free public API): trending coins + "DEX paid" (approved enhanced
+   * token profile) / community takeover. Adds points to the score and checks
+   * tracked coins that start trending right away. `requirePaidFor` = strategies
+   * that ONLY buy DEX-paid (or CTO) coins (empty = just a bonus).
+   */
+  dex: {
+    enabled: true,
+    pollSec: 60,
+    trendingSize: 30,
+    paidPoints: 4,
+    ctoPoints: 2,
+    trendingPoints: 5,
+    requirePaidFor: [] as StrategyName[],
+  },
+
   /** Copy trading: react when a wallet on your watch list buys. */
   copy: {
     /**
@@ -282,7 +298,7 @@ export const DEFAULT_CONFIG = {
       maxHoldMultiplier: 2,
     },
     /** Before initials are out, the trailing stop arms here and trails this far below the peak. */
-    trailingStopActivateMultiple: 1.2,
+    trailingStopActivateMultiple: 1.15,
     trailingStopPct: 20,
     /** The higher the peak, the tighter the trail (only before initials are out). */
     trailingTightening: [
@@ -311,8 +327,9 @@ export const DEFAULT_CONFIG = {
         { fromMultiple: 5, maxTrailPct: 25 },
         { fromMultiple: 10, maxTrailPct: 20 },
       ],
-      confirmTicks: 2,
-      confirmSec: 3,
+      /** Trailing stop: sell the moment it breaks (owner: strict + aggressive). */
+      confirmTicks: 1,
+      confirmSec: 0,
       gapMultiple: 1.5,
       /** Once the peak reached this, the stop never sits below break-even (+fees): no round-tripping winners. */
       breakEvenAfterMultiple: 1.2,
@@ -322,14 +339,15 @@ export const DEFAULT_CONFIG = {
        * nudges it ×volAdjust.min–max (2.5 × volatility vs the ladder value).
        */
       ladder: [
-        { fromMultiple: 1.2, pct: 8 },
-        { fromMultiple: 1.5, pct: 12 },
-        { fromMultiple: 2, pct: 16 },
-        { fromMultiple: 3, pct: 20 },
-        { fromMultiple: 5, pct: 25 },
-        { fromMultiple: 10, pct: 30 },
+        { fromMultiple: 1.15, pct: 6 },
+        { fromMultiple: 1.3, pct: 7 },
+        { fromMultiple: 1.5, pct: 9 },
+        { fromMultiple: 2, pct: 11 },
+        { fromMultiple: 3, pct: 14 },
+        { fromMultiple: 5, pct: 17 },
+        { fromMultiple: 10, pct: 20 },
       ],
-      volAdjust: { min: 0.8, max: 1.3 },
+      volAdjust: { min: 0.8, max: 1.15 },
       peakRefTolerancePct: 25,
     },
     /** After reaching `afterMultiple`, sell everything if it falls back to `floorMultiple` (before initials are out). */
@@ -379,6 +397,9 @@ export const DEFAULT_CONFIG = {
       fallbackPct: 15,
       /** Tighter max per strategy (migration plays: 15%). */
       maxPctByStrategy: { MIGRATION_MOMENTUM: 15 } as Partial<Record<StrategyName, number>>,
+      /** A dip under the stop (not the hard limit) must hold this long before selling. */
+      confirmTicks: 1,
+      confirmSec: 1.5,
     },
     rugExit: {
       /** Bundle wallets sold this many % of supply since we bought → exit. */
@@ -408,8 +429,8 @@ export const DEFAULT_CONFIG = {
      * waits a random delay in this range and THEN fills at the live price, so fast
      * pumps and dumps move against us exactly like they would with real money.
      */
-    latencyMinMs: 400,
-    latencyMaxMs: 1200,
+    latencyMinMs: 150,
+    latencyMaxMs: 500,
     /** Network + priority fee + Jito tip per transaction (realistic for fast Pump.fun fills). */
     txFeeSol: 0.0015,
     /** PumpSwap pool fee (LP + protocol + creator), basis points per side. Approximate. */

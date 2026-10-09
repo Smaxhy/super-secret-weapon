@@ -78,7 +78,10 @@ export function PositionChart({ position, height = 180 }: { position: LivePositi
       if (e.type !== 'positions') return;
       const u = (e.data as { updates?: LivePositionUpdate[] }).updates?.find((x) => x.id === position.id);
       if (!u || !Number.isFinite(u.priceSol)) return;
-      setPoints((prev) => cap([...prev, { t: Date.now(), priceSol: u.priceSol, marketCapSol: u.priceSol * supply }]));
+      const t = Date.now();
+      // A spike between updates (u.highSol) is drawn too, so the chart shows the real top.
+      const spike = u.highSol && u.highSol > u.priceSol ? [{ t: t - 1, priceSol: u.highSol, marketCapSol: u.highSol * supply }] : [];
+      setPoints((prev) => cap([...prev, ...spike, { t, priceSol: u.priceSol, marketCapSol: u.priceSol * supply }]));
     },
     [position.id, supply],
   );

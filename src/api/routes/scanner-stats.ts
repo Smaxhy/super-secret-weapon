@@ -6,6 +6,15 @@ import { hotKeywords } from '../../scanner/x-watcher';
 import type { ApiDeps } from '../deps';
 
 export async function scannerStatsRoutes(app: FastifyInstance, deps: ApiDeps): Promise<void> {
+  /** DexScreener trending (our ranking of its boosted/profiled Solana coins) + whether we track each coin. */
+  app.get('/api/dexscreener', async () => {
+    const snap = deps.dex?.snapshot() ?? { trending: [], updatedAt: null, error: 'DexScreener not running' };
+    return {
+      ...snap,
+      trending: snap.trending.map((c) => ({ ...c, tracked: deps.liveState.isTracked(c.mint), dexPaid: deps.dex?.paidInfo(c.mint) ?? null })),
+    };
+  });
+
   app.get('/api/scanner-stats', async () => {
     const now = Date.now();
     const day = new Date(now - 24 * 3600_000);

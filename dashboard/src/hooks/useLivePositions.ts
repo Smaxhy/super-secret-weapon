@@ -47,7 +47,7 @@ export function mergeLive(base: OpenPosition, u?: LivePositionUpdate & { at: num
 }
 
 /** A live tick older than this is ignored (the pages also stop showing the 'live' dot then). */
-const LIVE_FRESH_MS = 6_000;
+const LIVE_FRESH_MS = 4_000;
 
 export function useLivePositions() {
   const { data, error, loading, reload } = useApi<OpenPosition[]>('/api/positions', 10_000, ['trade']);

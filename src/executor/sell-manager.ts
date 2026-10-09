@@ -51,10 +51,30 @@ import { getConnection } from '../lib/solana';
 import { copySoldKey } from '../scanner/whale-tracker';
 import { insiderDumpSignal } from '../evaluator/insider-cluster';
 import { coachFor } from '../learner/trade-coach';
+import type { CrowdTracker } from '../scanner/crowd-tracker';
 import type { Executor } from './types';
 
 const log = moduleLogger('sell-manager');
-const TICK_MS = 2_000;
+/** Fallback check for every open position (quiet coins, stale/max-hold exits). */
+const TICK_MS = 1_000;
+/** Trade-driven checks: at most one per coin every this many ms (a burst of trades coalesces). */
+const FAST_MIN_GAP_MS = 200;
+/** Risk / resistance / volatility samples are kept at roughly this spacing. */
+const SAMPLE_GAP_MS = 1_500;
+
+export interface PositionUpdate {
+  id: string;
+  priceSol: number;
+  /** Highest real trade price since the previous update (a spike between checks), if above priceSol. */
+  highSol?: number;
+  multiple: number;
+  peakMultiple: number;
+  unrealizedPnlSol: number;
+  risk: number;
+  holders: number;
+  ownSupplyPct: number;
+  exitImpactPct: number;
+}
 /** A price change smaller than this doesn't count as "movement" for the stale rule. */
 const MOVE_THRESHOLD = 0.05;
 
@@ -119,6 +139,13 @@ export interface ExitInput {
   strategy?: string;
   /** Minimum hold (copy trades): until then only stop-loss, rug and profit-taking exits fire. */
   minHoldUntilMs?: number | null;
+  /**
+   * Live mode (sell manager): the peak follows real trades at once — the highest
+   * real trade since the last check (`recentHighSol`) or the current price — so a
+   * fast spike registers. Without it (legacy), a new high must hold for two checks.
+   */
+  instantPeak?: boolean;
+  recentHighSol?: number | null;
 }
 
 /** Marker stored in `tpTiersHit` once initials are out (real tiers are all > 1). */
@@ -429,7 +456,13 @@ export interface ExitDecision {
 export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDecision {
   // Peak from real trades only: a suspicious price can't raise it, and a new high
   // must hold for two checks in a row (min of this and the previous price) — a single wick doesn't count.
-  const peakCandidate = i.priceTrusted === false ? 0 : i.prevPriceSol && i.prevPriceSol > 0 ? Math.min(i.priceSol, i.prevPriceSol) : i.priceSol;
+  const peakCandidate = i.instantPeak
+    ? Math.max(i.priceTrusted === false ? 0 : i.priceSol, i.recentHighSol && i.recentHighSol > 0 ? i.recentHighSol : 0)
+    : i.priceTrusted === false
+      ? 0
+      : i.prevPriceSol && i.prevPriceSol > 0
+        ? Math.min(i.priceSol, i.prevPriceSol)
+        : i.priceSol;
   const state: ExitDecision['state'] = {
     peakPriceSol: Math.max(i.peakPriceSol, peakCandidate),
     trailingActive: i.trailingActive,
@@ -467,9 +500,12 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   if (i.priceSol <= sl.hardPriceSol) return all('STOP_LOSS', `price ${((multiple - 1) * 100).toFixed(1)}% (hard limit −${sl.hardPct}% after fees)`);
   if (i.priceSol <= sl.stopPriceSol) {
     const tr = trailRules(rules);
+    const slc = { ...DEFAULT_CONFIG.exit.stopLoss, ...((rules as Partial<ExitRules>).stopLoss ?? {}) };
+    const needTicks = slc.confirmTicks ?? tr.confirmTicks;
+    const needSec = slc.confirmSec ?? tr.confirmSec;
     const ticks = (i.breachTicks ?? 0) + 1;
     const since = i.breachSinceMs ?? i.nowMs;
-    if (ticks >= tr.confirmTicks && i.nowMs - since >= tr.confirmSec * 1000) {
+    if (ticks >= needTicks && i.nowMs - since >= needSec * 1000) {
       return all('STOP_LOSS', `price ${((multiple - 1) * 100).toFixed(1)}% held under the −${sl.stopPct}% stop (after fees) for ${Math.round((i.nowMs - since) / 1000)}s`);
     }
     state.breachTicks = ticks;
@@ -619,7 +655,13 @@ export class SellManager {
   private readonly lastPoll = new Map<string, number>();
   /** Per position: unconfirmed trailing-stop break + last measured volatility (memory only). */
   private readonly trail = new Map<string, { breachSinceMs: number | null; breachTicks: number; volatilityPct: number | null }>();
-  private updates: Array<{ id: string; priceSol: number; multiple: number; peakMultiple: number; unrealizedPnlSol: number; risk: number; holders: number; ownSupplyPct: number; exitImpactPct: number }> = [];
+  /** Live per-trade log (set in index.ts): real trade prices between checks, so spikes register. */
+  crowd: CrowdTracker | null = null;
+  /** Coins we hold (refreshed every tick) — trades on these trigger an immediate check. */
+  private readonly openMints = new Set<string>();
+  private readonly fast = new Map<string, { running: boolean; again: boolean; last: number }>();
+  private readonly manageLocks = new Map<string, Promise<unknown>>();
+  private readonly lastCheck = new Map<string, number>();
 
   constructor(
     private readonly executor: Executor,
@@ -637,25 +679,86 @@ export class SellManager {
     while (this.running) await new Promise((r) => setTimeout(r, 50));
   }
 
+  /**
+   * A trade just happened on `mint` (wired from the token registry). If we hold it,
+   * check the exits right away instead of waiting for the next tick — so a spike
+   * to 2-3x and back within seconds still gets sold into. Bursts coalesce: at most
+   * one check per coin every FAST_MIN_GAP_MS, plus one more if trades came in meanwhile.
+   */
+  onTrade(mint: string): void {
+    if (!this.openMints.has(mint)) return;
+    let s = this.fast.get(mint);
+    if (!s) {
+      s = { running: false, again: false, last: 0 };
+      this.fast.set(mint, s);
+    }
+    if (s.running) {
+      s.again = true;
+      return;
+    }
+    void this.runFast(mint, s);
+  }
+
+  private async runFast(mint: string, s: { running: boolean; again: boolean; last: number }): Promise<void> {
+    s.running = true;
+    try {
+      do {
+        s.again = false;
+        const wait = FAST_MIN_GAP_MS - (Date.now() - s.last);
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        s.last = Date.now();
+        const open = await prisma.position.findMany({ where: { mint, mode: this.executor.mode, status: 'OPEN' }, select: { id: true } });
+        if (!open.length) {
+          this.openMints.delete(mint);
+          break;
+        }
+        const updates: PositionUpdate[] = [];
+        for (const { id } of open) await this.managePosition(id, updates);
+        if (updates.length) bus.publish({ type: 'positions', data: { updates } });
+      } while (s.again);
+    } catch (err) {
+      log.warn({ mint, err: (err as Error).message }, 'trade-driven exit check failed');
+    } finally {
+      s.running = false;
+    }
+  }
+
+  /** Check one position (fresh from the DB) — never two checks of the same position at once. */
+  private async managePosition(id: string, out: PositionUpdate[], before?: (p: Position & { token: { symbol: string; bondingCurve: string } }) => Promise<void>): Promise<void> {
+    const prev = this.manageLocks.get(id) ?? Promise.resolve();
+    const run = prev.catch(() => undefined).then(async () => {
+      const p = await prisma.position.findUnique({ where: { id }, include: { token: { select: { symbol: true, bondingCurve: true } } } });
+      if (!p || p.status !== 'OPEN') return;
+      if (before) await before(p);
+      await this.manage(p, p.token.symbol, out);
+    });
+    const tail = run.catch(() => undefined);
+    this.manageLocks.set(id, tail);
+    try {
+      await run;
+    } catch (err) {
+      log.error({ positionId: id, err: (err as Error).message }, 'failed to manage position');
+    } finally {
+      if (this.manageLocks.get(id) === tail) this.manageLocks.delete(id);
+    }
+  }
+
   private async tick(): Promise<void> {
     if (this.running) return; // previous tick still working
     this.running = true;
     try {
-      const positions = await prisma.position.findMany({ where: { mode: this.executor.mode, status: 'OPEN' }, include: { token: { select: { symbol: true, bondingCurve: true } } } });
-      this.updates = [];
+      const positions = await prisma.position.findMany({ where: { mode: this.executor.mode, status: 'OPEN' }, select: { id: true, mint: true } });
       const openIds = new Set(positions.map((x) => x.id));
+      this.openMints.clear();
+      for (const p of positions) this.openMints.add(p.mint);
       for (const id of this.samples.keys()) if (!openIds.has(id)) this.samples.delete(id);
       for (const id of this.trail.keys()) if (!openIds.has(id)) this.trail.delete(id);
-      for (const p of positions) {
-        try {
-          await this.refreshIfStale(p.mint, p.token.bondingCurve);
-          await this.manage(p, p.token.symbol);
-        } catch (err) {
-          log.error({ positionId: p.id, err: (err as Error).message }, 'failed to manage position');
-        }
-      }
+      for (const id of this.lastCheck.keys()) if (!openIds.has(id)) this.lastCheck.delete(id);
+      for (const m of this.fast.keys()) if (!this.openMints.has(m)) this.fast.delete(m);
+      const updates: PositionUpdate[] = [];
+      for (const p of positions) await this.managePosition(p.id, updates, (pos) => this.refreshIfStale(pos.mint, pos.token.bondingCurve));
       // Live prices for the dashboard's Positions page.
-      if (this.updates.length) bus.publish({ type: 'positions', data: { updates: this.updates } });
+      if (updates.length) bus.publish({ type: 'positions', data: { updates } });
     } catch (err) {
       log.error({ err: (err as Error).message }, 'sell manager tick failed');
     } finally {
@@ -714,7 +817,7 @@ export class SellManager {
     }
   }
 
-  private async manage(p: Position, symbol: string): Promise<void> {
+  private async manage(p: Position, symbol: string, out: PositionUpdate[]): Promise<void> {
     const cfg = getConfig();
     const view = await this.liveState.read(p.mint);
     if (!view) {
@@ -731,7 +834,15 @@ export class SellManager {
     const hist = this.samples.get(p.id) ?? [];
     const trusted = priceTrusted(m.priceSol, view.refPriceSol, trailRules(cfg.exit).peakRefTolerancePct);
     const prevPriceSol = [...hist].reverse().find((x) => x.trusted !== false)?.priceSol ?? null;
-    hist.push({ t: now, buys: view.buys, sells: view.sells, holders: m.holderCount, priceSol: m.priceSol, trusted });
+    // Highest REAL trade since the last check (a spike between checks). Dust prints and
+    // prices wildly off the pool/reference are ignored.
+    const since = Math.max(this.lastCheck.get(p.id) ?? 0, p.openedAt.getTime());
+    this.lastCheck.set(p.id, now);
+    const sane = Math.max(m.priceSol, view.refPriceSol ?? 0) * 2.5;
+    const recentHighSol = (this.crowd?.trades(p.mint) ?? []).reduce((mx, x) => (x.t > since && x.sol >= 0.02 && x.px > 0 && x.px <= sane ? Math.max(mx, x.px) : mx), 0) || null;
+    // Samples for risk / resistance / volatility stay ~1.5s apart (checks can be 5×/s).
+    const lastSample = hist[hist.length - 1];
+    if (!lastSample || now - lastSample.t >= SAMPLE_GAP_MS) hist.push({ t: now, buys: view.buys, sells: view.sells, holders: m.holderCount, priceSol: m.priceSol, trusted });
     while (hist.length && now - hist[0]!.t > Math.max(180_000, cfg.exit.resistance.windowSec * 1000, cfg.exit.runner.volWindowSec * 1000)) hist.shift();
     this.samples.set(p.id, hist);
     const { risk, why } = computeRisk(hist, Math.max(p.peakPriceSol, m.priceSol), now);
@@ -744,13 +855,14 @@ export class SellManager {
       const [rs, rt] = view.ammBaseReserve && view.ammQuoteReserve ? [view.ammQuoteReserve, view.ammBaseReserve] : [view.virtualSolReserves, view.virtualTokenReserves];
       const ideal = (Number(tokensLeft) / 1e6) * m.priceSol;
       const real = Number(quoteSell(tokensLeft, rs, rt, 0).solOutLamports) / 1e9;
-      this.updates.push({
+      out.push({
         id: p.id,
+        ...(recentHighSol && recentHighSol > m.priceSol ? { highSol: recentHighSol } : {}),
         ownSupplyPct: (Number(tokensLeft) / Number(view.curve.totalSupply || 1n)) * 100,
         exitImpactPct: ideal > 0 ? (1 - real / ideal) * 100 : 0,
         priceSol: m.priceSol,
         multiple,
-        peakMultiple: Math.max(p.peakPriceSol, m.priceSol) / p.entryPriceSol,
+        peakMultiple: Math.max(p.peakPriceSol, m.priceSol, recentHighSol ?? 0) / p.entryPriceSol,
         unrealizedPnlSol: costLeft * multiple * (1 - feeBps / 10_000) - costLeft,
         risk,
         holders: m.holderCount,
@@ -810,6 +922,8 @@ export class SellManager {
         exitCostPct,
         strategy: p.strategy,
         minHoldUntilMs: p.strategy === 'SMART_MONEY_COPY' ? p.openedAt.getTime() + (cfg.copy.minHoldSec ?? 0) * 1000 : null,
+        instantPeak: true,
+        recentHighSol,
       },
       cfg.exit,
     );

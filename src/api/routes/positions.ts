@@ -5,7 +5,7 @@
 import type { FastifyInstance } from 'fastify';
 import { getConfig } from '../../config/runtime-config';
 import type { BotConfigShape } from '../../config/default';
-import { readHistory } from '../../executor/position-history';
+import { downsample, readHistory } from '../../executor/position-history';
 import { exitCostPctFor, INITIALS_MARKER, stopLossLevel, trailingStopLevel, type TrailLevel } from '../../executor/sell-manager';
 import { coachFor } from '../../learner/trade-coach';
 import type { StrategyName } from '../../config/types';
@@ -161,9 +161,7 @@ export async function positionsRoutes(app: FastifyInstance, deps: ApiDeps): Prom
     const history = await readHistory(p.id);
     const points = [
       { t: openedMs, priceSol: p.entryPriceSol, marketCapSol: p.entryPriceSol * supply },
-      ...history
-        .filter((h) => h.t > openedMs)
-        .map((h) => ({ t: h.t, priceSol: h.priceSol, marketCapSol: h.priceSol * supply })),
+      ...downsample(history.filter((h) => h.t > openedMs), 1_500).map((h) => ({ t: h.t, priceSol: h.priceSol, marketCapSol: h.priceSol * supply })),
     ];
     const tiersHit = Array.isArray(p.tpTiersHit) ? (p.tpTiersHit as number[]) : [];
     const volatilityPct = p.status === 'OPEN' ? deps.sellManager.volatilityFor(p.id) : null;

@@ -91,7 +91,7 @@ describe('exit rules', () => {
     resistance: { hit: false, level: 0, touches: 0 },
     sizeSol: 1, costSol: 1.0015, proceedsSol: 0, volatilityPct: null, txFeeSol: 0.0015,
   };
-  const rules = DEFAULT_CONFIG.exit;
+  const rules = { ...DEFAULT_CONFIG.exit, trailingStopActivateMultiple: 1.25, trail: { ...DEFAULT_CONFIG.exit.trail, ladder: [], breakEvenAfterMultiple: 1.5, confirmTicks: 2, confirmSec: 3 } }; // legacy trail
   const reasons = (i: Partial<ExitInput>) => decideExit({ ...base, ...i }, rules).sells.map((s) => `${s.reason}:${s.pct}`);
 
   it('holds when nothing happens', () => expect(reasons({})).toEqual([]));
@@ -140,7 +140,7 @@ describe('take initials + runner', () => {
     resistance: { hit: false, level: 0, touches: 0 },
     sizeSol: 1, costSol: 1.0015, proceedsSol: 0, volatilityPct: null, txFeeSol: 0.0015,
   };
-  const rules = { ...DEFAULT_CONFIG.exit, trailingStopActivateMultiple: 1.25, trail: { ...DEFAULT_CONFIG.exit.trail, ladder: [], breakEvenAfterMultiple: 1.5 } }; // legacy trail (ladder tested in exits-ladder)
+  const rules = { ...DEFAULT_CONFIG.exit, trailingStopActivateMultiple: 1.25, trail: { ...DEFAULT_CONFIG.exit.trail, ladder: [], breakEvenAfterMultiple: 1.5, confirmTicks: 2, confirmSec: 3 } }; // legacy trail (ladder tested in entries-exits-v3)
   // After the 1.3x tier: 25% sold at ~1.3x minus fees.
   const afterTier = { ...base, tpTiersHit: [1.3], remainingPct: 75, trailingActive: true, proceedsSol: 0.25 * 1.3 * 0.985 - 0.0015 };
   const runner = { ...afterTier, tpTiersHit: [1.3, INITIALS_MARKER], remainingPct: 40, peakPriceSol: 2.5, priceSol: 2.4, proceedsSol: 1.01 };

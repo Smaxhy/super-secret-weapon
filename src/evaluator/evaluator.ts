@@ -39,6 +39,7 @@ import { ALL_PATTERN, beliefCache, patternsOf, type StoredFeatures } from '../le
 import { DEFAULT_CONFIG } from '../config/default';
 import { NEUTRAL_WALLET_FEATURES, walletFeatures, type CreatorProfile, type WalletAnalyzer } from './wallet-analyzer';
 import type { CrowdMetrics, CrowdTracker } from '../scanner/crowd-tracker';
+import { dexPoints, type DexScreener } from '../scanner/dexscreener';
 import { rememberBuyers, smartShare } from '../learner/wallet-reputation';
 import { coachFor } from '../learner/trade-coach';
 import { calibration, calibrationAdjust, type CalibrationAdjust } from '../learner/score-calibration';
@@ -57,6 +58,8 @@ export class Evaluator {
   private readonly social: SocialAnalyzer;
   /** Live per-trade crowd log (set in index.ts). */
   crowd: CrowdTracker | null = null;
+  /** DexScreener trending + DEX paid (set in index.ts). */
+  dex: DexScreener | null = null;
 
   constructor(
     private readonly redis: Redis,
@@ -186,6 +189,15 @@ export class Evaluator {
     const crowd: CrowdMetrics | null = this.crowd && this.crowd.trades(mint).length > 0 ? this.crowd.metrics(mint, smart.pct) : null;
     // Fake volume / bundles / chasing: over the limits = no buy; under them = points off.
     const manip = manipulationCheck(crowd, cfg.entry.manipulation);
+    // DexScreener: DEX paid / CTO / trending → bonus points (optionally required).
+    const dexCfg = cfg.dex ?? DEFAULT_CONFIG.dex;
+    // (only for coins that matter — DexScreener allows 60 checks a minute)
+    const wantPaid = STRATEGY.name !== 'CURVE_SNIPE' || !!job.data.confirm;
+    const dexPaid = dexCfg.enabled && wantPaid ? (this.dex?.paidInfo(mint) ?? null) : null;
+    const dexTrend = dexCfg.enabled ? (this.dex?.trendingInfo(mint) ?? null) : null;
+    const dexBonus = dexPoints(dexPaid, dexTrend, dexCfg);
+    const dexFails: string[] = [];
+    if (dexCfg.requirePaidFor?.includes(STRATEGY.name) && !(dexPaid?.paid || dexPaid?.cto)) dexFails.push(dexPaid ? 'not DEX paid' : 'DEX paid not checked yet');
     // Socials + keywords (from the metadata file, if it has been fetched).
     let socialInfo: { hasTwitter: boolean; blockedKeyword: string | null } | undefined;
     let socialFeatures = NEUTRAL_SOCIAL_FEATURES;
@@ -210,7 +222,7 @@ export class Evaluator {
       if (kw.blocked) socialInfo = { hasTwitter: false, blockedKeyword: kw.blocked };
     }
 
-    const rules = () => [...checkEntryRules({ safetyScore: token.safetyScore!, safetyHardFail: token.safetyHardFail!, market: market.raw, strategy: STRATEGY, entry: cfg.entry, social: socialInfo, focus: cfg.focus, crowd }), ...manip.fails];
+    const rules = () => [...checkEntryRules({ safetyScore: token.safetyScore!, safetyHardFail: token.safetyHardFail!, market: market.raw, strategy: STRATEGY, entry: cfg.entry, social: socialInfo, focus: cfg.focus, crowd }), ...manip.fails, ...dexFails];
     let ruleFails = rules();
 
     // Total fees so far use an ASSUMED priority fee + tip per trade. If fees are
@@ -238,7 +250,7 @@ export class Evaluator {
     // keep losing get marked down). `pre` (before calibration) is what calibration measures.
     const score = (f: FeatureVector): Scored => {
       const r = withOdds(scoreFeatures(f, weights), odds);
-      const pre = Math.round((r.score - manip.penalty) * 100) / 100;
+      const pre = Math.round((r.score - manip.penalty + dexBonus.points) * 100) / 100;
       const cal = calibrationAdjust(calibration(), STRATEGY.name, pre);
       return { ...r, score: Math.round(Math.max(0, Math.min(100, pre + cal.points)) * 100) / 100, pre, cal };
     };
@@ -301,7 +313,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, market: market.raw, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, market: market.raw, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },
@@ -381,7 +393,7 @@ export class Evaluator {
         sizeMultiplier: (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? 1) * coach.sizeFactor * conv.factor * copyMult,
         swing,
         explain: (sizeSol) =>
-          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
+          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
       });
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.
       if (!swing && (res.entered || res.reason === 'already traded this token')) await markDone();

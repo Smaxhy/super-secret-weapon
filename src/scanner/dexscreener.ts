@@ -1,0 +1,237 @@
+/**
+ * DexScreener — what the wider market is looking at (free public API, no key).
+ *
+ *  Trending: every `pollSec` pulls DexScreener's boosted lists (top + latest) and
+ *  latest token profiles for Solana, fetches live pair data for those coins
+ *  (≤30 per request) and ranks them by recent activity (1h volume, trades,
+ *  price change, boosts). DexScreener's own "trending" ranking isn't in the
+ *  public API — this is the closest equivalent. Coins we track that newly show
+ *  up get checked right away and score a little higher.
+ *
+ *  DEX paid: /orders/v1/solana/<mint> lists paid orders. An approved
+ *  "tokenProfile" order = the team paid for DexScreener's enhanced profile
+ *  ("DEX paid"); "communityTakeover" = CTO. Cached (paid 1h, not paid 3 min) and
+ *  rate-limited (DexScreener allows 60 req/min on these endpoints).
+ */
+import { getConfig } from '../config/runtime-config';
+import { moduleLogger } from '../lib/logger';
+
+const log = moduleLogger('dexscreener');
+const BASE = 'https://api.dexscreener.com';
+
+export interface DexPair {
+  chainId: string;
+  pairAddress?: string;
+  dexId?: string;
+  url?: string;
+  baseToken?: { address: string; name?: string; symbol?: string };
+  priceUsd?: string;
+  txns?: Record<string, { buys?: number; sells?: number }>;
+  volume?: Record<string, number>;
+  priceChange?: Record<string, number>;
+  liquidity?: { usd?: number };
+  marketCap?: number;
+  fdv?: number;
+  pairCreatedAt?: number;
+  boosts?: { active?: number };
+}
+
+export interface TrendingCoin {
+  mint: string;
+  symbol: string;
+  name: string;
+  rank: number;
+  trendScore: number;
+  volumeH1Usd: number;
+  txnsH1: number;
+  priceChangeH1Pct: number;
+  marketCapUsd: number | null;
+  liquidityUsd: number | null;
+  boosts: number;
+  url: string | null;
+  /** On pump.fun (mint ends in "pump"). */
+  pump: boolean;
+}
+
+export interface DexPaidInfo {
+  paid: boolean;
+  cto: boolean;
+  /** Paid but not approved yet. */
+  pending: boolean;
+  checkedAt: number;
+}
+
+/** Pure: rank pairs by recent activity (one entry per token — its most liquid pair). */
+export function rankTrending(pairs: readonly DexPair[], limit = 30): TrendingCoin[] {
+  const best = new Map<string, DexPair>();
+  for (const p of pairs) {
+    const mint = p.baseToken?.address;
+    if (p.chainId !== 'solana' || !mint) continue;
+    const cur = best.get(mint);
+    if (!cur || (p.liquidity?.usd ?? 0) > (cur.liquidity?.usd ?? 0)) best.set(mint, p);
+  }
+  const rows = [...best.entries()].map(([mint, p]) => {
+    const vol1h = p.volume?.h1 ?? 0;
+    const txns1h = (p.txns?.h1?.buys ?? 0) + (p.txns?.h1?.sells ?? 0);
+    const pc1h = p.priceChange?.h1 ?? 0;
+    const boosts = p.boosts?.active ?? 0;
+    const trendScore = Math.log10(1 + vol1h) + 0.8 * Math.log10(1 + txns1h) + Math.max(-0.5, Math.min(2, pc1h / 100)) + Math.min(boosts, 500) / 250;
+    return {
+      mint,
+      symbol: p.baseToken?.symbol ?? '?',
+      name: p.baseToken?.name ?? '',
+      rank: 0,
+      trendScore: Math.round(trendScore * 100) / 100,
+      volumeH1Usd: Math.round(vol1h),
+      txnsH1: txns1h,
+      priceChangeH1Pct: pc1h,
+      marketCapUsd: p.marketCap ?? p.fdv ?? null,
+      liquidityUsd: p.liquidity?.usd ?? null,
+      boosts,
+      url: p.url ?? null,
+      pump: mint.endsWith('pump'),
+    };
+  });
+  return rows
+    .filter((r) => r.volumeH1Usd > 0)
+    .sort((a, b) => b.trendScore - a.trendScore)
+    .slice(0, limit)
+    .map((r, i) => ({ ...r, rank: i + 1 }));
+}
+
+/** Pure: read DexScreener's /orders response. */
+export function parseOrders(orders: unknown): Omit<DexPaidInfo, 'checkedAt'> {
+  const list = Array.isArray(orders) ? (orders as Array<{ type?: string; status?: string }>) : [];
+  const has = (type: string, statuses: string[]) => list.some((o) => o.type === type && statuses.includes(String(o.status)));
+  return {
+    paid: has('tokenProfile', ['approved']),
+    cto: has('communityTakeover', ['approved']),
+    pending: has('tokenProfile', ['processing', 'on-hold']) && !has('tokenProfile', ['approved']),
+  };
+}
+
+/** Score points for the DexScreener picture of a coin (shown in the buy explanation). Pure. */
+export function dexPoints(paid: DexPaidInfo | null, trending: TrendingCoin | null, c: { paidPoints: number; ctoPoints: number; trendingPoints: number }): { points: number; notes: string[] } {
+  let points = 0;
+  const notes: string[] = [];
+  if (paid?.paid) {
+    points += c.paidPoints;
+    notes.push('DEX paid');
+  } else if (paid?.cto) {
+    points += c.ctoPoints;
+    notes.push('DexScreener CTO');
+  }
+  if (trending) {
+    // #1 gets the full bonus, #30 a third of it.
+    const p = c.trendingPoints * (1 - ((trending.rank - 1) / 29) * (2 / 3));
+    points += p;
+    notes.push(`DexScreener trending #${trending.rank}`);
+  }
+  return { points: Math.round(points * 10) / 10, notes };
+}
+
+export class DexScreener {
+  private timer: NodeJS.Timeout | null = null;
+  private trending: TrendingCoin[] = [];
+  private byMint = new Map<string, TrendingCoin>();
+  private updatedAt = 0;
+  private lastError: string | null = null;
+  private readonly paid = new Map<string, DexPaidInfo>();
+  private readonly inflight = new Set<string>();
+  /** Requests to the 60/min endpoints in the current minute. */
+  private window = { start: 0, used: 0 };
+  /** A tracked coin just entered the trending list. */
+  onTrending: ((coin: TrendingCoin) => void) | null = null;
+
+  start(): void {
+    const sec = Math.max(30, getConfig().dex.pollSec);
+    void this.refresh();
+    this.timer = setInterval(() => void this.refresh(), sec * 1000);
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer);
+  }
+
+  snapshot(): { trending: TrendingCoin[]; updatedAt: string | null; error: string | null } {
+    return { trending: this.trending, updatedAt: this.updatedAt ? new Date(this.updatedAt).toISOString() : null, error: this.lastError };
+  }
+
+  trendingInfo(mint: string): TrendingCoin | null {
+    return this.byMint.get(mint) ?? null;
+  }
+
+  /** Cached DEX-paid status; starts a background check if unknown/expired (returns null meanwhile). */
+  paidInfo(mint: string, now = Date.now()): DexPaidInfo | null {
+    const c = this.paid.get(mint);
+    const ttl = c?.paid || c?.cto ? 3600_000 : 180_000;
+    if (c && now - c.checkedAt < ttl) return c;
+    if (!this.inflight.has(mint)) void this.checkPaid(mint);
+    return c ?? null;
+  }
+
+  /** Ask DexScreener now (awaitable — used where a few hundred ms don't matter). */
+  async checkPaid(mint: string): Promise<DexPaidInfo | null> {
+    if (!getConfig().dex.enabled || !this.take()) return this.paid.get(mint) ?? null;
+    this.inflight.add(mint);
+    try {
+      const orders = await this.get(`/orders/v1/solana/${mint}`);
+      const info = { ...parseOrders(orders), checkedAt: Date.now() };
+      this.paid.set(mint, info);
+      if (this.paid.size > 20_000) this.paid.clear();
+      return info;
+    } catch (err) {
+      log.debug({ mint, err: (err as Error).message }, 'DEX paid check failed');
+      return this.paid.get(mint) ?? null;
+    } finally {
+      this.inflight.delete(mint);
+    }
+  }
+
+  private async refresh(): Promise<void> {
+    if (!getConfig().dex.enabled) return;
+    try {
+      const lists = await Promise.all(['/token-boosts/top/v1', '/token-boosts/latest/v1', '/token-profiles/latest/v1'].map((p) => (this.take() ? this.get(p).catch(() => []) : Promise.resolve([]))));
+      const mints = [
+        ...new Set(
+          lists
+            .flat()
+            .filter((x): x is { chainId: string; tokenAddress: string } => !!x && typeof x === 'object' && (x as { chainId?: string }).chainId === 'solana')
+            .map((x) => x.tokenAddress)
+            .filter(Boolean),
+        ),
+      ].slice(0, 90);
+      const pairs: DexPair[] = [];
+      for (let i = 0; i < mints.length; i += 30) {
+        const res = await this.get(`/tokens/v1/solana/${mints.slice(i, i + 30).join(',')}`).catch(() => []);
+        if (Array.isArray(res)) pairs.push(...(res as DexPair[]));
+      }
+      const ranked = rankTrending(pairs, getConfig().dex.trendingSize);
+      const before = this.byMint;
+      this.trending = ranked;
+      this.byMint = new Map(ranked.map((c) => [c.mint, c]));
+      this.updatedAt = Date.now();
+      this.lastError = null;
+      for (const c of ranked) if (!before.has(c.mint)) this.onTrending?.(c);
+      log.debug({ coins: ranked.length }, 'DexScreener trending refreshed');
+    } catch (err) {
+      this.lastError = (err as Error).message;
+      log.warn({ err: this.lastError }, 'DexScreener refresh failed');
+    }
+  }
+
+  /** Simple per-minute budget for the 60 req/min endpoints (kept under 45). */
+  private take(now = Date.now()): boolean {
+    if (now - this.window.start >= 60_000) this.window = { start: now, used: 0 };
+    if (this.window.used >= 45) return false;
+    this.window.used++;
+    return true;
+  }
+
+  private async get(path: string): Promise<unknown> {
+    const res = await fetch(`${BASE}${path}`, { headers: { accept: 'application/json', 'user-agent': 'solbot/1.0' }, signal: AbortSignal.timeout(8_000) });
+    if (res.status === 429) throw new Error('DexScreener rate limit (429)');
+    if (!res.ok) throw new Error(`DexScreener HTTP ${res.status}`);
+    return res.json();
+  }
+}

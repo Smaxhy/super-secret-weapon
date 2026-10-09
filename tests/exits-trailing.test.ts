@@ -15,7 +15,7 @@ import {
 
 // These tests cover the LEGACY trailing logic (no ladder, break-even from 1.5x). The
 // ladder (tight on small moves, wide on big ones) is tested in tests/exits-ladder.test.ts.
-const rules = { ...DEFAULT_CONFIG.exit, trailingStopActivateMultiple: 1.25, trail: { ...DEFAULT_CONFIG.exit.trail, ladder: [], breakEvenAfterMultiple: 1.5 } };
+const rules = { ...DEFAULT_CONFIG.exit, trailingStopActivateMultiple: 1.25, trail: { ...DEFAULT_CONFIG.exit.trail, ladder: [], breakEvenAfterMultiple: 1.5, confirmTicks: 2, confirmSec: 3, volAdjust: { min: 0.8, max: 1.3 } } };
 const now = 50_000_000;
 const base: ExitInput = {
   entryPriceSol: 1, peakPriceSol: 1, remainingPct: 100, tpTiersHit: [], trailingActive: false, refPriceSol: 1, lastMoveAtMs: now,
@@ -162,7 +162,8 @@ describe('older saved exit configs', () => {
     const { trail: _drop, ...old } = rules;
     expect(trailRules(old as typeof rules)).toEqual(DEFAULT_CONFIG.exit.trail);
     const oldRules = old as typeof rules;
-    expect(decideExit({ ...pre, peakPriceSol: 1.9, priceSol: 1.3 }, oldRules).sells.map((s) => s.reason)).toEqual(['TRAILING_STOP']);
-    expect(decideExit({ ...pre, peakPriceSol: 1.9, priceSol: 1.5 }, oldRules).sells).toEqual([]);
+    // Defaults: ~10.6% trail at a 1.9x peak, sells the moment it breaks.
+    expect(decideExit({ ...pre, peakPriceSol: 1.9, priceSol: 1.65 }, oldRules).sells.map((s) => s.reason)).toEqual(['TRAILING_STOP']);
+    expect(decideExit({ ...pre, peakPriceSol: 1.9, priceSol: 1.75 }, oldRules).sells).toEqual([]);
   });
 });

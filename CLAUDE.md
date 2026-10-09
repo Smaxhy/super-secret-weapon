@@ -62,9 +62,19 @@ smart money → learning engine → ML → social). See README.md.
 - Stop loss (`exit.stopLoss`): owner's band = 10–20% loss AFTER fees: 2×volatility (+coach bias) clamped to
   10–20% (15% until volatility is known), confirmed break (2 ticks + 3s), immediate past the hard limit.
   MIGRATION_MOMENTUM max 15% (`maxPctByStrategy`).
-- Trailing (`exit.trail.ladder`): owner wants tight on small moves, wide on big ones: 8% at 1.2x → 12% 1.5x →
-  16% 2x → 20% 3x → 25% 5x → 30% 10x (linear), ×0.8–1.3 by volatility, × coach trailFactor. Break-even
-  (+fees) floor once the peak hit 1.2x. Empty ladder = legacy logic (still tested in exits-trailing.test.ts).
+- Trailing (`exit.trail.ladder`, owner: strict + aggressive): 6% at 1.15x → 7% 1.3x → 9% 1.5x → 11% 2x →
+  14% 3x → 17% 5x → 20% 10x (linear), ×0.8–1.15 by volatility, × coach trailFactor; sells the moment it
+  breaks (confirmTicks 1, confirmSec 0). Break-even (+fees) floor once the peak hit 1.2x. Stop loss below
+  the hard limit needs 1.5s under the stop. Empty ladder = legacy logic (tested in exits-trailing.test.ts).
+- **Speed (Oct 9 v4):** exits are trade-driven — TokenRegistry.onTradeApplied → SellManager.onTrade checks a
+  held coin ≤200 ms after each trade (coalesced; per-position lock), 1s tick as fallback. Peak = highest REAL
+  trade since the last check (crowd log, ≥0.02 SOL, ≤2.5× pool price) → spikes register (`instantPeak`).
+  Paper landing delay 150–500 ms. Chart: history point every 1s (+ spike highs), 6000 pts, API downsamples
+  to 1500 keeping highs/lows; WS updates per trade. Migration v2 pushes these into saved settings.
+- DexScreener (`src/scanner/dexscreener.ts`, `dex` config): every 60s ranks Solana boosted/profiled coins by
+  1h volume/trades/move (DexScreener's own trending isn't in the public API); `/orders/v1/solana/<mint>` →
+  DEX paid (approved tokenProfile) / CTO, cached, ≤45 req/min. +4 paid, +2 CTO, up to +5 trending; tracked
+  coins that start trending are checked at once; `dex.requirePaidFor` can make it mandatory. Scanner page list.
 - Exits: tiers (25% at 1.3x, 15% at 5x), then **initials** at 2x (sell enough to get the stake + fees back →
   "house money"), the rest rides as a **runner** with a volatility-adaptive trail (ignores resistance/risk exits,
   max hold 2× normal). Protect profit (1.3x → floor 1.05x), resistance exit, momentum-risk exits, rug/copy exits.

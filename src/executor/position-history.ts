@@ -19,9 +19,9 @@ import { redis } from '../lib/redis';
 const log = moduleLogger('position-history');
 
 /** Minimum gap between two stored points for the same position. */
-export const HISTORY_MIN_GAP_MS = 5_000;
+export const HISTORY_MIN_GAP_MS = 1_000;
 /** Max points kept per position (oldest are dropped). */
-export const HISTORY_MAX_POINTS = 2_000;
+export const HISTORY_MAX_POINTS = 6_000;
 /** History lives this long after the last write. */
 export const HISTORY_TTL_SEC = 3 * 24 * 60 * 60;
 
@@ -86,9 +86,37 @@ export function pickPoints(e: BusEvent, throttle: PointThrottle, now: number): A
   const out: Array<{ id: string; point: HistoryPoint }> = [];
   for (const u of e.data.updates) {
     if (!(u.priceSol > 0) || !Number.isFinite(u.priceSol)) continue;
-    if (!throttle.allow(u.id, now)) continue;
+    const high = u.highSol;
+    // A spike between checks always gets drawn (even inside the throttle gap).
+    if (high && high > u.priceSol && Number.isFinite(high)) out.push({ id: u.id, point: { t: now - 1, priceSol: high } });
+    else if (!throttle.allow(u.id, now)) continue;
     out.push({ id: u.id, point: { t: now, priceSol: u.priceSol } });
   }
+  return out;
+}
+
+/**
+ * Thin a long history for the chart: at most `max` points, keeping each bucket's
+ * highest and lowest price (so spikes and dips survive) plus the first and last. Pure.
+ */
+export function downsample(points: readonly HistoryPoint[], max = 1_500): HistoryPoint[] {
+  if (points.length <= max) return [...points];
+  const buckets = Math.max(1, Math.floor((max - 2) / 2));
+  const size = (points.length - 2) / buckets;
+  const out: HistoryPoint[] = [points[0]!];
+  for (let b = 0; b < buckets; b++) {
+    const slice = points.slice(1 + Math.floor(b * size), 1 + Math.floor((b + 1) * size));
+    if (!slice.length) continue;
+    let lo = slice[0]!;
+    let hi = slice[0]!;
+    for (const p of slice) {
+      if (p.priceSol < lo.priceSol) lo = p;
+      if (p.priceSol > hi.priceSol) hi = p;
+    }
+    if (lo === hi) out.push(lo);
+    else out.push(...(lo.t <= hi.t ? [lo, hi] : [hi, lo]));
+  }
+  out.push(points[points.length - 1]!);
   return out;
 }
 

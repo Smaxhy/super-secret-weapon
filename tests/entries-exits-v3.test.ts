@@ -22,16 +22,16 @@ const trail = (peakX: number, vol: number | null = null) =>
 
 describe('dynamic trailing ladder', () => {
   it('tight on small moves, wider on big ones', () => {
-    expect(ladderTrailPct(1.2, rules.trail.ladder)).toBe(8);
-    expect(ladderTrailPct(1.75, rules.trail.ladder)).toBeCloseTo(14, 5);
-    expect(ladderTrailPct(4, rules.trail.ladder)).toBeCloseTo(22.5, 5);
-    expect(ladderTrailPct(20, rules.trail.ladder)).toBe(30);
+    expect(ladderTrailPct(1.15, rules.trail.ladder)).toBe(6);
+    expect(ladderTrailPct(1.75, rules.trail.ladder)).toBeCloseTo(10, 5);
+    expect(ladderTrailPct(4, rules.trail.ladder)).toBeCloseTo(15.5, 5);
+    expect(ladderTrailPct(20, rules.trail.ladder)).toBe(20);
     expect(trail(1.25)!.trailPct).toBeLessThan(trail(3)!.trailPct);
     expect(trail(3)!.trailPct).toBeLessThan(trail(10)!.trailPct);
   });
-  it('volatility nudges the ladder value within 0.8–1.3×', () => {
-    expect(trail(2, 1)!.trailPct).toBeCloseTo(12.8, 1); // calm → 16 × 0.8
-    expect(trail(2, 20)!.trailPct).toBeCloseTo(20.8, 1); // wild → 16 × 1.3
+  it('volatility nudges the ladder value within 0.8–1.15×', () => {
+    expect(trail(2, 1)!.trailPct).toBeCloseTo(8.8, 1); // calm → 11 × 0.8
+    expect(trail(2, 20)!.trailPct).toBeCloseTo(12.65, 0); // wild → 11 × 1.15
   });
 });
 
@@ -44,8 +44,17 @@ describe('break-even stop from 1.2x', () => {
     const d = decideExit({ ...base, peakPriceSol: 1.22, trailingActive: true, priceSol: 1.0 }, rules);
     expect(d.sells.map((s) => s.reason)).toEqual(['TRAILING_STOP']);
   });
-  it('below 1.2x peak there is no break-even floor yet', () => {
-    expect(trailingStopLevel({ entryPriceSol: 1, peakPriceSol: 1.15, trailingActive: false, initialsOut: false, volatilityPct: null, sizeSol: 1, costSol: 1, remainingPct: 100, txFeeSol: 0 }, rules)).toBeNull();
+  it('below 1.15x nothing trails; 1.15–1.2x trails 6% without the break-even floor yet', () => {
+    const lvl = (peak: number) => trailingStopLevel({ entryPriceSol: 1, peakPriceSol: peak, trailingActive: false, initialsOut: false, volatilityPct: null, sizeSol: 1, costSol: 1, remainingPct: 100, txFeeSol: 0 }, rules);
+    expect(lvl(1.1)).toBeNull();
+    expect(lvl(1.15)!.trailPct).toBe(6);
+    expect(lvl(1.15)!.floorPriceSol).toBeNull();
+  });
+  it('a spike between checks registers as the peak (live mode) and is sold into at once', () => {
+    // Price is back to 1.5x, but a real trade printed 2.0x since the last check.
+    const d = decideExit({ ...base, peakPriceSol: 1.3, trailingActive: true, tpTiersHit: [1.3], remainingPct: 75, priceSol: 1.5, instantPeak: true, recentHighSol: 2.0 }, rules);
+    expect(d.state.peakPriceSol).toBe(2.0);
+    expect(d.sells.map((s) => s.reason)).toContain('TRAILING_STOP');
   });
 });
 

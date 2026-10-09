@@ -32,6 +32,8 @@ const log = moduleLogger('token-registry');
 export class TokenRegistry {
   private safetyWorker: Worker<SafetyJob> | null = null;
   readonly stats = { created: 0, createErrors: 0, completed: 0, tradeErrors: 0, latencyMsAvg: 0 };
+  /** Called with the mint after every trade is applied to the live state (exits react instantly). */
+  readonly onTradeApplied: Array<(mint: string) => void> = [];
 
   constructor(
     private readonly liveState: LiveState,
@@ -55,6 +57,7 @@ export class TokenRegistry {
         this.liveState.onTrade(event).then(() => {
           if (!this.liveState.isTracked(event.mint)) return;
           this.crowd?.onCurveTrade(event, envelope.slot);
+          for (const f of this.onTradeApplied) f(event.mint);
           if (!this.insiders) return;
           return this.insiders.onTrade({
             mint: event.mint, user: event.user, isBuy: event.isBuy, lamports: event.solAmount, tokens: event.tokenAmount, timestamp: event.timestamp, slot: envelope.slot,
@@ -75,6 +78,7 @@ export class TokenRegistry {
         this.liveState.onAmmTrade(event).then((mint) => {
           if (!mint) return;
           this.crowd?.onAmmTrade(mint, event, envelope.slot);
+          for (const f of this.onTradeApplied) f(mint);
           if (!this.insiders) return;
           return this.insiders.onTrade({ mint, user: event.user, isBuy: event.isBuy, lamports: event.quoteAmount, tokens: event.baseAmount, timestamp: event.timestamp, slot: envelope.slot });
         }).catch((err: Error) => {

@@ -3,6 +3,7 @@ import type { SellManager } from '../executor/sell-manager';
 import type { Executor } from '../executor/types';
 import type { LiveState } from '../scanner/live-state';
 import type { ListenerStats } from '../scanner/pumpfun-listener';
+import type { DexScreener } from '../scanner/dexscreener';
 
 export interface ApiDeps {
   liveState: LiveState;
@@ -10,6 +11,7 @@ export interface ApiDeps {
   listenerStats: () => ListenerStats | null;
   startedAt: number;
   sellManager: SellManager;
+  dex?: DexScreener | null;
 }
 
 /** Classify a token for the live feed colour code. */

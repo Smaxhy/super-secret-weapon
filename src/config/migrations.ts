@@ -34,6 +34,27 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['focus', ['crowdLogFromCurvePct'], 0],
     ],
   },
+  {
+    version: 2,
+    note: 'stricter, instant trailing stop; faster paper fills (150–500 ms)',
+    set: [
+      ['exit', ['trailingStopActivateMultiple'], 1.15],
+      ['exit', ['trail', 'confirmTicks'], 1],
+      ['exit', ['trail', 'confirmSec'], 0],
+      ['exit', ['trail', 'ladder'], [
+        { fromMultiple: 1.15, pct: 6 },
+        { fromMultiple: 1.3, pct: 7 },
+        { fromMultiple: 1.5, pct: 9 },
+        { fromMultiple: 2, pct: 11 },
+        { fromMultiple: 3, pct: 14 },
+        { fromMultiple: 5, pct: 17 },
+        { fromMultiple: 10, pct: 20 },
+      ]],
+      ['exit', ['trail', 'volAdjust'], { min: 0.8, max: 1.15 }],
+      ['paper', ['latencyMinMs'], 150],
+      ['paper', ['latencyMaxMs'], 500],
+    ],
+  },
 ];
 
 /** Pure: apply `set` to saved rows. Returns only the rows that changed (sections never saved are skipped). */

@@ -26,6 +26,7 @@ import { ensureTimescale } from './db/timescale';
 import { SafetyChecker } from './evaluator/safety-checker';
 import { InsiderTracker } from './evaluator/insider-cluster';
 import { CrowdTracker } from './scanner/crowd-tracker';
+import { DexScreener } from './scanner/dexscreener';
 import { TradeCoach } from './learner/trade-coach';
 import { SwingWatcher } from './executor/swing-watcher';
 import { ObservationLogger } from './learner/observation-logger';
@@ -112,6 +113,25 @@ async function main(): Promise<void> {
 
   const insiders = new InsiderTracker(redis);
   const registry = new TokenRegistry(liveState, observations, safety, evaluator, insiders, crowd);
+  // DexScreener: trending coins + DEX paid. A tracked coin that starts trending is checked right away.
+  const dex = new DexScreener();
+  evaluator.dex = dex;
+  dex.onTrending = (c) => {
+    if (!liveState.isTracked(c.mint)) return;
+    void liveState
+      .isComplete(c.mint)
+      .then(async (done) => {
+        const why = `dex-trending#${c.rank}`;
+        if (done) return evaluator.checkNow(c.mint, 'MIGRATION_MOMENTUM', why);
+        await evaluator.checkNow(c.mint, 'SOON', why);
+        await evaluator.checkNow(c.mint, 'CURVE_SNIPE', why);
+      })
+      .catch(() => undefined);
+  };
+  dex.start();
+  // Exits react to every trade on a coin we hold (not just the 1s tick); real trade highs count as peaks.
+  sellManager.crowd = crowd;
+  registry.onTradeApplied.push((mint) => sellManager.onTrade(mint));
   registry.startSafetyWorker();
   // Copy trading: watch the wallets you added on the dashboard.
   const whales = new WhaleTracker(redis, liveState, evaluator);
@@ -208,7 +228,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -275,6 +295,7 @@ async function main(): Promise<void> {
       stopPositionHistory();
       if (xTimer) clearInterval(xTimer);
       coach.stop();
+      dex.stop();
       stopCalibration();
       swings.stop();
       crowd.stop();

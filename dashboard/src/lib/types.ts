@@ -90,6 +90,8 @@ export interface PositionChartData {
 export interface LivePositionUpdate {
   id: string;
   priceSol: number;
+  /** Highest real trade since the previous update (a spike), if above priceSol. */
+  highSol?: number;
   multiple: number;
   peakMultiple: number;
   unrealizedPnlSol: number;
