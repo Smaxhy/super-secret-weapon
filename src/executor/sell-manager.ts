@@ -209,6 +209,7 @@ export class SellManager {
         tx,
       );
       if (!fill.ok) return p;
+      if (closing && reason === 'RUG_DETECTED') await tx.token.update({ where: { mint: p.mint }, data: { status: 'RUGGED' } });
       return tx.position.update({
         where: { id: p.id },
         data: {

@@ -1,0 +1,27 @@
+/** What the API routes need from the running bot. */
+import type { Executor } from '../executor/types';
+import type { LiveState } from '../scanner/live-state';
+import type { ListenerStats } from '../scanner/pumpfun-listener';
+
+export interface ApiDeps {
+  liveState: LiveState;
+  executor: Executor;
+  listenerStats: () => ListenerStats | null;
+  startedAt: number;
+}
+
+/** Classify a token for the live feed colour code. */
+export type DetectionStatus = 'bought' | 'flagged' | 'interesting' | 'skipped' | 'pending';
+
+export function detectionStatus(t: { safetyHardFail: boolean | null; combinedScore: number | null; hasPosition: boolean }): DetectionStatus {
+  if (t.hasPosition) return 'bought';
+  if (t.safetyHardFail) return 'flagged';
+  if (t.combinedScore !== null && t.combinedScore >= 60) return 'interesting';
+  if (t.safetyHardFail === null) return 'pending';
+  return 'skipped';
+}
+
+export const clampInt = (v: unknown, def: number, min: number, max: number) => {
+  const n = Number.parseInt(String(v ?? ''), 10);
+  return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : def;
+};

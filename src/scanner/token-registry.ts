@@ -13,6 +13,7 @@ import { Worker } from 'bullmq';
 import { env } from '../config/env';
 import type { PumpCompleteEvent, PumpCreateEvent, PumpEventEnvelope } from '../config/types';
 import { recordEvent } from '../lib/bot-events';
+import { bus } from '../lib/bus';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import { QUEUE_NAMES, safetyQueue, type SafetyJob } from '../lib/queues';
@@ -93,6 +94,7 @@ export class TokenRegistry {
       this.stats.latencyMsAvg = this.stats.latencyMsAvg * 0.95 + latency * 0.05;
       log.info({ mint: ev.mint, tokenName: ev.name, symbol: ev.symbol, creator: ev.creator, latencyMs: latency }, `🆕 ${ev.symbol}`);
 
+      bus.publish({ type: 'token', data: { mint: ev.mint, name: ev.name, symbol: ev.symbol, creator: ev.creator, createdAt: new Date(createdAtMs).toISOString() } });
       await this.observations?.scheduleFor(ev.mint, createdAtMs);
       await this.evaluator?.scheduleFor(ev.mint, createdAtMs);
       if (this.safety) {

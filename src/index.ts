@@ -9,7 +9,9 @@
  *
  * Shutdown (Ctrl+C or `docker stop`) runs in reverse so nothing is lost.
  */
+import { startApi } from './api/server';
 import { env, rpcEndpoints } from './config/env';
+import { bus } from './lib/bus';
 import { startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
 import { Evaluator } from './evaluator/evaluator';
 import { WalletAnalyzer } from './evaluator/wallet-analyzer';
@@ -86,6 +88,17 @@ async function main(): Promise<void> {
     listener.start();
   }
 
+  // 5. Dashboard API + WebSocket
+  const startedAt = Date.now();
+  const api = await startApi({ liveState, executor, listenerStats: () => listener?.stats ?? null, startedAt }).catch((err: Error) => {
+    log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
+    return null;
+  });
+  const pushTimer = setInterval(() => {
+    const s = listener?.stats;
+    bus.publish({ type: 'stats', data: { connected: s?.connected ?? false, launches: s?.creates ?? 0, trades: s?.trades ?? 0, tracked: liveState.trackedCount, uptimeSec: Math.round((Date.now() - startedAt) / 1000) } });
+  }, 5_000);
+
   // Heartbeat line every minute so you can see it's alive at a glance.
   let lastCreates = 0;
   let lastTrades = 0;
@@ -127,8 +140,10 @@ async function main(): Promise<void> {
     shuttingDown = true;
     log.info({ signal }, 'shutting down…');
     clearInterval(statsTimer);
+    clearInterval(pushTimer);
     const force = setTimeout(() => process.exit(1), 15_000); // don't hang forever
     try {
+      await api?.close();
       await listener?.stop();
       await evaluator.stop();
       await sellManager.stop();

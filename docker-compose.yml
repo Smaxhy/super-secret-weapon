@@ -48,7 +48,7 @@ services:
       REDIS_URL: redis://redis:6379
       NODE_ENV: production
     ports:
-      - "8080:8080" # dashboard API (Phase 3)
+      - "127.0.0.1:8080:8080" # API — only reachable via Caddy (HTTPS) from outside
     depends_on:
       postgres:
         condition: service_healthy
@@ -57,6 +57,21 @@ services:
     logging:
       driver: json-file
       options: { max-size: "50m", max-file: "5" }
+
+  # HTTPS reverse proxy for the dashboard API (VPS only — set API_DOMAIN in .env).
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    environment:
+      API_DOMAIN: ${API_DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+    depends_on:
+      - bot
 
   # Phase 8 — uncomment once ml/ has a real service.
   # ml-service:
@@ -70,3 +85,4 @@ services:
 volumes:
   pgdata:
   redisdata:
+  caddydata:

@@ -31,3 +31,4 @@ Thumbs.db
 .vscode/
 .idea/
 dump.rdb
+*.tsbuildinfo

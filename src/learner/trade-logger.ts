@@ -7,6 +7,7 @@
  */
 import type { Prisma, Strategy, TradeSide, TradingMode } from '@prisma/client';
 import { recordEvent } from '../lib/bot-events';
+import { bus } from '../lib/bus';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import type { Fill } from '../executor/types';
@@ -57,6 +58,7 @@ export async function logTrade(t: TradeLogInput, tx: Prisma.TransactionClient = 
     { mint: t.mint, side: t.side, sol: +t.fill.solAmount.toFixed(4), reason: t.reason, pnlSol: t.pnlSol },
     `${tag} ${t.side} ${t.symbol ?? t.mint.slice(0, 6)} ${t.fill.solAmount.toFixed(4)} SOL (${t.reason})${pnl}`,
   );
+  bus.publish({ type: 'trade', data: { mint: t.mint, symbol: t.symbol, side: t.side, mode: t.mode, amountSol: t.fill.solAmount, reason: t.reason, pnlSol: t.pnlSol } });
   void recordEvent({
     module: 'trader',
     type: `${t.side.toLowerCase()}_${t.fill.ok ? 'filled' : 'failed'}`,

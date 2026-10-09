@@ -22,6 +22,7 @@ import { ExtensionType, getExtensionTypes, unpackMint } from '@solana/spl-token'
 import { PublicKey } from '@solana/web3.js';
 import { SAFETY_PENALTIES as P } from '../config/default';
 import type { SafetyCheckItem, SafetyReport } from '../config/types';
+import { bus } from '../lib/bus';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import { PUMP_DEFAULT_TOTAL_SUPPLY, PUMP_TOKEN_DECIMALS, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '../lib/pumpfun';
@@ -196,6 +197,7 @@ export class SafetyChecker {
       prisma.token.update({ where: { mint }, data: { safetyScore: report.score, safetyHardFail: report.hardFail } }),
     ]);
 
+    bus.publish({ type: 'safety', data: { mint, score: report.score, hardFail: report.hardFail } });
     const failed = report.checks.filter((c) => c.severity !== 'PASS').map((c) => c.id);
     log.info(
       { mint, symbol: token.symbol, score: report.score, hardFail: report.hardFail, failed },

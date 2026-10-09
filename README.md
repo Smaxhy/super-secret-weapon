@@ -91,6 +91,21 @@ and a `📊 stats` line every minute. To browse the data, run `npm run db:studio
 
 ---
 
+## Dashboard
+
+**Locally:** add `DASHBOARD_PASSWORD` and `JWT_SECRET` to `.env` and restart the bot. Then in a second window run:
+```powershell
+cd dashboard
+npm install
+npm run dev
+```
+Open http://localhost:5173 and log in.
+
+**Online (GitHub Pages + VPS):**
+1. On the VPS, set `DASHBOARD_PASSWORD`, `JWT_SECRET` and `API_DOMAIN=45-32-238-44.sslip.io` in `.env`, then run `docker compose up -d --build`. Caddy gets an HTTPS certificate automatically.
+2. Merge this branch into `main`. In GitHub, go to repo Settings → Pages → Source and pick **GitHub Actions**.
+3. Open `https://smaxhy.github.io/super-secret-weapon/`. Under "Bot address", enter `https://45-32-238-44.sslip.io` and log in.
+
 ## Useful commands
 
 | Command | What it does |

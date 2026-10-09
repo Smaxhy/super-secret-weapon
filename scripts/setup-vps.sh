@@ -10,7 +10,7 @@
 #   2. Creates a non-root user "bot" (the bot never runs as root)
 #   3. Copies root's SSH key to "bot", then disables password logins
 #      (only if a key is present — it won't lock you out)
-#   4. Firewall: only SSH (22) and the dashboard API (8080) are open
+#   4. Firewall: only SSH (22) and HTTP/HTTPS (80/443, for the dashboard API) are open
 #   5. fail2ban: bans IPs that brute-force SSH
 #   6. Installs Docker + docker compose
 # =============================================================================
@@ -48,7 +48,8 @@ echo "==> 4/6 Firewall"
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow 22/tcp
-ufw allow 8080/tcp
+ufw allow 80/tcp   # HTTPS certificate challenge
+ufw allow 443/tcp  # dashboard API over HTTPS
 ufw --force enable
 
 echo "==> 5/6 fail2ban"

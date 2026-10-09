@@ -19,6 +19,7 @@ import type { Redis } from 'ioredis';
 import type { Prisma } from '@prisma/client';
 import { getConfig, getWeights } from '../config/runtime-config';
 import { STRATEGIES } from '../config/strategies';
+import { bus } from '../lib/bus';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import { evaluateQueue, QUEUE_NAMES, type EvaluateJob } from '../lib/queues';
@@ -127,6 +128,7 @@ export class Evaluator {
         },
       });
       evaluationId = row.id;
+      bus.publish({ type: 'evaluation', data: { mint, symbol: token.symbol, score: result.score, decision, reasons } });
       await prisma.token.update({ where: { mint }, data: { combinedScore: result.score } });
     }
 
