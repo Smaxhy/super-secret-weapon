@@ -1,12 +1,15 @@
 # Builds the dashboard and publishes it to GitHub Pages.
 # One-time setup: repo Settings → Pages → Source: "GitHub Actions".
+# To deploy straight from the bot's working branch (no merging needed):
+#   Settings → Environments → github-pages → Deployment branches → add
+#   claude/festive-albattani-6aufe6
 # Optional: Settings → Secrets and variables → Actions → Variables →
 #   VITE_API_URL = https://<your-ip-with-dashes>.sslip.io   (pre-fills the login screen)
 name: Deploy dashboard
 
 on:
   push:
-    branches: [main]
+    branches: [main, claude/festive-albattani-6aufe6]
     paths: ['dashboard/**', '.github/workflows/dashboard.yml']
   workflow_dispatch:
 
