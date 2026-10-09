@@ -36,7 +36,7 @@ export function Login() {
         <details className="mb-5">
           <summary className="cursor-pointer text-sm text-ink-2">Bot address</summary>
           <label htmlFor="url" className="mb-1 mt-3 block text-sm text-ink-2">
-            API URL (e.g. https://45-32-238-44.sslip.io)
+            API URL (e.g. https://209-250-254-34.sslip.io)
           </label>
           <input id="url" type="url" value={url} onChange={(e) => setUrl(e.target.value)} className="w-full rounded-lg border border-line bg-page px-3 py-2 text-sm text-ink" />
         </details>

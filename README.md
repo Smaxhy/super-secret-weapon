@@ -102,9 +102,9 @@ npm run dev
 Open http://localhost:5173 and log in.
 
 **Online (GitHub Pages + VPS):**
-1. On the VPS, set `DASHBOARD_PASSWORD`, `JWT_SECRET` and `API_DOMAIN=45-32-238-44.sslip.io` in `.env`, then run `docker compose up -d --build`. Caddy gets an HTTPS certificate automatically.
+1. On the VPS, set `DASHBOARD_PASSWORD`, `JWT_SECRET` and `API_DOMAIN=209-250-254-34.sslip.io` in `.env`, then run `docker compose up -d --build`. Caddy gets an HTTPS certificate automatically.
 2. Merge this branch into `main`. In GitHub, go to repo Settings → Pages → Source and pick **GitHub Actions**.
-3. Open `https://smaxhy.github.io/super-secret-weapon/`. Under "Bot address", enter `https://45-32-238-44.sslip.io` and log in.
+3. Open `https://smaxhy.github.io/super-secret-weapon/`. Under "Bot address", enter `https://209-250-254-34.sslip.io` and log in.
 
 ### Install it on your phone
 The dashboard is an installable web app. Open the GitHub Pages link on your phone:
