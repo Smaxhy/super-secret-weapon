@@ -340,6 +340,8 @@ model Trade {
 model TrackedWallet {
   address    String       @id
   label      String?
+  /// COPY = copy this wallet's buys; KOL = a known influencer/big trader: counts toward the "KOLs buying" signal only
+  kind       String       @default("COPY")
   source     WalletSource @default(MANUAL)
   /// How much we trust this wallet's buys (0-1). Discovered wallets start low.
   weight     Float        @default(0.5)

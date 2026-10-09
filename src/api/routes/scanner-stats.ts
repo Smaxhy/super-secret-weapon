@@ -6,6 +6,9 @@ import { hotKeywords } from '../../scanner/x-watcher';
 import type { ApiDeps } from '../deps';
 
 export async function scannerStatsRoutes(app: FastifyInstance, deps: ApiDeps): Promise<void> {
+  /** Top coins right now + the narratives they share. */
+  app.get('/api/market-leaders', async () => deps.leaders?.snapshot() ?? { leaders: [], narratives: [], updatedAt: null });
+
   /** DexScreener trending (our ranking of its boosted/profiled Solana coins) + whether we track each coin. */
   app.get('/api/dexscreener', async () => {
     const snap = deps.dex?.snapshot() ?? { trending: [], updatedAt: null, error: 'DexScreener not running' };

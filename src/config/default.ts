@@ -213,7 +213,7 @@ export const DEFAULT_CONFIG = {
    * that ONLY buy DEX-paid (or CTO) coins (empty = just a bonus).
    */
   dex: {
-    enabled: true,
+    enabled: true as boolean,
     pollSec: 60,
     trendingSize: 30,
     paidPoints: 4,
@@ -221,6 +221,32 @@ export const DEFAULT_CONFIG = {
     trendingPoints: 5,
     requirePaidFor: [] as StrategyName[],
   },
+
+  /**
+   * KOLs (well-known traders like Cupsey / Cented / Orangie — wallets on the Wallets page with kind KOL).
+   * Several KOLs buying the same coin is a strong signal: `minKols` different KOLs within `windowMin`
+   * → the coin is checked right away; each KOL adds `pointsPerKol` (max `maxPoints`). KOLs who bought
+   * now selling (≥ dumpMinKols, at least half of them) → `dumpPenalty` points off, no new buy, and an
+   * open position in profit is sold.
+   */
+  kol: {
+    enabled: true as boolean,
+    windowMin: 60,
+    minKols: 2,
+    pointsPerKol: 3,
+    maxPoints: 12,
+    dumpMinKols: 2,
+    dumpWindowMin: 5,
+    dumpPenalty: 6,
+    checkCooldownSec: 120,
+  },
+
+  /**
+   * "What's working now": every `everyMin` the top coins (DexScreener trending + our biggest-volume
+   * tracked coins of the last hour) are read; words shared by ≥ `minLeaders` of them become hot
+   * narratives (like X hot keywords) for `narrative` scoring.
+   */
+  leaders: { enabled: true as boolean, everyMin: 5, topOwn: 15, minLeaders: 2, maxKeywords: 12 },
 
   /** Copy trading: react when a wallet on your watch list buys. */
   copy: {

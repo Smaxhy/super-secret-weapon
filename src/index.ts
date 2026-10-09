@@ -27,6 +27,7 @@ import { SafetyChecker } from './evaluator/safety-checker';
 import { InsiderTracker } from './evaluator/insider-cluster';
 import { CrowdTracker } from './scanner/crowd-tracker';
 import { DexScreener } from './scanner/dexscreener';
+import { MarketLeaders } from './scanner/market-leaders';
 import { TradeCoach } from './learner/trade-coach';
 import { SwingWatcher } from './executor/swing-watcher';
 import { ObservationLogger } from './learner/observation-logger';
@@ -129,6 +130,10 @@ async function main(): Promise<void> {
       .catch(() => undefined);
   };
   dex.start();
+  // "What's working now": top coins + the narratives they share → hot keywords for scoring.
+  const leaders = new MarketLeaders(liveState, dex);
+  evaluator.leaders = leaders;
+  leaders.start();
   // Exits react to every trade on a coin we hold (not just the 1s tick); real trade highs count as peaks.
   sellManager.crowd = crowd;
   registry.onTradeApplied.push((mint) => sellManager.onTrade(mint));
@@ -136,6 +141,18 @@ async function main(): Promise<void> {
   // Copy trading: watch the wallets you added on the dashboard.
   const whales = new WhaleTracker(redis, liveState, evaluator);
   whales.onAdopt = (ev) => registry.adopt(ev);
+  // Several KOLs (Cupsey, Cented…) bought the same coin → check it now.
+  whales.onKolCluster = (mint, kols) => {
+    const why = `kols:${kols}`;
+    void liveState
+      .isComplete(mint)
+      .then(async (done) => {
+        if (done) return evaluator.checkNow(mint, 'MIGRATION_MOMENTUM', why);
+        await evaluator.checkNow(mint, 'SOON', why);
+        await evaluator.checkNow(mint, 'CURVE_SNIPE', why);
+      })
+      .catch(() => undefined);
+  };
 
   // 4. Live data sources
   const { ws } = rpcEndpoints();
@@ -228,7 +245,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -296,6 +313,7 @@ async function main(): Promise<void> {
       if (xTimer) clearInterval(xTimer);
       coach.stop();
       dex.stop();
+      leaders.stop();
       stopCalibration();
       swings.stop();
       crowd.stop();

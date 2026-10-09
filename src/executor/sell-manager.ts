@@ -52,6 +52,7 @@ import { copySoldKey } from '../scanner/whale-tracker';
 import { insiderDumpSignal } from '../evaluator/insider-cluster';
 import { coachFor } from '../learner/trade-coach';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
+import { kolActivity } from '../scanner/kol-signal';
 import type { Executor } from './types';
 
 const log = moduleLogger('sell-manager');
@@ -146,6 +147,8 @@ export interface ExitInput {
    */
   instantPeak?: boolean;
   recentHighSol?: number | null;
+  /** KOLs that bought this coin are selling → bank it if we're in profit. */
+  kolDump?: { hit: boolean; detail: string } | null;
 }
 
 /** Marker stored in `tpTiersHit` once initials are out (real tiers are all > 1). */
@@ -494,6 +497,7 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   // Minimum hold (copy trades): wobbles and the copied wallet selling don't shake us out early.
   const holding = !!i.minHoldUntilMs && i.nowMs < i.minHoldUntilMs;
   if (i.copyWalletSold && !holding) return all('COPY_EXIT', 'the wallet we copied sold');
+  if (i.kolDump?.hit && multiple >= 1.05) return all('TAKE_PROFIT', `KOLs dumping: ${i.kolDump.detail} — banked ${multiple.toFixed(2)}x`);
 
   // Stop loss: 10–20% band (volatility + coach). Past the hard limit → out at once.
   const sl = stopLossLevel(i.entryPriceSol, i.volatilityPct, rules, i.coachStopBiasPct ?? 0, i.exitCostPct ?? 0, i.strategy);
@@ -871,6 +875,8 @@ export class SellManager {
     const copied = (entry as { copiedWallet?: string | null }).copiedWallet;
     const copyWalletSold = !!copied && (await this.redis.exists(copySoldKey(p.mint, copied))) === 1;
     const insiderDump = await readInsiderDump(this.redis, p.mint);
+    const kolAct = cfg.kol?.enabled ? await kolActivity(this.redis, p.mint, cfg.kol).catch(() => null) : null;
+    const kolDump = kolAct?.dumping ? { hit: true, detail: `${kolAct.recentSellers.map((s) => s.name).slice(0, 3).join(', ')} sold` } : null;
     const volatilityPct = computeVolatilityPct(hist, now, cfg.exit.runner.volWindowSec * 1000, cfg.exit.runner.volStepSec * 1000);
     const tr = this.trail.get(p.id) ?? { breachSinceMs: null, breachTicks: 0, volatilityPct: null };
     // Money in vs money out, for "take initials". realizedPnlSol already subtracts
@@ -924,6 +930,7 @@ export class SellManager {
         minHoldUntilMs: p.strategy === 'SMART_MONEY_COPY' ? p.openedAt.getTime() + (cfg.copy.minHoldSec ?? 0) * 1000 : null,
         instantPeak: true,
         recentHighSol,
+        kolDump,
       },
       cfg.exit,
     );

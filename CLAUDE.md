@@ -75,6 +75,15 @@ smart money → learning engine → ML → social). See README.md.
   1h volume/trades/move (DexScreener's own trending isn't in the public API); `/orders/v1/solana/<mint>` →
   DEX paid (approved tokenProfile) / CTO, cached, ≤45 req/min. +4 paid, +2 CTO, up to +5 trending; tracked
   coins that start trending are checked at once; `dex.requirePaidFor` can make it mandatory. Scanner page list.
+- KOLs (`kol` config, `src/scanner/kol-signal.ts`): TrackedWallet.kind = COPY (copy each buy) | KOL (signal only).
+  Starter list `src/config/kol-wallets.ts` (Cupsey, Cented, Orangie — public-tracker addresses, unverified;
+  seeded once, marker `_kolSeed`). Whale tracker records KOL buys/sells (Redis `kol:buy:/kol:sell:<mint>`);
+  ≥2 KOLs in a coin within 60 min → immediate check; +3 pts per KOL (max 12); KOLs who bought now selling
+  (≥2, ≥half) → −6, rug screen blocks the buy, open position ≥1.05x is sold. Wallets page: KOL board, bulk
+  import ("name address" per line, POST /api/wallets/bulk), kind selector.
+- "What's working now" (`leaders` config, `src/scanner/market-leaders.ts`): top coins = our biggest 1h-volume
+  tracked coins + DexScreener trending; words shared by ≥2 of them = hot narratives, added to the narrative
+  hot-keyword list. Scanner page card (`/api/market-leaders`).
 - Exits: tiers (25% at 1.3x, 15% at 5x), then **initials** at 2x (sell enough to get the stake + fees back →
   "house money"), the rest rides as a **runner** with a volatility-adaptive trail (ignores resistance/risk exits,
   max hold 2× normal). Protect profit (1.3x → floor 1.05x), resistance exit, momentum-risk exits, rug/copy exits.

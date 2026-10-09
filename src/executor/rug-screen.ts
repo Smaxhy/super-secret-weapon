@@ -16,6 +16,7 @@ import { getConfig } from '../config/runtime-config';
 import { insiderDumpSignal } from '../evaluator/insider-cluster';
 import type { MarketRaw } from '../evaluator/market-analyzer';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
+import { kolActivity } from '../scanner/kol-signal';
 import { deriveMetrics, type LiveState } from '../scanner/live-state';
 
 export interface RugSnapshot {
@@ -35,6 +36,8 @@ export interface RugScreenInput {
   flow60s: { buySol: number; sellSol: number; biggestSellSol: number; highPx: number; lastPx: number } | null;
   insider: { dumping: boolean; reason: string } | null;
   maxDevHoldingPct: number;
+  /** KOLs that bought are selling (e.g. "Cupsey, Cented sold"). */
+  kolDump?: string | null;
 }
 
 /** Pure: the reason to refuse the buy, or null when it looks clean. */
@@ -42,6 +45,7 @@ export function rugScreen(i: RugScreenInput): string | null {
   const a = i.atSignal;
   const n = i.now;
   if (i.insider?.dumping) return `insiders dumping (${i.insider.reason})`;
+  if (i.kolDump) return `KOLs dumping (${i.kolDump})`;
   if (a.devHoldingPct > 0.5 && n.devSoldFraction - a.devSoldFraction >= 0.1) return `dev started selling (${Math.round(n.devSoldFraction * 100)}% of their bag gone)`;
   if (n.devHoldingPct > i.maxDevHoldingPct) return `dev now holds ${n.devHoldingPct.toFixed(1)}%`;
   if (a.earlyBuyerPct - n.earlyBuyerPct >= 2) return `bundlers dumping (${a.earlyBuyerPct.toFixed(1)}% → ${n.earlyBuyerPct.toFixed(1)}%)`;
@@ -77,6 +81,8 @@ export async function screenEntry(
         }
       : null;
     const insider = await insiderDumpSignal(deps.redis, req.mint).catch(() => null);
+    const kc = getConfig().kol;
+    const kol = kc?.enabled ? await kolActivity(deps.redis, req.mint, kc, now).catch(() => null) : null;
     const r = req.market;
     return rugScreen({
       atSignal: { devHoldingPct: r.devHoldingPct, devSoldFraction: r.devSoldFraction, earlyBuyerPct: r.earlyBuyerPct, top10HolderPct: r.top10HolderPct, liquiditySol: r.liquiditySol, priceSol: r.priceSol },
@@ -85,6 +91,7 @@ export async function screenEntry(
       flow60s,
       insider,
       maxDevHoldingPct: getConfig().entry.maxDevHoldingPct,
+      kolDump: kol?.dumping ? `${kol.recentSellers.map((s) => s.name).slice(0, 3).join(', ')} sold` : null,
     });
   } catch {
     return null;

@@ -40,6 +40,8 @@ import { DEFAULT_CONFIG } from '../config/default';
 import { NEUTRAL_WALLET_FEATURES, walletFeatures, type CreatorProfile, type WalletAnalyzer } from './wallet-analyzer';
 import type { CrowdMetrics, CrowdTracker } from '../scanner/crowd-tracker';
 import { dexPoints, type DexScreener } from '../scanner/dexscreener';
+import { kolActivity, kolPoints } from '../scanner/kol-signal';
+import type { MarketLeaders } from '../scanner/market-leaders';
 import { rememberBuyers, smartShare } from '../learner/wallet-reputation';
 import { coachFor } from '../learner/trade-coach';
 import { calibration, calibrationAdjust, type CalibrationAdjust } from '../learner/score-calibration';
@@ -60,6 +62,8 @@ export class Evaluator {
   crowd: CrowdTracker | null = null;
   /** DexScreener trending + DEX paid (set in index.ts). */
   dex: DexScreener | null = null;
+  /** Top coins right now and the narratives they share (set in index.ts). */
+  leaders: MarketLeaders | null = null;
 
   constructor(
     private readonly redis: Redis,
@@ -197,17 +201,24 @@ export class Evaluator {
     const dexTrend = dexCfg.enabled ? (this.dex?.trendingInfo(mint) ?? null) : null;
     const dexBonus = dexPoints(dexPaid, dexTrend, dexCfg);
     const dexFails: string[] = [];
+    // KOLs (Cupsey, Cented…) in this coin: points per KOL; KOLs dumping = no buy.
+    const kolCfg = cfg.kol ?? DEFAULT_CONFIG.kol;
+    const kolAct = kolCfg.enabled ? await kolActivity(this.redis, mint, kolCfg).catch(() => null) : null;
+    const kolBonus = kolPoints(kolAct, kolCfg);
+    if (kolAct?.dumping) dexFails.push(`KOLs dumping (${kolAct.recentSellers.length} sold)`);
     if (dexCfg.requirePaidFor?.includes(STRATEGY.name) && !(dexPaid?.paid || dexPaid?.cto)) dexFails.push(dexPaid ? 'not DEX paid' : 'DEX paid not checked yet');
     // Socials + keywords (from the metadata file, if it has been fetched).
     let socialInfo: { hasTwitter: boolean; blockedKeyword: string | null } | undefined;
     let socialFeatures = NEUTRAL_SOCIAL_FEATURES;
+    // Hot right now: keywords trending on X + narratives shared by today's top coins.
+    const hot = [...hotKeywords(), ...(this.leaders?.keywords() ?? [])];
     // Your boost list + keywords currently hot on X (e.g. from Elon's latest post).
-    const kw = keywordCheck(`${token.name} ${token.symbol} ${token.description ?? ''}`, [...cfg.keywords.boost, ...hotKeywords()], cfg.keywords.block);
+    const kw = keywordCheck(`${token.name} ${token.symbol} ${token.description ?? ''}`, [...cfg.keywords.boost, ...hot], cfg.keywords.block);
     // Narrative quality: keywords (static + hot + learned win odds), copycats, trends, description/socials quality.
     let narrativeReason: string | null = null;
     let narrativeScore = kw.blocked ? 0 : kw.boosted ? 1 : 0.5;
     try {
-      const nar = await this.social.narrative({ ...token, mint }, cfg.keywords, hotKeywords());
+      const nar = await this.social.narrative({ ...token, mint }, cfg.keywords, hot);
       narrativeScore = nar.score;
       narrativeReason = nar.reason;
     } catch (err) {
@@ -250,7 +261,7 @@ export class Evaluator {
     // keep losing get marked down). `pre` (before calibration) is what calibration measures.
     const score = (f: FeatureVector): Scored => {
       const r = withOdds(scoreFeatures(f, weights), odds);
-      const pre = Math.round((r.score - manip.penalty + dexBonus.points) * 100) / 100;
+      const pre = Math.round((r.score - manip.penalty + dexBonus.points + kolBonus.points) * 100) / 100;
       const cal = calibrationAdjust(calibration(), STRATEGY.name, pre);
       return { ...r, score: Math.round(Math.max(0, Math.min(100, pre + cal.points)) * 100) / 100, pre, cal };
     };
@@ -313,7 +324,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, market: market.raw, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, kol: kolAct ? { kols: kolAct.buyers.length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, market: market.raw, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },
@@ -393,7 +404,7 @@ export class Evaluator {
         sizeMultiplier: (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? 1) * coach.sizeFactor * conv.factor * copyMult,
         swing,
         explain: (sizeSol) =>
-          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
+          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...kolBonus.notes, ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
       });
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.
       if (!swing && (res.entered || res.reason === 'already traded this token')) await markDone();

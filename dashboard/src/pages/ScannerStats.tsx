@@ -1,5 +1,6 @@
 import { SystemPanel } from '../components/SystemHealth';
 import { DexTrending } from '../components/DexTrending';
+import { MarketLeadersCard } from '../components/MarketLeaders';
 import { CountBars } from '../components/Charts';
 import { Card, ErrorBox, Loading, PageHeader, StatTile } from '../components/ui';
 import { useApi } from '../hooks/useApi';
@@ -109,6 +110,7 @@ export function ScannerStats() {
           <Card title="Market regime" className="mt-4">
             <p className="text-ink-2">{d.regime ?? 'Hot / normal / cold detection arrives with the learning engine (Phase 7).'}</p>
           </Card>
+          <MarketLeadersCard />
           <DexTrending />
           <SystemPanel />
         </>

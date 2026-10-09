@@ -191,7 +191,20 @@ export class DexScreener {
   private async refresh(): Promise<void> {
     if (!getConfig().dex.enabled) return;
     try {
-      const lists = await Promise.all(['/token-boosts/top/v1', '/token-boosts/latest/v1', '/token-profiles/latest/v1'].map((p) => (this.take() ? this.get(p).catch(() => []) : Promise.resolve([]))));
+      let failed = 0;
+      let lastErr = '';
+      const lists = await Promise.all(
+        ['/token-boosts/top/v1', '/token-boosts/latest/v1', '/token-profiles/latest/v1'].map((p) =>
+          this.take()
+            ? this.get(p).catch((err: Error) => {
+                failed++;
+                lastErr = err.message;
+                return [];
+              })
+            : Promise.resolve([]),
+        ),
+      );
+      if (failed === 3) throw new Error(`can't reach DexScreener: ${lastErr}`);
       const mints = [
         ...new Set(
           lists

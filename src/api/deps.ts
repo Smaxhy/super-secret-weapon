@@ -4,6 +4,7 @@ import type { Executor } from '../executor/types';
 import type { LiveState } from '../scanner/live-state';
 import type { ListenerStats } from '../scanner/pumpfun-listener';
 import type { DexScreener } from '../scanner/dexscreener';
+import type { MarketLeaders } from '../scanner/market-leaders';
 
 export interface ApiDeps {
   liveState: LiveState;
@@ -12,6 +13,7 @@ export interface ApiDeps {
   startedAt: number;
   sellManager: SellManager;
   dex?: DexScreener | null;
+  leaders?: MarketLeaders | null;
 }
 
 /** Classify a token for the live feed colour code. */
