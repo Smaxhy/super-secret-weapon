@@ -20,7 +20,7 @@ import { recordEvent } from '../lib/bot-events';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import { logTrade } from '../learner/trade-logger';
-import { currentRegime } from '../learner/regime-detector';
+import { currentHourFactor, currentRegime } from '../learner/regime-detector';
 import type { MarketRaw } from '../evaluator/market-analyzer';
 import type { Executor } from './types';
 
@@ -95,7 +95,8 @@ export class Trader {
     const budget = capital * cfg.trading.allocation[req.strategy] - strategyOpen;
     const reserve = cfg.paper.txFeeSol * 4 + 0.01; // keep enough to pay for the exits
     // Market mood scales position size (e.g. ×1.2 when hot, ×0.5 when rug-heavy).
-    const sized = Math.min(cfg.trading.maxPositionSol * cfg.regimeAdjustments[currentRegime()].sizeMultiplier, cfg.trading.maxPositionSolCeiling);
+    // …and by time of day: hours that historically produce more winners get bigger size.
+    const sized = Math.min(cfg.trading.maxPositionSol * cfg.regimeAdjustments[currentRegime()].sizeMultiplier * currentHourFactor(), cfg.trading.maxPositionSolCeiling);
     const size = Math.min(sized * (req.sizeMultiplier ?? 1), budget, balance - reserve);
     if (size < cfg.trading.minPositionSol) {
       return refuse(`size ${size.toFixed(3)} SOL below minimum (balance ${balance.toFixed(3)}, ${req.strategy} budget ${budget.toFixed(3)})`);

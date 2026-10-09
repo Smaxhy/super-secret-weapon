@@ -9,7 +9,7 @@ import { DEFAULT_WEIGHTS } from '../../config/default';
 import { getWeights } from '../../config/runtime-config';
 import { runDailyAdjustment } from '../../learner/daily-adjuster';
 import { WIN_MULTIPLE } from '../../learner/outcome-labeler';
-import { currentRegime } from '../../learner/regime-detector';
+import { allHourFactors, currentRegime } from '../../learner/regime-detector';
 import { prisma } from '../../lib/prisma';
 
 export async function learnerRoutes(app: FastifyInstance): Promise<void> {
@@ -34,6 +34,7 @@ export async function learnerRoutes(app: FastifyInstance): Promise<void> {
       history: snapshots.map((s) => ({ version: s.version, active: s.active, reason: s.reason, createdAt: s.createdAt, changes: s.changes })),
       beliefs: beliefs.map((b) => ({ pattern: b.pattern, winRate: (b.alpha / (b.alpha + b.beta)) * 100, observations: b.observations })),
       regime: currentRegime(),
+      hourFactors: allHourFactors(),
       regimeHistory: regimes.reverse().map((r) => ({ t: r.createdAt, regime: r.regime, stats: r.stats })),
       missed: missed.map((m) => ({ ...m, symbol: symbols.get(m.mint) ?? m.mint.slice(0, 6) })),
       labeled24h,

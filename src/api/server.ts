@@ -28,6 +28,7 @@ import { scannerStatsRoutes } from './routes/scanner-stats';
 import { tradesRoutes } from './routes/trades';
 import { walletsRoutes } from './routes/wallets';
 import { learnerRoutes } from './routes/learner';
+import { controlsRoutes } from './routes/controls';
 import { registerWebSocket } from './websocket';
 
 const log = moduleLogger('api');
@@ -63,6 +64,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     await scannerStatsRoutes(secured, deps);
     await walletsRoutes(secured);
     await learnerRoutes(secured);
+    await controlsRoutes(secured, deps);
   });
 
   app.setErrorHandler((error, req, reply) => {

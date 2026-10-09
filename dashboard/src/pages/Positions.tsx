@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useBotEvents, type BotEvent } from '../hooks/useWebSocket';
+import { api } from '../lib/api';
 import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { ago, multiple, num, pct, price, sol, STRATEGY_LABEL } from '../lib/format';
@@ -19,7 +20,7 @@ interface LiveUpdate {
 }
 
 export function Positions() {
-  const { data, error, loading } = useApi<OpenPosition[]>('/api/positions', 10_000, ['trade']);
+  const { data, error, loading, reload } = useApi<OpenPosition[]>('/api/positions', 10_000, ['trade']);
   // The bot pushes every open position's price every ~2s; overlay it on the last full load.
   const [live, setLive] = useState<Record<string, LiveUpdate & { at: number }>>({});
   const onEvent = useCallback((e: BotEvent) => {
@@ -32,7 +33,7 @@ export function Positions() {
   useBotEvents(onEvent);
   return (
     <>
-      <PageHeader title="Open positions" subtitle="Prices stream live from the bot every ~2 seconds." />
+      <PageHeader title="Open positions" subtitle="Prices stream live every ~2 seconds. Tap Sell now to exit manually." />
       {error && <ErrorBox message={error} />}
       {loading && !data ? <Loading /> : !data?.length ? <Empty>No open positions right now.</Empty> : null}
       <div className="grid gap-4 lg:grid-cols-2">
@@ -103,6 +104,13 @@ export function Positions() {
                   <span className={`tabular ${u.exitImpactPct > 5 ? 'text-down' : 'text-ink'}`}>−{u.exitImpactPct.toFixed(1)}%</span>
                 </div>
               )}
+              <button
+                type="button"
+                onClick={() => window.confirm(`Sell all of ${p.symbol} now?`) && void api(`/api/positions/${p.id}/sell`, { method: 'POST' }).then(() => reload())}
+                className="mt-3 w-full rounded-lg border border-critical py-2.5 text-sm font-semibold text-down sm:w-auto sm:px-5"
+              >
+                Sell now
+              </button>
               {p.buyReason && (
                 <details className="mt-3 text-sm">
                   <summary className="cursor-pointer text-ink-2">Why it bought</summary>

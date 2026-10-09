@@ -59,7 +59,7 @@ export function Learning() {
     <>
       <PageHeader
         title="Learning"
-        subtitle={d ? `Every scored coin is checked again an hour later: did it reach ${d.winMultiple}×? Weights adjust nightly at 00:05 UTC.` : undefined}
+        subtitle={d ? `Every scored coin is checked again an hour later: did it reach ${d.winMultiple}×? Weights adjust every 2 hours, counting the bot's own trades 3× (so losses teach the most).` : undefined}
         action={
           <button type="button" onClick={() => void adjustNow()} disabled={busy} className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
             {busy ? 'Adjusting…' : '↻ Adjust weights now'}

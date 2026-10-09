@@ -175,7 +175,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });

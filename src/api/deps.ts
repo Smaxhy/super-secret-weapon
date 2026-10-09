@@ -1,4 +1,5 @@
 /** What the API routes need from the running bot. */
+import type { SellManager } from '../executor/sell-manager';
 import type { Executor } from '../executor/types';
 import type { LiveState } from '../scanner/live-state';
 import type { ListenerStats } from '../scanner/pumpfun-listener';
@@ -8,6 +9,7 @@ export interface ApiDeps {
   executor: Executor;
   listenerStats: () => ListenerStats | null;
   startedAt: number;
+  sellManager: SellManager;
 }
 
 /** Classify a token for the live feed colour code. */

@@ -20,6 +20,7 @@ import { Positions } from './pages/Positions';
 import { ScannerStats } from './pages/ScannerStats';
 import { TokenDetail } from './pages/TokenDetail';
 import { Wallets } from './pages/Wallets';
+import { Controls } from './pages/Controls';
 
 const NAV = [
   { to: '/', label: 'Overview', icon: '◎' },
@@ -30,7 +31,10 @@ const NAV = [
   { to: '/wallets', label: 'Wallets', icon: '◈' },
   { to: '/learning', label: 'Learning', icon: '✦' },
   { to: '/scanner', label: 'Scanner', icon: '◉' },
+  { to: '/controls', label: 'Controls', icon: '⚙' },
 ];
+/** Phone bottom bar: the four pages you check most; the rest live under "More". */
+const PHONE_MAIN = ['/', '/positions', '/history', '/feed'];
 
 type Theme = 'system' | 'light' | 'dark';
 
@@ -69,6 +73,7 @@ function useAuthed(): boolean {
 function Shell() {
   const [theme, nextTheme] = useTheme();
   const connected = useSocketStatus();
+  const [more, setMore] = useState(false);
   const linkCls = ({ isActive }: { isActive: boolean }) =>
     `flex items-center gap-3 rounded-lg px-3 py-2.5 font-medium ${isActive ? 'bg-accent text-white' : 'text-ink-2 hover:bg-surface-2 hover:text-ink'}`;
 
@@ -113,24 +118,10 @@ function Shell() {
         <div className="flex items-center gap-2">
           <InstallButton compact />
           <BotStatusBadge connected={connected} />
-          <button type="button" onClick={nextTheme} aria-label={`Theme: ${theme}`} className="rounded-lg border border-line px-2.5 py-1 text-base leading-none">
-            ◐
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              disconnectSocket();
-              setToken(null);
-            }}
-            aria-label="Log out"
-            className="rounded-lg border border-line px-2.5 py-1 text-base leading-none"
-          >
-            ⎋
-          </button>
         </div>
       </header>
 
-      <main id="main" className="mx-auto w-full max-w-7xl flex-1 px-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-5 sm:px-6 md:pb-10">
+      <main id="main" className="mx-auto w-full max-w-7xl flex-1 px-4 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-5 sm:px-6 md:pb-10">
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/feed" element={<LiveFeed />} />
@@ -139,6 +130,7 @@ function Shell() {
           <Route path="/performance" element={<Performance />} />
           <Route path="/wallets" element={<Wallets />} />
           <Route path="/learning" element={<Learning />} />
+          <Route path="/controls" element={<Controls />} />
           <Route path="/scanner" element={<ScannerStats />} />
           <Route path="/token/:mint" element={<TokenDetail />} />
           <Route path="*" element={<Navigate to="/" replace />} />
@@ -147,15 +139,53 @@ function Shell() {
 
       <Toasts />
 
-      {/* Mobile bottom nav */}
-      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-8 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden" aria-label="Main">
-        {NAV.map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => `flex min-h-14 flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium ${isActive ? 'text-accent' : 'text-ink-2'}`}>
-            <span aria-hidden="true" className="text-lg leading-none">{n.icon}</span>
+      {/* Mobile bottom nav: 4 main pages + More */}
+      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden" aria-label="Main">
+        {NAV.filter((n) => PHONE_MAIN.includes(n.to)).map((n) => (
+          <NavLink key={n.to} to={n.to} end={n.to === '/'} onClick={() => setMore(false)} className={({ isActive }) => `flex min-h-16 flex-col items-center justify-center gap-1 text-xs font-medium ${isActive ? 'text-accent' : 'text-ink-2'}`}>
+            <span aria-hidden="true" className="text-xl leading-none">{n.icon}</span>
             {n.label.split(' ')[0]}
           </NavLink>
         ))}
+        <button type="button" onClick={() => setMore((m) => !m)} aria-expanded={more} className={`flex min-h-16 flex-col items-center justify-center gap-1 text-xs font-medium ${more ? 'text-accent' : 'text-ink-2'}`}>
+          <span aria-hidden="true" className="text-xl leading-none">☰</span>
+          More
+        </button>
       </nav>
+      {more && (
+        <div className="fixed inset-0 z-10 bg-black/40 md:hidden" onClick={() => setMore(false)} aria-hidden="true">
+          <div
+            role="dialog"
+            aria-label="More pages"
+            onClick={(e) => e.stopPropagation()}
+            className="absolute inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] rounded-t-2xl border-t border-line bg-surface p-3 shadow-2xl"
+          >
+            <div className="grid grid-cols-3 gap-2">
+              {NAV.filter((n) => !PHONE_MAIN.includes(n.to)).map((n) => (
+                <NavLink key={n.to} to={n.to} onClick={() => setMore(false)} className={({ isActive }) => `flex flex-col items-center gap-1 rounded-xl border border-line py-3 text-sm font-medium ${isActive ? 'bg-accent text-white' : 'text-ink'}`}>
+                  <span aria-hidden="true" className="text-xl">{n.icon}</span>
+                  {n.label}
+                </NavLink>
+              ))}
+              <button type="button" onClick={nextTheme} className="flex flex-col items-center gap-1 rounded-xl border border-line py-3 text-sm font-medium text-ink">
+                <span aria-hidden="true" className="text-xl">◐</span>
+                Theme: {theme}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  disconnectSocket();
+                  setToken(null);
+                }}
+                className="flex flex-col items-center gap-1 rounded-xl border border-line py-3 text-sm font-medium text-down"
+              >
+                <span aria-hidden="true" className="text-xl">⎋</span>
+                Log out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

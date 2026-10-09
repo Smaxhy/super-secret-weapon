@@ -169,8 +169,8 @@ export const DEFAULT_CONFIG = {
 
   /** Runtime switches (dashboard-controlled in Phase 5). */
   state: {
-    paused: false,
-    killSwitch: false,
+    paused: false as boolean,
+    killSwitch: false as boolean,
   },
 
   scoring: {

@@ -1,5 +1,5 @@
 /**
- * Daily adjuster — every night (00:05 UTC) nudge the scorer's feature weights
+ * Weight adjuster — every 2 hours nudge the scorer's feature weights
  * toward what actually predicted winners.
  *
  * For each feature we compare its average value (0-1) on labelled winners
@@ -21,7 +21,8 @@ const log = moduleLogger('daily-adjuster');
 
 const MIN_SAMPLES = 100;
 const MIN_WINS = 10;
-const MAX_STEP = 0.05;
+/** Runs every 2 hours now, so each step is small (≈ up to 5%/day in total per feature… compounded slowly). */
+const MAX_STEP = 0.02;
 /** How strongly a winner/loser difference turns into a weight change. */
 const SENSITIVITY = 0.5;
 
@@ -36,14 +37,18 @@ export interface WeightChange {
 /** Pure: compute new weights from labelled samples. Exported for tests. */
 export function adjustWeights(
   current: Weights,
-  samples: Array<{ features: Partial<Record<FeatureName, number>>; win: boolean }>,
+  samples: Array<{ features: Partial<Record<FeatureName, number>>; win: boolean; weight?: number }>,
   defaults: Weights = { ...DEFAULT_WEIGHTS },
 ): { weights: Weights; changes: WeightChange[]; wins: number; total: number } | null {
   const wins = samples.filter((s) => s.win);
   const losses = samples.filter((s) => !s.win);
   if (samples.length < MIN_SAMPLES || wins.length < MIN_WINS || losses.length < MIN_WINS) return null;
 
-  const avg = (list: typeof samples, f: FeatureName) => list.reduce((s, x) => s + (x.features[f] ?? 0.5), 0) / list.length;
+  // Weighted average: tokens the bot actually traded count more than ones it only watched.
+  const avg = (list: typeof samples, f: FeatureName) => {
+    const w = list.reduce((s, x) => s + (x.weight ?? 1), 0) || 1;
+    return list.reduce((s, x) => s + (x.features[f] ?? 0.5) * (x.weight ?? 1), 0) / w;
+  };
   const raw = {} as Weights;
   const stats = {} as Record<FeatureName, { w: number; l: number }>;
   for (const f of Object.keys(current) as FeatureName[]) {
@@ -66,17 +71,19 @@ export function adjustWeights(
 }
 
 /** Run one adjustment now (cron or dashboard button). */
-export async function runDailyAdjustment(trigger: 'nightly' | 'manual'): Promise<{ ok: boolean; message: string }> {
+export async function runDailyAdjustment(trigger: 'scheduled' | 'manual'): Promise<{ ok: boolean; message: string }> {
   const since = new Date(Date.now() - 7 * 24 * 3600_000);
   const rows = await prisma.evaluation.findMany({
     where: { outcomeLabeledAt: { not: null }, createdAt: { gte: since } },
-    select: { features: true, outcomeMax: true },
+    select: { features: true, outcomeMax: true, decision: true },
     orderBy: { createdAt: 'desc' },
     take: 20_000,
   });
   const samples = rows.map((r) => ({
     features: ((r.features as { features?: Partial<Record<FeatureName, number>> })?.features ?? {}) as Partial<Record<FeatureName, number>>,
     win: (r.outcomeMax ?? 0) >= WIN_MULTIPLE,
+    // Our own buys (wins AND losses) teach the most — weight them 3×.
+    weight: r.decision === 'BUY' ? 3 : 1,
   }));
   const { weights: current, version } = getWeights();
   const result = adjustWeights(current, samples);
@@ -108,5 +115,6 @@ export async function runDailyAdjustment(trigger: 'nightly' | 'manual'): Promise
 }
 
 export function scheduleDailyAdjuster(): ReturnType<typeof cron.schedule> {
-  return cron.schedule('5 0 * * *', () => void runDailyAdjustment('nightly').catch((err: Error) => log.error({ err: err.message }, 'nightly adjustment failed')), { timezone: 'UTC' });
+  // Every 2 hours (it learns continuously; small steps each time).
+  return cron.schedule('5 */2 * * *', () => void runDailyAdjustment('scheduled').catch((err: Error) => log.error({ err: err.message }, 'nightly adjustment failed')), { timezone: 'UTC' });
 }

@@ -29,6 +29,28 @@ export interface RegimeStats {
 let current: MarketRegime = 'NORMAL';
 export const currentRegime = (): MarketRegime => current;
 
+/** Hit rate per UTC hour vs overall (last 7 days) → size multiplier 0.6-1.3 for the current hour. */
+let hourFactors: number[] = Array(24).fill(1);
+export const currentHourFactor = (): number => hourFactors[new Date().getUTCHours()] ?? 1;
+export const allHourFactors = (): number[] => [...hourFactors];
+
+async function updateHourFactors(): Promise<void> {
+  const rows = await prisma.$queryRaw<Array<{ h: number; n: bigint; wins: bigint }>>`
+    SELECT EXTRACT(HOUR FROM "createdAt" AT TIME ZONE 'UTC')::int AS h, COUNT(*) AS n,
+           COUNT(*) FILTER (WHERE "outcomeMax" >= ${WIN_MULTIPLE}) AS wins
+    FROM "Evaluation" WHERE "outcomeLabeledAt" IS NOT NULL AND "createdAt" >= NOW() - INTERVAL '7 days'
+    GROUP BY 1`;
+  const total = rows.reduce((s, r) => s + Number(r.n), 0);
+  const wins = rows.reduce((s, r) => s + Number(r.wins), 0);
+  const overall = total ? wins / total : 0;
+  const next: number[] = Array(24).fill(1);
+  for (const r of rows) {
+    if (Number(r.n) < 30 || overall <= 0) continue;
+    next[r.h] = Math.max(0.6, Math.min(1.3, Number(r.wins) / Number(r.n) / overall));
+  }
+  hourFactors = next;
+}
+
 /** Pure classification. Exported for tests. */
 export function classify(s: RegimeStats): MarketRegime {
   if (s.labeled >= 30 && (s.rugRatePct ?? 0) >= 60) return 'RUG_HEAVY';
@@ -68,6 +90,7 @@ async function tick(): Promise<void> {
     if (regime !== current) log.info({ from: current, to: regime, ...stats }, `market regime → ${regime}`);
     current = regime;
     await prisma.regimeSnapshot.create({ data: { regime, stats: stats as unknown as object } });
+    await updateHourFactors();
   } catch (err) {
     log.warn({ err: (err as Error).message }, 'regime update failed');
   }

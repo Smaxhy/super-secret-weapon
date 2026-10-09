@@ -1,6 +1,6 @@
 /** Trade history: filterable, sortable, exportable to CSV. */
 import { useMemo, useState } from 'react';
-import { TradeRow } from '../components/TradeRow';
+import { TradeCard, TradeRow } from '../components/TradeRow';
 import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl, Select } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { EXIT_LABEL, STRATEGY_LABEL } from '../lib/format';
@@ -87,7 +87,9 @@ export function History() {
       {loading && !data ? (
         <Loading />
       ) : rows.length ? (
-        <Card>
+        <>
+        <ul className="space-y-2 md:hidden">{rows.map((t) => <TradeCard key={t.id} t={t} />)}</ul>
+        <Card className="hidden md:block">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[960px] text-sm tabular">
               <thead>
@@ -106,6 +108,7 @@ export function History() {
             </table>
           </div>
         </Card>
+        </>
       ) : (
         <Empty>No trades match these filters.</Empty>
       )}
