@@ -54,6 +54,7 @@ export interface OpenPosition {
   realizedPnlSol: number;
   scoreAtEntry: number | null;
   trailingActive: boolean;
+  buyReason: string | null;
   targets: { stopLossPrice: number; takeProfits: Array<{ multiple: number; sellPct: number; hit: boolean }>; trailingStopPrice: number | null };
   health: { holders: number; devHoldingPct: number; top10HolderPct: number; curvePct: number } | null;
 }
@@ -77,6 +78,8 @@ export interface TradeRowData {
   peakMultiple: number;
   maxProfitSol: number;
   bestWithin1hMultiple: number | null;
+  buyReason: string | null;
+  sellReasons: string[];
 }
 
 export interface PerformanceData {

@@ -13,7 +13,7 @@ export const DEFAULT_CONFIG = {
   trading: {
     mode: 'PAPER' as const,
     maxPositionSol: 0.2,
-    minPositionSol: 0.1,
+    minPositionSol: 0.05,
     maxPositionSolCeiling: 0.3, // the dashboard slider can't go above this
     maxConcurrentPositions: 5,
     /** Fraction of capital per strategy. Must add up to 1. */
@@ -58,6 +58,19 @@ export const DEFAULT_CONFIG = {
      * per trade (SOL). Typical Pump.fun trades pay ~0.001-0.005.
      */
     assumedExtraFeePerTradeSol: 0.002,
+    /**
+     * "Still worth a shot": a token that only breaks the bundler / top-10 /
+     * single-wallet limits (within these looser caps) but scores this many
+     * points above the bar is bought at reduced size instead of skipped.
+     */
+    riskyEntry: {
+      enabled: true,
+      maxBundlePct: 30,
+      maxTop10Pct: 65,
+      maxSingleHolderPct: 15,
+      extraScore: 5,
+      sizeMultiplier: 0.5,
+    },
     /** Only buy tokens that link an X account / post / community in their metadata. */
     requireTwitter: false,
   },
@@ -169,6 +182,10 @@ export const DEFAULT_CONFIG = {
     walletAnalysisMargin: 10,
     /** Evaluations scoring at least this are stored even when skipped ("interesting"). */
     storeAboveScore: 60,
+    /** Watchlist: near-misses (within this many points, or only soft rules failing) get re-checked. */
+    watchlist: { scoreMargin: 8, everySec: 120, maxExtraChecks: 6 },
+    /** Volume spike → check the token immediately (outside the normal schedule). */
+    volumeSpike: { minSolPer15s: 2, multipleOfAverage: 4 },
     /**
      * Save Helius credits: only run the (RPC) safety check once a token has
      * this many holders. Most launches never get there.
@@ -226,8 +243,9 @@ export const DEFAULT_WEIGHTS = {
   safety: 0.15,
   holders: 0.1,
   buyPressure: 0.1,
-  volume: 0.03,
-  curveVelocity: 0.08,
+  volume: 0.02,
+  volumeSpike: 0.04,
+  curveVelocity: 0.05,
   distribution: 0.08,
   devHolding: 0.06,
   devBehavior: 0.06,

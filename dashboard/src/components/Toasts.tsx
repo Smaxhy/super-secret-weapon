@@ -5,6 +5,7 @@ import { useBotEvents, type BotEvent } from '../hooks/useWebSocket';
 interface Toast {
   id: number;
   text: string;
+  why?: string | null;
   tone: 'up' | 'down' | 'neutral';
 }
 
@@ -14,7 +15,7 @@ export function Toasts() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const onEvent = useCallback((e: BotEvent) => {
     if (e.type !== 'trade') return;
-    const d = e.data as { side: string; symbol?: string; mint: string; amountSol: number; reason: string; pnlSol?: number; mode: string; peakMultiple?: number; closed?: boolean; totalPnlSol?: number };
+    const d = e.data as { side: string; symbol?: string; mint: string; amountSol: number; reason: string; pnlSol?: number; mode: string; peakMultiple?: number; closed?: boolean; totalPnlSol?: number; explanation?: string | null };
     const name = d.symbol ?? d.mint.slice(0, 6);
     const tag = d.mode === 'PAPER' ? '📝' : '💸';
     const signed = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(3)} SOL`;
@@ -26,8 +27,8 @@ export function Toasts() {
         : `${tag} Sold ${name}: ${d.pnlSol !== undefined ? `${d.pnlSol >= 0 ? '+' : '−'}${Math.abs(d.pnlSol).toFixed(3)} SOL` : ''} (${d.reason.split(':')[0]?.toLowerCase().replace(/_/g, ' ')})`;
     const tone = d.side === 'BUY' ? 'neutral' : ((d.closed ? d.totalPnlSol : d.pnlSol) ?? 0) >= 0 ? 'up' : 'down';
     const id = nextId++;
-    setToasts((t) => [...t.slice(-3), { id, text, tone }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 6_000);
+    setToasts((t) => [...t.slice(-3), { id, text, tone, why: d.explanation }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 9_000);
     if (navigator.vibrate) navigator.vibrate(40);
   }, []);
   useBotEvents(onEvent);
@@ -40,6 +41,7 @@ export function Toasts() {
           className={`pointer-events-auto w-full max-w-sm rounded-xl border bg-surface px-4 py-3 text-sm font-medium shadow-lg ${t.tone === 'up' ? 'border-good/50 text-up' : t.tone === 'down' ? 'border-critical/50 text-down' : 'border-line text-ink'}`}
         >
           {t.text}
+          {t.why && <div className="mt-1 text-xs font-normal leading-snug text-ink-2">{t.why}</div>}
         </div>
       ))}
     </div>

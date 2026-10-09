@@ -33,6 +33,7 @@ import { LiveState } from './scanner/live-state';
 import { PumpFunListener, type ListenerStats } from './scanner/pumpfun-listener';
 import { PumpPortalListener } from './scanner/pumpportal-listener';
 import { WhaleTracker } from './scanner/whale-tracker';
+import { startSpikeWatcher } from './scanner/spike-watcher';
 import { TokenRegistry } from './scanner/token-registry';
 
 const log = logger.child({ module: 'main' });
@@ -170,6 +171,7 @@ async function main(): Promise<void> {
   };
 
   await whales.start();
+  const spikeTimer = startSpikeWatcher(liveState, evaluator);
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
@@ -235,6 +237,7 @@ async function main(): Promise<void> {
       whales.stop();
       void nightly.stop();
       clearInterval(regimeTimer);
+      clearInterval(spikeTimer);
       await outcomes.stop();
       await evaluator.stop();
       await sellManager.stop();

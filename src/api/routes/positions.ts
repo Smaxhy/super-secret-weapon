@@ -42,6 +42,7 @@ export async function positionsRoutes(app: FastifyInstance, deps: ApiDeps): Prom
           realizedPnlSol: p.realizedPnlSol,
           scoreAtEntry: p.evaluation?.combinedScore ?? null,
           trailingActive: p.trailingActive,
+          buyReason: (p.entryContext as { explanation?: string } | null)?.explanation ?? null,
           targets: {
             stopLossPrice: p.entryPriceSol * (1 - cfg.exit.hardStopLossPct / 100),
             takeProfits: cfg.exit.takeProfitTiers.map((t) => ({ multiple: t.multiple, sellPct: t.sellPct, hit: tiersHit.includes(t.multiple) })),

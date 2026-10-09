@@ -26,7 +26,7 @@ describe('curve quotes', () => {
 const goodMarket: MarketRaw = {
   ageSec: 120, holders: 70, uniqueWallets: 80, buys: 120, sells: 30, buySellRatio: 4, volumeSol: 40,
   liquiditySol: 12, bondingCurvePct: 25, curveVelocity: 5, priceSol: 5e-8, marketCapSol: 50,
-  devHoldingPct: 2, devSoldFraction: 0, top10HolderPct: 14, earlyBuyerPct: 1, maxHolderPct: 3, retention: 0.875, complete: false, onAmm: false,
+  devHoldingPct: 2, devSoldFraction: 0, top10HolderPct: 14, earlyBuyerPct: 1, maxHolderPct: 3, volumeSpikeRatio: 1, retention: 0.875, complete: false, onAmm: false,
   totalFeesSol: 1.2, volumeUsd: 15_000, marketCapUsd: 13_000,
 };
 const goodWallet: CreatorProfile = { creator: 'c', balanceSol: 3, walletAgeHours: 24 * 60, veryActive: false, funder: 'f', funderBlacklisted: false, funderCreatorCount: 1, launches24h: 0, priorLaunches: 0, priorCompleted: 0 };

@@ -14,6 +14,8 @@ interface LiveUpdate {
   unrealizedPnlSol: number;
   risk: number;
   holders: number;
+  ownSupplyPct: number;
+  exitImpactPct: number;
 }
 
 export function Positions() {
@@ -95,6 +97,18 @@ export function Positions() {
                 </ul>
               </div>
 
+              {u && (
+                <div className="mt-3 text-sm text-ink-2">
+                  You hold <span className="tabular text-ink">{u.ownSupplyPct.toFixed(2)}%</span> of the supply · selling it all now would move the price{' '}
+                  <span className={`tabular ${u.exitImpactPct > 5 ? 'text-down' : 'text-ink'}`}>−{u.exitImpactPct.toFixed(1)}%</span>
+                </div>
+              )}
+              {p.buyReason && (
+                <details className="mt-3 text-sm">
+                  <summary className="cursor-pointer text-ink-2">Why it bought</summary>
+                  <p className="mt-1 leading-relaxed text-ink">{p.buyReason}</p>
+                </details>
+              )}
               {p.health && (
                 <div className="mt-3 text-sm text-ink-2">
                   Health: {num(p.health.holders)} holders · dev {pct(p.health.devHoldingPct)} · top 10 {pct(p.health.top10HolderPct)} · curve {pct(p.health.curvePct)}

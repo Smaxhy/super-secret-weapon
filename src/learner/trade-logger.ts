@@ -65,7 +65,7 @@ export async function logTrade(t: TradeLogInput, tx: Prisma.TransactionClient = 
     { mint: t.mint, side: t.side, sol: +t.fill.solAmount.toFixed(4), reason: t.reason, pnlSol: t.pnlSol },
     `${tag} ${t.side} ${t.symbol ?? t.mint.slice(0, 6)} ${t.fill.solAmount.toFixed(4)} SOL (${t.reason})${pnl}`,
   );
-  bus.publish({ type: 'trade', data: { mint: t.mint, symbol: t.symbol, side: t.side, mode: t.mode, amountSol: t.fill.solAmount, reason: t.reason, pnlSol: t.pnlSol, peakMultiple: t.peakMultiple, closed: t.closed, totalPnlSol: t.totalPnlSol } });
+  bus.publish({ type: 'trade', data: { mint: t.mint, symbol: t.symbol, side: t.side, mode: t.mode, amountSol: t.fill.solAmount, reason: t.reason, pnlSol: t.pnlSol, peakMultiple: t.peakMultiple, closed: t.closed, totalPnlSol: t.totalPnlSol, explanation: (t.context.explanation as string | null | undefined) ?? null } });
   void recordEvent({
     module: 'trader',
     type: `${t.side.toLowerCase()}_${t.fill.ok ? 'filled' : 'failed'}`,

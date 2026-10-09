@@ -9,9 +9,9 @@ export type BusEvent =
   | { type: 'token'; data: { mint: string; name: string; symbol: string; creator: string; createdAt: string } }
   | { type: 'safety'; data: { mint: string; score: number; hardFail: boolean } }
   | { type: 'evaluation'; data: { mint: string; symbol: string; score: number; decision: string; reasons: string[] } }
-  | { type: 'trade'; data: { mint: string; symbol?: string; side: string; mode: string; amountSol: number; reason: string; pnlSol?: number; peakMultiple?: number; closed?: boolean; totalPnlSol?: number } }
+  | { type: 'trade'; data: { mint: string; symbol?: string; side: string; mode: string; amountSol: number; reason: string; pnlSol?: number; peakMultiple?: number; closed?: boolean; totalPnlSol?: number; explanation?: string | null } }
   | { type: 'stats'; data: Record<string, unknown> }
-  | { type: 'positions'; data: { updates: Array<{ id: string; priceSol: number; multiple: number; peakMultiple: number; unrealizedPnlSol: number; risk: number; holders: number }> } };
+  | { type: 'positions'; data: { updates: Array<{ id: string; priceSol: number; multiple: number; peakMultiple: number; unrealizedPnlSol: number; risk: number; holders: number; ownSupplyPct: number; exitImpactPct: number }> } };
 
 class Bus extends EventEmitter {
   publish(e: BusEvent): void {

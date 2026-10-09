@@ -27,6 +27,7 @@ export const PATTERNS: Record<string, (f: StoredFeatures, strategy: string | nul
   '50+ holders': (f) => Number(f.market?.holders ?? 0) >= 50,
   'Fast curve (>5%/min)': (f) => Number(f.market?.curveVelocity ?? 0) > 5,
   'Buyers 3× sellers': (f) => Number(f.market?.buySellRatio ?? 0) >= 3,
+  'Volume spiking (3×+ average)': (f) => Number(f.market?.volumeSpikeRatio ?? 1) >= 3,
   'Fees paid >2 SOL': (f) => Number(f.market?.totalFeesSol ?? 0) > 2,
   'Low holder retention (<50%)': (f) => Number(f.market?.retention ?? 1) < 0.5,
   'Has X link': (f) => !!f.socials?.twitter,

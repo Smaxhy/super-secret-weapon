@@ -25,7 +25,9 @@ import { getConfig } from '../config/runtime-config';
 import { bus } from '../lib/bus';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
+import { explainSell } from '../learner/explain';
 import { logTrade } from '../learner/trade-logger';
+import { quoteSell } from '../lib/pumpfun';
 import { deriveMetrics, type LiveState } from '../scanner/live-state';
 import type { Redis } from 'ioredis';
 import { PublicKey } from '@solana/web3.js';
@@ -230,7 +232,7 @@ export class SellManager {
   private running = false;
   private readonly samples = new Map<string, ActivitySample[]>();
   private readonly lastPoll = new Map<string, number>();
-  private updates: Array<{ id: string; priceSol: number; multiple: number; peakMultiple: number; unrealizedPnlSol: number; risk: number; holders: number }> = [];
+  private updates: Array<{ id: string; priceSol: number; multiple: number; peakMultiple: number; unrealizedPnlSol: number; risk: number; holders: number; ownSupplyPct: number; exitImpactPct: number }> = [];
 
   constructor(
     private readonly executor: Executor,
@@ -322,8 +324,15 @@ export class SellManager {
       const costLeft = (p.sizeSol * p.remainingPct) / 100;
       const multiple = m.priceSol / p.entryPriceSol;
       const feeBps = view.ammBaseReserve ? cfg.paper.ammFeeBps : cfg.paper.curveFeeBps;
+      // How much of the supply we hold, and how much our own sell would push the price down.
+      const tokensLeft = (p.tokenAmountRaw * BigInt(Math.round(p.remainingPct * 100))) / 10_000n;
+      const [rs, rt] = view.ammBaseReserve && view.ammQuoteReserve ? [view.ammQuoteReserve, view.ammBaseReserve] : [view.virtualSolReserves, view.virtualTokenReserves];
+      const ideal = (Number(tokensLeft) / 1e6) * m.priceSol;
+      const real = Number(quoteSell(tokensLeft, rs, rt, 0).solOutLamports) / 1e9;
       this.updates.push({
         id: p.id,
+        ownSupplyPct: (Number(tokensLeft) / Number(view.curve.totalSupply || 1n)) * 100,
+        exitImpactPct: ideal > 0 ? (1 - real / ideal) * 100 : 0,
         priceSol: m.priceSol,
         multiple,
         peakMultiple: Math.max(p.peakPriceSol, m.priceSol) / p.entryPriceSol,
@@ -400,7 +409,23 @@ export class SellManager {
           strategy: p.strategy,
           fill,
           reason: `${reason}: ${detail}`,
-          context: { pct, costBasis, multiple: fill.priceSol / p.entryPriceSol, peakMultiple: p.peakPriceSol / p.entryPriceSol },
+          context: {
+            pct,
+            costBasis,
+            multiple: fill.priceSol / p.entryPriceSol,
+            peakMultiple: p.peakPriceSol / p.entryPriceSol,
+            explanation: explainSell({
+              symbol,
+              reason,
+              detail,
+              multiple: fill.priceSol / p.entryPriceSol,
+              peakMultiple: p.peakPriceSol / p.entryPriceSol,
+              pct,
+              closing,
+              heldMinutes: (Date.now() - p.openedAt.getTime()) / 60_000,
+              pnlSol: pnl,
+            }),
+          },
           pnlSol: fill.ok ? pnl : undefined,
           peakMultiple: p.peakPriceSol / p.entryPriceSol,
           closed: fill.ok && closing,

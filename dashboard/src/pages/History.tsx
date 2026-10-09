@@ -99,6 +99,7 @@ export function History() {
                       </button>
                     </th>
                   ))}
+                  <th className="pb-2 font-medium" aria-label="Explanation" />
                 </tr>
               </thead>
               <tbody>{rows.map((t) => <TradeRow key={t.id} t={t} />)}</tbody>

@@ -32,6 +32,8 @@ export interface MarketRaw {
   earlyBuyerPct: number;
   /** Biggest single wallet (dev excluded), % of supply. */
   maxHolderPct: number;
+  /** Volume per minute since the last checkpoint ÷ average per minute since launch (1 = normal). */
+  volumeSpikeRatio: number;
   /** Current holders / every wallet that ever traded. Low = lots of flipping. */
   retention: number;
   complete: boolean;
@@ -49,11 +51,12 @@ export interface PrevCheckpoint {
   atMs: number;
   bondingCurvePct: number;
   priceSol?: number;
+  volumeSol?: number;
 }
 
 export type MarketFeatures = Pick<
   Record<FeatureName, number>,
-  'holders' | 'buyPressure' | 'volume' | 'curveVelocity' | 'distribution' | 'devHolding' | 'devBehavior' | 'snipers' | 'retention'
+  'holders' | 'buyPressure' | 'volume' | 'volumeSpike' | 'curveVelocity' | 'distribution' | 'devHolding' | 'devBehavior' | 'snipers' | 'retention'
 >;
 
 const clamp01 = (x: number) => (Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0);
@@ -95,6 +98,10 @@ export function analyzeMarket(
     top10HolderPct: m.top10HolderPct,
     earlyBuyerPct: m.earlyBuyerPct,
     maxHolderPct: m.maxHolderPct,
+    volumeSpikeRatio:
+      prev?.volumeSol !== undefined && now - prev.atMs >= 15_000 && m.volumeSol > 0
+        ? ((m.volumeSol - prev.volumeSol) / ((now - prev.atMs) / 60_000)) / Math.max(1e-9, m.volumeSol / (ageSec / 60))
+        : 1,
     retention: view.uniqueWallets > 0 ? m.holderCount / view.uniqueWallets : 0,
     complete: view.complete,
     onAmm: view.ammBaseReserve !== null && view.ammBaseReserve > 0n && view.ammTrades > 0,
@@ -116,6 +123,8 @@ export function marketFeatures(r: MarketRaw): MarketFeatures {
     buyPressure: clamp01((r.buySellRatio - 1) / 3),
     // Log scale: 1 SOL ≈ 0.18, 10 SOL ≈ 0.61, 50 SOL = 1.
     volume: clamp01(Math.log10(1 + r.volumeSol) / Math.log10(51)),
+    // Volume accelerating vs its own average: 1× = 0, 4×+ = 1.
+    volumeSpike: clamp01((r.volumeSpikeRatio - 1) / 3),
     // Sweet spot 2-8 %/min. Slower = no demand; much faster = usually a bot-driven pump.
     curveVelocity: velocityScore(r.curveVelocity),
     // Top 10 wallets ≤ 15% of supply = great, ≥ 50% = terrible.

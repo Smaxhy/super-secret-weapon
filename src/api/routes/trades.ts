@@ -34,12 +34,14 @@ export async function tradesRoutes(app: FastifyInstance, deps: ApiDeps): Promise
       include: {
         token: { select: { symbol: true, name: true } },
         evaluation: { select: { combinedScore: true, outcomeMax: true } },
-        trades: { where: { side: 'SELL', status: { in: ['SIMULATED', 'CONFIRMED'] } }, select: { amountSol: true, tokenAmountRaw: true } },
+        trades: { where: { status: { in: ['SIMULATED', 'CONFIRMED'] } }, select: { side: true, amountSol: true, tokenAmountRaw: true, context: true, createdAt: true }, orderBy: { createdAt: 'asc' } },
       },
     });
     return rows.map((p) => {
-      const solOut = p.trades.reduce((s, t) => s + t.amountSol, 0);
-      const tokensOut = p.trades.reduce((s, t) => s + Number(t.tokenAmountRaw), 0) / 1e6;
+      const sells = p.trades.filter((t) => t.side === 'SELL');
+      const solOut = sells.reduce((s, t) => s + t.amountSol, 0);
+      const tokensOut = sells.reduce((s, t) => s + Number(t.tokenAmountRaw), 0) / 1e6;
+      const why = (t: { context: unknown }) => ((t.context as { explanation?: string } | null)?.explanation ?? null);
       return {
         id: p.id,
         mint: p.mint,
@@ -59,6 +61,8 @@ export async function tradesRoutes(app: FastifyInstance, deps: ApiDeps): Promise
         maxProfitSol: p.sizeSol * (p.peakPriceSol / p.entryPriceSol - 1),
         // Best price within 1h of the buy signal (includes after we sold) — did we exit too early?
         bestWithin1hMultiple: p.evaluation?.outcomeMax ?? null,
+        buyReason: (p.entryContext as { explanation?: string } | null)?.explanation ?? why(p.trades.find((t) => t.side === 'BUY') ?? { context: null }),
+        sellReasons: sells.map(why).filter((x): x is string => !!x),
         openedAt: p.openedAt,
         closedAt: p.closedAt,
       };

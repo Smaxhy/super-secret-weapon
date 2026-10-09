@@ -37,6 +37,10 @@ export interface EntryRequest {
   features: Record<string, number>;
   /** Copy trades: the wallet we copied (its sells trigger our exit). */
   copiedWallet?: string;
+  /** < 1 for higher-risk entries (e.g. bundled tokens bought at half size). */
+  sizeMultiplier?: number;
+  /** Builds the human-readable "why we bought" once the size is known. */
+  explain?: (sizeSol: number) => string;
 }
 
 export interface EntryResult {
@@ -92,13 +96,14 @@ export class Trader {
     const reserve = cfg.paper.txFeeSol * 4 + 0.01; // keep enough to pay for the exits
     // Market mood scales position size (e.g. ×1.2 when hot, ×0.5 when rug-heavy).
     const sized = Math.min(cfg.trading.maxPositionSol * cfg.regimeAdjustments[currentRegime()].sizeMultiplier, cfg.trading.maxPositionSolCeiling);
-    const size = Math.min(sized, budget, balance - reserve);
+    const size = Math.min(sized * (req.sizeMultiplier ?? 1), budget, balance - reserve);
     if (size < cfg.trading.minPositionSol) {
       return refuse(`size ${size.toFixed(3)} SOL below minimum (balance ${balance.toFixed(3)}, ${req.strategy} budget ${budget.toFixed(3)})`);
     }
 
     const fill = await this.executor.buy({ mint: req.mint, solAmount: round4(size), maxSlippageBps: req.maxSlippageBps });
-    const context = { score: req.score, market: req.market, features: req.features, balanceBefore: balance };
+    const explanation = req.explain?.(size) ?? null;
+    const context = { score: req.score, market: req.market, features: req.features, balanceBefore: balance, explanation };
     if (!fill.ok) {
       await logTrade({ positionId: null, mint: req.mint, symbol: req.symbol, side: 'BUY', mode, strategy: req.strategy, fill, reason: 'entry failed', context });
       return refuse(`execution failed: ${fill.error}`);
@@ -123,6 +128,7 @@ export class Trader {
             copiedWallet: req.copiedWallet ?? null,
             // Counted into each sell's cost basis so P&L includes the buy's gas/tip.
             buyFeeSol: fill.feeSol,
+            explanation,
             top10HolderPct: req.market.top10HolderPct,
             holders: req.market.holders,
             marketCapSol: req.market.marketCapSol,

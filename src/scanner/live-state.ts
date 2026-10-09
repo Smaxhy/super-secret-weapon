@@ -181,6 +181,25 @@ export class LiveState {
     return [...this.tracked.keys()];
   }
 
+  /** Total volume (SOL), age and status for every tracked token traded in the last minute. */
+  async activeVolumes(): Promise<Array<{ mint: string; volumeSol: number; ageSec: number; complete: boolean }>> {
+    const mints = [...this.tracked.keys()];
+    const out: Array<{ mint: string; volumeSol: number; ageSec: number; complete: boolean }> = [];
+    const now = Date.now();
+    for (let i = 0; i < mints.length; i += 500) {
+      const chunk = mints.slice(i, i + 500);
+      const p = this.r.pipeline();
+      for (const m of chunk) p.hmget(key.live(m), 'buyVol', 'sellVol', 'lastTradeAt', 'complete');
+      const res = (await p.exec()) ?? [];
+      chunk.forEach((m, j) => {
+        const [bv, sv, lt, c] = (res[j]?.[1] as Array<string | null>) ?? [];
+        if (!lt || now - Number(lt) > 60_000) return;
+        out.push({ mint: m, volumeSol: (Number(bv ?? 0) + Number(sv ?? 0)) / 1e9, ageSec: now / 1000 - this.tracked.get(m)!.createdSec, complete: c === '1' });
+      });
+    }
+    return out;
+  }
+
   /**
    * Tokens older than `minAgeSec` that never reached `minHolders` and haven't
    * migrated — i.e. dead launches. Used to stop streaming their trades.

@@ -43,3 +43,23 @@ describe('bayesian patterns', () => {
     expect(p).not.toContain('Already migrated');
   });
 });
+
+import { explainBuy, explainSell } from '../src/learner/explain';
+describe('explanations', () => {
+  it('buy recap names the strongest signals and key numbers', () => {
+    const t = explainBuy({
+      symbol: 'FROG', strategy: 'CURVE_SNIPE', score: 78, threshold: 70, contributions: { holders: 9, buyPressure: 8 }, features: { holders: 0.9, buyPressure: 0.95, snipers: 0.2 },
+      market: { holders: 80, volumeUsd: 15000, volumeSol: 100, marketCapUsd: 14000, marketCapSol: 90, buySellRatio: 3.2, complete: false, bondingCurvePct: 60, devHoldingPct: 2, earlyBuyerPct: 12, top10HolderPct: 30, totalFeesSol: 1.4 } as never,
+      sizeSol: 0.1, regime: 'HOT', risky: 'bundlers hold 22% > 18%',
+    });
+    expect(t).toContain('Bought 0.100 SOL of FROG');
+    expect(t).toContain('holder count');
+    expect(t).toContain('few bundlers/snipers'); // weak spot
+    expect(t).toContain('reduced size');
+  });
+  it('sell recap explains the reason and result', () => {
+    const t = explainSell({ symbol: 'FROG', reason: 'TAKE_PROFIT', detail: 'resistance at 1.30x', multiple: 1.25, peakMultiple: 1.3, pct: 70, closing: true, heldMinutes: 6, pnlSol: 0.02 });
+    expect(t).toContain('Took profit: resistance at 1.30x.');
+    expect(t).toContain('+0.0200 SOL');
+  });
+});

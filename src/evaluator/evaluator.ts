@@ -28,6 +28,7 @@ import type { Trader } from '../executor/trader';
 import type { LiveState } from '../scanner/live-state';
 import { getSolUsd } from '../lib/sol-price';
 import { FeeEstimator } from './fee-estimator';
+import { explainBuy } from '../learner/explain';
 import type { OutcomeLabeler } from '../learner/outcome-labeler';
 import { currentRegime } from '../learner/regime-detector';
 import { keywordCheck, NEUTRAL_SOCIAL_FEATURES, SocialAnalyzer, socialsScore, twitterInfo } from './social-analyzer';
@@ -137,7 +138,7 @@ export class Evaluator {
     const prev = prevRaw ? (JSON.parse(prevRaw) as PrevCheckpoint) : null;
 
     const market = analyzeMarket(view, prev, await getSolUsd(), Date.now(), cfg.entry.assumedExtraFeePerTradeSol);
-    await this.redis.set(prevKey, JSON.stringify({ atMs: Date.now(), bondingCurvePct: market.raw.bondingCurvePct, priceSol: market.raw.priceSol } satisfies PrevCheckpoint), 'EX', STATE_TTL_SECONDS);
+    await this.redis.set(prevKey, JSON.stringify({ atMs: Date.now(), bondingCurvePct: market.raw.bondingCurvePct, priceSol: market.raw.priceSol, volumeSol: market.raw.volumeSol } satisfies PrevCheckpoint), 'EX', STATE_TTL_SECONDS);
     this.stats.evaluated++;
 
     // A tracked wallet buying is a signal of its own → lower bar for copy trades.
@@ -177,14 +178,30 @@ export class Evaluator {
     let result = scoreFeatures(features, weights);
     let profile: CreatorProfile | null = null;
 
-    if (!token.safetyHardFail && ruleFails.length === 0 && result.score >= threshold - cfg.scoring.walletAnalysisMargin) {
+    // Soft = concentration limits a strong token may still be bought through at reduced size.
+    const isSoft = (f: string) => /^(bundlers hold|top 10 hold|one wallet holds)/.test(f);
+    if (!token.safetyHardFail && ruleFails.every(isSoft) && result.score >= threshold - cfg.scoring.walletAnalysisMargin) {
       profile = await this.wallets.analyze(token.creator, mint);
       this.stats.walletLookups++;
       features = { ...features, ...walletFeatures(profile) };
       result = scoreFeatures(features, weights);
     }
 
-    const { decision, reasons } = decide(result.score, threshold, ruleFails, token.safetyHardFail);
+    let { decision, reasons } = decide(result.score, threshold, ruleFails, token.safetyHardFail);
+
+    // "Still worth a shot": only soft concentration limits broken, within looser caps,
+    // and a clearly strong score → buy at reduced size (the learner tracks how these do).
+    let risky: string | null = null;
+    const re = cfg.entry.riskyEntry;
+    if (
+      decision === 'SKIP' && re.enabled && ruleFails.length > 0 && ruleFails.every(isSoft) &&
+      market.raw.earlyBuyerPct <= re.maxBundlePct && market.raw.top10HolderPct <= re.maxTop10Pct && market.raw.maxHolderPct <= re.maxSingleHolderPct &&
+      result.score >= threshold + re.extraScore
+    ) {
+      risky = ruleFails.join(', ');
+      decision = 'BUY';
+      reasons = [`higher-risk entry at ${re.sizeMultiplier}× size: ${risky}`, `score ${result.score.toFixed(1)} ≥ ${threshold + re.extraScore}`];
+    }
     const store = decision !== 'SKIP' || final || result.score >= cfg.scoring.storeAboveScore;
 
     let evaluationId: string | null = null;
@@ -232,13 +249,37 @@ export class Evaluator {
         maxSlippageBps: STRATEGY.maxSlippageBps,
         features,
         copiedWallet: job.data.wallet,
+        sizeMultiplier: risky ? re.sizeMultiplier : 1,
+        explain: (sizeSol) =>
+          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet }),
       });
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.
       if (res.entered || res.reason === 'already traded this token') await markDone();
     } else if (result.score >= cfg.scoring.storeAboveScore) {
       log.debug({ mint, symbol: token.symbol, score: result.score, reasons }, `👀 ${token.symbol} ${result.score.toFixed(1)} — ${reasons[0]}`);
     }
-    if (final) await markDone();
+    if (final) {
+      // Watchlist: a near-miss gets a few extra looks instead of being dropped.
+      const wl = cfg.scoring.watchlist;
+      const nearMiss = decision === 'SKIP' && (result.score >= threshold - wl.scoreMargin || ruleFails.every(isSoft));
+      const watchKey = `eval:${mint}:${STRATEGY.name}:watch`;
+      const n = nearMiss ? await this.redis.incr(watchKey) : wl.maxExtraChecks + 1;
+      if (n <= wl.maxExtraChecks) {
+        await this.redis.expire(watchKey, STATE_TTL_SECONDS);
+        await evaluateQueue.add(
+          `watch+${n}`,
+          { mint, checkpointSec: checkpointSec + wl.everySec, final: true, strategy: STRATEGY.name, wallet: job.data.wallet },
+          { jobId: `${mint}-${STRATEGY.name}-watch-${n}`, delay: wl.everySec * 1000 },
+        );
+        log.debug({ mint, symbol: token.symbol, score: result.score }, `👁 watching ${token.symbol} (${n}/${wl.maxExtraChecks})`);
+      } else await markDone();
+    }
+  }
+
+  /** Something just happened on this token (volume spike) — check it right now. */
+  async checkNow(mint: string, strategy: 'CURVE_SNIPE' | 'MIGRATION_MOMENTUM', why: string): Promise<void> {
+    const bucket = Math.floor(Date.now() / 60_000);
+    await evaluateQueue.add(`now:${why}`, { mint, checkpointSec: 0, final: false, strategy }, { jobId: `${mint}-${strategy}-now-${bucket}` });
   }
 }
 
