@@ -14,7 +14,15 @@ import { bullConnection } from './redis';
 export const QUEUE_NAMES = {
   safety: 'safety-check',
   observations: 'observations',
+  evaluate: 'evaluate',
 } as const;
+
+export interface EvaluateJob {
+  mint: string;
+  checkpointSec: number;
+  /** True for the last checkpoint — always store the evaluation (training data). */
+  final: boolean;
+}
 
 export interface SafetyJob {
   mint: string;
@@ -43,6 +51,12 @@ export const observationQueue = new Queue<ObservationJob>(QUEUE_NAMES.observatio
   defaultJobOptions,
 });
 
+export const evaluateQueue = new Queue<EvaluateJob>(QUEUE_NAMES.evaluate, {
+  connection: bullConnection(),
+  // A missed checkpoint isn't worth retrying 4 times — the next one comes soon.
+  defaultJobOptions: { ...defaultJobOptions, attempts: 2 },
+});
+
 export async function closeQueues(): Promise<void> {
-  await Promise.all([safetyQueue.close(), observationQueue.close()]);
+  await Promise.all([safetyQueue.close(), observationQueue.close(), evaluateQueue.close()]);
 }

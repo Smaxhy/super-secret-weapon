@@ -22,6 +22,9 @@ const view: LiveTokenView = {
     ['B', 7_000_000_000_000n],
   ]),
   uniqueWallets: 5,
+  earlyBuyers: ['B'],
+  devBought: 60_000_000_000_000n,
+  devSold: 10_000_000_000_000n,
 };
 
 describe('deriveMetrics / buildSnapshot', () => {
@@ -34,6 +37,8 @@ describe('deriveMetrics / buildSnapshot', () => {
     expect(m.volumeSol).toBe(4);
     expect(m.liquiditySol).toBeCloseTo(2);
     expect(m.bondingCurvePct).toBeGreaterThan(8);
+    expect(m.earlyBuyerPct).toBeCloseTo(0.7);
+    expect(m.devSoldFraction).toBeCloseTo(1 / 6);
   });
   it('builds a snapshot with age relative to creation', () => {
     const s = buildSnapshot(view, 'M1', 1_060_000);

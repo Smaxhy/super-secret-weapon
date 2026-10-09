@@ -19,6 +19,7 @@ import { QUEUE_NAMES, safetyQueue, type SafetyJob } from '../lib/queues';
 import { bullConnection } from '../lib/redis';
 import type { SafetyChecker } from '../evaluator/safety-checker';
 import type { ObservationLogger } from '../learner/observation-logger';
+import type { Evaluator } from '../evaluator/evaluator';
 import type { LiveState } from './live-state';
 
 const log = moduleLogger('token-registry');
@@ -34,6 +35,7 @@ export class TokenRegistry {
     private readonly liveState: LiveState,
     private readonly observations: ObservationLogger | null,
     private readonly safety: SafetyChecker | null,
+    private readonly evaluator: Evaluator | null = null,
   ) {}
 
   /** Wire this to `listener.on('event', ...)`. */
@@ -92,6 +94,7 @@ export class TokenRegistry {
       log.info({ mint: ev.mint, tokenName: ev.name, symbol: ev.symbol, creator: ev.creator, latencyMs: latency }, `🆕 ${ev.symbol}`);
 
       await this.observations?.scheduleFor(ev.mint, createdAtMs);
+      await this.evaluator?.scheduleFor(ev.mint, createdAtMs);
       if (this.safety) {
         await safetyQueue.add('check', { mint: ev.mint }, { jobId: `safety-${ev.mint}`, delay: SAFETY_CHECK_DELAY_MS });
       }

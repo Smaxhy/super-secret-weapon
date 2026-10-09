@@ -63,6 +63,32 @@ export const DEFAULT_CONFIG = {
     dailyLossCircuitBreakerPct: 20,
   },
 
+  /** Paper-trading simulation settings. Kept pessimistic so paper results aren't fantasy. */
+  paper: {
+    startingBalanceSol: 10,
+    /** Pump.fun curve fee (protocol + creator), basis points per side. Approximate. */
+    curveFeeBps: 125,
+    /** Extra adverse price movement assumed between decision and fill (latency). */
+    slippagePct: 1.5,
+    /** Network + priority fee per transaction. */
+    txFeeSol: 0.0005,
+  },
+
+  /** Runtime switches (dashboard-controlled in Phase 5). */
+  state: {
+    paused: false,
+    killSwitch: false,
+  },
+
+  scoring: {
+    /** Checkpoints (seconds after launch) at which a token is (re)evaluated. */
+    checkpointsSec: [20, 45, 90, 180, 300, 480, 720, 900],
+    /** Only run the RPC-heavy wallet analysis if the pre-score is within this many points of the threshold. */
+    walletAnalysisMargin: 10,
+    /** Evaluations scoring at least this are stored even when skipped ("interesting"). */
+    storeAboveScore: 60,
+  },
+
   /** How the regime detector nudges size and thresholds (Phase 7). */
   regimeAdjustments: {
     HOT: { sizeMultiplier: 1.2, scoreThresholdDelta: -3 },
@@ -103,3 +129,28 @@ export const SAFETY_PENALTIES = {
   missingMetadataUri: 15,
   unexpectedSupply: 30,
 } as const;
+
+/**
+ * Scorer feature weights. Every feature is normalised to 0-1 (1 = good), and
+ * the combined score is 100 x the weighted average. The weights add up to 1.
+ * Phase 7's daily adjuster nudges these and stores new versions in WeightSnapshot.
+ */
+export const DEFAULT_WEIGHTS = {
+  safety: 0.15,
+  holders: 0.12,
+  buyPressure: 0.1,
+  volume: 0.05,
+  curveVelocity: 0.1,
+  distribution: 0.1,
+  devHolding: 0.06,
+  devBehavior: 0.06,
+  snipers: 0.08,
+  retention: 0.05,
+  creatorLaunches: 0.05,
+  creatorSuccess: 0.03,
+  funderReuse: 0.03,
+  walletAge: 0.02,
+} as const;
+
+export type FeatureName = keyof typeof DEFAULT_WEIGHTS;
+export type Weights = Record<FeatureName, number>;

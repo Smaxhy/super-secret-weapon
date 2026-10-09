@@ -85,6 +85,7 @@ enum ExitReason {
   MANUAL
   KILL_SWITCH
   CIRCUIT_BREAKER
+  MIGRATED // curve completed while held (post-migration tracking arrives in Phase 6)
 }
 
 enum WalletSource {
@@ -262,11 +263,16 @@ model Position {
   sizeSol        Float
   tokenAmountRaw BigInt
   /// % of the original token amount still held (100 → 0)
-  remainingPct   Float   @default(100)
+  remainingPct   Float     @default(100)
   peakPriceSol   Float
   /// Which take-profit tiers already fired, e.g. [2, 5]
-  tpTiersHit     Json    @default("[]")
-  trailingActive Boolean @default(false)
+  tpTiersHit     Json      @default("[]")
+  trailingActive Boolean   @default(false)
+  /// Price at the last real move (>5%) and when it happened (drives the stale exit)
+  refPriceSol    Float?
+  lastMoveAt     DateTime? @db.Timestamptz(3)
+  /// Market state at entry (dev %, top-10 %, holders...) used by rug detection
+  entryContext   Json?
 
   realizedPnlSol Float       @default(0)
   exitReason     ExitReason?

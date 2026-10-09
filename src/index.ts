@@ -10,6 +10,12 @@
  * Shutdown (Ctrl+C or `docker stop`) runs in reverse so nothing is lost.
  */
 import { env, rpcEndpoints } from './config/env';
+import { startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
+import { Evaluator } from './evaluator/evaluator';
+import { WalletAnalyzer } from './evaluator/wallet-analyzer';
+import { PaperExecutor } from './executor/paper-trader';
+import { SellManager } from './executor/sell-manager';
+import { Trader } from './executor/trader';
 import { ensureTimescale } from './db/timescale';
 import { SafetyChecker } from './evaluator/safety-checker';
 import { ObservationLogger } from './learner/observation-logger';
@@ -42,6 +48,7 @@ async function main(): Promise<void> {
   await prisma.$connect();
   log.info('postgres connected');
   await ensureTimescale();
+  await startConfigRefresh();
 
   // 2. Redis
   await redis.ping();
@@ -53,7 +60,17 @@ async function main(): Promise<void> {
   const observations = env.ENABLE_OBSERVATIONS ? new ObservationLogger(liveState) : null;
   observations?.start();
   const safety = env.ENABLE_SAFETY_CHECKS ? new SafetyChecker(liveState) : null;
-  const registry = new TokenRegistry(liveState, observations, safety);
+
+  // Phase 2: scoring + execution. LIVE execution arrives in Phase 4.
+  if (env.TRADING_MODE === 'LIVE') log.warn('TRADING_MODE=LIVE but live execution is not built yet (Phase 4) — running PAPER');
+  const executor = new PaperExecutor(liveState);
+  const trader = new Trader(executor);
+  const sellManager = new SellManager(executor, liveState);
+  sellManager.start();
+  const evaluator = new Evaluator(redis, liveState, new WalletAnalyzer(redis), trader);
+  evaluator.start();
+
+  const registry = new TokenRegistry(liveState, observations, safety, evaluator);
   registry.startSafetyWorker();
 
   // 4. Listener
@@ -72,8 +89,12 @@ async function main(): Promise<void> {
   // Heartbeat line every minute so you can see it's alive at a glance.
   let lastCreates = 0;
   let lastTrades = 0;
-  const statsTimer = setInterval(() => {
+  const statsTimer = setInterval(async () => {
     const s = listener?.stats;
+    const [balance, openPositions] = await Promise.all([
+      executor.getBalanceSol().catch(() => NaN),
+      prisma.position.count({ where: { status: 'OPEN', mode: executor.mode } }).catch(() => -1),
+    ]);
     log.info(
       {
         connected: s?.connected ?? false,
@@ -87,6 +108,11 @@ async function main(): Promise<void> {
         reconnects: s?.reconnects ?? 0,
         rpcQueue: rpcLimiter.pending,
         avgLatencyMs: Math.round(registry.stats.latencyMsAvg),
+        evaluated: evaluator.stats.evaluated,
+        buySignals: evaluator.stats.buys,
+        walletLookups: evaluator.stats.walletLookups,
+        openPositions,
+        [`${executor.mode.toLowerCase()}BalanceSol`]: +balance.toFixed(4),
       },
       '📊 stats',
     );
@@ -104,6 +130,9 @@ async function main(): Promise<void> {
     const force = setTimeout(() => process.exit(1), 15_000); // don't hang forever
     try {
       await listener?.stop();
+      await evaluator.stop();
+      await sellManager.stop();
+      stopConfigRefresh();
       await registry.stop();
       await observations?.stop();
       await closeQueues();

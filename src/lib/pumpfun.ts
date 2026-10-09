@@ -360,3 +360,37 @@ export function isValidPubkey(s: string): boolean {
     return false;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Trade quotes (constant-product maths, same as the on-chain program)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tokens received for `solInLamports` spent on the curve.
+ * The fee (in basis points) is taken from the SOL before it hits the curve.
+ */
+export function quoteBuy(
+  solInLamports: bigint,
+  virtualSolReserves: bigint,
+  virtualTokenReserves: bigint,
+  feeBps: number,
+): { tokensOut: bigint; feeLamports: bigint } {
+  const feeLamports = (solInLamports * BigInt(feeBps)) / 10_000n;
+  const net = solInLamports - feeLamports;
+  if (net <= 0n) return { tokensOut: 0n, feeLamports };
+  const tokensOut = (virtualTokenReserves * net) / (virtualSolReserves + net);
+  return { tokensOut, feeLamports };
+}
+
+/** SOL received (after fee) for selling `tokensIn` raw tokens into the curve. */
+export function quoteSell(
+  tokensIn: bigint,
+  virtualSolReserves: bigint,
+  virtualTokenReserves: bigint,
+  feeBps: number,
+): { solOutLamports: bigint; feeLamports: bigint } {
+  if (tokensIn <= 0n) return { solOutLamports: 0n, feeLamports: 0n };
+  const gross = (virtualSolReserves * tokensIn) / (virtualTokenReserves + tokensIn);
+  const feeLamports = (gross * BigInt(feeBps)) / 10_000n;
+  return { solOutLamports: gross - feeLamports, feeLamports };
+}

@@ -16,6 +16,8 @@
  *   tok:<mint>:live  HASH   counters, reserves, creator, flags
  *   tok:<mint>:bal   HASH   wallet → raw token balance (only > 0 kept)
  *   tok:<mint>:hll   HLL    every wallet that ever traded (approximate count)
+ *   tok:<mint>:early SET    wallets (not the dev) that bought within ~1s of launch
+ *                           — snipers / bundled wallets controlled by the dev
  *   tracked          ZSET   mint → creation time (ms), used to rebuild on restart
  */
 import type { Redis } from 'ioredis';
@@ -37,7 +39,11 @@ const key = {
   live: (mint: string) => `tok:${mint}:live`,
   bal: (mint: string) => `tok:${mint}:bal`,
   hll: (mint: string) => `tok:${mint}:hll`,
+  early: (mint: string) => `tok:${mint}:early`,
 };
+
+/** Buys within this many seconds of the create are counted as snipes / bundles. */
+const EARLY_WINDOW_SECONDS = 1;
 
 /**
  * Lua script: add `delta` to a wallet's balance, and delete the entry if it
@@ -70,6 +76,10 @@ export interface LiveTokenView {
   curve: CurveParams;
   balances: Map<string, bigint>;
   uniqueWallets: number;
+  earlyBuyers: string[];
+  /** Raw tokens the dev bought / sold in total. */
+  devBought: bigint;
+  devSold: bigint;
 }
 
 export interface DerivedMetrics {
@@ -82,11 +92,15 @@ export interface DerivedMetrics {
   top10HolderPct: number;
   buySellRatio: number;
   volumeSol: number;
+  /** % of supply still held by early (sniper/bundle) wallets, dev excluded. */
+  earlyBuyerPct: number;
+  /** Fraction of the dev's purchased tokens they've sold (0-1). */
+  devSoldFraction: number;
 }
 
 export class LiveState {
-  /** In-memory mirror of `tracked` so trade filtering never waits on Redis. */
-  private readonly tracked = new Set<string>();
+  /** In-memory mirror of `tracked` (mint → creation time + dev) so trade filtering never waits on Redis. */
+  private readonly tracked = new Map<string, { createdSec: number; creator: string | null }>();
   private readonly r: RedisWithBalance;
 
   constructor(redis: Redis) {
@@ -98,8 +112,20 @@ export class LiveState {
   async restore(): Promise<number> {
     const cutoff = Date.now() - LIVE_STATE_TTL_SECONDS * 1000;
     await this.r.zremrangebyscore(TRACKED_KEY, '-inf', String(cutoff));
-    const mints = await this.r.zrange(TRACKED_KEY, '0', '-1');
-    for (const m of mints) this.tracked.add(m);
+    const flat = await this.r.zrange(TRACKED_KEY, '0', '-1', 'WITHSCORES');
+    const mints: string[] = [];
+    for (let i = 0; i < flat.length; i += 2) {
+      mints.push(flat[i]!);
+      this.tracked.set(flat[i]!, { createdSec: Math.floor(Number(flat[i + 1]) / 1000), creator: null });
+    }
+    // Recover each token's dev so dev buy/sell tracking keeps working after a restart.
+    const p = this.r.pipeline();
+    for (const m of mints) p.hget(key.live(m), 'creator');
+    const creators = (await p.exec()) ?? [];
+    mints.forEach((m, i) => {
+      const c = creators[i]?.[1];
+      if (typeof c === 'string') this.tracked.get(m)!.creator = c;
+    });
     log.info({ restored: mints.length }, 'restored tracked tokens from redis');
     return mints.length;
   }
@@ -114,7 +140,7 @@ export class LiveState {
 
   /** Start tracking a newly created token. Synchronously marks it tracked first. */
   async onCreate(ev: PumpCreateEvent, detectedAtMs: number): Promise<void> {
-    this.tracked.add(ev.mint);
+    this.tracked.set(ev.mint, { createdSec: ev.timestamp || Math.floor(detectedAtMs / 1000), creator: ev.creator });
     const k = key.live(ev.mint);
     await this.r
       .multi()
@@ -132,15 +158,18 @@ export class LiveState {
         initRTok: ev.realTokenReserves.toString(),
         supply: ev.tokenTotalSupply.toString(),
         complete: '0',
+        devBought: '0',
+        devSold: '0',
       })
       .expire(k, LIVE_STATE_TTL_SECONDS)
-      .zadd(TRACKED_KEY, Date.now(), ev.mint)
+      .zadd(TRACKED_KEY, (ev.timestamp || Math.floor(detectedAtMs / 1000)) * 1000, ev.mint)
       .exec();
   }
 
   /** Apply one buy or sell. Ignores tokens we didn't see being created. */
   async onTrade(ev: PumpTradeEvent): Promise<void> {
-    if (!this.tracked.has(ev.mint)) return;
+    const t = this.tracked.get(ev.mint);
+    if (!t) return;
     const live = key.live(ev.mint);
     const bal = key.bal(ev.mint);
     const hll = key.hll(ev.mint);
@@ -157,6 +186,12 @@ export class LiveState {
     // ioredis pipelines support custom commands; typed loosely here.
     (p as unknown as { balanceDelta(k: string, w: string, d: string): void }).balanceDelta(bal, ev.user, delta.toString());
     p.pfadd(hll, ev.user);
+    if (t.creator && ev.user === t.creator) {
+      p.hincrby(live, ev.isBuy ? 'devBought' : 'devSold', ev.tokenAmount.toString());
+    } else if (ev.isBuy && ev.timestamp - t.createdSec <= EARLY_WINDOW_SECONDS) {
+      p.sadd(key.early(ev.mint), ev.user);
+      p.expire(key.early(ev.mint), LIVE_STATE_TTL_SECONDS);
+    }
     p.expire(live, LIVE_STATE_TTL_SECONDS);
     p.expire(bal, LIVE_STATE_TTL_SECONDS);
     p.expire(hll, LIVE_STATE_TTL_SECONDS);
@@ -172,12 +207,18 @@ export class LiveState {
 
   /** Read everything about one token. Returns null if its state has expired. */
   async read(mint: string): Promise<LiveTokenView | null> {
-    const [liveRes, balRes, hllRes] = (await this.r
+    const [liveRes, balRes, hllRes, earlyRes] = (await this.r
       .pipeline()
       .hgetall(key.live(mint))
       .hgetall(key.bal(mint))
       .pfcount(key.hll(mint))
-      .exec()) as [[Error | null, Record<string, string>], [Error | null, Record<string, string>], [Error | null, number]];
+      .smembers(key.early(mint))
+      .exec()) as [
+      [Error | null, Record<string, string>],
+      [Error | null, Record<string, string>],
+      [Error | null, number],
+      [Error | null, string[]],
+    ];
 
     const h = liveRes[1];
     if (!h || !h.creator) return null;
@@ -206,13 +247,16 @@ export class LiveState {
       },
       balances,
       uniqueWallets: hllRes[1] ?? 0,
+      earlyBuyers: earlyRes[1] ?? [],
+      devBought: big(h.devBought),
+      devSold: big(h.devSold),
     };
   }
 
   /** Stop tracking a token and free its Redis memory. */
   async forget(mint: string): Promise<void> {
     this.tracked.delete(mint);
-    await this.r.multi().del(key.live(mint), key.bal(mint), key.hll(mint)).zrem(TRACKED_KEY, mint).exec();
+    await this.r.multi().del(key.live(mint), key.bal(mint), key.hll(mint), key.early(mint)).zrem(TRACKED_KEY, mint).exec();
   }
 }
 
@@ -224,6 +268,7 @@ export function deriveMetrics(v: LiveTokenView): DerivedMetrics {
   const balances = [...v.balances.values()].sort((a, b) => (a > b ? -1 : a < b ? 1 : 0));
   const top10 = balances.slice(0, 10).reduce((s, b) => s + Number(b), 0);
   const dev = Number(v.balances.get(v.creator) ?? 0n);
+  const early = v.earlyBuyers.reduce((s, w) => s + Number(v.balances.get(w) ?? 0n), 0);
 
   return {
     priceSol: price,
@@ -236,5 +281,7 @@ export function deriveMetrics(v: LiveTokenView): DerivedMetrics {
     // Ratio of buy count to sell count; when nobody has sold yet we report the buy count itself.
     buySellRatio: v.sells === 0 ? v.buys : v.buys / v.sells,
     volumeSol: v.buyVolumeSol + v.sellVolumeSol,
+    earlyBuyerPct: (early / supply) * 100,
+    devSoldFraction: v.devBought > 0n ? Math.min(1, Number(v.devSold) / Number(v.devBought)) : 0,
   };
 }
