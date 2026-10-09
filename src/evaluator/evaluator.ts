@@ -29,6 +29,7 @@ import type { LiveState } from '../scanner/live-state';
 import { getSolUsd } from '../lib/sol-price';
 import { FeeEstimator } from './fee-estimator';
 import { explainBuy } from '../learner/explain';
+import { hotKeywords } from '../scanner/x-watcher';
 import type { OutcomeLabeler } from '../learner/outcome-labeler';
 import { currentRegime } from '../learner/regime-detector';
 import { keywordCheck, NEUTRAL_SOCIAL_FEATURES, SocialAnalyzer, socialsScore, twitterInfo } from './social-analyzer';
@@ -149,7 +150,8 @@ export class Evaluator {
     // Socials + keywords (from the metadata file, if it has been fetched).
     let socialInfo: { hasTwitter: boolean; blockedKeyword: string | null } | undefined;
     let socialFeatures = NEUTRAL_SOCIAL_FEATURES;
-    const kw = keywordCheck(`${token.name} ${token.symbol} ${token.description ?? ''}`, cfg.keywords.boost, cfg.keywords.block);
+    // Your boost list + keywords currently hot on X (e.g. from Elon's latest post).
+    const kw = keywordCheck(`${token.name} ${token.symbol} ${token.description ?? ''}`, [...cfg.keywords.boost, ...hotKeywords()], cfg.keywords.block);
     if (token.metadataFetchedAt) {
       const tw = twitterInfo(token.twitter);
       socialInfo = { hasTwitter: !!(tw.handle || tw.isCommunity), blockedKeyword: kw.blocked };

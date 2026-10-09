@@ -2,6 +2,7 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../../lib/prisma';
 import { rpcUsage } from '../../lib/solana';
+import { hotKeywords } from '../../scanner/x-watcher';
 import type { ApiDeps } from '../deps';
 
 export async function scannerStatsRoutes(app: FastifyInstance, deps: ApiDeps): Promise<void> {
@@ -37,6 +38,7 @@ export async function scannerStatsRoutes(app: FastifyInstance, deps: ApiDeps): P
       scoreHistogram: histogram,
       launchesPerHour: hourly.map((h) => ({ hour: h.hour.toISOString(), count: Number(h.n) })),
       regime: null, // Phase 7
+      hotKeywords: hotKeywords(),
       // Which entry rules blocked buys in the last 24h (from stored evaluations).
       skipReasons: await (async () => {
         const evals = await prisma.evaluation.findMany({ where: { createdAt: { gte: day }, decision: { not: 'BUY' } }, select: { mint: true, reasons: true }, orderBy: { createdAt: 'desc' }, take: 20_000 });

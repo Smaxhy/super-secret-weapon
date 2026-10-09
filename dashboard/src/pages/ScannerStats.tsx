@@ -90,6 +90,20 @@ export function ScannerStats() {
               <p className="mt-2 text-sm text-ink-2">Only tokens that reached a scoring checkpoint. The bot buys at 70+ (copy trades 60+).</p>
             </Card>
           </div>
+          <Card title="Hot keywords from X" className="mt-4">
+            {d.hotKeywords?.length ? (
+              <div className="flex flex-wrap gap-2">
+                {d.hotKeywords.map((k) => (
+                  <span key={k} className="rounded-full border border-line bg-surface-2 px-3 py-1 text-sm text-ink">
+                    🔥 {k}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-ink-2">None right now. Add an X API key (TWITTER_BEARER_TOKEN in .env on the VPS) to turn on live keywords from @elonmusk and others; your own boost words on the Controls page always apply.</p>
+            )}
+          </Card>
+
           <Card title="Market regime" className="mt-4">
             <p className="text-ink-2">{d.regime ?? 'Hot / normal / cold detection arrives with the learning engine (Phase 7).'}</p>
           </Card>

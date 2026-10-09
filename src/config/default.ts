@@ -85,10 +85,18 @@ export const DEFAULT_CONFIG = {
     checkpointsSec: [0, 30, 90, 180],
   },
 
+  /** X accounts whose posts become "hot keywords" (needs TWITTER_BEARER_TOKEN). */
+  x: {
+    accounts: ['elonmusk'] as string[],
+    pollSec: 300,
+    /** How long a keyword stays hot after a post. */
+    hotHours: 6,
+  },
+
   /** Keyword lists matched against name, ticker and description (whole words, case-insensitive). */
   keywords: {
     /** A match nudges the score up. */
-    boost: [] as string[],
+    boost: ['elon', 'musk', 'doge', 'grok', 'trump', 'maga', 'agent', 'pepe'] as string[],
     /** A match blocks the buy. */
     block: ['rug', 'scam', 'honeypot', 'test'] as string[],
   },

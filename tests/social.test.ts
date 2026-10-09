@@ -47,3 +47,12 @@ describe('social entry rules', () => {
     expect(checkEntryRules({ ...base, entry, social: { hasTwitter: true, blockedKeyword: null } })).toEqual([]);
   });
 });
+
+import { extractKeywords } from '../src/scanner/x-watcher';
+describe('X keyword extraction', () => {
+  it('picks hashtags, cashtags and capitalised words, skipping filler', () => {
+    const k = extractKeywords('The Doge army is back. Grok will be amazing #MarsColony $TSLA https://x.co');
+    expect(k).toEqual(expect.arrayContaining(['marscolony', 'tsla', 'doge', 'grok']));
+    expect(k).not.toContain('the');
+  });
+});
