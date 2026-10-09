@@ -60,7 +60,7 @@ smart money → learning engine → ML → social). See README.md.
   gave back profit, stopped then ran, sold too early…), stores the lesson on the position and adjusts per
   strategy: buy bar −5…+12, size ×0.35–1 on losing streaks, stop bias ±5%, trail ×0.75–1.3.
 - Stop loss (`exit.stopLoss`): owner's band = 10–20% loss AFTER fees: 2×volatility (+coach bias) clamped to
-  10–20% (15% until volatility is known), confirmed break (2 ticks + 3s), immediate past the hard limit.
+  10–20% (15% until volatility is known), must hold 1.5s under the stop, immediate past the hard limit.
   MIGRATION_MOMENTUM max 15% (`maxPctByStrategy`).
 - Trailing (`exit.trail.ladder`, owner: strict + aggressive): 6% at 1.15x → 7% 1.3x → 9% 1.5x → 11% 2x →
   14% 3x → 17% 5x → 20% 10x (linear), ×0.8–1.15 by volatility, × coach trailFactor; sells the moment it
@@ -78,10 +78,10 @@ smart money → learning engine → ML → social). See README.md.
 - Exits: tiers (25% at 1.3x, 15% at 5x), then **initials** at 2x (sell enough to get the stake + fees back →
   "house money"), the rest rides as a **runner** with a volatility-adaptive trail (ignores resistance/risk exits,
   max hold 2× normal). Protect profit (1.3x → floor 1.05x), resistance exit, momentum-risk exits, rug/copy exits.
-  Fees: curve 1.25%, PumpSwap 0.3%, 0.0015 SOL gas+tip per tx, 1.5% slippage, 0.4–1.2s random landing delay
+  Fees: curve 1.25%, PumpSwap 0.3%, 0.0015 SOL gas+tip per tx, 1.5% slippage, 0.15–0.5s random landing delay
   before each paper fill. Every trade stores an explanation (+ the coach's lesson after review).
 - Dashboard: positions show entry MC vs current MC (SOL + USD), a live price chart per position
-  (Redis `pos:hist:<id>`, 5s points, 3-day TTL) with TP/stop/trail lines; redesigned layout + footer.
+  (Redis `pos:hist:<id>`, 1s points + spike highs, 3-day TTL) with TP/stop/trail lines; redesigned layout + footer.
 - Pricing safety: fake/duplicate PumpSwap pools rejected (curve must be ~complete, price within 3x of final curve
   price), trade-implied price cross-checks, every paper fill clamped to ≤3x the last real trade price
   (`suspicious_fill` WARN events), sells serialized per position. `scripts/find-suspicious-trades.ts` lists bad trades.
