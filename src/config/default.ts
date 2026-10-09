@@ -242,6 +242,26 @@ export const DEFAULT_CONFIG = {
   },
 
   /**
+   * Smart-money discovery (src/learner/wallet-pnl.ts): real profit per wallet from every trade
+   * the bot sees (creators and launch snipers excluded). Every `everyMin` the `top` wallets with
+   * ≥ minSells sells, ≥ minWinRate wins, ≥ minPnlSol profit and ≥ minAvgPnlSol per sell (filters
+   * spray bots) become KOL wallets automatically (weight `weight`); dropped ones are paused.
+   */
+  discovery: {
+    enabled: true as boolean,
+    everyMin: 30,
+    top: 40,
+    minSells: 8,
+    maxSells: 3000,
+    minWinRate: 0.45,
+    minPnlSol: 5,
+    minAvgPnlSol: 0.05,
+    sniperWindowSec: 15,
+    decayPerDay: 0.85,
+    weight: 0.6,
+  },
+
+  /**
    * "What's working now": every `everyMin` the top coins (DexScreener trending + our biggest-volume
    * tracked coins of the last hour) are read; words shared by ≥ `minLeaders` of them become hot
    * narratives (like X hot keywords) for `narrative` scoring.

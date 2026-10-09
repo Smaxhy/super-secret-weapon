@@ -28,6 +28,7 @@ import { InsiderTracker } from './evaluator/insider-cluster';
 import { CrowdTracker } from './scanner/crowd-tracker';
 import { DexScreener } from './scanner/dexscreener';
 import { MarketLeaders } from './scanner/market-leaders';
+import { WalletPnl } from './learner/wallet-pnl';
 import { TradeCoach } from './learner/trade-coach';
 import { SwingWatcher } from './executor/swing-watcher';
 import { ObservationLogger } from './learner/observation-logger';
@@ -134,6 +135,10 @@ async function main(): Promise<void> {
   const leaders = new MarketLeaders(liveState, dex);
   evaluator.leaders = leaders;
   leaders.start();
+  // Smart-money discovery: real profit per wallet → the best become KOL wallets automatically.
+  const walletPnl = new WalletPnl(redis);
+  registry.pnl = walletPnl;
+  walletPnl.start();
   // Exits react to every trade on a coin we hold (not just the 1s tick); real trade highs count as peaks.
   sellManager.crowd = crowd;
   registry.onTradeApplied.push((mint) => sellManager.onTrade(mint));
@@ -245,7 +250,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -314,6 +319,7 @@ async function main(): Promise<void> {
       coach.stop();
       dex.stop();
       leaders.stop();
+      walletPnl.stop();
       stopCalibration();
       swings.stop();
       crowd.stop();

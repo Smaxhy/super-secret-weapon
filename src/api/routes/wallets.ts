@@ -14,6 +14,7 @@ import { isValidPubkey } from '../../lib/pumpfun';
 import { redis } from '../../lib/redis';
 import { getConfig } from '../../config/runtime-config';
 import { kolBoard } from '../../scanner/kol-signal';
+import type { ApiDeps } from '../deps';
 
 /**
  * Parse a pasted wallet list: one wallet per line, "name address", "address name",
@@ -37,7 +38,14 @@ export function parseWalletList(text: string): { valid: Array<{ address: string;
   return { valid: [...valid.entries()].map(([address, label]) => ({ address, label })), invalid };
 }
 
-export async function walletsRoutes(app: FastifyInstance): Promise<void> {
+export async function walletsRoutes(app: FastifyInstance, deps?: ApiDeps): Promise<void> {
+  /** The most profitable wallets the bot has seen (~7 days; creators and snipers excluded). */
+  app.get('/api/smart-wallets', async () => {
+    const rows = (await deps?.walletPnl?.leaderboard(25)) ?? [];
+    const known = new Map((await prisma.trackedWallet.findMany({ where: { address: { in: rows.map((r) => r.wallet) } }, select: { address: true, label: true, kind: true, active: true } })).map((w) => [w.address, w]));
+    return rows.map((r) => ({ ...r, label: known.get(r.wallet)?.label ?? null, tracked: known.get(r.wallet)?.active ?? false }));
+  });
+
   app.get('/api/wallets', async () => {
     const [wallets, copies] = await Promise.all([
       prisma.trackedWallet.findMany({ orderBy: { addedAt: 'desc' } }),
@@ -51,6 +59,9 @@ export async function walletsRoutes(app: FastifyInstance): Promise<void> {
         label: w.label,
         kind: w.kind,
         notes: w.notes,
+        source: w.source,
+        pnlSol: w.score14d,
+        winRate: w.winRate,
         active: w.active,
         addedAt: w.addedAt,
         lastSeenAt: w.lastSeenAt,

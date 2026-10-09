@@ -5,6 +5,7 @@ import type { LiveState } from '../scanner/live-state';
 import type { ListenerStats } from '../scanner/pumpfun-listener';
 import type { DexScreener } from '../scanner/dexscreener';
 import type { MarketLeaders } from '../scanner/market-leaders';
+import type { WalletPnl } from '../learner/wallet-pnl';
 
 export interface ApiDeps {
   liveState: LiveState;
@@ -14,6 +15,7 @@ export interface ApiDeps {
   sellManager: SellManager;
   dex?: DexScreener | null;
   leaders?: MarketLeaders | null;
+  walletPnl?: WalletPnl | null;
 }
 
 /** Classify a token for the live feed colour code. */

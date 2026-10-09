@@ -11,6 +11,9 @@ interface WalletRow {
   label: string | null;
   kind: 'COPY' | 'KOL';
   notes: string | null;
+  source: 'MANUAL' | 'DISCOVERED';
+  pnlSol: number | null;
+  winRate: number | null;
   active: boolean;
   addedAt: string;
   lastSeenAt: string | null;
@@ -51,6 +54,50 @@ function KolBoard() {
         </ul>
       ) : (
         <Empty>No KOL buys in the last {data?.windowMin ?? 60} min. 2+ KOLs in the same coin makes the bot check it right away.</Empty>
+      )}
+    </Card>
+  );
+}
+
+interface SmartRow {
+  wallet: string;
+  label: string | null;
+  tracked: boolean;
+  pnlSol: number;
+  sells: number;
+  winRate: number;
+  avgPnlSol: number;
+}
+
+function SmartMoney() {
+  const { data } = useApi<SmartRow[]>('/api/smart-wallets', 60_000);
+  return (
+    <Card title="Smart money the bot found (~7 days)" className="mb-4">
+      <p className="mb-2 text-sm text-ink-2">
+        Real profit of every wallet the bot sees trading (devs and launch snipers left out). The best ones become KOLs automatically every 30 min — so it isn't
+        limited to the names you know.
+      </p>
+      {data && data.length ? (
+        <ul className="divide-y divide-line text-sm">
+          {data.map((r, i) => (
+            <li key={r.wallet} className="flex min-w-0 items-center justify-between gap-2 py-1.5">
+              <a href={`https://solscan.io/account/${r.wallet}`} target="_blank" rel="noreferrer" className="min-w-0 truncate font-mono text-ink hover:underline">
+                <span className="mr-1 font-sans text-muted">#{i + 1}</span>
+                {r.label ?? shortAddr(r.wallet)}
+                {r.tracked && <span className="ml-1 font-sans text-xs text-accent">● KOL</span>}
+              </a>
+              <span className="shrink-0 tabular-nums">
+                <span className="text-up">+{r.pnlSol.toFixed(1)} SOL</span>
+                <span className="text-muted">
+                  {' '}
+                  · {Math.round(r.winRate * 100)}% · {Math.round(r.sells)} sells
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <Empty>Builds up as the bot watches trades — the first smart wallets usually show within an hour or two.</Empty>
       )}
     </Card>
   );
@@ -128,6 +175,7 @@ export function Wallets() {
       <PageHeader title="Wallets & KOLs" subtitle="KOLs (Cupsey, Cented…): when several buy the same coin the bot checks it right away and scores it higher; KOLs dumping = no buy / take profit. Copy wallets: each buy is checked and copied (half size, strict) if it passes the rules." />
 
       <KolBoard />
+      <SmartMoney />
 
       <Card title="Add a wallet" className="mb-4">
         <form onSubmit={add} className="grid gap-3 sm:grid-cols-[2fr_1fr_auto_auto] sm:items-end">
@@ -173,7 +221,14 @@ export function Wallets() {
                   <div className="font-semibold text-ink">
                     {w.label ?? shortAddr(w.address)}{' '}
                     <span className={`ml-1 rounded border border-line px-1.5 py-0.5 text-xs font-normal ${w.kind === 'KOL' ? 'text-accent' : 'text-ink-2'}`}>{w.kind === 'KOL' ? 'KOL' : 'Copy'}</span>
+                    {w.source === 'DISCOVERED' && <span className="ml-1 rounded border border-line px-1.5 py-0.5 text-xs font-normal text-up">Auto-found</span>}
                   </div>
+                  {w.pnlSol !== null && (
+                    <div className="text-xs tabular-nums text-ink-2">
+                      ~7d: <span className={w.pnlSol >= 0 ? 'text-up' : 'text-down'}>{w.pnlSol >= 0 ? '+' : ''}{w.pnlSol.toFixed(1)} SOL</span>
+                      {w.winRate !== null && ` · ${Math.round(w.winRate * 100)}% wins`}
+                    </div>
+                  )}
                   {w.notes && <div className="text-xs text-muted">{w.notes}</div>}
                   <a href={`https://solscan.io/account/${w.address}`} target="_blank" rel="noreferrer" className="break-all font-mono text-xs text-ink-2 underline-offset-2 hover:underline">
                     {w.address}

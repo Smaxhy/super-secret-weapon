@@ -74,7 +74,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     await tradesRoutes(secured, deps);
     await performanceRoutes(secured, deps);
     await scannerStatsRoutes(secured, deps);
-    await walletsRoutes(secured);
+    await walletsRoutes(secured, deps);
     await learnerRoutes(secured);
     await controlsRoutes(secured, deps);
   });

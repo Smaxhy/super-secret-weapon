@@ -81,6 +81,11 @@ smart money → learning engine → ML → social). See README.md.
   ≥2 KOLs in a coin within 60 min → immediate check; +3 pts per KOL (max 12); KOLs who bought now selling
   (≥2, ≥half) → −6, rug screen blocks the buy, open position ≥1.05x is sold. Wallets page: KOL board, bulk
   import ("name address" per line, POST /api/wallets/bulk), kind selector.
+- Smart-money discovery (`discovery` config, `src/learner/wallet-pnl.ts`): realised PnL per wallet from every
+  tracked trade (Redis `wpos:*` per-coin cost basis 12h, `wpnl:*` aggregates, ×0.85/day decay, ≤80k wallets;
+  creators + buys <15s after launch excluded). Every 30 min the top 40 (≥8 sells, ≥45% wins, ≥5 SOL, ≥0.05
+  SOL/sell, ≤3000 sells) become KOL wallets (source DISCOVERED, "Smart #n"); dropped → paused, deleted after
+  7 days; manual wallets just get stats. `/api/smart-wallets` leaderboard on the Wallets page.
 - "What's working now" (`leaders` config, `src/scanner/market-leaders.ts`): top coins = our biggest 1h-volume
   tracked coins + DexScreener trending; words shared by ≥2 of them = hot narratives, added to the narrative
   hot-keyword list. Scanner page card (`/api/market-leaders`).

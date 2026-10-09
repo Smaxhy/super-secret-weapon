@@ -525,6 +525,11 @@ export class LiveState {
     await this.r.hset(key.live(mint), { evalId: evaluationId, evalBase: p, evalMax: p, evalMin: p, evalAt: String(Date.now()) });
   }
 
+  /** Launch time + creator for a tracked coin (memory only, no Redis). */
+  meta(mint: string): { createdSec: number; creator: string | null } | null {
+    return this.tracked.get(mint) ?? null;
+  }
+
   /** Has the curve completed (migrated)? One cheap read. */
   async isComplete(mint: string): Promise<boolean> {
     return (await this.r.hget(key.live(mint), 'complete')) === '1';

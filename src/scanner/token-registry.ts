@@ -26,12 +26,15 @@ import type { LiveState } from './live-state';
 import { curvePriceSol } from '../lib/pumpfun';
 import type { InsiderTracker } from '../evaluator/insider-cluster';
 import type { CrowdTracker } from './crowd-tracker';
+import type { WalletPnl } from '../learner/wallet-pnl';
 
 const log = moduleLogger('token-registry');
 
 export class TokenRegistry {
   private safetyWorker: Worker<SafetyJob> | null = null;
   readonly stats = { created: 0, createErrors: 0, completed: 0, tradeErrors: 0, latencyMsAvg: 0 };
+  /** Smart-money discovery: every trade's realised profit per wallet (set in index.ts). */
+  pnl: WalletPnl | null = null;
   /** Called with the mint after every trade is applied to the live state (exits react instantly). */
   readonly onTradeApplied: Array<(mint: string) => void> = [];
 
@@ -58,6 +61,10 @@ export class TokenRegistry {
           if (!this.liveState.isTracked(event.mint)) return;
           this.crowd?.onCurveTrade(event, envelope.slot);
           for (const f of this.onTradeApplied) f(event.mint);
+          if (this.pnl) {
+            const meta = this.liveState.meta(event.mint);
+            void this.pnl.onTrade({ mint: event.mint, wallet: event.user, isBuy: event.isBuy, sol: Number(event.solAmount) / 1e9, tokens: Number(event.tokenAmount) / 1e6, ageSec: meta ? event.timestamp - meta.createdSec : null, creator: meta?.creator ?? null });
+          }
           if (!this.insiders) return;
           return this.insiders.onTrade({
             mint: event.mint, user: event.user, isBuy: event.isBuy, lamports: event.solAmount, tokens: event.tokenAmount, timestamp: event.timestamp, slot: envelope.slot,
@@ -79,6 +86,10 @@ export class TokenRegistry {
           if (!mint) return;
           this.crowd?.onAmmTrade(mint, event, envelope.slot);
           for (const f of this.onTradeApplied) f(mint);
+          if (this.pnl) {
+            const meta = this.liveState.meta(mint);
+            void this.pnl.onTrade({ mint, wallet: event.user, isBuy: event.isBuy, sol: Number(event.quoteAmount) / 1e9, tokens: Number(event.baseAmount) / 1e6, ageSec: null, creator: meta?.creator ?? null });
+          }
           if (!this.insiders) return;
           return this.insiders.onTrade({ mint, user: event.user, isBuy: event.isBuy, lamports: event.quoteAmount, tokens: event.baseAmount, timestamp: event.timestamp, slot: envelope.slot });
         }).catch((err: Error) => {
