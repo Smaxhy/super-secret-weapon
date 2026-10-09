@@ -16,7 +16,21 @@ const subs = new Set<() => void>();
 
 export function registerPwa(): void {
   if ('serviceWorker' in navigator && import.meta.env.PROD) {
-    window.addEventListener('load', () => void navigator.serviceWorker.register('./sw.js').catch(() => undefined));
+    window.addEventListener('load', async () => {
+      const reg = await navigator.serviceWorker.register('./sw.js').catch(() => undefined);
+      // Check GitHub Pages for a new dashboard version every 10 minutes and when reopened.
+      const check = () => void reg?.update().catch(() => undefined);
+      setInterval(check, 10 * 60_000);
+      document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && check());
+    });
+    // A new version took over → reload once so the user sees it.
+    let reloaded = false;
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloaded) return;
+      reloaded = true;
+      window.location.reload();
+    });
   }
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();

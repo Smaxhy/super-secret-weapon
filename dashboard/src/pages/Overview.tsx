@@ -7,9 +7,9 @@ import { ago, duration, EXIT_LABEL, pct, sol } from '../lib/format';
 import type { Detection, Overview as OverviewData, TradeRowData } from '../lib/types';
 
 export function Overview() {
-  const o = useApi<OverviewData>('/api/overview', 10_000);
-  const trades = useApi<TradeRowData[]>('/api/trades?limit=5', 15_000);
-  const feed = useApi<Detection[]>('/api/detections?limit=6', 10_000);
+  const o = useApi<OverviewData>('/api/overview', 15_000, ['trade', 'token']);
+  const trades = useApi<TradeRowData[]>('/api/trades?limit=5', 30_000, ['trade']);
+  const feed = useApi<Detection[]>('/api/detections?limit=6', 15_000, ['token', 'safety', 'evaluation']);
 
   if (o.loading && !o.data) return <Loading />;
   const d = o.data;

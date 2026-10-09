@@ -27,7 +27,7 @@ const FEATURE_LABEL: Record<string, string> = {
 
 export function TokenDetail() {
   const { mint = '' } = useParams();
-  const { data: d, error, loading } = useApi<Detail>(`/api/detections/${mint}`, 10_000);
+  const { data: d, error, loading } = useApi<Detail>(`/api/detections/${mint}`, 10_000, ['safety', 'evaluation', 'trade']);
   if (loading && !d) return <Loading />;
   if (error && !d) return <ErrorBox message={error} />;
   if (!d) return null;

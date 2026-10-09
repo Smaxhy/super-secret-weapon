@@ -5,10 +5,10 @@ import { ago, multiple, num, pct, price, sol, STRATEGY_LABEL } from '../lib/form
 import type { OpenPosition } from '../lib/types';
 
 export function Positions() {
-  const { data, error, loading } = useApi<OpenPosition[]>('/api/positions', 3_000);
+  const { data, error, loading } = useApi<OpenPosition[]>('/api/positions', 3_000, ['trade']);
   return (
     <>
-      <PageHeader title="Open positions" subtitle="Updates every 3 seconds. Manual sell arrives with the Controls page (Phase 5)." />
+      <PageHeader title="Open positions" subtitle="Updates live. Manual sell arrives with the Controls page (Phase 5)." />
       {error && <ErrorBox message={error} />}
       {loading && !data ? <Loading /> : !data?.length ? <Empty>No open positions right now.</Empty> : null}
       <div className="grid gap-4 lg:grid-cols-2">

@@ -5,7 +5,7 @@ import { EXIT_LABEL, pct, STRATEGY_LABEL } from '../lib/format';
 import type { PerformanceData } from '../lib/types';
 
 export function Performance() {
-  const { data: d, error, loading } = useApi<PerformanceData>('/api/performance', 30_000);
+  const { data: d, error, loading } = useApi<PerformanceData>('/api/performance', 60_000, ['trade']);
   if (loading && !d) return <Loading />;
   return (
     <>

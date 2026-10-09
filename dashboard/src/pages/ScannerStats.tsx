@@ -5,7 +5,7 @@ import { num, pct } from '../lib/format';
 import type { ScannerStatsData } from '../lib/types';
 
 export function ScannerStats() {
-  const { data: d, error, loading } = useApi<ScannerStatsData>('/api/scanner-stats', 30_000);
+  const { data: d, error, loading } = useApi<ScannerStatsData>('/api/scanner-stats', 30_000, ['token']);
   if (loading && !d) return <Loading />;
   return (
     <>

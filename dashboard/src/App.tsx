@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import { HashRouter, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { InstallButton } from './components/InstallButton';
+import { Toasts } from './components/Toasts';
 import { BotStatusBadge } from './components/StatusBadge';
 import { disconnectSocket, useSocketStatus } from './hooks/useWebSocket';
 import { getToken, setToken } from './lib/api';
@@ -137,6 +138,8 @@ function Shell() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+
+      <Toasts />
 
       {/* Mobile bottom nav */}
       <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-6 border-t border-line bg-surface pb-[env(safe-area-inset-bottom)] md:hidden" aria-label="Main">

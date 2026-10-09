@@ -28,7 +28,7 @@ export function History() {
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'closedAt', dir: -1 });
 
   const qs = new URLSearchParams({ limit: '2000', ...(strategy && { strategy }), ...(outcome && { outcome }), ...(exitReason && { exitReason }), ...(from && { from }), ...(to && { to: `${to}T23:59:59Z` }) }).toString();
-  const { data, error, loading } = useApi<TradeRowData[]>(`/api/trades?${qs}`, 30_000);
+  const { data, error, loading } = useApi<TradeRowData[]>(`/api/trades?${qs}`, 60_000, ['trade']);
 
   const rows = useMemo(() => {
     const r = [...(data ?? [])];

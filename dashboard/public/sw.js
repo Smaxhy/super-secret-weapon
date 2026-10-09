@@ -3,7 +3,7 @@
  * offline. Only the dashboard's own files are cached — bot data (the API on
  * your VPS) is always fetched live and never stored on the phone.
  */
-const CACHE = 'solbot-shell-v1';
+const CACHE = 'solbot-shell-__BUILD_ID__';
 
 const CACHE_VERSION_FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png'];
 
