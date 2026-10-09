@@ -43,10 +43,14 @@ const EnvSchema = z.object({
 
   /**
    * Where live launches/trades come from:
-   *   pumpportal (default) — free, no Helius credits
+   *   hybrid (default)     — PumpPortal for launches + Solana's public node for
+   *                          trades. Free, no Helius credits.
+   *   pumpportal           — PumpPortal only (its per-token trade feed)
    *   helius               — logsSubscribe on your Helius key (uses LOTS of credits)
    */
-  DATA_SOURCE: z.enum(['pumpportal', 'helius']).default('pumpportal'),
+  DATA_SOURCE: z.enum(['hybrid', 'pumpportal', 'helius']).default('hybrid'),
+  /** Free WebSocket for the trade stream in hybrid mode (Solana's public node by default). */
+  TRADES_WS_URL: z.string().default('wss://api.mainnet-beta.solana.com'),
   PUMPPORTAL_API_KEY: optionalString,
   ENABLE_SCANNER: bool(true),
   ENABLE_SAFETY_CHECKS: bool(true),

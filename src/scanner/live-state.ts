@@ -323,6 +323,12 @@ export class LiveState {
     if (failed) log.warn({ mint, err: failed[0]?.message }, 'trade pipeline had an error');
   }
 
+  /** Price refresh read straight from the chain (used when the stream goes quiet on a token we hold). */
+  async applyCurveState(mint: string, s: { virtualSolReserves: bigint; virtualTokenReserves: bigint; complete: boolean }): Promise<void> {
+    if (!this.tracked.has(mint)) return;
+    await this.r.hset(key.live(mint), { vSol: s.virtualSolReserves.toString(), vTok: s.virtualTokenReserves.toString(), ...(s.complete ? { complete: '1' } : {}), polledAt: String(Date.now()) });
+  }
+
   async onComplete(ev: PumpCompleteEvent): Promise<void> {
     if (!this.tracked.has(ev.mint)) return;
     await this.r.hset(key.live(ev.mint), { complete: '1', completedAt: String(ev.timestamp * 1000) });

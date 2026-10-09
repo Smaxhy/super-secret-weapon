@@ -100,7 +100,11 @@ export class PumpFunListener extends EventEmitter {
     lastEventAt: null,
   };
 
-  constructor(private readonly wsUrl: string) {
+  constructor(
+    private readonly wsUrl: string,
+    /** Fetch full transactions (Helius RPC credits) when a create's event is missing. Off when another source supplies launches. */
+    private readonly fetchMissingCreates = true,
+  ) {
     super();
   }
 
@@ -250,7 +254,7 @@ export class PumpFunListener extends EventEmitter {
     if (parsed.truncated) this.stats.truncatedLogs++;
 
     const hasCreate = parsed.events.some((e) => e.kind === 'create');
-    if (parsed.sawCreateInstruction && !hasCreate) {
+    if (parsed.sawCreateInstruction && !hasCreate && this.fetchMissingCreates) {
       // The create ran but its event wasn't in the logs (truncated logs or an
       // emit_cpi-style event). Fetch the full transaction and decode it there.
       void this.fallbackFetch(value.signature, context.slot);

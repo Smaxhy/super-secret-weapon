@@ -26,6 +26,9 @@ import { prisma } from '../lib/prisma';
 import { logTrade } from '../learner/trade-logger';
 import { deriveMetrics, type LiveState } from '../scanner/live-state';
 import type { Redis } from 'ioredis';
+import { PublicKey } from '@solana/web3.js';
+import { decodeBondingCurveAccount } from '../lib/pumpfun';
+import { getConnection } from '../lib/solana';
 import { copySoldKey } from '../scanner/whale-tracker';
 import type { Executor } from './types';
 
@@ -185,6 +188,7 @@ export class SellManager {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
   private readonly samples = new Map<string, ActivitySample[]>();
+  private readonly lastPoll = new Map<string, number>();
 
   constructor(
     private readonly executor: Executor,
@@ -205,11 +209,12 @@ export class SellManager {
     if (this.running) return; // previous tick still working
     this.running = true;
     try {
-      const positions = await prisma.position.findMany({ where: { mode: this.executor.mode, status: 'OPEN' }, include: { token: { select: { symbol: true } } } });
+      const positions = await prisma.position.findMany({ where: { mode: this.executor.mode, status: 'OPEN' }, include: { token: { select: { symbol: true, bondingCurve: true } } } });
       const openIds = new Set(positions.map((x) => x.id));
       for (const id of this.samples.keys()) if (!openIds.has(id)) this.samples.delete(id);
       for (const p of positions) {
         try {
+          await this.refreshIfStale(p.mint, p.token.bondingCurve);
           await this.manage(p, p.token.symbol);
         } catch (err) {
           log.error({ positionId: p.id, err: (err as Error).message }, 'failed to manage position');
@@ -219,6 +224,26 @@ export class SellManager {
       log.error({ err: (err as Error).message }, 'sell manager tick failed');
     } finally {
       this.running = false;
+    }
+  }
+
+  /**
+   * Safety net: if the live stream hasn't updated a token we HOLD for 20s,
+   * read its bonding curve straight from the chain (1 Helius credit, at most
+   * every 15s per position) so exits never act on a frozen price.
+   */
+  private async refreshIfStale(mint: string, bondingCurve: string): Promise<void> {
+    const view = await this.liveState.read(mint);
+    if (!view || view.complete || !bondingCurve) return;
+    const now = Date.now();
+    if (now - (view.lastTradeAtMs ?? 0) < 20_000 || now - (this.lastPoll.get(mint) ?? 0) < 15_000) return;
+    this.lastPoll.set(mint, now);
+    try {
+      const info = await getConnection().getAccountInfo(new PublicKey(bondingCurve), 'confirmed');
+      const state = info ? decodeBondingCurveAccount(info.data) : null;
+      if (state) await this.liveState.applyCurveState(mint, state);
+    } catch (err) {
+      log.debug({ mint, err: (err as Error).message }, 'curve poll failed');
     }
   }
 

@@ -27,7 +27,7 @@ import { closeQueues } from './lib/queues';
 import { closeRedis, redis } from './lib/redis';
 import { rpcLimiter } from './lib/solana';
 import { LiveState } from './scanner/live-state';
-import { PumpFunListener } from './scanner/pumpfun-listener';
+import { PumpFunListener, type ListenerStats } from './scanner/pumpfun-listener';
 import { PumpPortalListener } from './scanner/pumpportal-listener';
 import { WhaleTracker } from './scanner/whale-tracker';
 import { TokenRegistry } from './scanner/token-registry';
@@ -79,62 +79,97 @@ async function main(): Promise<void> {
   // Copy trading: watch the wallets you added on the dashboard.
   const whales = new WhaleTracker(redis, liveState, evaluator);
 
-  // 4. Listener
+  // 4. Live data sources
   const { ws } = rpcEndpoints();
-  let listener: PumpFunListener | PumpPortalListener | null = null;
-  if (!env.ENABLE_SCANNER) {
-    log.warn('scanner disabled (ENABLE_SCANNER=false)');
-  } else if (env.DATA_SOURCE === 'pumpportal') {
-    // Free stream. Trades are per-mint subscriptions, so follow every token we track.
+  const sources: Array<{ stop(): Promise<void> }> = [];
+  let portalRef: PumpPortalListener | null = null;
+  let logsRef: PumpFunListener | null = null;
+
+  const startPortal = (followTrades: boolean) => {
     const portal = new PumpPortalListener(env.PUMPPORTAL_API_KEY ? `wss://pumpportal.fun/api/data?api-key=${env.PUMPPORTAL_API_KEY}` : undefined);
     portal.on('event', (e) => {
-      if (e.event.kind === 'create') portal.watch(e.event.mint);
+      if (followTrades && e.event.kind === 'create') portal.watch(e.event.mint);
       registry.handle(e);
       whales.onEvent(e);
     });
-    whales.onWalletsChanged = (list) => portal.watchAccounts(list);
-    whales.onWatchToken = (m) => portal.watch(m);
-    for (const m of liveState.trackedMints()) portal.watch(m);
-    liveState.onForget.push((m) => portal.unwatch(m));
-    portal.start();
-    // Most launches die within minutes. Stop streaming trades for tokens that
-    // are 20+ min old with < 10 holders (their snapshots continue; a later
-    // migration is still caught by the global migration feed).
-    const dormant = new Set<string>();
-    setInterval(async () => {
-      try {
-        for (const m of await liveState.dormantMints(20 * 60, 10)) {
-          if (dormant.has(m)) continue;
-          dormant.add(m);
-          portal.unwatch(m);
+    if (followTrades) {
+      whales.onWalletsChanged = (list) => portal.watchAccounts(list);
+      whales.onWatchToken = (m) => portal.watch(m);
+      for (const m of liveState.trackedMints()) portal.watch(m);
+      liveState.onForget.push((m) => portal.unwatch(m));
+      // Stop streaming trades for dead launches (20+ min old, < 10 holders).
+      const dormant = new Set<string>();
+      setInterval(async () => {
+        try {
+          for (const m of await liveState.dormantMints(20 * 60, 10)) {
+            if (dormant.has(m)) continue;
+            dormant.add(m);
+            portal.unwatch(m);
+          }
+          if (dormant.size > 100_000) dormant.clear();
+        } catch (err) {
+          log.warn({ err: (err as Error).message }, 'dormant sweep failed');
         }
-        if (dormant.size > 100_000) dormant.clear();
-      } catch (err) {
-        log.warn({ err: (err as Error).message }, 'dormant sweep failed');
-      }
-    }, 60_000).unref();
-    listener = portal;
-    log.info('data source: PumpPortal (free) — Helius is only used for RPC checks');
+      }, 60_000).unref();
+    }
+    portal.start();
+    sources.push(portal);
+    portalRef = portal;
+  };
+
+  const startLogs = (url: string, fetchMissingCreates: boolean) => {
+    const l = new PumpFunListener(url, fetchMissingCreates);
+    l.on('event', registry.handle);
+    l.on('event', whales.onEvent);
+    l.start();
+    sources.push(l);
+    logsRef = l;
+  };
+
+  if (!env.ENABLE_SCANNER) {
+    log.warn('scanner disabled (ENABLE_SCANNER=false)');
+  } else if (env.DATA_SOURCE === 'hybrid') {
+    // Launches + migrations from PumpPortal, every trade from Solana's public node. Both free.
+    startPortal(false);
+    startLogs(env.TRADES_WS_URL, false);
+    log.info({ trades: env.TRADES_WS_URL.replace(/api-key=[^&]+/, 'api-key=***') }, 'data source: hybrid (PumpPortal launches + free trade stream)');
+  } else if (env.DATA_SOURCE === 'pumpportal') {
+    startPortal(true);
+    log.info('data source: PumpPortal only');
   } else if (!ws) {
     log.error('no WebSocket endpoint — set HELIUS_API_KEY in .env. Scanner not started.');
   } else {
-    listener = new PumpFunListener(ws);
-    listener.on('event', registry.handle);
-    listener.on('event', whales.onEvent);
-    listener.start();
+    startLogs(ws, true);
     log.warn('data source: Helius logsSubscribe — this uses a lot of Helius credits');
   }
+
+  /** Combined view of all sources for stats + dashboard. */
+  const statsOf = (): ListenerStats | null => {
+    const a = (logsRef as PumpFunListener | null)?.stats;
+    const b = (portalRef as PumpPortalListener | null)?.stats;
+    if (!a && !b) return null;
+    if (!a || !b) return (a ?? b)!;
+    return {
+      ...a,
+      connected: a.connected && b.connected,
+      creates: Math.max(a.creates, b.creates),
+      completes: Math.max(a.completes, b.completes),
+      reconnects: a.reconnects + b.reconnects,
+      decodeErrors: a.decodeErrors + b.decodeErrors,
+      notifications: a.notifications + b.notifications,
+    };
+  };
 
   await whales.start();
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: () => listener?.stats ?? null, startedAt }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
   const pushTimer = setInterval(() => {
-    const s = listener?.stats;
+    const s = statsOf();
     bus.publish({ type: 'stats', data: { connected: s?.connected ?? false, launches: s?.creates ?? 0, trades: s?.trades ?? 0, tracked: liveState.trackedCount, uptimeSec: Math.round((Date.now() - startedAt) / 1000) } });
   }, 5_000);
 
@@ -143,7 +178,7 @@ async function main(): Promise<void> {
   let lastTrades = 0;
   let lastAmm = 0;
   const statsTimer = setInterval(async () => {
-    const s = listener?.stats;
+    const s = statsOf();
     const [balance, openPositions] = await Promise.all([
       executor.getBalanceSol().catch(() => NaN),
       prisma.position.count({ where: { status: 'OPEN', mode: executor.mode } }).catch(() => -1),
@@ -162,7 +197,7 @@ async function main(): Promise<void> {
         rpcQueue: rpcLimiter.pending,
         avgLatencyMs: Math.round(registry.stats.latencyMsAvg),
         ammTradesPerMin: (s?.ammTrades ?? 0) - lastAmm,
-        ...(listener instanceof PumpPortalListener ? { watching: listener.watchedCount, portalMsgs: { ...listener.seen } } : {}),
+        ...(portalRef ? { watching: (portalRef as PumpPortalListener).watchedCount, portalMsgs: { ...(portalRef as PumpPortalListener).seen } } : {}),
         evaluated: evaluator.stats.evaluated,
         buySignals: evaluator.stats.buys,
         walletLookups: evaluator.stats.walletLookups,
@@ -187,7 +222,7 @@ async function main(): Promise<void> {
     const force = setTimeout(() => process.exit(1), 15_000); // don't hang forever
     try {
       await api?.close();
-      await listener?.stop();
+      for (const src of sources) await src.stop();
       whales.stop();
       await evaluator.stop();
       await sellManager.stop();

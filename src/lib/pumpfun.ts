@@ -38,6 +38,16 @@ export const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 export const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 export const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 
+/** Decode a bonding-curve account (getAccountInfo data). null if it doesn't look like one. Pure. */
+export function decodeBondingCurveAccount(data: Buffer): { virtualTokenReserves: bigint; virtualSolReserves: bigint; complete: boolean } | null {
+  if (data.length < 49) return null;
+  return {
+    virtualTokenReserves: data.readBigUInt64LE(8),
+    virtualSolReserves: data.readBigUInt64LE(16),
+    complete: data.readUInt8(48) !== 0,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Curve maths constants (fallbacks — we prefer values from the CreateEvent)
 // ---------------------------------------------------------------------------

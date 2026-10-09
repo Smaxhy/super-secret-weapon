@@ -122,3 +122,15 @@ describe('PumpSwap events', () => {
     expect(evs[2]).toMatchObject({ kind: 'ammTrade', isBuy: false, baseReserve: 207_900_000_000_000n, quoteReserve: 84_490_000_000n });
   });
 });
+
+import { decodeBondingCurveAccount } from '../src/lib/pumpfun';
+describe('bonding curve account', () => {
+  it('decodes reserves and the complete flag', () => {
+    const b = Buffer.alloc(81);
+    b.writeBigUInt64LE(900_000_000_000_000n, 8);
+    b.writeBigUInt64LE(35_000_000_000n, 16);
+    b.writeUInt8(1, 48);
+    expect(decodeBondingCurveAccount(b)).toEqual({ virtualTokenReserves: 900_000_000_000_000n, virtualSolReserves: 35_000_000_000n, complete: true });
+    expect(decodeBondingCurveAccount(Buffer.alloc(10))).toBeNull();
+  });
+});
