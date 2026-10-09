@@ -37,6 +37,20 @@ export async function scannerStatsRoutes(app: FastifyInstance, deps: ApiDeps): P
       scoreHistogram: histogram,
       launchesPerHour: hourly.map((h) => ({ hour: h.hour.toISOString(), count: Number(h.n) })),
       regime: null, // Phase 7
+      // Which entry rules blocked buys in the last 24h (from stored evaluations).
+      skipReasons: await (async () => {
+        const evals = await prisma.evaluation.findMany({ where: { createdAt: { gte: day }, decision: { not: 'BUY' } }, select: { mint: true, reasons: true }, orderBy: { createdAt: 'desc' }, take: 20_000 });
+        const counts = new Map<string, Set<string>>();
+        for (const e of evals) {
+          for (const r of (e.reasons as string[]) ?? []) {
+            // "holders 12 < 20" → "holders"; "MC $8123 < $12000" → "MC"
+            const key = r.replace(/["\d$.,%:-]+.*$/, '').replace(/\s+(<|>|outside|above|below).*$/, '').trim() || r;
+            if (!counts.has(key)) counts.set(key, new Set());
+            counts.get(key)!.add(e.mint);
+          }
+        }
+        return [...counts.entries()].map(([reason, mints]) => ({ reason, tokens: mints.size })).sort((a, b) => b.tokens - a.tokens);
+      })(),
       rpc: await (async () => {
         const days = Array.from({ length: 7 }, (_, i) => new Date(now - i * 86_400_000).toISOString().slice(0, 10));
         const usage = await Promise.all(days.map((d) => rpcUsage(d)));

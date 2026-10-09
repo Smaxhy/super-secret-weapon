@@ -28,7 +28,10 @@ export const STRATEGIES: Record<StrategyName, StrategyParams> = {
     description: 'Early entries on the Pump.fun bonding curve for tokens that pass safety + early-traction checks.',
     minHolders: 20,
     entryWindowMinutes: { min: 0, max: 15 },
-    curveProgressRange: { min: 5, max: 60 },
+    // Upper bound is high because the $12k market-cap rule is only met once
+    // the curve is ~55-70% full (depends on SOL price). Completed curves are
+    // still excluded by their own rule.
+    curveProgressRange: { min: 5, max: 95 },
     staleExitMinutes: 30,
     maxSlippageBps: 1500,
   },

@@ -108,4 +108,5 @@ export interface ScannerStatsData {
   regime: string | null;
   scanner: { connected: boolean; reconnects: number; creates: number; trades: number; decodeErrors: number } | null;
   rpc: { today: number; byMethodToday: Record<string, number>; estMonth: number };
+  skipReasons: Array<{ reason: string; tokens: number }>;
 }

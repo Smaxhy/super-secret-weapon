@@ -4,6 +4,24 @@ import { useApi } from '../hooks/useApi';
 import { num, pct } from '../lib/format';
 import type { ScannerStatsData } from '../lib/types';
 
+const REASON_LABEL: Record<string, string> = {
+  score: 'Score below 75',
+  holders: 'Not enough holders',
+  MC: 'Market cap under $12k',
+  volume: 'Volume under $12k',
+  fees: 'Fees paid under 1 SOL',
+  curve: 'Bonding curve outside range',
+  age: 'Too old (over 15 min)',
+  liquidity: 'Too little SOL in curve',
+  'dev holds': 'Dev holds too much',
+  safety: 'Safety score too low',
+  'safety hard fail': 'Failed safety (dangerous)',
+  'blocked keyword': 'Blocked keyword',
+  'no X link': 'No X link',
+  'curve already complete': 'Already migrated',
+  'SOL/USD price unknown': 'SOL price unavailable',
+};
+
 export function ScannerStats() {
   const { data: d, error, loading } = useApi<ScannerStatsData>('/api/scanner-stats', 30_000, ['token']);
   if (loading && !d) return <Loading />;
@@ -20,6 +38,30 @@ export function ScannerStats() {
             <StatTile label="Flagged dangerous (7d)" value={pct(d.flaggedRate7d, 1)} sub="failed a hard safety check" />
             <StatTile label="Scanner" value={d.scanner?.connected ? '● Connected' : '○ Offline'} sub={d.scanner ? `${d.scanner.reconnects} reconnects · ${d.scanner.decodeErrors} decode errors` : undefined} />
           </div>
+          <Card title="Why coins weren't bought (last 24h)" className="mt-4">
+            {d.skipReasons.length ? (
+              <>
+                <ul className="space-y-2">
+                  {d.skipReasons.slice(0, 12).map((r) => {
+                    const max = d.skipReasons[0]?.tokens || 1;
+                    return (
+                      <li key={r.reason} className="grid grid-cols-[minmax(8rem,14rem)_1fr_3.5rem] items-center gap-3 text-sm">
+                        <span className="text-ink">{REASON_LABEL[r.reason] ?? r.reason}</span>
+                        <span className="h-2 rounded-full bg-[color-mix(in_srgb,var(--series-1)_15%,transparent)]">
+                          <span className="block h-2 rounded-full bg-[var(--series-1)]" style={{ width: `${(r.tokens / max) * 100}%` }} />
+                        </span>
+                        <span className="tabular text-right text-ink">{num(r.tokens)}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <p className="mt-3 text-sm text-muted">Number of coins that failed each rule. One coin can fail several. Only coins that reached 10 holders get checked.</p>
+              </>
+            ) : (
+              <p className="text-ink-2">No coins have been scored in the last 24h yet.</p>
+            )}
+          </Card>
+
           <Card title="Helius RPC usage" className="mt-4">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               <StatTile label="Calls today (UTC)" value={num(d.rpc.today)} />
