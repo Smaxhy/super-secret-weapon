@@ -18,6 +18,8 @@ import { moduleLogger } from '../lib/logger';
 
 const log = moduleLogger('dexscreener');
 const BASE = 'https://api.dexscreener.com';
+/** Coin lists DexScreener publishes (its own "trending" ranking isn't public). */
+const LIST_PATHS = ['/token-boosts/top/v1', '/token-boosts/latest/v1', '/token-profiles/latest/v1', '/community-takeovers/latest/v1', '/ads/latest/v1'];
 
 export interface DexPair {
   chainId: string;
@@ -55,6 +57,12 @@ export interface TrendingCoin {
   url: string | null;
   /** On pump.fun (mint ends in "pump"). */
   pump: boolean;
+  /** Last 5 minutes (what pops up right now). */
+  volumeM5Usd: number;
+  txnsM5: number;
+  priceChangeM5Pct: number;
+  /** Rank on the 5-minute list (null = not on it). */
+  hot5mRank: number | null;
 }
 
 export interface DexPaidInfo {
@@ -65,8 +73,12 @@ export interface DexPaidInfo {
   checkedAt: number;
 }
 
-/** Pure: rank pairs by recent activity (one entry per token — its most liquid pair). */
-export function rankTrending(pairs: readonly DexPair[], limit = 30): TrendingCoin[] {
+/**
+ * Pure: rank pairs by recent activity (one entry per token — its most liquid pair).
+ * `window` h1 = the last hour (default), m5 = the last 5 minutes: coins popping up right now
+ * (needs real 5-min volume, trades and a rising price; mostly buys).
+ */
+export function rankTrending(pairs: readonly DexPair[], limit = 30, window: 'h1' | 'm5' = 'h1'): TrendingCoin[] {
   const best = new Map<string, DexPair>();
   for (const p of pairs) {
     const mint = p.baseToken?.address;
@@ -79,7 +91,16 @@ export function rankTrending(pairs: readonly DexPair[], limit = 30): TrendingCoi
     const txns1h = (p.txns?.h1?.buys ?? 0) + (p.txns?.h1?.sells ?? 0);
     const pc1h = p.priceChange?.h1 ?? 0;
     const boosts = p.boosts?.active ?? 0;
-    const trendScore = Math.log10(1 + vol1h) + 0.8 * Math.log10(1 + txns1h) + Math.max(-0.5, Math.min(2, pc1h / 100)) + Math.min(boosts, 500) / 250;
+    const vol5m = p.volume?.m5 ?? 0;
+    const buys5m = p.txns?.m5?.buys ?? 0;
+    const txns5m = buys5m + (p.txns?.m5?.sells ?? 0);
+    const pc5m = p.priceChange?.m5 ?? 0;
+    const trendScore =
+      window === 'm5'
+        ? vol5m >= 2_000 && txns5m >= 20 && pc5m > 0 && buys5m >= txns5m * 0.5
+          ? Math.log10(1 + vol5m) + 0.8 * Math.log10(1 + txns5m) + Math.min(2, pc5m / 25) + Math.min(boosts, 500) / 500
+          : 0
+        : Math.log10(1 + vol1h) + 0.8 * Math.log10(1 + txns1h) + Math.max(-0.5, Math.min(2, pc1h / 100)) + Math.min(boosts, 500) / 250;
     return {
       mint,
       symbol: p.baseToken?.symbol ?? '?',
@@ -94,13 +115,26 @@ export function rankTrending(pairs: readonly DexPair[], limit = 30): TrendingCoi
       boosts,
       url: p.url ?? null,
       pump: mint.endsWith('pump'),
+      volumeM5Usd: Math.round(vol5m),
+      txnsM5: txns5m,
+      priceChangeM5Pct: pc5m,
+      hot5mRank: null as number | null,
     };
   });
   return rows
-    .filter((r) => r.volumeH1Usd > 0)
+    .filter((r) => (window === 'm5' ? r.trendScore > 0 : r.volumeH1Usd > 0))
     .sort((a, b) => b.trendScore - a.trendScore)
     .slice(0, limit)
     .map((r, i) => ({ ...r, rank: i + 1 }));
+}
+
+/** Pure: the 1-hour list plus the 5-minute list (coins only hot right now are appended). */
+export function mergeHot(h1: readonly TrendingCoin[], m5: readonly TrendingCoin[]): TrendingCoin[] {
+  const hot = new Map(m5.map((c) => [c.mint, c.rank]));
+  const out = h1.map((c) => ({ ...c, hot5mRank: hot.get(c.mint) ?? null }));
+  const seen = new Set(out.map((c) => c.mint));
+  for (const c of m5) if (!seen.has(c.mint)) out.push({ ...c, rank: out.length + 1, hot5mRank: c.rank });
+  return out;
 }
 
 /** Pure: read DexScreener's /orders response. */
@@ -133,9 +167,10 @@ export function dexPoints(paid: DexPaidInfo | null, trending: TrendingCoin | nul
   }
   if (trending) {
     // #1 gets the full bonus, #30 a third of it.
-    const p = c.trendingPoints * (1 - ((trending.rank - 1) / 29) * (2 / 3));
-    points += p;
-    notes.push(`DexScreener trending #${trending.rank}`);
+    // #1 of either list gets the full bonus, #30 a third of it.
+    const rank = Math.min(30, trending.hot5mRank ?? Infinity, trending.rank);
+    points += c.trendingPoints * (1 - ((rank - 1) / 29) * (2 / 3));
+    notes.push(trending.hot5mRank !== null ? `DexScreener hot right now (5 min #${trending.hot5mRank})` : `DexScreener trending #${trending.rank}`);
   }
   return { points: Math.round(points * 10) / 10, notes };
 }
@@ -206,7 +241,7 @@ export class DexScreener {
       let failed = 0;
       let lastErr = '';
       const lists = await Promise.all(
-        ['/token-boosts/top/v1', '/token-boosts/latest/v1', '/token-profiles/latest/v1'].map((p) =>
+        LIST_PATHS.map((p) =>
           this.take()
             ? this.get(p).catch((err: Error) => {
                 failed++;
@@ -216,7 +251,7 @@ export class DexScreener {
             : Promise.resolve([]),
         ),
       );
-      if (failed === 3) throw new Error(`can't reach DexScreener: ${lastErr}`);
+      if (failed === LIST_PATHS.length) throw new Error(`can't reach DexScreener: ${lastErr}`);
       const mints = [
         ...new Set(
           lists
@@ -225,19 +260,22 @@ export class DexScreener {
             .map((x) => x.tokenAddress)
             .filter(Boolean),
         ),
-      ].slice(0, 90);
+      ].slice(0, 150);
       const pairs: DexPair[] = [];
       for (let i = 0; i < mints.length; i += 30) {
         const res = await this.get(`/tokens/v1/solana/${mints.slice(i, i + 30).join(',')}`).catch(() => []);
         if (Array.isArray(res)) pairs.push(...(res as DexPair[]));
       }
-      const ranked = rankTrending(pairs, getConfig().dex.trendingSize);
+      const dc = getConfig().dex;
+      const ranked = mergeHot(rankTrending(pairs, dc.trendingSize), rankTrending(pairs, dc.hot5mSize ?? 15, 'm5'));
       const before = this.byMint;
+      const hotBefore = new Set(this.trending.filter((c) => c.hot5mRank !== null).map((c) => c.mint));
       this.trending = ranked;
       this.byMint = new Map(ranked.map((c) => [c.mint, c]));
       this.updatedAt = Date.now();
       this.lastError = null;
-      for (const c of ranked) if (!before.has(c.mint)) this.onTrending?.(c);
+      // Newly trending, or newly popping on the 5-minute list → check it right away.
+      for (const c of ranked) if (!before.has(c.mint) || (c.hot5mRank !== null && !hotBefore.has(c.mint))) this.onTrending?.(c);
       log.debug({ coins: ranked.length }, 'DexScreener trending refreshed');
     } catch (err) {
       this.lastError = (err as Error).message;

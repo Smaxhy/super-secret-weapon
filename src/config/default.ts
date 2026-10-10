@@ -303,8 +303,10 @@ export const DEFAULT_CONFIG = {
    */
   dex: {
     enabled: true as boolean,
-    pollSec: 60,
+    // v8.2: every 30 s (owner: good coins pop up within minutes) + a 5-minute "hot right now" list.
+    pollSec: 30,
     trendingSize: 30,
+    hot5mSize: 15,
     paidPoints: 4,
     ctoPoints: 2,
     trendingPoints: 5,

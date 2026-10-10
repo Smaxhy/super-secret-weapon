@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { downsample, pickPoints, PointThrottle } from '../src/executor/position-history';
-import { dexPoints, parseOrders, rankTrending, type DexPair } from '../src/scanner/dexscreener';
+import { dexPoints, mergeHot, parseOrders, rankTrending, type DexPair } from '../src/scanner/dexscreener';
 
 const pair = (mint: string, vol1h: number, txns: number, pc: number, liq = 10_000, boosts = 0): DexPair => ({
   chainId: 'solana',
@@ -25,6 +25,22 @@ describe('DexScreener', () => {
     expect(ranked[0]!.rank).toBe(1);
     expect(ranked[0]!.pump).toBe(true);
     expect(ranked[0]!.volumeH1Usd).toBe(400_000);
+  });
+  it('finds coins popping up in the last 5 minutes and merges them into the list', () => {
+    const m5 = (mint: string, vol: number, buys: number, sells: number, pc: number): DexPair => ({ ...pair(mint, 500_000, 2_000, 10), volume: { h1: 500_000, m5: vol }, txns: { h1: { buys: 1000, sells: 1000 }, m5: { buys, sells } }, priceChange: { h1: 10, m5: pc } });
+    const pairs = [
+      m5('oldbigpump', 100, 2, 2, -3), // big hour, dead now
+      m5('poppingpump', 40_000, 180, 60, 45),
+      m5('dumpingpump', 60_000, 50, 200, 30), // mostly sells → not hot
+      m5('fallingpump', 50_000, 150, 50, -10), // price falling → not hot
+    ];
+    const hot = rankTrending(pairs, 15, 'm5');
+    expect(hot.map((c) => c.mint)).toEqual(['poppingpump']);
+    const merged = mergeHot(rankTrending(pairs.slice(0, 1), 30), hot);
+    expect(merged.map((c) => [c.mint, c.rank, c.hot5mRank])).toEqual([['oldbigpump', 1, null], ['poppingpump', 2, 1]]);
+    const r = dexPoints(null, merged[1]!, { paidPoints: 4, ctoPoints: 2, trendingPoints: 5 });
+    expect(r.points).toBe(5);
+    expect(r.notes[0]).toContain('hot right now');
   });
   it('reads DEX paid / CTO from the orders endpoint', () => {
     expect(parseOrders([{ type: 'tokenProfile', status: 'approved', paymentTimestamp: 1 }])).toEqual({ paid: true, cto: false, pending: false });

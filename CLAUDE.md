@@ -195,6 +195,11 @@ smart money → learning engine → ML → social). See README.md.
   entry (stacked coach × conviction × regime × hour multipliers silently refused everything); learning trades pass
   the strategy cool-off; no buy for `explore.droughtMinutes` 45 → learning margin `droughtScoreMargin` 10 (all rules
   must still pass). Last entry time is read from the DB at start. FIRST thing to check when it doesn't trade.
+- **v8.2 (Oct 10): DexScreener 5-minute hot list** (owner: "very good coins pop up in the past 5 minutes"). Poll every
+  30 s (was 60), lists boosts top/latest + profiles + community-takeovers + ads (≤150 coins); `rankTrending(…, 'm5')`
+  = ≥$2k 5-min volume, ≥20 trades, price rising, ≥50% buys; `mergeHot` appends 5-min-only coins (`hot5mRank`). A coin
+  newly on either list → checkNow; points use the better rank. Scanner card tabs "Last 5 min / Last hour".
+  Config migration v7. DexScreener's real trending ranking still isn't in the public API.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

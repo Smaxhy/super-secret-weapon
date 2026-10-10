@@ -161,6 +161,14 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['explore', ['strategies'], ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM']],
     ],
   },
+  {
+    version: 7,
+    note: 'v8.2 (owner: good coins pop up on DexScreener within minutes): DexScreener every 30 s + a 5-minute hot list',
+    set: [
+      ['dex', ['pollSec'], 30],
+      ['dex', ['hot5mSize'], 15],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */
