@@ -181,6 +181,15 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['learning', ['drawdownLossMultiple'], 0.85],
     ],
   },
+  {
+    version: 9,
+    note: 'v9.2 (owner: trade a lot more, especially migrated coins with real volume): migration 25% of capital, 4 open, up to 10 positions',
+    set: [
+      ['trading', ['allocation'], { CURVE_SNIPE: 0.3, MIGRATION_MOMENTUM: 0.25, SOON: 0.1, SMART_MONEY_COPY: 0.15, SWING: 0.2 }],
+      ['trading', ['maxOpenByStrategy', 'MIGRATION_MOMENTUM'], 4],
+      ['trading', ['maxConcurrentPositions'], 10],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

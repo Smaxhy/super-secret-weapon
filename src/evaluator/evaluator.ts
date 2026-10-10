@@ -181,7 +181,7 @@ export class Evaluator {
     const doneKey = `eval:${mint}:${STRATEGY.name}:done`;
     // Swing re-entries re-check a token we already finished with.
     const swing = job.data.swing === true;
-    if (!swing && (await this.redis.exists(doneKey))) return;
+    if (!swing && !job.data.rescan && (await this.redis.exists(doneKey))) return;
     const markDone = () => this.redis.set(doneKey, '1', 'EX', STATE_TTL_SECONDS);
 
     const token = await prisma.token.findUnique({ where: { mint }, select: { symbol: true, name: true, uri: true, creator: true, bondingCurve: true, safetyScore: true, safetyHardFail: true, description: true, twitter: true, telegram: true, website: true, metadataFetchedAt: true } });
@@ -593,7 +593,7 @@ export class Evaluator {
   }
 
   /** Something just happened on this token (volume spike) — check it right now. */
-  async checkNow(mint: string, strategy: StrategyName, why: string, opts: { swing?: boolean; dip?: boolean; wallet?: string; bucketSec?: number } = {}): Promise<void> {
+  async checkNow(mint: string, strategy: StrategyName, why: string, opts: { swing?: boolean; dip?: boolean; wallet?: string; bucketSec?: number; rescan?: boolean } = {}): Promise<void> {
     // One "check now" per coin + strategy + kind per bucket (default a minute; fresh pairs re-check faster).
     const bucket = Math.floor(Date.now() / ((opts.bucketSec ?? 60) * 1000));
     const kind = opts.dip ? 'dip' : opts.swing ? 'swing' : 'now';
@@ -607,6 +607,7 @@ export class Evaluator {
         ...(opts.swing ? { swing: true, swingWhy: why } : {}),
         ...(opts.dip ? { dip: true, dipWhy: why } : {}),
         ...(opts.wallet ? { wallet: opts.wallet } : {}),
+        ...(opts.rescan ? { rescan: true } : {}),
       },
       { jobId: `${mint}-${strategy}-${kind}-${bucket}` },
     );

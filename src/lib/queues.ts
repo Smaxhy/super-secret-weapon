@@ -44,6 +44,8 @@ export interface EvaluateJob {
   wallet?: string;
   /** KOL follow: several KOLs / smart wallets bought this coin (strategy SMART_MONEY_COPY). */
   kolFollow?: boolean;
+  /** Re-check a coin whose checkpoint schedule already ended (the migrated-coin scanner saw strong flow). */
+  rescan?: boolean;
 }
 
 export interface SafetyJob {

@@ -270,6 +270,13 @@ smart money → learning engine → ML → social). See README.md.
   (`shape.*`); `afterEntry` (pos:hist → min1m, max5m, min5m, peak, secToPeak = early / late / bought the top). AI input
   now includes the autopsy (`whatKeepsGoingWrong`) + `afterBuy` per trade, prompt focuses on entry timing. Autopsy gets
   bands `chase` (run3m) and `entry` (offHigh10m) → chasing / buying-the-top bands get blocked automatically.
+- **v9.2 (Oct 10): migrated coins with real volume** (owner: "trade a lot more, especially migrated coins with lots of
+  organic volume"). `src/scanner/migrated-scanner.ts` (`focus.migrated.scan`, every 15 s): every migrated coin that
+  traded in 2 min (`crowd.activeAmmMints`) → `organicFlow` over 5 min (repeat-size bots, churners, dust <0.01 SOL
+  removed) → `scanVerdict`: ≥20 real buyers, ≥5 SOL, buyers ≥55%, ≥60% organic, ≤+35% in 3 min, MC ≥$25k → checkNow
+  MIGRATION_MOMENTUM with `rescan` (ignores the finished-schedule done key; once per coin per 5 min, ≤8 per tick, not
+  held). Before this a migrated coin was only checked in its first hour. Allocation now NEW 30 / MIGRATION 25 / SWING 20 /
+  KOL 15 / SOON 10, MIGRATION max 4 open, 10 positions total. Config migration v9.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

@@ -16,7 +16,7 @@ export const DEFAULT_CONFIG = {
     minPositionSol: 0.05,
     maxPositionSolCeiling: 0.3, // the dashboard slider can't go above this
     /** v7: 8 (owner: trade more often so the bot learns; swing trades on bigger coins add up to 3). */
-    maxConcurrentPositions: 8,
+    maxConcurrentPositions: 10,
     /**
      * Conviction sizing: maxPositionSol is the size of an AVERAGE-conviction buy.
      * Strong setups (score well over the bar, good learned odds, healthy crowd) go up
@@ -35,13 +35,14 @@ export const DEFAULT_CONFIG = {
      * rule in public tests (2 s late = their exit liquidity) → off.
      */
     allocation: {
-      CURVE_SNIPE: 0.35,
-      MIGRATION_MOMENTUM: 0.15,
+      CURVE_SNIPE: 0.3,
+      // v9.2: more on migrated coins with real volume (migrated-scanner).
+      MIGRATION_MOMENTUM: 0.25,
       SOON: 0.1,
       // v8.9: KOL follow (kol.follow) — coins several KOLs / smart wallets bought.
       SMART_MONEY_COPY: 0.15,
       // v7 (owner): swing trade bigger coins that keep bouncing back (src/evaluator/swing.ts).
-      SWING: 0.25,
+      SWING: 0.2,
     } satisfies Record<StrategyName, number>,
     enabledStrategies: {
       MIGRATION_MOMENTUM: true,
@@ -51,7 +52,7 @@ export const DEFAULT_CONFIG = {
       SWING: true,
     } satisfies Record<StrategyName, boolean>,
     /** At most this many open positions per strategy (fresh pairs: 4, swings on bigger coins: 3). */
-    maxOpenByStrategy: { CURVE_SNIPE: 4, SOON: 2, MIGRATION_MOMENTUM: 2, SMART_MONEY_COPY: 3, SWING: 3 } as Partial<Record<StrategyName, number>>,
+    maxOpenByStrategy: { CURVE_SNIPE: 4, SOON: 2, MIGRATION_MOMENTUM: 4, SMART_MONEY_COPY: 3, SWING: 3 } as Partial<Record<StrategyName, number>>,
     /**
      * Strategy cool-off: once a strategy has `minTrades` closed trades among its last `lastN` and they
      * average worse than `maxAvgPnlPct` per trade, it takes no new entries for `pauseMinutes`
@@ -296,6 +297,13 @@ export const DEFAULT_CONFIG = {
       noEntryFirstSec: 330,
       scoreThresholdDelta: 0,
       sizeMultiplier: 1,
+      /**
+       * v9.2 (owner: "trade a lot more, especially migrated coins with lots of organic, real volume"):
+       * src/scanner/migrated-scanner.ts checks ANY migrated coin (not only in its first hour) whose 5-min
+       * organic flow is strong: ≥20 real buyers, ≥5 SOL real buying, buyers ≥55% of it, ≥60% of all volume
+       * organic, not already up >35% in 3 min, MC ≥ $25k. Once per coin per 5 min.
+       */
+      scan: { enabled: true as boolean, everySec: 15, minOrganicBuyers5m: 20, minOrganicBuySol5m: 5, minBuySharePct: 55, minOrganicPct: 60, maxRun3mPct: 35, minMarketCapUsd: 25_000, cooldownMin: 5, maxChecksPerTick: 8 },
     },
     /** Active wallets in 5 min at which the attention score is full (the "50+ eyes" rule of thumb). */
     fullAttentionWallets: 50,

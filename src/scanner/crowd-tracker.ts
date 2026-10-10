@@ -272,6 +272,8 @@ function median(a: number[]): number {
 
 export class CrowdTracker {
   private readonly logs = new Map<string, CrowdTrade[]>();
+  /** Migrated (PumpSwap) coins → time of their last trade (for the migrated-coin scanner). */
+  private readonly ammLast = new Map<string, number>();
   /** 15-second candles per coin (last hour) — the chart the chart reader reads. */
   private readonly candleSeries = new Map<string, Candle[]>();
   /** Coins that already crossed into the Soon zone (fire once). */
@@ -312,7 +314,18 @@ export class CrowdTracker {
     const sol = Number(ev.quoteAmount) / 1e9;
     // Price after the trade from its own amounts (BOOST pools' virtual reserves make the raw vault ratio wrong).
     const pp = ammPostTradePrice(ev) ?? undefined;
+    this.ammLast.set(mint, now);
     this.push(mint, { t: now, w: ev.user, buy: ev.isBuy, sol, tok, px: tok > 0 ? sol / tok : 0, ...(pp ? { pp } : {}), s: slot || undefined });
+  }
+
+  /** Migrated coins that traded within `withinMs`. */
+  activeAmmMints(withinMs = 120_000, now = Date.now()): string[] {
+    const out: string[] = [];
+    for (const [m, t] of this.ammLast) {
+      if (now - t <= withinMs) out.push(m);
+      else if (now - t > KEEP_MS) this.ammLast.delete(m);
+    }
+    return out;
   }
 
   trades(mint: string): readonly CrowdTrade[] {

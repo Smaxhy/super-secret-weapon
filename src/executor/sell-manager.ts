@@ -822,6 +822,10 @@ export class SellManager {
   crowd: CrowdTracker | null = null;
   /** Coins we hold (refreshed every tick) — trades on these trigger an immediate check. */
   private readonly openMints = new Set<string>();
+  /** Do we hold this coin right now? */
+  isHolding(mint: string): boolean {
+    return this.openMints.has(mint);
+  }
   private readonly fast = new Map<string, { running: boolean; again: boolean; last: number }>();
   private readonly manageLocks = new Map<string, Promise<unknown>>();
   private readonly lastCheck = new Map<string, number>();

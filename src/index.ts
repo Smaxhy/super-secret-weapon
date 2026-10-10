@@ -19,6 +19,7 @@ import { startCalibration, stopCalibration } from './learner/score-calibration';
 import { screenEntry } from './executor/rug-screen';
 import { RuggerMemory } from './executor/rug-watch';
 import { LossAutopsy } from './learner/loss-autopsy';
+import { MigratedScanner } from './scanner/migrated-scanner';
 import { priceShape } from './evaluator/price-shape';
 import { AiCoach } from './learner/ai-coach';
 import { Evaluator } from './evaluator/evaluator';
@@ -130,6 +131,9 @@ async function main(): Promise<void> {
   const ruggers = new RuggerMemory(redis);
   sellManager.ruggers = ruggers;
   trader.screen = (req) => screenEntry(req, { liveState, redis, crowd, ruggers });
+  // Migrated coins with strong organic flow → checked any time, not only in their first hour.
+  const migratedScanner = new MigratedScanner(crowd, (mint, why) => evaluator.checkNow(mint, 'MIGRATION_MOMENTUM', why, { rescan: true, bucketSec: 300 }), (mint) => sellManager.isHolding(mint));
+  migratedScanner.start();
   // AI coach: Claude reads the trades for behaviour patterns → rules that must prove themselves first.
   const aiCoach = new AiCoach(redis, () => getConfig().aiCoach ?? DEFAULT_CONFIG.aiCoach);
   aiCoach.start();
