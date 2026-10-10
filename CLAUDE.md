@@ -308,6 +308,12 @@ smart money → learning engine → ML → social). See README.md.
   those three stay the migrated rules; `focus.migrated.scoreThresholdDelta` −15, `minActiveWallets5m` 15, migrated scan
   looser (≥12 real buyers, ≥3 SOL, buys ≥52%, ≥50% organic, every 3 min, 12 per tick); MIGRATION 30% / 6 open, 14
   positions; NEW 20 / MIG 30 / RUNNER 20 / SWING 15 / KOL 10 / SOON 5. Config migration v12.
+- **v9.8 (Oct 10): running coins feeder** (owner: "check coins already running, not only super new ones";
+  `src/scanner/running-coins.ts`, every 120 s + 30 s after start): pump coins on the trending lists (TrendingHub
+  snapshot + DexScreener incl. 5-min hot, `dexId` now kept) that we don't follow → curve / unknown: `registry.want(mint)`
+  (adopted from its next curve trade, 15 min); migrated (pump.fun complete / gecko pumpswap / dex `pumpswap`, or unknown
+  with MC ≥$69k) with MC ≥$25k: `adoptMigrated` on the canonical pool (≤25 per run). Evaluator: late-joined coins
+  (`view.adopted` or no creator) skip the fee / volume / holder minimums (our ledger only starts at the join).
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

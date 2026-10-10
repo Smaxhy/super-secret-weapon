@@ -356,6 +356,11 @@ export class Evaluator {
 
     const rules = () => [...checkEntryRules({ safetyScore: token.safetyScore!, safetyHardFail: token.safetyHardFail!, market: market.raw, strategy: STRATEGY, entry: cfg.entry, social: socialInfo, focus: cfg.focus, crowd }), ...manip.fails, ...dexFails, ...(newPair?.fails ?? []), ...(trend?.fails ?? []), ...(chart?.verdict === 'avoid' ? [`chart breaking down (${chart.summary})`] : [])];
     let ruleFails = rules();
+    // Coins we started following late (trending lists / adopted pools): our ledger only covers trades since then,
+    // so its fee / volume / holder totals are too low — those minimums can't be judged; everything else still is.
+    const lateJoin = view.adopted || !view.creator;
+    const partialLedger = (f: string) => /^(fees |volume \$|holders )/.test(f);
+    if (lateJoin) ruleFails = ruleFails.filter((f) => !partialLedger(f));
 
     // Total fees so far use an ASSUMED priority fee + tip per trade. If fees are
     // the ONLY thing standing in the way, measure the real figure by sampling
@@ -364,7 +369,7 @@ export class Evaluator {
       const est = await this.fees.estimate(mint, token.bondingCurve, market.raw.buys + market.raw.sells, view.feesSol);
       this.stats.feeSamples++;
       market.raw.totalFeesSol = est.totalFeesSol;
-      ruleFails = rules();
+      ruleFails = rules().filter((f) => !lateJoin || !partialLedger(f));
     }
 
     // Learned odds: how often coins with the same patterns went on to win (bounded ±points).

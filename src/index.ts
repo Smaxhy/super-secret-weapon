@@ -20,6 +20,7 @@ import { screenEntry } from './executor/rug-screen';
 import { RuggerMemory } from './executor/rug-watch';
 import { LossAutopsy } from './learner/loss-autopsy';
 import { MigratedScanner } from './scanner/migrated-scanner';
+import { RunningCoins } from './scanner/running-coins';
 import { priceShape } from './evaluator/price-shape';
 import { AiCoach } from './learner/ai-coach';
 import { Evaluator } from './evaluator/evaluator';
@@ -239,6 +240,9 @@ async function main(): Promise<void> {
   // measure their bounce-back power, buy confirmed dips (owner: "swing more, especially bigger coins").
   const swingUniverse = new SwingUniverse(redis, liveState, registry, dex, trendFeeds, leaders);
   swingUniverse.start();
+  // Coins already running (trending lists) that we never saw launch → follow them so the scanners see them.
+  const runningCoins = new RunningCoins(liveState, registry, trending, dex);
+  runningCoins.start();
   const swingTrader = new SwingTrader(redis, liveState, crowd, swingUniverse, trader, outcomes);
   swingTrader.ta = taLab;
   swingTrader.trending = trending;

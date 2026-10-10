@@ -63,6 +63,8 @@ export interface TrendingCoin {
   priceChangeM5Pct: number;
   /** Rank on the 5-minute list (null = not on it). */
   hot5mRank: number | null;
+  /** 'pumpswap' = migrated, 'pumpfun' = still on the bonding curve. */
+  dexId?: string | null;
 }
 
 export interface DexPaidInfo {
@@ -119,6 +121,7 @@ export function rankTrending(pairs: readonly DexPair[], limit = 30, window: 'h1'
       txnsM5: txns5m,
       priceChangeM5Pct: pc5m,
       hot5mRank: null as number | null,
+      dexId: p.dexId ?? null,
     };
   });
   return rows

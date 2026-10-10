@@ -58,8 +58,15 @@ export class TokenRegistry {
         void this.onCreate(event, envelope);
         break;
       case 'trade':
-        this.liveState.onTrade(event).then(() => {
-          if (!this.liveState.isTracked(event.mint)) return;
+        this.liveState.onTrade(event).then(async () => {
+          if (!this.liveState.isTracked(event.mint)) {
+            // A running coin we never saw launch (trending lists) → start following it from this trade.
+            const until = this.wanted.get(event.mint);
+            if (!until || until < Date.now()) return;
+            this.wanted.delete(event.mint);
+            await this.adopt(event);
+            if (!this.liveState.isTracked(event.mint)) return;
+          }
           this.crowd?.onCurveTrade(event, envelope.slot);
           for (const f of this.onTradeApplied) f(event.mint);
           if (this.pnl) {
@@ -153,6 +160,14 @@ export class TokenRegistry {
    * Start tracking a curve token we never saw launch (e.g. a tracked wallet
    * bought it). Name/symbol are filled in from its metadata later if possible.
    */
+  /** Curve coins to start following on their next trade (mint → until, ms). */
+  private readonly wanted = new Map<string, number>();
+  want(mint: string, forMs = 15 * 60_000): void {
+    if (this.liveState.isTracked(mint)) return;
+    if (this.wanted.size > 3_000) for (const [m, t] of this.wanted) if (t < Date.now()) this.wanted.delete(m);
+    if (this.wanted.size <= 3_000) this.wanted.set(mint, Date.now() + forMs);
+  }
+
   async adopt(ev: PumpTradeEvent): Promise<void> {
     if (this.liveState.isTracked(ev.mint)) return;
     const create: PumpCreateEvent = {
