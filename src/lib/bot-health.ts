@@ -113,3 +113,32 @@ function parse<T>(raw: string | null | undefined): T | null {
     return null;
   }
 }
+
+/**
+ * "Update now" button. The VPS auto-updater (scripts/auto-update.sh, every minute) picks up
+ * `update:request` and writes what it did to `update:status`.
+ */
+export interface UpdateStatus {
+  running: string;
+  requested: string | null;
+  last: { at: string; state: 'up_to_date' | 'updating' | 'done' | 'failed'; message: string; deployed: string; remote: string } | null;
+}
+
+export async function updateStatus(): Promise<UpdateStatus> {
+  const base: UpdateStatus = { running: BOT_VERSION, requested: null, last: null };
+  if (!redisRef) return base;
+  try {
+    const [req, last] = await Promise.all([redisRef.get('update:request'), redisRef.get('update:status')]);
+    base.requested = req;
+    base.last = parse(last);
+  } catch {
+    /* best effort */
+  }
+  return base;
+}
+
+export async function requestUpdate(force: boolean): Promise<void> {
+  if (!redisRef) throw new Error('not ready yet');
+  // Expires if the updater isn't running (cron missing) so a stale request never fires hours later.
+  await redisRef.set('update:request', force ? 'force' : 'normal', 'EX', 600);
+}

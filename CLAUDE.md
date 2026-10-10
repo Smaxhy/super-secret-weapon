@@ -12,7 +12,7 @@ smart money → learning engine → ML → social). See README.md.
 - **Branch:** `claude/festive-albattani-6aufe6` (all work goes here; the VPS and GitHub Pages follow it).
 - **VPS:** Vultr, Ubuntu 24.04, `ssh root@209.250.254.34` (SSH key from the owner's Windows PC).
   Repo at `/root/bot`. `docker compose` runs postgres (TimescaleDB), redis, bot, caddy.
-  Cron runs `scripts/auto-update.sh` every 5 min: pulls the branch and rebuilds if it changed.
+  Cron runs `scripts/auto-update.sh` every minute (GitHub checked every 5 min or on the dashboard's Update button).
   Log: `~/bot-update.log`. Bot logs: `docker compose logs -f bot`.
 - **API:** `https://209-250-254-34.sslip.io` (Caddy → bot:8080, Let's Encrypt).
 - **Dashboard:** `https://smaxhy.github.io/super-secret-weapon/` built by `.github/workflows/dashboard.yml`
@@ -209,6 +209,11 @@ smart money → learning engine → ML → social). See README.md.
   SIGTERM → every update SIGKILLed after 20 s → "killed or crashed" + 15 restarts/24h. Now `exec node`. Owner: "remove
   the limit, get as much data as possible" → PAPER ignores the daily loss breaker AND the strategy cool-off
   (`exit.paperIgnoresLossLimits`, default true; WARN event still logged). LIVE: both always apply (re-check before Phase 4).
+- **v8.5 (Oct 10): update button** — Overview "Updates" card (`dashboard/src/components/UpdateCard.tsx`): bot version vs
+  newest on GitHub, app version vs `version.json` (written by dashboard.yml; sw.js never caches it), buttons Update bot
+  now / Force rebuild / Reload app (clears caches + SW update). API GET/POST `/api/update` → Redis `update:request`
+  (EX 600) → `scripts/auto-update.sh` now runs EVERY MINUTE (self-migrates the old */5 cron), checks GitHub every 5 min
+  or at once on a request (`force` = `--force-recreate` without new code), writes `update:status` JSON.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

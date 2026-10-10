@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ResetPaperDialog } from '../components/ResetPaper';
 import { HealthBanner } from '../components/SystemHealth';
+import { UpdateCard } from '../components/UpdateCard';
 import { PnlChart } from '../components/Charts';
 import { TokenCard } from '../components/TokenCard';
 import { McChange } from '../components/McCompare';
@@ -103,6 +104,7 @@ export function Overview() {
           {feed.data && !feed.data.length && <Empty>Waiting for launches…</Empty>}
         </Card>
       </div>
+      <UpdateCard />
     </>
   );
 }

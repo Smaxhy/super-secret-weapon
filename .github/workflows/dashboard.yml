@@ -41,6 +41,8 @@ jobs:
           VITE_API_URL: ${{ vars.VITE_API_URL }}
           # Shown next to the bot's version (spot a stuck VPS update).
           VITE_GIT_SHA: ${{ github.sha }}
+      # The app's "Updates" card compares itself with this to offer "Reload app".
+      - run: echo "{\"sha\":\"${{ github.sha }}\"}" > dist/version.json
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dashboard/dist

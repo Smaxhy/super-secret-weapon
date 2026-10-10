@@ -32,7 +32,7 @@ import { learnerRoutes } from './routes/learner';
 import { controlsRoutes } from './routes/controls';
 import { swingRoutes } from './routes/swing';
 import { registerWebSocket } from './websocket';
-import { healthSnapshot } from '../lib/bot-health';
+import { healthSnapshot, requestUpdate, updateStatus } from '../lib/bot-health';
 
 const log = moduleLogger('api');
 
@@ -69,6 +69,16 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     secured.get('/api/system', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
       return healthSnapshot();
+    });
+    // Update button: ask the VPS updater to pull + rebuild now (force = rebuild even without new code).
+    secured.get('/api/update', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return updateStatus();
+    });
+    secured.post('/api/update', async (req) => {
+      const force = (req.body as { force?: boolean } | null)?.force === true;
+      await requestUpdate(force);
+      return { ok: true, force, message: 'Asked the server to update — it starts within a minute' };
     });
     await detectionsRoutes(secured, deps);
     await positionsRoutes(secured, deps);

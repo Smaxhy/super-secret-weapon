@@ -30,6 +30,8 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   // Never touch API calls or anything on another origin.
   if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  // The version check must always ask GitHub Pages (and never fill the cache with ?t= copies).
+  if (url.pathname.endsWith('/version.json')) return;
 
   // Pages: network first (always get the latest version), cached copy when offline.
   if (e.request.mode === 'navigate') {
