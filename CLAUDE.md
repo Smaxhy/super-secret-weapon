@@ -205,6 +205,9 @@ smart money → learning engine → ML → social). See README.md.
   holders, not migrated/adopted, no trade 15 min, not held) are now `forget()`-ed every 5 min (`liveState.deadMints`)
   instead of sitting 26 h in memory + Redis. A socket that was up >30 s reconnects after 250 ms. diagnose.sh prints
   `docker stats` and no longer lists stats lines as errors. Note: every push redeploys → one restart each.
+- **v8.4 (Oct 10): clean restarts + paper breaker** — Dockerfile CMD used `sh -c "… && node"`: sh (PID 1) swallowed
+  SIGTERM → every update SIGKILLed after 20 s → "killed or crashed" + 15 restarts/24h. Now `exec node`. Daily loss
+  breaker in PAPER no longer stops everything: minimum size, ≤ `exit.paperBreakerMaxOpen` (2) open; LIVE = full stop.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

@@ -894,6 +894,12 @@ export const DEFAULT_CONFIG = {
       SWING: 45,
     } satisfies Record<StrategyName, number>,
     dailyLossCircuitBreakerPct: 20,
+    /**
+     * PAPER only: after the daily breaker trips, keep trading at the minimum size with at most
+     * this many positions open (0 = full stop like live). Fake money — a whole day without trades
+     * teaches the bot nothing. LIVE always stops completely.
+     */
+    paperBreakerMaxOpen: 2,
   },
 
   /** Paper-trading simulation settings. Kept pessimistic so paper results aren't fantasy. */

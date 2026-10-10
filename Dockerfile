@@ -22,4 +22,6 @@ COPY package.json ./
 ARG GIT_SHA=unknown
 ENV GIT_SHA=$GIT_SHA
 # Sync the DB schema, then start. `db push` is idempotent — safe on every boot.
-CMD ["sh", "-c", "npx prisma db push --skip-generate && node dist/index.js"]
+# `exec` makes node PID 1: Docker's SIGTERM reaches the bot, so updates shut it down cleanly
+# (without it sh swallowed the signal, the bot was SIGKILLed after 20 s and every update looked like a crash).
+CMD ["sh", "-c", "npx prisma db push --skip-generate && exec node dist/index.js"]

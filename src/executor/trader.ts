@@ -93,13 +93,18 @@ export class Trader {
     const capital = balance + openCost;
 
     const dailyPnl = await realisedPnlToday(mode);
+    let breakerSmall = false;
     if (dailyPnl <= -(cfg.exit.dailyLossCircuitBreakerPct / 100) * capital) {
       const day = new Date().toISOString().slice(0, 10);
       if (this.breakerTrippedDay !== day) {
         this.breakerTrippedDay = day;
         void recordEvent({ level: 'WARN', module: 'trader', type: 'circuit_breaker', message: `Daily P&L ${dailyPnl.toFixed(3)} SOL hit the −${cfg.exit.dailyLossCircuitBreakerPct}% breaker — no new entries until 00:00 UTC` });
       }
-      return refuse('daily loss circuit breaker');
+      // Paper: keep learning at the minimum size, a couple of positions at a time.
+      const smallMax = mode === 'PAPER' ? (cfg.exit.paperBreakerMaxOpen ?? 0) : 0;
+      if (smallMax <= 0) return refuse('daily loss circuit breaker');
+      if (open.length >= smallMax) return refuse(`daily loss circuit breaker (minimum-size mode: max ${smallMax} open)`);
+      breakerSmall = true;
     }
 
     if (open.length >= cfg.trading.maxConcurrentPositions) return refuse(`max ${cfg.trading.maxConcurrentPositions} positions open`);
@@ -157,6 +162,7 @@ export class Trader {
     // Stacked multipliers (coach × conviction × regime × hour…) can shrink a buy under the minimum
     // and silently stop every entry → the minimum size, if the budget allows it.
     if (size < cfg.trading.minPositionSol && Math.min(cap, budget, balance - reserve) >= cfg.trading.minPositionSol) size = cfg.trading.minPositionSol;
+    if (breakerSmall) size = Math.min(size, cfg.trading.minPositionSol);
     if (size < cfg.trading.minPositionSol) {
       return refuse(`size ${size.toFixed(3)} SOL below minimum (balance ${balance.toFixed(3)}, ${req.strategy} budget ${budget.toFixed(3)})`);
     }
