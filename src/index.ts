@@ -16,6 +16,7 @@ import { getConfig, startConfigRefresh, stopConfigRefresh } from './config/runti
 import { markStrategySince, oneTimeUpgrade, runConfigMigrations } from './config/migrations';
 import { startCalibration, stopCalibration } from './learner/score-calibration';
 import { screenEntry } from './executor/rug-screen';
+import { RuggerMemory } from './executor/rug-watch';
 import { Evaluator } from './evaluator/evaluator';
 import { WalletAnalyzer } from './evaluator/wallet-analyzer';
 import { PaperExecutor } from './executor/paper-trader';
@@ -121,7 +122,10 @@ async function main(): Promise<void> {
   const crowd = new CrowdTracker();
   crowd.start();
   // Last look before every buy: anything rug-like since the signal?
-  trader.screen = (req) => screenEntry(req, { liveState, redis, crowd });
+  // Rug guard v2: wallets that dumped on us before are refused at entry (sell manager records them).
+  const ruggers = new RuggerMemory(redis);
+  sellManager.ruggers = ruggers;
+  trader.screen = (req) => screenEntry(req, { liveState, redis, crowd, ruggers });
   evaluator.crowd = crowd;
   crowd.onSoon = (mint, pct) => {
     log.info({ mint, curvePct: +pct.toFixed(1) }, '⏳ coin entered the Soon zone — checking');

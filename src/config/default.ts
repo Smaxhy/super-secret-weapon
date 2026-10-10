@@ -170,6 +170,25 @@ export const DEFAULT_CONFIG = {
     insiderDumpWindowSec: 60,
     /** Ignore the dump signal if insiders held less than this % of supply. */
     insiderDumpMinClusterPct: 1,
+    // ---- Rug guard v2 (src/executor/rug-watch.ts; owner: "still gets rugged way too much") ----
+    rugGuard: {
+      enabled: true as boolean,
+      /** No buy when the 3 biggest holders dumping everything would crash the price this much… */
+      maxTop3DumpImpactPct: 45,
+      /** …or the single biggest holder alone this much. */
+      maxTopDumpImpactPct: 25,
+      /** Wallets that dumped on us before (+ devs of coins that rugged us): this many among the top holders → no buy (dev = 2). */
+      ruggerWalletMin: 2,
+      ruggerMemoryDays: 14,
+      /** While holding: the biggest holders at entry sold this % of the supply → out. */
+      holderDumpPct: 4,
+      holderDumpTop: 15,
+      /** …or one holder with ≥2% of supply sold ≥60% of it. */
+      bigSellerMinSupplyPct: 2,
+      bigSellerSoldPct: 60,
+      /** Sell cascade: ≥20% under the 20-second high, sells ≥3× buys, ≥2 sellers → out at once (not above 1.3x: the trail handles winners). */
+      cascade: { enabled: true as boolean, windowSec: 20, dropPct: 20, sellBuyRatio: 3, minSellers: 2, maxMultiple: 1.3 },
+    },
   },
 
   /**

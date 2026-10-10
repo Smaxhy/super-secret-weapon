@@ -45,7 +45,7 @@ import { explainSell } from '../learner/explain';
 import { logTrade } from '../learner/trade-logger';
 import { poolFeeBps, quoteSell } from '../lib/pumpfun';
 import { settledHigh } from '../lib/settled-price';
-import { deriveMetrics, type LiveState } from '../scanner/live-state';
+import { deriveMetrics, type LiveState, type LiveTokenView } from '../scanner/live-state';
 import type { Redis } from 'ioredis';
 import { PublicKey } from '@solana/web3.js';
 import { decodeBondingCurveAccount } from '../lib/pumpfun';
@@ -53,10 +53,11 @@ import { getConnection } from '../lib/solana';
 import { copySoldKey } from '../scanner/whale-tracker';
 import { insiderDumpSignal } from '../evaluator/insider-cluster';
 import { coachFor } from '../learner/trade-coach';
-import type { CrowdTracker } from '../scanner/crowd-tracker';
+import type { CrowdTrade, CrowdTracker } from '../scanner/crowd-tracker';
 import { kolActivity } from '../scanner/kol-signal';
 import { analyzeChart } from '../evaluator/chart-reader';
 import type { Executor } from './types';
+import { holderDump, sellCascade, topHolders, type Holder, type RuggerMemory } from './rug-watch';
 
 const log = moduleLogger('sell-manager');
 /** Fallback check for every open position (quiet coins, stale/max-hold exits). */
@@ -138,6 +139,10 @@ export interface ExitInput {
   breachTicks?: number;
   /** Insider / hidden dev wallets dumped (insiderDumpSignal) → immediate rug exit. */
   insiderDump?: { hit: boolean; detail: string } | null;
+  /** Rug guard v2: the biggest holders at entry dumped (rug-watch.holderDump). */
+  holderDump?: { hit: boolean; detail: string } | null;
+  /** Rug guard v2: a sell cascade is happening right now; ignored above `maxMultiple` (the trail handles winners). */
+  sellCascade?: { hit: boolean; detail: string; maxMultiple: number } | null;
   /** Trade coach: points added to the stop-loss % (still clamped to the 10–20% band). */
   coachStopBiasPct?: number;
   /** Trade coach: trail width multiplier. */
@@ -569,6 +574,8 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   }
 
   if (i.insiderDump?.hit) return all('RUG_DETECTED', i.insiderDump.detail);
+  if (i.holderDump?.hit) return all('RUG_DETECTED', i.holderDump.detail);
+  if (i.sellCascade?.hit && multiple <= i.sellCascade.maxMultiple) return all('RUG_DETECTED', i.sellCascade.detail);
 
   if (i.devHoldingPctEntry > 0.1) {
     const devSoldPct = ((i.devHoldingPctEntry - i.devHoldingPctNow) / i.devHoldingPctEntry) * 100;
@@ -817,12 +824,58 @@ export class SellManager {
   private readonly fast = new Map<string, { running: boolean; again: boolean; last: number }>();
   private readonly manageLocks = new Map<string, Promise<unknown>>();
   private readonly lastCheck = new Map<string, number>();
+  /** Rug guard v2 (set in index.ts): rugger list + entry holder snapshots. */
+  ruggers: RuggerMemory | null = null;
+  private readonly entryHolders = new Map<string, Holder[]>();
 
   constructor(
     private readonly executor: Executor,
     private readonly liveState: LiveState,
     private readonly redis: Redis,
   ) {}
+
+  /**
+   * Rug guard v2 while holding: did the biggest holders (as they were when we bought) dump, is a
+   * sell cascade under way? Also returns the wallets that dumped (for the rugger list). Never throws.
+   */
+  private async rugGuard(p: Position, view: LiveTokenView, trades: readonly CrowdTrade[], now: number): Promise<{ holderDump: { hit: boolean; detail: string } | null; cascade: { hit: boolean; detail: string; maxMultiple: number } | null; dumpers: string[] }> {
+    const g = getConfig().antiRug?.rugGuard ?? DEFAULT_CONFIG.antiRug.rugGuard;
+    const out: Awaited<ReturnType<SellManager['rugGuard']>> = { holderDump: null, cascade: null, dumpers: [] };
+    if (!g.enabled) return out;
+    try {
+      const sc = sellCascade(trades, now, g.cascade);
+      if (sc.hit) {
+        out.cascade = { hit: true, detail: `sell cascade: −${sc.dropPct.toFixed(0)}% in ${g.cascade.windowSec}s, ${sc.sellers} sellers dumped ${sc.sellSol.toFixed(1)} SOL vs ${sc.buySol.toFixed(1)} bought`, maxMultiple: g.cascade.maxMultiple };
+        const bySeller = new Map<string, number>();
+        for (const x of trades) if (!x.buy && now - x.t <= g.cascade.windowSec * 1000) bySeller.set(x.w, (bySeller.get(x.w) ?? 0) + x.sol);
+        out.dumpers.push(...[...bySeller].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w]) => w));
+      }
+      // Adopted coins: the ledger only starts at adoption, holder numbers aren't real.
+      if (!view.adopted && this.ruggers) {
+        let snap = this.entryHolders.get(p.id) ?? (await this.ruggers.entryHolders(p.id));
+        if (!snap) {
+          snap = topHolders(view.balances, g.holderDumpTop);
+          await this.ruggers.saveEntryHolders(p.id, snap);
+        }
+        if (this.entryHolders.size > 500) this.entryHolders.clear();
+        this.entryHolders.set(p.id, snap);
+        const hd = holderDump(snap, view.balances, view.curve.totalSupply);
+        const big = hd.biggest && hd.biggest.supplyPct >= g.bigSellerMinSupplyPct && hd.biggest.soldPct >= g.bigSellerSoldPct ? hd.biggest : null;
+        if (hd.soldSupplyPct >= g.holderDumpPct || big) {
+          out.holderDump = {
+            hit: true,
+            detail: big && hd.soldSupplyPct < g.holderDumpPct
+              ? `a top holder (${big.supplyPct.toFixed(1)}% of supply) sold ${big.soldPct.toFixed(0)}% of their bag`
+              : `top holders dumped ${hd.soldSupplyPct.toFixed(1)}% of the supply since we bought (${hd.sellers.length} sold half or more)`,
+          };
+          out.dumpers.push(...hd.sellers);
+        }
+      }
+    } catch (err) {
+      log.debug({ mint: p.mint, err: (err as Error).message }, 'rug guard check failed');
+    }
+    return out;
+  }
 
   start(): void {
     void upgradeStoredExitRules();
@@ -1032,6 +1085,7 @@ export class SellManager {
     const copied = (entry as { copiedWallet?: string | null }).copiedWallet;
     const copyWalletSold = !!copied && (await this.redis.exists(copySoldKey(p.mint, copied))) === 1;
     const insiderDump = await readInsiderDump(this.redis, p.mint);
+    const guard = await this.rugGuard(p, view, crowdTrades, now);
     const kolAct = cfg.kol?.enabled ? await kolActivity(this.redis, p.mint, cfg.kol).catch(() => null) : null;
     // Chart-timed selling (blow-off top / bearish divergence).
     const cc = cfg.chart;
@@ -1090,6 +1144,8 @@ export class SellManager {
         breachSinceMs: tr.breachSinceMs,
         breachTicks: tr.breachTicks,
         insiderDump,
+        holderDump: guard.holderDump,
+        sellCascade: guard.cascade,
         coachStopBiasPct: coach.stopBiasPct,
         trailFactor: coach.trailFactor,
         exitCostPct,
@@ -1107,6 +1163,12 @@ export class SellManager {
       ex,
     );
 
+    // Rugged: remember who dumped (and the dev) — their next coins are refused at entry.
+    if (decision.sells.some((x) => x.reason === 'RUG_DETECTED') && this.ruggers) {
+      const g = cfg.antiRug?.rugGuard ?? DEFAULT_CONFIG.antiRug.rugGuard;
+      const who = [...guard.dumpers, ...(view.adopted ? [] : [view.creator])];
+      void this.ruggers.record(who, g.ruggerMemoryDays, now).catch(() => undefined);
+    }
     const s = decision.state;
     this.trail.set(p.id, { breachSinceMs: s.breachSinceMs, breachTicks: s.breachTicks, volatilityPct, peakAtMs: s.peakAtMs });
     await prisma.position.update({

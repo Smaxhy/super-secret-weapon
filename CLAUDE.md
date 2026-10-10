@@ -214,6 +214,13 @@ smart money → learning engine → ML → social). See README.md.
   now / Force rebuild / Reload app (clears caches + SW update). API GET/POST `/api/update` → Redis `update:request`
   (EX 600) → `scripts/auto-update.sh` now runs EVERY MINUTE (self-migrates the old */5 cron), checks GitHub every 5 min
   or at once on a request (`force` = `--force-recreate` without new code), writes `update:status` JSON.
+- **v8.6 (Oct 10): rug guard v2** (owner: "still gets rugged WAY too much"; `src/executor/rug-watch.ts`,
+  `antiRug.rugGuard`). Entry (rug-screen, every strategy, not adopted coins): **dump risk** = constant-product price
+  drop if the top holder / top-3 sold everything (`dumpImpactPct`, curve vTok or pool base reserve) > 25% / 45% → no
+  buy; **rugger memory** Redis ZSET `rug:wallets` (14 days): creator (counts 2) + top-20 holders + early buyers ≥2 →
+  no buy. Exit (sell manager `rugGuard()`): top-15 holders snapshotted at the first check (`rug:holders:<positionId>`,
+  3 days) — they sold ≥4% of supply, or one ≥2%-holder sold ≥60% → RUG_DETECTED; **sell cascade** (20 s: −20% from
+  the high, sells ≥3× buys, ≥2 sellers, only ≤1.3x) → RUG_DETECTED. Every RUG_DETECTED records the dumpers + dev.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
