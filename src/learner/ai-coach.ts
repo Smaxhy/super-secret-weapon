@@ -175,7 +175,7 @@ export function priceFor(model: string, promptTokens = 0): { in: number; out: nu
   return { in: 5, out: 25 };
 }
 
-const K = { rules: 'ai:rules', insights: 'ai:insights', last: 'ai:lastRun', spend: (d: string) => `ai:spend:${d}` };
+const K = { rules: 'ai:rules', insights: 'ai:insights', last: 'ai:lastRun', lastDeep: 'ai:lastDeep', spend: (d: string) => `ai:spend:${d}` };
 const STRATS = ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'SMART_MONEY_COPY', 'SWING'];
 
 const OUTPUT_SCHEMA = {
@@ -233,6 +233,10 @@ export class AiCoach {
     // Owner: Haiku to keep costs down (AI_MODEL in .env overrides).
     return process.env.AI_MODEL?.trim() || 'claude-haiku-5-5';
   }
+  /** Once a day a deeper review on a stronger model (owner: Haiku hourly + Sonnet daily). */
+  get deepModel(): string {
+    return process.env.AI_DEEP_MODEL?.trim() || 'claude-sonnet-5-5';
+  }
   get budgetUsd(): number {
     const b = Number(process.env.AI_DAILY_BUDGET_USD ?? 2);
     return Number.isFinite(b) && b >= 0 ? b : 2;
@@ -269,12 +273,13 @@ export class AiCoach {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  async snapshot(): Promise<{ enabled: boolean; hasKey: boolean; model: string; spentTodayUsd: number; budgetUsd: number; lastRun: unknown; lastError: string | null; insights: Array<{ at: string; text: string }>; rules: AiRule[] }> {
+  async snapshot(): Promise<{ enabled: boolean; hasKey: boolean; model: string; deepModel: string; spentTodayUsd: number; budgetUsd: number; lastRun: unknown; lastError: string | null; insights: Array<{ at: string; text: string }>; rules: AiRule[] }> {
     const [spent, last, ins, rules] = await Promise.all([this.spentToday(), this.redis.get(K.last), this.redis.lrange(K.insights, 0, 29), this.rules()]);
     return {
       enabled: this.cfg().enabled,
       hasKey: !!this.client,
       model: this.model,
+      deepModel: this.deepModel,
       spentTodayUsd: Math.round(spent * 1000) / 1000,
       budgetUsd: this.budgetUsd,
       lastRun: last ? JSON.parse(last) : null,
@@ -349,7 +354,7 @@ export class AiCoach {
   }
 
   /** Ask Claude to review the latest trades (when there are new ones and budget left). */
-  async review(force = false): Promise<{ ran: boolean; why: string }> {
+  async review(force = false, deepAsked = false): Promise<{ ran: boolean; why: string }> {
     const c = this.cfg();
     if (!c.enabled) return { ran: false, why: 'AI coach is off' };
     if (!this.client) return { ran: false, why: 'no ANTHROPIC_API_KEY on the server' };
@@ -364,9 +369,13 @@ export class AiCoach {
       const fresh = trades.filter((t) => t.closedAtMs > (last?.newestClosedMs ?? 0)).length;
       if (!force && fresh < c.minNewTrades) return { ran: false, why: `only ${fresh} new closed trades (needs ${c.minNewTrades})` };
       if (trades.length < 10) return { ran: false, why: `only ${trades.length} closed trades so far` };
+      // Deep review: once every 24 h (or when asked) — stronger model, twice the trades, more effort.
+      const lastDeepAt = Date.parse((await this.redis.get(K.lastDeep)) ?? '') || 0;
+      const deep = !!this.deepModel && this.deepModel !== 'off' && (deepAsked || Date.now() - lastDeepAt >= 24 * 3600_000);
+      const model = deep ? this.deepModel : this.model;
 
       const rules = await this.rules();
-      const sample = trades.slice(0, c.tradesPerReview);
+      const sample = trades.slice(0, deep ? c.tradesPerReview * 2 : c.tradesPerReview);
       // Features worth showing: present on most trades and actually varying.
       const names = new Map<string, number[]>();
       for (const t of sample) for (const [k, v] of Object.entries(t.flat)) names.set(k, [...(names.get(k) ?? []), v]);
@@ -396,24 +405,25 @@ export class AiCoach {
       };
 
       // Server-side refusal fallback exists for the Opus / Sonnet / Fable models, not for Haiku.
-      const fallback = /haiku/.test(this.model) ? {} : { betas: ['server-side-fallback-2026-07-01'] as Anthropic.Beta.AnthropicBeta[], fallbacks: 'default' as const };
+      const fallback = /haiku/.test(model) ? {} : { betas: ['server-side-fallback-2026-07-01'] as Anthropic.Beta.AnthropicBeta[], fallbacks: 'default' as const };
       const res = await this.client.beta.messages.create({
-        model: this.model,
+        model,
         max_tokens: 16000,
         ...fallback,
         system: SYSTEM,
-        output_config: { effort: 'medium', format: { type: 'json_schema', schema: OUTPUT_SCHEMA as unknown as Record<string, unknown> } },
+        output_config: { effort: deep ? 'high' : 'medium', format: { type: 'json_schema', schema: OUTPUT_SCHEMA as unknown as Record<string, unknown> } },
         messages: [{ role: 'user', content: `Here are the bot's ${sample.length} most recent closed trades (newest first) as JSON:\n\n${JSON.stringify(input)}` }],
       });
       // Cost from the real usage at the model's price (AI_PRICE_IN/OUT_PER_MTOK override).
       const promptTokens = res.usage.input_tokens + (res.usage.cache_read_input_tokens ?? 0) + (res.usage.cache_creation_input_tokens ?? 0);
-      const price = priceFor(this.model, promptTokens);
+      const price = priceFor(model, promptTokens);
       const inP = Number(process.env.AI_PRICE_IN_PER_MTOK ?? price.in);
       const outP = Number(process.env.AI_PRICE_OUT_PER_MTOK ?? price.out);
       const cost = ((res.usage.input_tokens + (res.usage.cache_read_input_tokens ?? 0) * 0.1 + (res.usage.cache_creation_input_tokens ?? 0) * 1.25) * inP + res.usage.output_tokens * outP) / 1e6;
       const day = new Date().toISOString().slice(0, 10);
       await this.redis.multi().incrbyfloat(K.spend(day), cost).expire(K.spend(day), 3 * 86_400).exec();
-      await this.redis.set(K.last, JSON.stringify({ at: new Date().toISOString(), newestClosedMs: newest, trades: sample.length, costUsd: Math.round(cost * 1000) / 1000 }));
+      await this.redis.set(K.last, JSON.stringify({ at: new Date().toISOString(), newestClosedMs: newest, trades: sample.length, costUsd: Math.round(cost * 1000) / 1000, model, deep }));
+      if (deep) await this.redis.set(K.lastDeep, new Date().toISOString());
 
       if (res.stop_reason === 'refusal') {
         this.lastError = 'the AI declined this review';
@@ -458,7 +468,7 @@ export class AiCoach {
       if (retired.length > 40) await this.redis.hdel(K.rules, ...retired.slice(40).map((r) => r.id));
       this.lastError = null;
       log.info({ insights: out.insights.length, rules: added, costUsd: cost.toFixed(3) }, '🤖 AI coach reviewed the latest trades');
-      return { ran: true, why: `read ${sample.length} trades, ${out.insights.length} insights, ${added} new rules to test ($${cost.toFixed(3)})` };
+      return { ran: true, why: `${deep ? 'deep review: ' : ''}read ${sample.length} trades, ${out.insights.length} insights, ${added} new rules to test ($${cost.toFixed(3)})` };
     } catch (err) {
       this.lastError = err instanceof Anthropic.AuthenticationError ? 'the ANTHROPIC_API_KEY was rejected' : err instanceof Anthropic.RateLimitError ? 'rate limited by the AI API — will retry next hour' : (err as Error).message.slice(0, 200);
       log.warn({ err: this.lastError }, 'AI coach review failed');

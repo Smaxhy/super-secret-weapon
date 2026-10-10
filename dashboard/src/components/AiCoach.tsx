@@ -12,8 +12,8 @@ interface Rule {
   createdAt: string; status: 'testing' | 'live' | 'retired'; statusWhy: string; backtest: Stats | null; forward: Stats | null;
 }
 interface Data {
-  enabled: boolean; hasKey: boolean; model: string; spentTodayUsd: number; budgetUsd: number;
-  lastRun: { at: string; trades: number; costUsd: number } | null; lastError: string | null;
+  enabled: boolean; hasKey: boolean; model: string; deepModel?: string; spentTodayUsd: number; budgetUsd: number;
+  lastRun: { at: string; trades: number; costUsd: number; model?: string; deep?: boolean } | null; lastError: string | null;
   insights: Array<{ at: string; text: string }>; rules: Rule[];
 }
 
@@ -23,10 +23,10 @@ export function AiCoach() {
   const { data, reload } = useApi<Data | null>('/api/ai-coach', 60_000);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const run = async () => {
+  const run = async (deep = false) => {
     setBusy(true);
     try {
-      const r = await api<{ ran: boolean; why: string }>('/api/ai-coach/run', { method: 'POST' });
+      const r = await api<{ ran: boolean; why: string }>('/api/ai-coach/run', { method: 'POST', body: JSON.stringify({ deep }) });
       setNote(r.why);
       await reload();
     } finally {
@@ -41,9 +41,14 @@ export function AiCoach() {
       className="mb-4"
       action={
         data.hasKey ? (
-          <button type="button" disabled={busy} onClick={() => void run()} className="text-sm text-accent hover:underline disabled:opacity-50">
-            {busy ? 'Reading trades…' : 'Review now'}
-          </button>
+          <span className="flex gap-3">
+            <button type="button" disabled={busy} onClick={() => void run()} className="text-sm text-accent hover:underline disabled:opacity-50">
+              {busy ? 'Reading trades…' : 'Review now'}
+            </button>
+            <button type="button" disabled={busy} onClick={() => void run(true)} className="text-sm text-accent hover:underline disabled:opacity-50">
+              Deep review
+            </button>
+          </span>
         ) : undefined
       }
     >
@@ -52,8 +57,8 @@ export function AiCoach() {
       ) : (
         <div className="space-y-4 text-sm">
           <p className="text-xs text-muted">
-            {data.model} · spent today ${data.spentTodayUsd.toFixed(2)} of ${data.budgetUsd.toFixed(2)}
-            {data.lastRun ? ` · last review ${ago(data.lastRun.at)} (${data.lastRun.trades} trades, $${data.lastRun.costUsd})` : ' · first review a few minutes after start, then hourly when new trades closed'}
+            hourly {data.model}{data.deepModel ? ` · daily deep review ${data.deepModel}` : ''} · spent today ${data.spentTodayUsd.toFixed(2)} of ${data.budgetUsd.toFixed(2)}
+            {data.lastRun ? ` · last ${data.lastRun.deep ? 'deep ' : ''}review ${ago(data.lastRun.at)} (${data.lastRun.trades} trades, $${data.lastRun.costUsd})` : ' · first review a few minutes after start, then hourly when new trades closed'}
           </p>
           {(data.lastError || note) && <p className={`text-sm ${data.lastError ? 'text-down' : 'text-ink-2'}`}>{data.lastError ?? note}</p>}
           {data.insights.length > 0 && (
