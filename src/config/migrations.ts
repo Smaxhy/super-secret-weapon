@@ -211,6 +211,20 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['explore', ['maxPerHour'], 10],
     ],
   },
+  {
+    version: 12,
+    note: 'v9.7 (owner: trade A LOT more on migrated coins with ≥$2k liquidity, ≥$25k MC, ≥9 SOL fees): migrated bar −15, looser real-volume scan, 30% of capital, 6 open, 14 positions',
+    set: [
+      ['focus', ['migrated', 'minTotalFeesSol'], 9],
+      ['focus', ['migrated', 'minMarketCapUsd'], 25_000],
+      ['focus', ['migrated', 'minLiquidityUsd'], 2_000],
+      ['focus', ['migrated', 'scoreThresholdDelta'], -15],
+      ['focus', ['migrated', 'minActiveWallets5m'], 15],
+      ['trading', ['allocation'], { CURVE_SNIPE: 0.2, MIGRATION_MOMENTUM: 0.3, SOON: 0.05, SMART_MONEY_COPY: 0.1, SWING: 0.15, RUNNER: 0.2 }],
+      ['trading', ['maxOpenByStrategy', 'MIGRATION_MOMENTUM'], 6],
+      ['trading', ['maxConcurrentPositions'], 14],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

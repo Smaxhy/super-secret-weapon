@@ -16,7 +16,7 @@ export const DEFAULT_CONFIG = {
     minPositionSol: 0.05,
     maxPositionSolCeiling: 0.3, // the dashboard slider can't go above this
     /** v7: 8 (owner: trade more often so the bot learns; swing trades on bigger coins add up to 3). */
-    maxConcurrentPositions: 12,
+    maxConcurrentPositions: 14,
     /**
      * Conviction sizing: maxPositionSol is the size of an AVERAGE-conviction buy.
      * Strong setups (score well over the bar, good learned odds, healthy crowd) go up
@@ -35,9 +35,9 @@ export const DEFAULT_CONFIG = {
      * rule in public tests (2 s late = their exit liquidity) → off.
      */
     allocation: {
-      CURVE_SNIPE: 0.25,
-      // v9.2: more on migrated coins with real volume (migrated-scanner).
-      MIGRATION_MOMENTUM: 0.25,
+      CURVE_SNIPE: 0.2,
+      // v9.2 / v9.7: more on migrated coins with real volume (migrated-scanner).
+      MIGRATION_MOMENTUM: 0.3,
       SOON: 0.05,
       // v9.4 (owner: "stop skipping coins that then go 2–4×"): curve coins with proven organic momentum.
       RUNNER: 0.2,
@@ -55,7 +55,7 @@ export const DEFAULT_CONFIG = {
       RUNNER: true,
     } satisfies Record<StrategyName, boolean>,
     /** At most this many open positions per strategy (fresh pairs: 4, swings on bigger coins: 3). */
-    maxOpenByStrategy: { CURVE_SNIPE: 4, SOON: 2, MIGRATION_MOMENTUM: 4, SMART_MONEY_COPY: 3, SWING: 3, RUNNER: 4 } as Partial<Record<StrategyName, number>>,
+    maxOpenByStrategy: { CURVE_SNIPE: 4, SOON: 2, MIGRATION_MOMENTUM: 6, SMART_MONEY_COPY: 3, SWING: 3, RUNNER: 4 } as Partial<Record<StrategyName, number>>,
     /**
      * Strategy cool-off: once a strategy has `minTrades` closed trades among its last `lastN` and they
      * average worse than `maxAvgPnlPct` per trade, it takes no new entries for `pauseMinutes`
@@ -295,13 +295,15 @@ export const DEFAULT_CONFIG = {
       minMarketCapUsd: 25_000,
       /** Pool liquidity in USD (both sides, like trading terminals show it). */
       minLiquidityUsd: 2_000,
-      minActiveWallets5m: 20,
+      minActiveWallets5m: 15,
       /**
        * No entries in the first minutes after migration: pump.fun's BOOST buys ~17.6 SOL over the
        * first 5 min (mechanical, front-run by bots) and liquidity drains ~57% from minute 5 to 30.
        */
       noEntryFirstSec: 330,
-      scoreThresholdDelta: 0,
+      // v9.7 (owner: "trade A LOT more on migrated coins with ≥$2k liquidity, ≥$25k MC, ≥9 SOL fees"): those rules
+      // are the filter, so the score bar is 15 lower for migrated coins (safety / rug / staircase / vamp still apply).
+      scoreThresholdDelta: -15,
       sizeMultiplier: 1,
       /**
        * v9.2 (owner: "trade a lot more, especially migrated coins with lots of organic, real volume"):
@@ -309,7 +311,7 @@ export const DEFAULT_CONFIG = {
        * organic flow is strong: ≥20 real buyers, ≥5 SOL real buying, buyers ≥55% of it, ≥60% of all volume
        * organic, not already up >35% in 3 min, MC ≥ $25k. Once per coin per 5 min.
        */
-      scan: { enabled: true as boolean, everySec: 15, minOrganicBuyers5m: 20, minOrganicBuySol5m: 5, minBuySharePct: 55, minOrganicPct: 60, maxRun3mPct: 35, minMarketCapUsd: 25_000, cooldownMin: 5, maxChecksPerTick: 8 },
+      scan: { enabled: true as boolean, everySec: 15, minOrganicBuyers5m: 12, minOrganicBuySol5m: 3, minBuySharePct: 52, minOrganicPct: 50, maxRun3mPct: 35, minMarketCapUsd: 25_000, cooldownMin: 3, maxChecksPerTick: 12 },
     },
     /** Active wallets in 5 min at which the attention score is full (the "50+ eyes" rule of thumb). */
     fullAttentionWallets: 50,

@@ -304,6 +304,10 @@ smart money → learning engine → ML → social). See README.md.
 - **v9.6 (Oct 10): trade more** (owner: "it isn't trading enough"): `entry.minSafetyScore` 70 → 55 (soft insider flags
   burst 10 / transfer 10 / dev-slot sells 15 stacked busy coins under 70; hard fails still block, rug guard covers the
   rest); learning trades `explore` margin 8, maxOpen 4, maxPerHour 10. Config migration v11.
+- **v9.7 (Oct 10): migrated coins a lot more** (owner: "≥$2k liquidity, ≥$25k MC, ≥9 SOL fees — trade A LOT more"):
+  those three stay the migrated rules; `focus.migrated.scoreThresholdDelta` −15, `minActiveWallets5m` 15, migrated scan
+  looser (≥12 real buyers, ≥3 SOL, buys ≥52%, ≥50% organic, every 3 min, 12 per tick); MIGRATION 30% / 6 open, 14
+  positions; NEW 20 / MIG 30 / RUNNER 20 / SWING 15 / KOL 10 / SOON 5. Config migration v12.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
