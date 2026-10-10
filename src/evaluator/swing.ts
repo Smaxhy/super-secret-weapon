@@ -57,6 +57,8 @@ export interface BounceStats {
   changePct: number;
   /** The last three swing lows are rising (structure); null = not enough swings. */
   higherLows: boolean | null;
+  /** The last three swing lows are each LOWER than the one before — a downtrend. */
+  lowerLows: boolean;
   /** 0–1 bounce-back power (see swingResilience). */
   score: number;
 }
@@ -73,10 +75,11 @@ function pivotLows(bars: readonly Bar[], k = 3): Array<{ i: number; p: number }>
 }
 
 /** 0–1 bounce-back power from dip statistics. Pure. */
-export function swingResilience(s: Pick<BounceStats, 'recovered' | 'failed' | 'recoveryRate' | 'fromHighPct' | 'changePct' | 'higherLows'>): number {
+export function swingResilience(s: Pick<BounceStats, 'recovered' | 'failed' | 'recoveryRate' | 'fromHighPct' | 'changePct' | 'higherLows'> & { lowerLows?: boolean }): number {
   let score = 0.15 + Math.min(s.recovered, 4) * 0.15 + (s.recoveryRate ?? 0.5) * 0.25 - s.failed * 0.1;
   if (s.higherLows === true) score += 0.05;
   if (s.higherLows === false) score -= 0.05;
+  if (s.lowerLows) score -= 0.1;
   // A coin far under its high or down hard on the day is losing its holders, whatever it did before.
   if (s.fromHighPct > 70) score *= 0.5;
   if (s.changePct < -50) score *= 0.7;
@@ -159,6 +162,7 @@ export function bounceBack(
     fromHighPct: r1((1 - last / high) * 100),
     changePct: r1((last / b[0]!.o - 1) * 100),
     higherLows: lastLows.length >= 3 ? lastLows[2]!.p > lastLows[1]!.p && lastLows[1]!.p > lastLows[0]!.p : lastLows.length === 2 ? (lastLows[1]!.p > lastLows[0]!.p ? true : null) : null,
+    lowerLows: lastLows.length >= 3 && lastLows[2]!.p < lastLows[1]!.p && lastLows[1]!.p < lastLows[0]!.p,
   };
   return { ...stats, score: swingResilience(stats) };
 }
@@ -289,6 +293,10 @@ export interface SwingConfig extends SwingSetupConfig {
   minResilience: number;
   maxTop10Pct: number;
   halfSizeTop10Pct: number;
+  /** Falling knife: down more than this in the last hour → no buy (default 40). */
+  maxDrop1hPct?: number;
+  /** The history shows lower lows (a downtrend) → no buy, watchlist exempt (default off). */
+  blockDowntrend?: boolean;
 }
 
 export interface SwingVerdict {
@@ -318,7 +326,9 @@ export function swingDecision(i: SwingInput, c: SwingConfig): SwingVerdict {
   if (i.volume24hUsd !== null && i.volume24hUsd < c.minVolume24hUsd) fails.push(`24h volume ${usd(i.volume24hUsd)} < ${usd(c.minVolume24hUsd)}`);
   if (i.ageMin !== null && i.ageMin < c.minAgeMin) fails.push(`migrated ${Math.round(i.ageMin)} min ago (< ${c.minAgeMin})`);
   if (i.trades10m < c.minTrades10m) fails.push(`only ${i.trades10m} trades in 10 min (< ${c.minTrades10m})`);
-  if (i.priceChange1hPct !== null && i.priceChange1hPct < -40) fails.push(`falling knife (${i.priceChange1hPct.toFixed(0)}% in 1 h)`);
+  const maxDrop = c.maxDrop1hPct ?? 40;
+  if (i.priceChange1hPct !== null && i.priceChange1hPct < -maxDrop) fails.push(`falling knife (${i.priceChange1hPct.toFixed(0)}% in 1 h)`);
+  if (c.blockDowntrend && !i.watchlist && i.bounce?.lowerLows) fails.push('downtrend on the bigger chart (lower lows)');
   if (i.priceChange24hPct !== null && i.priceChange24hPct < -75) fails.push(`down ${Math.abs(i.priceChange24hPct).toFixed(0)}% on the day`);
   if (i.crowd && i.crowd.fakeVolumePct > 50) fails.push(`fake volume ~${i.crowd.fakeVolumePct.toFixed(0)}%`);
   if (i.crowd && i.crowd.top3VolumePct > 65) fails.push(`3 wallets make ${i.crowd.top3VolumePct.toFixed(0)}% of the volume`);
@@ -374,6 +384,19 @@ export function swingDecision(i: SwingInput, c: SwingConfig): SwingVerdict {
   const threshold = c.minScore + i.barDelta + (i.watchlist ? c.watchlistScoreDelta : 0);
   if (i.watchlist) notes.push('on your swing watchlist');
   return { decision: !fails.length && score >= threshold ? 'BUY' : 'SKIP', score, threshold, fails, notes, sizeFactor, resilience, parts };
+}
+
+/**
+ * Owner: "lower MC coins less amount, higher MC coins can be higher investing". The size multiplier
+ * of the highest step at or below the market cap (steps sorted or not). Unknown MC → the lowest. Pure.
+ */
+export function swingSizeForMc(mcUsd: number | null, steps: ReadonlyArray<{ fromUsd: number; mult: number }> | undefined): number {
+  if (!steps?.length) return 1;
+  const sorted = [...steps].sort((a, b) => a.fromUsd - b.fromUsd);
+  if (mcUsd === null || !Number.isFinite(mcUsd)) return sorted[0]!.mult;
+  let m = sorted[0]!.mult;
+  for (const s of sorted) if (mcUsd >= s.fromUsd) m = s.mult;
+  return m;
 }
 
 /** Resample 15 s candles into bigger bars (e.g. 1-min bars for the live-hour bounce stats). Pure. */

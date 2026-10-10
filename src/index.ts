@@ -40,6 +40,7 @@ import { TradeCoach } from './learner/trade-coach';
 import { SwingWatcher } from './executor/swing-watcher';
 import { SwingTrader } from './executor/swing-trader';
 import { SwingUniverse } from './scanner/swing-universe';
+import { VampGuard } from './evaluator/vamp-guard';
 import { ObservationLogger } from './learner/observation-logger';
 import { requestAdjustment, scheduleDailyAdjuster } from './learner/daily-adjuster';
 import { startBeliefCache, stopBeliefCache } from './learner/bayesian-updater';
@@ -203,6 +204,29 @@ async function main(): Promise<void> {
   swingTrader.ta = taLab;
   swingTrader.trending = trending;
   swingTrader.start();
+  // Vamps (copycat coins): every coin we buy and every bigger coin becomes the original for its
+  // ticker / name; copies are refused everywhere (evaluator, swing trader, and the trader's last gate).
+  const vamp = new VampGuard(redis);
+  evaluator.vamp = vamp;
+  swingTrader.vamp = vamp;
+  swingUniverse.vamp = vamp;
+  const tokenNames = (mint: string) => prisma.token.findUnique({ where: { mint }, select: { symbol: true, name: true } }).catch(() => null);
+  trader.vampCheck = async (req) => {
+    const t = await tokenNames(req.mint);
+    return t ? vamp.check(req.mint, t.symbol, t.name) : null;
+  };
+  trader.onEntered = (req) => {
+    void tokenNames(req.mint).then((t) => t && vamp.record({ mint: req.mint, symbol: t.symbol, name: t.name, mcUsd: req.market.marketCapUsd ?? null, why: 'traded' }));
+  };
+  const vampPrune = setInterval(() => void vamp.prune().catch(() => undefined), 30 * 60_000);
+  vampPrune.unref();
+  // Coins traded in the last 3 days (before the guard existed) count as originals too — oldest first.
+  void prisma.position
+    .findMany({ where: { openedAt: { gte: new Date(Date.now() - 3 * 86_400_000) } }, orderBy: { openedAt: 'asc' }, select: { mint: true, entryContext: true, token: { select: { symbol: true, name: true } } } })
+    .then(async (rows) => {
+      for (const r of rows) await vamp.record({ mint: r.mint, symbol: r.token.symbol, name: r.token.name, mcUsd: Number((r.entryContext as { marketCapUsd?: number } | null)?.marketCapUsd ?? 0) || null, why: 'traded' });
+    })
+    .catch(() => undefined);
   // Exits react to every trade on a coin we hold (not just the 1s tick); real trade highs count as peaks.
   sellManager.crowd = crowd;
   registry.onTradeApplied.push((mint) => sellManager.onTrade(mint));
@@ -391,6 +415,7 @@ async function main(): Promise<void> {
       trending.stop();
       swingTrader.stop();
       swingUniverse.stop();
+      clearInterval(vampPrune);
       stopCalibration();
       swings.stop();
       crowd.stop();

@@ -38,7 +38,7 @@ interface Coin {
   holders: { top10Pct: number } | null;
   last: { at: number; score: number; decision: string; why: string } | null;
 }
-interface SwingData {
+export interface SwingData {
   enabled: boolean;
   watchlist: string[];
   maxWatchlist: number;
@@ -63,8 +63,13 @@ function Power({ b }: { b: Bounce | null }) {
   );
 }
 
-export function SwingCoins() {
+/** Self-loading version (for pages that don't already fetch /api/swing). */
+export function SwingCoinsCard() {
   const { data, reload } = useApi<SwingData>('/api/swing', 20_000);
+  return <SwingCoins data={data} reload={reload} />;
+}
+
+export function SwingCoins({ data, reload }: { data: SwingData | null; reload: () => Promise<void> | void }) {
   const [mint, setMint] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -92,7 +97,7 @@ export function SwingCoins() {
   const waiting = data.coins.filter((c) => !c.live && c.watchlist);
 
   return (
-    <Card title="Swing coins (bigger coins that bounce back)" className="mb-4">
+    <Card title="Bigger coins the bot swing-trades">
       <p className="mb-2 text-sm text-ink-2">
         Established coins ({usd(data.rules.minMarketCapUsd)}–{usd(data.rules.maxMarketCapUsd)} MC, migrated {data.rules.minAgeMin}+ min ago) that the bot follows trade by trade. It buys when one dips, holds a higher
         low and bounces with buyers in control — and favours coins whose dips keep getting bought back. {data.trader ? `${data.trader.entered} swing buys so far (${data.trader.learning} learning), ${data.trader.setups} setups seen.` : ''}

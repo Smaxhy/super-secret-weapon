@@ -55,6 +55,8 @@ export interface OpenPosition {
   scoreAtEntry: number | null;
   trailingActive: boolean;
   buyReason: string | null;
+  /** A learning trade: a near-miss bought small so the bot learns from it. */
+  learning?: boolean;
   targets: { stopLossPrice: number; takeProfits: Array<{ multiple: number; sellPct: number; hit: boolean }>; trailingStopPrice: number | null };
   health: { holders: number; devHoldingPct: number; top10HolderPct: number; curvePct: number } | null;
   /** Market cap in SOL at the moment we bought. */

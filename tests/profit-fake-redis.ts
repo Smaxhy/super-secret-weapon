@@ -65,8 +65,9 @@ export class FakeRedis {
     h.set(f, v.toString());
     return Number(v);
   }
-  async hdel(k: string, f: string): Promise<number> {
-    return (this.data.get(k) as Map<string, string> | undefined)?.delete(f) ? 1 : 0;
+  async hdel(k: string, ...fs: string[]): Promise<number> {
+    const h = this.data.get(k) as Map<string, string> | undefined;
+    return fs.reduce((n, f) => n + (h?.delete(f) ? 1 : 0), 0);
   }
   async hlen(k: string): Promise<number> {
     return (this.data.get(k) as Map<string, string> | undefined)?.size ?? 0;

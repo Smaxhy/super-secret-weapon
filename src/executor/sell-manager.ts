@@ -169,6 +169,8 @@ export interface ExitInput {
    * exits are skipped — the trailing stop and break-even floor still protect it.
    */
   holdLonger?: boolean;
+  /** % the price rose over the spike window (exit.spikeSell.windowSec): now vs the lowest real price in it. */
+  spikeRisePct?: number | null;
 }
 
 /** Marker stored in `tpTiersHit` once initials are out (real tiers are all > 1). */
@@ -178,6 +180,8 @@ export const BLOWOFF_MARKER = -2;
 export const DIVERGENCE_MARKER = -3;
 /** Marker: sold into pump.fun's BOOST buying right after migration (once). */
 export const BOOST_MARKER = -4;
+/** Marker: the spike sell already happened (once per position). */
+export const SPIKE_MARKER = -5;
 
 export interface ActivitySample {
   t: number;
@@ -425,13 +429,29 @@ export function stopLossLevel(
 ): { stopPct: number; stopPriceSol: number; hardPct: number; hardPriceSol: number } {
   const sl = { ...DEFAULT_CONFIG.exit.stopLoss, ...((rules as Partial<ExitRules>).stopLoss ?? {}) };
   const byStrategy = strategy ? (sl.maxPctByStrategy as Record<string, number | undefined> | undefined)?.[strategy] : undefined;
-  const hardPct = Math.max(sl.minPct, Math.min(sl.maxPct, byStrategy ?? sl.maxPct, rules.hardStopLossPct ?? sl.maxPct));
+  const minPct = (strategy ? (sl as { minPctByStrategy?: Record<string, number | undefined> }).minPctByStrategy?.[strategy] : undefined) ?? sl.minPct;
+  const hardPct = Math.max(minPct, Math.min(sl.maxPct, byStrategy ?? sl.maxPct, rules.hardStopLossPct ?? sl.maxPct));
   const base = volatilityPct === null ? sl.fallbackPct : sl.volMultiplier * volatilityPct;
-  const stopPct = Math.round(Math.max(sl.minPct, Math.min(hardPct, base + coachBiasPct)) * 10) / 10;
+  const stopPct = Math.round(Math.max(minPct, Math.min(hardPct, base + coachBiasPct)) * 10) / 10;
   const cost = Math.max(0, Math.min(15, exitCostPct)) / 100;
   // Loss after costs → price multiple that produces it (never closer than 3% to entry).
   const priceAt = (lossPct: number) => entryPriceSol * Math.min(0.97, (1 - lossPct / 100) / (1 - cost));
   return { stopPct, stopPriceSol: priceAt(stopPct), hardPct, hardPriceSol: priceAt(hardPct) };
+}
+
+/**
+ * How far the price rose within the spike window: now vs the lowest real trade price in it (trades
+ * ≥ 0.02 SOL, pool price after each trade; only since `sinceMs`, so the dip we bought doesn't count).
+ * null = no trades in the window. Pure.
+ */
+export function spikeRisePct(trades: ReadonlyArray<{ t: number; sol: number; px: number; pp?: number }>, priceNow: number, sinceMs: number): number | null {
+  let lo = Infinity;
+  for (const x of trades) {
+    if (x.t < sinceMs || x.sol < 0.02) continue;
+    const px = x.pp && x.pp > 0 ? x.pp : x.px;
+    if (px > 0 && px < lo) lo = px;
+  }
+  return Number.isFinite(lo) && lo > 0 && priceNow > 0 ? Math.round((priceNow / lo - 1) * 1000) / 10 : null;
 }
 
 /** Cost of selling now in % of the position: pool fee + assumed slippage + buy & sell tx fees. Pure. */
@@ -500,7 +520,7 @@ export function holdLongerNow(i: {
 }): boolean {
   const hl = (i.rules as Partial<ExitRules>).holdLonger;
   if (!hl?.enabled || i.marketCapUsd === null || i.marketCapUsd < hl.minMarketCapUsd || i.heldMs >= hl.maxHours * 3600_000) return false;
-  const banked = i.tpTiersHit.some((t) => t === INITIALS_MARKER || t > 1);
+  const banked = i.tpTiersHit.some((t) => t === INITIALS_MARKER || t === SPIKE_MARKER || t > 1);
   const up = !!i.chart && i.chart.verdict !== 'avoid' && (i.chart.trend === 'up' || (i.chart.trend === 'range' && i.chart.higherLows));
   return banked && up && i.risk < i.rules.riskExit.threshold;
 }
@@ -625,6 +645,20 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
       remaining -= pct;
       proceeds += valueOf(pct) - i.txFeeSol; // each sale also pays its own tx fee
     }
+  }
+
+  // Sell into a spike (swings): up ≥ risePct within the window → bank part of it right now (once).
+  // It stands in for the next take-profit tier (sold earlier, into the spike), so the later tiers and
+  // the trail still get what's left instead of the next tier selling it all.
+  const sp = (rules as Partial<ExitRules>).spikeSell;
+  if (sp?.enabled && remaining > 0 && i.spikeRisePct != null && i.spikeRisePct >= sp.risePct && multiple >= sp.minMultiple && !state.tpTiersHit.includes(SPIKE_MARKER)) {
+    const pct = Math.round(remaining * (sp.sellPct / 100) * 100) / 100;
+    sells.push({ pct, reason: 'TAKE_PROFIT', detail: `spike +${i.spikeRisePct.toFixed(1)}% in ${Math.round(sp.windowSec / 60)} min — sold ${sp.sellPct}% into it at ${multiple.toFixed(2)}x` });
+    state.tpTiersHit.push(SPIKE_MARKER);
+    const nextTier = rules.takeProfitTiers.find((t) => !state.tpTiersHit.includes(t.multiple));
+    if (nextTier && nextTier.multiple > multiple) state.tpTiersHit.push(nextTier.multiple);
+    remaining -= pct;
+    proceeds += valueOf(pct) - i.txFeeSol;
   }
 
   // Sell into strength, not after the dump: a blow-off top (vertical run on a volume climax that is
@@ -1068,6 +1102,7 @@ export class SellManager {
         peakAtMs: tr.peakAtMs ?? null,
         migratedAgoSec: view.complete && view.migratedAtMs ? Math.max(0, (now - view.migratedAtMs) / 1000) : null,
         holdLonger: holdLongerNow({ rules: ex, tpTiersHit: tiers, marketCapUsd: solUsd ? m.marketCapSol * solUsd : null, chart: read, risk, heldMs: now - p.openedAt.getTime() }),
+        spikeRisePct: ex.spikeSell?.enabled ? spikeRisePct(crowdTrades, m.priceSol, Math.max(p.openedAt.getTime(), now - ex.spikeSell.windowSec * 1000)) : null,
       },
       ex,
     );

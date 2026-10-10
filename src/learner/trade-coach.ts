@@ -36,7 +36,7 @@ import type { LiveState } from '../scanner/live-state';
 
 const log = moduleLogger('trade-coach');
 
-export type Verdict = 'late_entry' | 'gave_back_profit' | 'stopped_then_ran' | 'slow_loser' | 'good_cut' | 'sold_too_early' | 'good_exit' | 'rug';
+export type Verdict = 'late_entry' | 'gave_back_profit' | 'stopped_then_ran' | 'slow_loser' | 'good_cut' | 'sold_too_early' | 'good_exit' | 'rug' | 'manual_exit';
 
 export interface TradeReview {
   positionId: string;
@@ -93,16 +93,26 @@ export function classifyTrade(r: {
   postHighMultiple: number;
   postLowMultiple: number;
   exitReason: string;
+  strategy?: string;
 }): { verdict: Verdict; lesson: string } {
   const x = (n: number) => `${n.toFixed(2)}x`;
   if (r.exitReason === 'RUG_DETECTED') return { verdict: 'rug', lesson: 'rug/insider exit — similar setups get a stricter bar' };
+  // You sold it by hand: that's YOUR exit, never a "good exit" by the bot — it means the bot was too
+  // slow to sell (or shouldn't have bought). It sells sooner / buys pickier on this strategy.
+  if (r.exitReason === 'MANUAL') {
+    return r.pnlSol > 0
+      ? { verdict: 'manual_exit', lesson: `you closed it by hand at ${x(r.exitMultiple)} (peak ${x(r.peakMultiple)}) — the bot held too long; it now sells sooner on these` }
+      : { verdict: 'manual_exit', lesson: `you closed it by hand at ${x(r.exitMultiple)} — a trade you didn't trust; the bot gets pickier on these` };
+  }
+  // Swings take profit from +10% (owner) — giving back a +10% swing is already a mistake.
+  const gaveBackAt = r.strategy === 'SWING' ? 1.1 : 1.3;
   if (r.pnlSol > 0) {
     if (r.postHighMultiple >= Math.max(1.5, r.exitMultiple * 1.5)) {
       return { verdict: 'sold_too_early', lesson: `sold at ${x(r.exitMultiple)}, it ran to ${x(r.postHighMultiple)} after — let winners run a bit longer` };
     }
     return { verdict: 'good_exit', lesson: `banked ${x(r.exitMultiple)} (peak ${x(r.peakMultiple)})` };
   }
-  if (r.peakMultiple >= 1.3) return { verdict: 'gave_back_profit', lesson: `was up ${x(r.peakMultiple)} and still closed red — protect profit sooner` };
+  if (r.peakMultiple >= gaveBackAt) return { verdict: 'gave_back_profit', lesson: `was up ${x(r.peakMultiple)} and still closed red — protect profit sooner` };
   if (r.exitReason === 'STOP_LOSS' && r.postHighMultiple >= 1.3) {
     return { verdict: 'stopped_then_ran', lesson: `stopped out, then it ran to ${x(r.postHighMultiple)} — the stop was too tight for this coin` };
   }
@@ -159,13 +169,22 @@ export function computeCoachState(strategy: StrategyName, reviewsNewestFirst: re
   }
   const exits = list.filter((r) => r.pnlSol > 0 || r.verdict === 'gave_back_profit');
   if (exits.length >= 3) {
-    if (share(exits, 'sold_too_early') >= 0.4) {
+    // (swings stay fast — the owner wants profits taken from +10%, so "it ran after" never loosens them)
+    if (share(exits, 'sold_too_early') >= 0.4 && strategy !== 'SWING') {
       st.trailFactor = 1.2;
       notes.push('sold too early → looser trail');
     } else if (share(exits, 'gave_back_profit') >= 0.4) {
       st.trailFactor = 0.85;
       notes.push('gave back profits → tighter trail');
     }
+  }
+  // Trades you closed by hand: the bot was too slow → tighter trail; at a loss → pickier entries.
+  const manual = list.filter((r) => r.verdict === 'manual_exit');
+  if (manual.length >= 2 || (manual.length >= 1 && list.length <= 4)) {
+    st.trailFactor = Math.min(st.trailFactor, 0.8);
+    const manualLosses = manual.filter((r) => r.pnlSol <= 0).length;
+    if (manualLosses) st.thresholdDelta = Math.max(-5, Math.min(12, st.thresholdDelta + Math.min(4, 2 * manualLosses)));
+    notes.push(`you closed ${manual.length} trade${manual.length > 1 ? 's' : ''} by hand → selling sooner${manualLosses ? ', pickier entries' : ''}`);
   }
   if (st.thresholdDelta !== 0) notes.unshift(`buy bar ${st.thresholdDelta > 0 ? '+' : ''}${st.thresholdDelta} (last ${list.length}: ${st.winRatePct}% wins)`);
   st.note = notes.join('; ');
@@ -292,7 +311,7 @@ export class TradeCoach {
       postLowMultiple: pend.postLow > 0 ? pend.postLow / entry : exitPx / entry,
       exitReason: p.exitReason ?? 'UNKNOWN',
     };
-    const { verdict, lesson } = classifyTrade(base);
+    const { verdict, lesson } = classifyTrade({ ...base, strategy: p.strategy });
     const review: TradeReview = {
       positionId: p.id,
       mint: p.mint,

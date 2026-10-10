@@ -55,6 +55,8 @@ export function explainSwingBuy(i: {
   sizeNote: string;
   coachNote?: string | null;
   calibrationNote?: string | null;
+  /** The exit plan in words (from the live SWING exit rules). */
+  plan?: string;
 }): string {
   const usd = (x: number | null) => (x === null ? '?' : x >= 1e6 ? `$${(x / 1e6).toFixed(2)}M` : `$${Math.round(x / 1000)}k`);
   const parts = Object.entries(i.parts)
@@ -71,7 +73,7 @@ export function explainSwingBuy(i: {
     `Size: ${i.sizeNote}.`,
     i.calibrationNote ? `Score check: ${i.calibrationNote}.` : '',
     i.coachNote ? `Coach: ${i.coachNote}.` : '',
-    'Plan: 30% at 1.25x, 30% at 1.6x, 15% at 3x, trailing stop + break-even floor from 1.25x, stop 12–15% after fees; a winner on a big coin that keeps trending may ride longer.',
+    i.plan ? `Plan: ${i.plan}.` : '',
   ]
     .filter(Boolean)
     .join(' ');

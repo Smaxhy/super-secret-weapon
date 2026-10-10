@@ -60,6 +60,10 @@ export class Trader {
   private breakerTrippedDay: string | null = null;
   /** Pre-entry rug screen, run right before every buy (set in index.ts). Returns a reason to refuse, or null. */
   screen: ((req: EntryRequest) => Promise<string | null>) | null = null;
+  /** Vamp (copycat coin) check before every buy (set in index.ts). Returns a reason to refuse, or null. */
+  vampCheck: ((req: EntryRequest) => Promise<string | null>) | null = null;
+  /** Called after every entry (index.ts: the coin becomes the "original" for its ticker). */
+  onEntered: ((req: EntryRequest) => void) | null = null;
 
   constructor(private readonly executor: Executor) {}
 
@@ -143,7 +147,9 @@ export class Trader {
     // Conviction & other multipliers scale around maxPositionSol, capped at ×maxConvictionMultiple
     // of it and at maxPositionPctOfCapital % of capital.
     const t = cfg.trading;
-    const cap = Math.min(t.maxPositionSol * (t.maxConvictionMultiple ?? 1.6), (capital * (t.maxPositionPctOfCapital ?? 100)) / 100);
+    // (a strategy may be allowed a bigger position — swings on big, deep coins)
+    const stratMult = (t.maxPositionMultipleByStrategy as Partial<Record<string, number>> | undefined)?.[req.strategy];
+    const cap = Math.min(t.maxPositionSol * Math.max(t.maxConvictionMultiple ?? 1.6, stratMult ?? 0), (capital * (t.maxPositionPctOfCapital ?? 100)) / 100);
     let size = Math.min(sized * (req.sizeMultiplier ?? 1), cap, budget, balance - reserve);
     // A learning trade is small on purpose — the minimum size, if the budget allows it.
     if (req.explore && size < cfg.trading.minPositionSol && Math.min(cap, budget, balance - reserve) >= cfg.trading.minPositionSol) size = cfg.trading.minPositionSol;
@@ -151,6 +157,12 @@ export class Trader {
       return refuse(`size ${size.toFixed(3)} SOL below minimum (balance ${balance.toFixed(3)}, ${req.strategy} budget ${budget.toFixed(3)})`);
     }
 
+    // Copycat ("vamp") of a coin we traded or of a bigger coin with the same ticker → never.
+    const vamp = this.vampCheck ? await this.vampCheck(req) : null;
+    if (vamp) {
+      void recordEvent({ level: 'WARN', module: 'trader', type: 'vamp_blocked', mint: req.mint, message: `${req.symbol}: buy blocked — ${vamp}` });
+      return refuse(vamp);
+    }
     // Last look before the money moves: has anything rug-like happened since the signal?
     const rug = this.screen ? await this.screen(req) : null;
     if (rug) {
@@ -203,6 +215,7 @@ export class Trader {
       await logTrade({ positionId: p.id, mint: req.mint, symbol: req.symbol, side: 'BUY', mode, strategy: req.strategy, fill, reason: `entry: score ${req.score.toFixed(1)}`, context }, tx);
       return p;
     });
+    this.onEntered?.(req);
     return { entered: true, reason: 'entered', positionId: position.id };
   }
 }

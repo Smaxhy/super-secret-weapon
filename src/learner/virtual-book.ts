@@ -10,7 +10,7 @@
 import type { BotConfigShape } from '../config/default';
 import { getConfig } from '../config/runtime-config';
 import type { StrategyName } from '../config/types';
-import { decideExit, exitCostPctFor, exitRulesFor, trailRules, type ExitInput } from '../executor/sell-manager';
+import { decideExit, exitCostPctFor, exitRulesFor, spikeRisePct, trailRules, type ExitInput } from '../executor/sell-manager';
 import { poolFeeBps } from '../lib/pumpfun';
 import { settledHigh } from '../lib/settled-price';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
@@ -196,6 +196,7 @@ export class VirtualBook {
       recentHighSol: settledHigh(trades, since, now, holdMs, price * 2.5),
       peakAtMs: vp.peakAtMs,
       migratedAgoSec: null,
+      spikeRisePct: rules.spikeSell?.enabled ? spikeRisePct(trades, price, Math.max(vp.openedAt, now - rules.spikeSell.windowSec * 1000)) : null,
     };
     const d = decideExit(input, rules);
     vp.peakPriceSol = d.state.peakPriceSol;

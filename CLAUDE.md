@@ -156,6 +156,38 @@ smart money → learning engine → ML → social). See README.md.
   - E2E (/var/lib/e2e/e2e-swing.ts): watchlist coin adopted (canonical pool verified) → bounce-back 0.9 → bought 27%
     under the high after the bounce → 1.25x tier + trail at 1.24x = +20.7%; DUD → −15.6% stop; re-entry cooldown works.
     e2e-explore.ts: score 81 vs bar 84 → learning buy.
+- **v8 (Oct 10): stricter, faster swings, vamp guard, coach fix, Positions page redesign** (owner: "watch out for
+  vamps — you make money on a coin then buy a vamp and lose it; 10% is good profit; be very strict with swing
+  trading, more budget on higher MC, less on lower MC; sell faster on spikes; it says good exit when I closed it
+  manually; very hard to see what I'm invested in"). Config migration v6.
+  - **Vamp guard** (`src/evaluator/vamp-guard.ts`, `vamp` config): Redis HASH `vamp:orig` (normalised ticker /
+    name → original mint, MC, why). Originals = every coin we buy (`trader.onEntered`, + a 3-day backfill at start)
+    and bigger coins in the swing universe (MC ≥ $30k; the clearly bigger coin — ≥1.5× MC — wins a ticker).
+    Candidates are matched by exact ticker/name AND after stripping vamp dressing (baby/mini/real/the/official/og…,
+    …inu/ai/coin/token/classic/v2/2/3/cto/sol/x), ≥3 chars. A different mint → no buy: evaluator rule fail,
+    swing trader skip, swing universe drop (same-ticker group → only the biggest), and `trader.vampCheck` as the
+    last gate for every strategy (WARN event `vamp_blocked`). Expiry 7 days (MC ≥ $100k) / 3 days; pruned every 30 min.
+  - **Swings stricter**: MC ≥ $50k, liquidity ≥ $25k, 24h vol ≥ $250k, ≥40 trades/10 min, pullback 15–35%, bounce
+    3–8%, buy/sell ≥1.3, falling knife −30%/1h, downtrend on history (lower lows) blocked unless watchlist, bounce-back
+    ≥0.45, top-10 ≤45% (half size >35%), bar 78 (watchlist −3); re-entry 30 min / 4 h after a loss, ≤3 a day, 2
+    losses → 48 h pause; no learning trades on swings (`explore.strategies`, explore margin 5).
+  - **Swings faster** (`exit.byStrategy.SWING`): 50% at 1.1x, 25% at 1.2x, 15% at 1.5x; trail + break-even floor from
+    1.1x (ladder 6→7→9→12%), peak hold 2 s; **spike sell** (`exit.spikeSell`, off globally, on for SWING): ≥+8% within
+    2 min (`spikeRisePct`: now vs lowest real trade in the window since entry) and ≥1.04x → sell 50% of what's left,
+    once (SPIKE_MARKER −5), and it stands in for the next tier; stop 10–12% (`stopLoss.minPctByStrategy`); no
+    follow-through 30 min, stall 45 min, max hold 4 h (runner 8 h), hold-longer cap 8 h.
+  - **Size by MC** (`swing.sizeByMarketCap`): ×0.5 <$150k, ×0.8 <$500k, ×1 <$2M, ×1.3 <$10M, ×1.6 above;
+    `trading.maxPositionMultipleByStrategy.SWING` 2.5 (cap 0.5 SOL at 0.2 base, still ≤6% of capital).
+  - **Coach**: MANUAL exits → verdict `manual_exit` (never "good exit"): ≥2 (or 1 of ≤4) → trail ×0.8 (sell
+    sooner), manual losses raise the bar; swing gave-back-profit from 1.1x; swings never loosen the trail on
+    "sold too early". Dashboard label "You closed it".
+  - **Positions page** (`dashboard/src/pages/Positions.tsx`, `components/PositionRow.tsx`): summary (open trades,
+    SOL in trades, unrealised, banked) + tabs Invested now / Bigger coins (swing list + watchlist) / Waiting for a dip
+    (remembered per device); every open trade is one compact row (multiple, P&L, MC in → now, size, age, a
+    stop→next-target bar, learning badge) — tap for chart, exit plan, why it bought and Sell. Filter All / New
+    coins / Bigger, sort newest / best / worst. API: `learning` flag on /api/positions.
+  - E2E e2e-swing.ts: spike sale 50% at 1.06x, 25% at 1.2x, trail out 1.31x after 1.46x = +11.4%; DUD −12.3% stop;
+    CLUDE / BABYCLUDE vamps refused.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

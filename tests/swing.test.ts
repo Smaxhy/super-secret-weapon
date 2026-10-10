@@ -9,8 +9,10 @@ import { describe, expect, it } from 'vitest';
 import type { Redis } from 'ioredis';
 import { DEFAULT_CONFIG } from '../src/config/default';
 import type { Candle } from '../src/evaluator/chart-reader';
-import { bounceBack, parseGeckoOhlcv, pickPumpSwapPair, swingDecision, swingSetup, type Bar, type SwingInput } from '../src/evaluator/swing';
-import { decideExit, exitRulesFor, holdLongerNow, INITIALS_MARKER, type ExitInput } from '../src/executor/sell-manager';
+import { bounceBack, parseGeckoOhlcv, pickPumpSwapPair, swingDecision, swingSetup, swingSizeForMc, type Bar, type SwingInput } from '../src/evaluator/swing';
+import { decideExit, exitRulesFor, holdLongerNow, INITIALS_MARKER, SPIKE_MARKER, spikeRisePct, stopLossLevel, type ExitInput } from '../src/executor/sell-manager';
+import { candidateKeys, findVamp, originalKeys, replacesOriginal, VampGuard } from '../src/evaluator/vamp-guard';
+import { classifyTrade, computeCoachState } from '../src/learner/trade-coach';
 import { swingReentryReason } from '../src/executor/trader';
 import { canonicalPumpPool, checkPoolEvent, pdaCheck, pumpPoolAuthority } from '../src/lib/pump-pda';
 import { PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID, WSOL_MINT } from '../src/lib/pumpfun';
@@ -269,43 +271,178 @@ const exitBase: ExitInput = {
   resistance: { hit: false, level: 0, touches: 0 }, sizeSol: 1, costSol: 1.0015, proceedsSol: 0, volatilityPct: null, txFeeSol: 0.0015, strategy: 'SWING',
 };
 
-describe('swing exits + holding big winners longer', () => {
+describe('swing exits: fast profits, spike sells, tight stop (owner: "10% is good profit, be faster")', () => {
   const swing = exitRulesFor('SWING', DEFAULT_CONFIG.exit);
   it('SWING gets its own exit settings layered on the shared ones; other strategies are untouched', () => {
-    expect(swing.takeProfitTiers.map((t) => t.multiple)).toEqual([1.25, 1.6, 3]);
-    expect(swing.trail.breakEvenAfterMultiple).toBe(1.25);
+    expect(swing.takeProfitTiers.map((t) => [t.multiple, t.sellPct])).toEqual([[1.1, 50], [1.2, 25], [1.5, 15]]);
+    expect(swing.trail.breakEvenAfterMultiple).toBe(1.1);
     expect(swing.trail.confirmSec).toBe(DEFAULT_CONFIG.exit.trail.confirmSec); // not overridden → shared value
+    expect(swing.spikeSell.enabled).toBe(true);
+    expect(DEFAULT_CONFIG.exit.spikeSell.enabled).toBe(false); // only swings sell spikes by default
     expect(exitRulesFor('CURVE_SNIPE', DEFAULT_CONFIG.exit)).toBe(DEFAULT_CONFIG.exit);
     expect(exitRulesFor('SWING', DEFAULT_CONFIG.exit)).toBe(swing); // cached
   });
-  it('first profit at 1.25x (30%), stop band 12–15%', () => {
-    const d = decideExit({ ...exitBase, priceSol: 1.26, peakPriceSol: 1.26 }, swing);
-    expect(d.sells[0]).toMatchObject({ pct: 30, reason: 'TAKE_PROFIT' });
-    const stop = decideExit({ ...exitBase, priceSol: 0.8 }, swing);
-    expect(stop.sells[0]?.reason).toBe('STOP_LOSS');
+  it('half out at +10%, a quarter more at +20%', () => {
+    const d = decideExit({ ...exitBase, priceSol: 1.11, peakPriceSol: 1.11 }, swing);
+    expect(d.sells[0]).toMatchObject({ pct: 50, reason: 'TAKE_PROFIT' });
+    const d2 = decideExit({ ...exitBase, priceSol: 1.21, peakPriceSol: 1.21, remainingPct: 50, tpTiersHit: [1.1] }, swing);
+    expect(d2.sells[0]).toMatchObject({ pct: 25, reason: 'TAKE_PROFIT' });
   });
-  it('time stop is an hour for swings (no follow-through), not 1.5 minutes', () => {
-    const early = decideExit({ ...exitBase, priceSol: 0.99, peakPriceSol: 1.03, openedAtMs: NOW - 30 * 60_000, lastMoveAtMs: NOW - 60_000 }, swing);
+  it('stop 10–12% after fees for swings (shared band stays 12–20%)', () => {
+    const sw = stopLossLevel(1, null, swing, 0, 0, 'SWING');
+    expect(sw.stopPct).toBe(12); // fallback 15% clamped to the 12% swing max
+    expect(sw.hardPct).toBe(12);
+    expect(stopLossLevel(1, 2, swing, 0, 0, 'SWING').stopPct).toBe(10); // calm coin → the 10% floor
+    expect(stopLossLevel(1, 2, DEFAULT_CONFIG.exit, 0, 0, 'CURVE_SNIPE').stopPct).toBe(12);
+    expect(decideExit({ ...exitBase, priceSol: 0.85 }, swing).sells[0]?.reason).toBe('STOP_LOSS');
+  });
+  it('sells half of what is left into a +8% spike (once), never below 1.04x', () => {
+    const spike = decideExit({ ...exitBase, priceSol: 1.07, peakPriceSol: 1.07, spikeRisePct: 9 }, swing);
+    expect(spike.sells[0]).toMatchObject({ pct: 50, reason: 'TAKE_PROFIT' });
+    expect(spike.sells[0]!.detail).toMatch(/spike/);
+    expect(spike.state.tpTiersHit).toContain(SPIKE_MARKER);
+    expect(spike.state.tpTiersHit).toContain(1.1); // the spike sale stands in for the +10% tier
+    // so at 1.2x the next tier sells its 25% and the rest keeps riding
+    const at12 = decideExit({ ...exitBase, priceSol: 1.21, peakPriceSol: 1.21, remainingPct: 50, tpTiersHit: spike.state.tpTiersHit }, swing);
+    expect(at12.sells[0]).toMatchObject({ pct: 25, reason: 'TAKE_PROFIT' });
+    const again = decideExit({ ...exitBase, priceSol: 1.08, peakPriceSol: 1.08, remainingPct: 50, tpTiersHit: spike.state.tpTiersHit, spikeRisePct: 10 }, swing);
+    expect(again.sells.filter((x) => /spike/.test(x.detail))).toEqual([]);
+    expect(decideExit({ ...exitBase, priceSol: 1.02, peakPriceSol: 1.02, spikeRisePct: 12 }, swing).sells).toEqual([]);
+    expect(decideExit({ ...exitBase, priceSol: 1.07, peakPriceSol: 1.07, spikeRisePct: 9 }, DEFAULT_CONFIG.exit).sells).toEqual([]); // off elsewhere
+  });
+  it('spikeRisePct: now vs the lowest real trade in the window, only since we bought', () => {
+    const tr = [
+      { t: NOW - 200_000, sol: 1, px: 0.8 }, // before the window
+      { t: NOW - 100_000, sol: 1, px: 1.0, pp: 1.0 },
+      { t: NOW - 60_000, sol: 0.001, px: 0.5 }, // dust — ignored
+      { t: NOW - 30_000, sol: 1, px: 1.05 },
+    ];
+    expect(spikeRisePct(tr, 1.1, NOW - 120_000)).toBeCloseTo(10, 5);
+    expect(spikeRisePct(tr, 1.1, NOW - 40_000)).toBeCloseTo(4.8, 1); // opened 40 s ago: the earlier low doesn't count
+    expect(spikeRisePct([], 1.1, NOW - 120_000)).toBeNull();
+  });
+  it('no follow-through after 30 min / no new high for 45 min → out (faster than before)', () => {
+    const early = decideExit({ ...exitBase, priceSol: 0.99, peakPriceSol: 1.03, openedAtMs: NOW - 20 * 60_000, lastMoveAtMs: NOW - 60_000 }, swing);
     expect(early.sells).toEqual([]);
-    const late = decideExit({ ...exitBase, priceSol: 0.99, peakPriceSol: 1.03, openedAtMs: NOW - 61 * 60_000, lastMoveAtMs: NOW - 60_000 }, swing);
+    const late = decideExit({ ...exitBase, priceSol: 0.99, peakPriceSol: 1.03, openedAtMs: NOW - 31 * 60_000, lastMoveAtMs: NOW - 60_000 }, swing);
     expect(late.sells[0]?.detail).toMatch(/no follow-through/);
   });
-  it('a big coin still trending up rides past the max hold (the trail still protects it)', () => {
-    const held = { ...exitBase, priceSol: 2.2, peakPriceSol: 2.3, tpTiersHit: [1.25, 1.6, INITIALS_MARKER], trailingActive: true, openedAtMs: NOW - 25 * 3600_000, lastMoveAtMs: NOW - 60_000 };
+  it('max hold 4 h (8 h for the runner); a big coin still trending up may ride on, the trail still protects it', () => {
+    const held = { ...exitBase, maxHoldMinutes: swing.maxHoldMinutes.SWING, priceSol: 2.2, peakPriceSol: 2.3, remainingPct: 10, tpTiersHit: [1.1, 1.2, 1.5, INITIALS_MARKER], trailingActive: true, openedAtMs: NOW - 9 * 3600_000, lastMoveAtMs: NOW - 60_000 };
     expect(decideExit(held, swing).sells[0]?.detail).toMatch(/max hold/);
     expect(decideExit({ ...held, holdLonger: true }, swing).sells).toEqual([]);
-    // …but not through its trailing stop
     expect(decideExit({ ...held, priceSol: 1.5, holdLonger: true }, swing).sells[0]?.reason).toBe('TRAILING_STOP');
   });
-  it('holdLongerNow: banked profit + big market cap + uptrend + low risk + under 48 h', () => {
+  it('holdLongerNow: banked profit + big market cap + uptrend + low risk + under the cap (8 h for swings)', () => {
     const ok = { rules: DEFAULT_CONFIG.exit, tpTiersHit: [1.4, INITIALS_MARKER], marketCapUsd: 300_000, chart: { trend: 'up', higherLows: true, verdict: 'neutral' }, risk: 0.1, heldMs: 3 * 3600_000 };
     expect(holdLongerNow(ok)).toBe(true);
     expect(holdLongerNow({ ...ok, tpTiersHit: [] })).toBe(false);
+    expect(holdLongerNow({ ...ok, tpTiersHit: [SPIKE_MARKER] })).toBe(true); // a spike sell banked profit too
     expect(holdLongerNow({ ...ok, marketCapUsd: 30_000 })).toBe(false);
     expect(holdLongerNow({ ...ok, chart: { trend: 'down', higherLows: false, verdict: 'avoid' } })).toBe(false);
     expect(holdLongerNow({ ...ok, chart: { trend: 'range', higherLows: true, verdict: 'neutral' } })).toBe(true);
     expect(holdLongerNow({ ...ok, risk: 0.8 })).toBe(false);
     expect(holdLongerNow({ ...ok, heldMs: 49 * 3600_000 })).toBe(false);
+    expect(holdLongerNow({ ...ok, rules: swing, heldMs: 9 * 3600_000 })).toBe(false);
+  });
+});
+
+describe('swing sizing: small market caps less, big ones more (owner)', () => {
+  const steps = DEFAULT_CONFIG.swing.sizeByMarketCap;
+  it('steps by market cap', () => {
+    expect(swingSizeForMc(60_000, steps)).toBe(0.5);
+    expect(swingSizeForMc(200_000, steps)).toBe(0.8);
+    expect(swingSizeForMc(900_000, steps)).toBe(1);
+    expect(swingSizeForMc(3_000_000, steps)).toBe(1.3);
+    expect(swingSizeForMc(20_000_000, steps)).toBe(1.6);
+    expect(swingSizeForMc(null, steps)).toBe(0.5);
+    expect(swingSizeForMc(1_000_000, [])).toBe(1);
+  });
+  it('swings may use a bigger position cap', () => {
+    expect(DEFAULT_CONFIG.trading.maxPositionMultipleByStrategy.SWING).toBeGreaterThan(DEFAULT_CONFIG.trading.maxConvictionMultiple);
+  });
+});
+
+describe('stricter swing entries', () => {
+  it('falling knife over 30% in an hour, or a downtrend on the bigger chart → no buy', () => {
+    expect(swingDecision(goodInput({ priceChange1hPct: -33 }), C).fails.join()).toMatch(/falling knife/);
+    const lowerLows = bounceBack(path([1.4, 1.2, 1.3, 1.0, 1.1, 0.8, 0.9, 0.7]), { dipPct: 20, recoverPct: 60 }, NOW)!;
+    expect(lowerLows.higherLows).toBe(false);
+    expect(lowerLows.lowerLows).toBe(true);
+    // a range with one dip lower is not a downtrend
+    const range = bounceBack(path([1, 1.3, 1.0, 1.3, 0.97, 1.3, 1.05, 1.3]), { dipPct: 20, recoverPct: 60 }, NOW)!;
+    expect(range.lowerLows).toBe(false);
+    expect(swingDecision(goodInput({ bounce: lowerLows }), C).fails.join()).toMatch(/downtrend/);
+    expect(swingDecision(goodInput({ bounce: lowerLows, watchlist: true }), C).fails.join()).not.toMatch(/downtrend/);
+  });
+  it('the bar is higher and learning trades never apply to swings', () => {
+    expect(C.minScore).toBeGreaterThanOrEqual(78);
+    expect(DEFAULT_CONFIG.explore.strategies).not.toContain('SWING');
+  });
+});
+
+describe('vamps (copycat coins)', () => {
+  const vc = DEFAULT_CONFIG.vamp;
+  it('candidate keys strip the usual vamp dressing; originals are stored under their exact names', () => {
+    expect(candidateKeys('BABYCLUDE', 'Baby Clude')).toEqual(expect.arrayContaining(['babyclude', 'clude']));
+    expect(candidateKeys('CLUDE2', 'Clude 2.0')).toEqual(expect.arrayContaining(['clude2', 'clude']));
+    expect(candidateKeys('REALCLUDE', 'The Real Clude')).toContain('clude');
+    expect(candidateKeys('AI', 'AI')).toEqual([]); // too generic to guard
+    expect(originalKeys('CLUDE', 'Clude')).toEqual(['clude']);
+  });
+  it('a different mint with an original’s ticker or name is a vamp; the original itself is not', () => {
+    const map = new Map([['clude', { mint: 'REAL', symbol: 'CLUDE', mcUsd: 900_000, at: NOW, why: 'big' as const }]]);
+    expect(findVamp('FAKE', 'CLUDE', 'Clude', map, vc, NOW)?.mint).toBe('REAL');
+    expect(findVamp('FAKE', 'BABYCLUDE', 'Baby Clude', map, vc, NOW)?.mint).toBe('REAL');
+    expect(findVamp('REAL', 'CLUDE', 'Clude', map, vc, NOW)).toBeNull();
+    expect(findVamp('X', 'DOGWIF', 'Dog Wif', map, vc, NOW)).toBeNull();
+    expect(findVamp('FAKE', 'CLUDE', 'Clude', map, vc, NOW + 8 * 86_400_000)).toBeNull(); // expired
+  });
+  it('the clearly bigger coin wins a ticker (a small vamp we traded first is replaced by the real one)', () => {
+    const small = { mint: 'SMALL', symbol: 'CLUDE', mcUsd: 8_000, at: NOW, why: 'traded' as const };
+    const big = { mint: 'REAL', symbol: 'CLUDE', mcUsd: 900_000, at: NOW, why: 'big' as const };
+    expect(replacesOriginal(small, big, vc, NOW)).toBe(true);
+    expect(replacesOriginal(big, small, vc, NOW)).toBe(false);
+    expect(replacesOriginal(big, { ...big, mcUsd: 1_000_000 }, vc, NOW)).toBe(true); // same coin refreshes
+  });
+  it('the guard: a coin we traded becomes the original; the next coin with its ticker is refused', async () => {
+    const redis = new FakeRedis();
+    const g = new VampGuard(redis as unknown as Redis);
+    await g.record({ mint: 'WIN1', symbol: 'FROGGY', name: 'Froggy', mcUsd: 9_000, why: 'traded' });
+    expect(await g.check('WIN1', 'FROGGY', 'Froggy')).toBeNull();
+    expect(await g.check('VAMP1', 'FROGGY', 'Froggy')).toMatch(/vamp: copies \$FROGGY/);
+    expect(await g.check('VAMP2', 'BABYFROGGY', 'Baby Froggy')).toMatch(/vamp/);
+    expect(await g.check('OTHER', 'TOADY', 'Toady')).toBeNull();
+    // A much bigger FROGGY takes the ticker over; now the coin we traded counts as the copy.
+    await g.record({ mint: 'BIGFROG', symbol: 'FROGGY', name: 'Froggy', mcUsd: 2_000_000, why: 'big' });
+    expect(await g.check('BIGFROG', 'FROGGY', 'Froggy')).toBeNull();
+    expect(await g.check('WIN1', 'FROGGY', 'Froggy')).toMatch(/the real coin/);
+    expect(await g.prune(Date.now() + 30 * 86_400_000)).toBeGreaterThan(0);
+  });
+});
+
+describe('trade coach: your manual closes are lessons, not "good exits"', () => {
+  const base = { pnlSol: 0.02, peakMultiple: 1.3, exitMultiple: 1.2, postHighMultiple: 1.2, postLowMultiple: 1.0 };
+  it('a manual close is never a good exit', () => {
+    expect(classifyTrade({ ...base, exitReason: 'MANUAL' }).verdict).toBe('manual_exit');
+    expect(classifyTrade({ ...base, exitReason: 'MANUAL' }).lesson).toMatch(/held too long/);
+    expect(classifyTrade({ ...base, pnlSol: -0.01, exitReason: 'MANUAL' }).lesson).toMatch(/pickier/);
+    expect(classifyTrade({ ...base, exitReason: 'TAKE_PROFIT' }).verdict).toBe('good_exit');
+  });
+  it('a swing that was up 10% and closed red gave back profit (other strategies: 30%)', () => {
+    const r = { pnlSol: -0.01, peakMultiple: 1.12, exitMultiple: 0.95, postHighMultiple: 1.0, postLowMultiple: 0.9, exitReason: 'STOP_LOSS' };
+    expect(classifyTrade({ ...r, strategy: 'SWING' }).verdict).toBe('gave_back_profit');
+    expect(classifyTrade({ ...r, strategy: 'CURVE_SNIPE' }).verdict).not.toBe('gave_back_profit');
+  });
+  it('manual closes tighten the trail (sell sooner); at a loss they raise the bar', () => {
+    const review = (verdict: string, pnlSol: number) => ({ positionId: 'p', mint: 'm', symbol: 'S', strategy: 'SWING' as const, swing: false, pnlSol, pnlPct: pnlSol * 100, peakMultiple: 1.2, lowMultiple: 0.95, exitMultiple: 1.1, postHighMultiple: 1.2, postLowMultiple: 1, heldMin: 20, exitReason: verdict === 'manual_exit' ? 'MANUAL' : 'TAKE_PROFIT', verdict: verdict as never, lesson: '', at: '' });
+    const st = computeCoachState('SWING', [review('manual_exit', 0.02), review('manual_exit', -0.01), review('good_exit', 0.03)]);
+    expect(st.trailFactor).toBeLessThanOrEqual(0.8);
+    expect(st.thresholdDelta).toBeGreaterThan(0);
+    expect(st.note).toMatch(/by hand/);
+    // swings never loosen the trail because a coin "ran after" we sold
+    const early = computeCoachState('SWING', [review('sold_too_early', 0.02), review('sold_too_early', 0.02), review('sold_too_early', 0.02)]);
+    expect(early.trailFactor).toBe(1);
   });
 });
 

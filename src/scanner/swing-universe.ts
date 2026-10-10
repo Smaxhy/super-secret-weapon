@@ -32,6 +32,8 @@ import type { DexPair, DexScreener } from './dexscreener';
 import { deriveMetrics, type LiveState } from './live-state';
 import type { MarketLeaders } from './market-leaders';
 import type { TokenRegistry } from './token-registry';
+import { normalizeId } from '../evaluator/social-analyzer';
+import type { VampGuard } from '../evaluator/vamp-guard';
 
 const log = moduleLogger('swing-universe');
 const GECKO = 'https://api.geckoterminal.com/api/v2';
@@ -128,7 +130,9 @@ export class SwingUniverse {
   private restored = false;
   private grown: Array<{ mint: string; volume1h: number }> = [];
   private readonly gecko = { pausedUntil: 0, fails: 0, okAt: 0, lastError: null as string | null, calls: [] as number[] };
-  readonly stats = { refreshes: 0, adopted: 0, evicted: 0, historyFetches: 0, lastRefreshAt: 0, lastError: null as string | null };
+  readonly stats = { refreshes: 0, adopted: 0, evicted: 0, historyFetches: 0, vamps: 0, lastRefreshAt: 0, lastError: null as string | null };
+  /** Copycat guard: bigger coins become the original for their ticker; copies are dropped (set in index.ts). */
+  vamp: VampGuard | null = null;
 
   constructor(
     private readonly redis: Redis,
@@ -290,6 +294,7 @@ export class SwingUniverse {
       // Rank and pick the live set.
       const ranked = [...cand.keys()].map((m) => this.coins.get(m)!).filter(Boolean);
       for (const coin of ranked) coin.out = swingFilter(coin, c, now);
+      await this.dropVamps(ranked, now);
       // Watchlist coins are followed even before market data arrives (their own trades fill it in).
       for (const coin of ranked) if (coin.watchlist && coin.pool && coin.out === 'no market data yet') coin.out = null;
       const ok = ranked.filter((x) => !x.out).sort((a, b) => swingRank(b) - swingRank(a));
@@ -312,6 +317,35 @@ export class SwingUniverse {
     } finally {
       this.running = false;
     }
+  }
+
+  /**
+   * Vamps (copycats): two coins with one ticker → the clearly bigger one is the original, the other
+   * is out. Bigger coins are recorded as originals so copies of them are never bought anywhere.
+   */
+  private async dropVamps(coins: SwingCoin[], now: number): Promise<void> {
+    if (!this.vamp) return;
+    const vc = getConfig().vamp ?? DEFAULT_CONFIG.vamp;
+    const size = (x: SwingCoin) => Math.max(x.marketCapUsd ?? 0, (x.liquidityUsd ?? 0) * 5);
+    const byTicker = new Map<string, SwingCoin[]>();
+    for (const coin of coins) {
+      const k = normalizeId(coin.symbol);
+      if (k.length >= vc.minKeyLength) (byTicker.get(k) ?? byTicker.set(k, []).get(k)!).push(coin);
+    }
+    for (const group of byTicker.values()) {
+      if (group.length < 2) continue;
+      const top = [...group].sort((a, b) => size(b) - size(a))[0]!;
+      for (const x of group) if (x !== top && !x.watchlist) x.out = `vamp: copies $${top.symbol} (a bigger coin with the same ticker)`;
+    }
+    for (const coin of coins) {
+      if ((coin.marketCapUsd ?? 0) >= vc.minOriginalMcUsd && !coin.out?.startsWith('vamp')) await this.vamp.record({ mint: coin.mint, symbol: coin.symbol, name: coin.name, mcUsd: coin.marketCapUsd, why: 'big' }, now);
+    }
+    for (const coin of coins) {
+      if (coin.out?.startsWith('vamp') || coin.watchlist) continue;
+      const why = await this.vamp.check(coin.mint, coin.symbol, coin.name, now);
+      if (why) coin.out = why;
+    }
+    this.stats.vamps = coins.filter((x) => x.out?.startsWith('vamp')).length;
   }
 
   /** After a restart: coins adopted before are live (and evictable) again. */

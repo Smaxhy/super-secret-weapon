@@ -21,7 +21,7 @@ import { getConfig } from '../config/runtime-config';
 import { STRATEGIES } from '../config/strategies';
 import { analyzeMarket } from '../evaluator/market-analyzer';
 import { convictionFactor } from '../evaluator/scorer';
-import { bounceBack, bounceSummary, swingDecision, swingSetup, toBars, type SwingVerdict } from '../evaluator/swing';
+import { bounceBack, bounceSummary, swingDecision, swingSetup, swingSizeForMc, toBars, type SwingVerdict } from '../evaluator/swing';
 import { runStrategies, taContext } from '../evaluator/ta/strategies';
 import { explainSwingBuy } from '../learner/explain';
 import type { OutcomeLabeler } from '../learner/outcome-labeler';
@@ -42,6 +42,8 @@ import { deriveMetrics, type LiveState } from '../scanner/live-state';
 import type { SwingCoin, SwingUniverse } from '../scanner/swing-universe';
 import type { TrendingHub } from '../scanner/trending-hub';
 import type { Trader } from './trader';
+import type { VampGuard } from '../evaluator/vamp-guard';
+import { exitRulesFor } from './sell-manager';
 
 const log = moduleLogger('swing-trader');
 /** A coin's buy signal is stored at most this often (a refused buy is retried every tick). */
@@ -72,6 +74,16 @@ export async function topHoldersPct(mint: string, pool: string | null): Promise<
   }
 }
 
+/** The swing exit plan in words, from the live rules (e.g. "50% at 1.1x, 25% at 1.2x … stop 10–12%"). */
+export function swingPlan(r: ReturnType<typeof exitRulesFor>): string {
+  const tiers = r.takeProfitTiers.map((t) => `${t.sellPct}% at ${t.multiple}x`).join(', ');
+  const sl = r.stopLoss as { minPct: number; maxPct: number; minPctByStrategy?: Record<string, number>; maxPctByStrategy?: Record<string, number> };
+  const lo = sl.minPctByStrategy?.SWING ?? sl.minPct;
+  const hi = Math.min(sl.maxPct, sl.maxPctByStrategy?.SWING ?? sl.maxPct);
+  const spike = r.spikeSell?.enabled ? `; a +${r.spikeSell.risePct}% spike within ${Math.round(r.spikeSell.windowSec / 60)} min sells ${r.spikeSell.sellPct}% of the rest` : '';
+  return `${tiers}, then a tight trailing stop + break-even floor from ${r.trail.breakEvenAfterMultiple}x${spike}; stop ${lo}–${hi}% after fees`;
+}
+
 function json(v: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? x.toString() : x)));
 }
@@ -86,6 +98,8 @@ export class SwingTrader {
   ta: TaLab | null = null;
   /** Trending tabs (banned / Mayhem flags) — set in index.ts. */
   trending: TrendingHub | null = null;
+  /** Copycat ("vamp") guard — set in index.ts. */
+  vamp: VampGuard | null = null;
   /** Holder lookup (RPC); replaceable in tests. */
   holders: (mint: string, pool: string | null) => Promise<number | null> = topHoldersPct;
 
@@ -165,6 +179,11 @@ export class SwingTrader {
       getSolUsd(),
     ]);
     if (!view || !token) return null;
+    const vampWhy = this.vamp ? await this.vamp.check(mint, token.symbol, token.name, now) : null;
+    if (vampWhy) {
+      coin.last = { at: now, score: 0, decision: 'SKIP', why: vampWhy };
+      return null;
+    }
     const m = deriveMetrics(view);
     const liveMc = sol && view.ammTrades > 0 && m.priceSol > 0 ? m.marketCapSol * sol : null;
     const liveLiq = sol && view.ammTrades > 0 ? 2 * m.liquiditySol * sol : null;
@@ -250,7 +269,9 @@ export class SwingTrader {
     if (decision === 'BUY') {
       this.stats.buySignals++;
       const conv = convictionFactor({ scoreMargin: score - verdict.threshold, calibrationFactor: cal.factor, crowdScore: crowd.crowdScore, min: cfg.trading.minConvictionMultiple ?? 0.4, max: cfg.trading.maxConvictionMultiple ?? 1.6 });
-      const sizeMultiplier = explore ? ex.sizeMultiplier * coach.sizeFactor : verdict.sizeFactor * coach.sizeFactor * conv.factor * c.sizeMultiplier;
+      // Owner: small market caps get less, big ones more (sizeByMarketCap).
+      const mcMult = swingSizeForMc(liveMc ?? coin.marketCapUsd, c.sizeByMarketCap);
+      const sizeMultiplier = explore ? ex.sizeMultiplier * coach.sizeFactor * Math.min(1, mcMult) : verdict.sizeFactor * coach.sizeFactor * conv.factor * c.sizeMultiplier * mcMult;
       log.info({ mint, symbol: token.symbol, score, explore, setup: setup.why }, `🌊 SWING ${explore ? 'learning ' : ''}buy signal ${token.symbol} (${score})`);
       const res = await this.trader.tryEnter({
         mint,
@@ -279,9 +300,10 @@ export class SwingTrader {
             notes: verdict.notes,
             sources: coin.sources,
             explore,
-            sizeNote: explore ? `learning trade ×${ex.sizeMultiplier}` : conv.note + (verdict.sizeFactor !== 1 ? `, ×${verdict.sizeFactor} (holders)` : ''),
+            sizeNote: (explore ? `learning trade ×${ex.sizeMultiplier}` : conv.note + (verdict.sizeFactor !== 1 ? `, ×${verdict.sizeFactor} (holders)` : '')) + `, ×${mcMult} for its market cap`,
             coachNote: coach.note,
             calibrationNote: cal.note,
+            plan: swingPlan(exitRulesFor('SWING', cfg.exit)),
           }),
       });
       entered = res.entered;

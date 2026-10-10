@@ -1,9 +1,8 @@
 /** Coins the bot wants but won't buy at the top: waiting for a dip into the buy zone + a bounce. */
 import { Link } from 'react-router-dom';
-import { useApi } from '../hooks/useApi';
-import { Card } from './ui';
+import { Card, Empty } from './ui';
 
-interface Row {
+export interface DipRow {
   mint: string;
   symbol: string;
   strategy: string;
@@ -16,11 +15,11 @@ interface Row {
   why: string;
 }
 
-export function DipWatch() {
-  const { data } = useApi<Row[]>('/api/dip-watch', 5_000);
-  if (!data?.length) return null;
+export function DipWatch({ rows }: { rows: DipRow[] | null }) {
+  const data = rows;
+  if (!data?.length) return <Empty>Nothing waiting for a dip right now.</Empty>;
   return (
-    <Card title="Waiting for a dip" className="mb-4">
+    <Card title="Waiting for a dip">
       <p className="mb-2 text-sm text-ink-2">Passed every rule but the chart was stretched — the bot waits for a pullback into the buy zone and a bounce instead of buying the top.</p>
       <ul className="divide-y divide-line text-sm">
         {data.map((w) => {

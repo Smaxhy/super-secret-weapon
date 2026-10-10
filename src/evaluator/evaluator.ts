@@ -49,6 +49,7 @@ import type { StrategyLab } from '../learner/strategy-lab';
 import { taPoints, type TaLab } from '../learner/ta-lab';
 import { runStrategies, taContext } from './ta/strategies';
 import { trendScore, type TrendingHub } from '../scanner/trending-hub';
+import type { VampGuard } from './vamp-guard';
 import { rememberBuyers, smartShare } from '../learner/wallet-reputation';
 import { coachFor } from '../learner/trade-coach';
 import { calibration, calibrationAdjust, type CalibrationAdjust } from '../learner/score-calibration';
@@ -79,6 +80,8 @@ export class Evaluator {
   ta: TaLab | null = null;
   /** Trending tabs (pump.fun / GeckoTerminal / DexScreener narratives) (set in index.ts). */
   trending: TrendingHub | null = null;
+  /** Copycat ("vamp") coins of coins we traded or bigger coins → no buy (set in index.ts). */
+  vamp: VampGuard | null = null;
 
   constructor(
     private readonly redis: Redis,
@@ -272,6 +275,9 @@ export class Evaluator {
     const kolAct = kolCfg.enabled ? await kolActivity(this.redis, mint, kolCfg).catch(() => null) : null;
     const kolBonus = kolPoints(kolAct, kolCfg);
     if (kolAct?.dumping) dexFails.push(`KOLs dumping (${kolAct.recentSellers.length} sold)`);
+    // Vamps: a copy of a coin we already traded, or of a bigger coin with the same ticker / name.
+    const vampWhy = this.vamp ? await this.vamp.check(mint, token.symbol, token.name) : null;
+    if (vampWhy) dexFails.push(vampWhy);
     if (dexCfg.requirePaidFor?.includes(STRATEGY.name) && !(dexPaid?.paid || dexPaid?.cto)) dexFails.push(dexPaid ? 'not DEX paid' : 'DEX paid not checked yet');
     // Socials + keywords (from the metadata file, if it has been fetched).
     let socialInfo: { hasTwitter: boolean; blockedKeyword: string | null } | undefined;

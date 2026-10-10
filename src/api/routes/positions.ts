@@ -21,6 +21,8 @@ const DEFAULT_SUPPLY_TOKENS = 1_000_000_000;
 /** What the trader saved about the market when we bought (older positions may lack some fields). */
 interface EntryContext {
   explanation?: string | null;
+  /** Learning trade (a near-miss bought small). */
+  explore?: boolean;
   marketCapSol?: number;
   marketCapUsd?: number | null;
   priceSol?: number;
@@ -133,6 +135,7 @@ export async function positionsRoutes(app: FastifyInstance, deps: ApiDeps): Prom
           scoreAtEntry: p.evaluation?.combinedScore ?? null,
           trailingActive: p.trailingActive,
           buyReason: ctx?.explanation ?? null,
+          learning: ctx?.explore === true,
           // Market cap when we bought vs now (SOL and USD).
           entryMarketCapSol: entryMarketCapSol(p.entryPriceSol, supply, ctx),
           entryMarketCapUsd: typeof ctx?.marketCapUsd === 'number' ? ctx.marketCapUsd : null,
