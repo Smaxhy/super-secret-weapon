@@ -3,6 +3,7 @@ import { api } from '../lib/api';
 import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl } from '../components/ui';
 import { McCompare } from '../components/McCompare';
 import { PositionChart } from '../components/PositionChart';
+import { DipWatch } from '../components/DipWatch';
 import { useLivePositions } from '../hooks/useLivePositions';
 import { ago, multiple, num, pct, price, sol, STRATEGY_LABEL } from '../lib/format';
 
@@ -11,7 +12,8 @@ export function Positions() {
   const { positions: data, error, loading, reload } = useLivePositions();
   return (
     <>
-      <PageHeader title="Open positions" subtitle="Prices and market caps stream live every ~2 seconds. Tap Sell now to exit manually." />
+      <PageHeader title="Open positions" subtitle="Prices and market caps update live on every trade. Tap Sell now to exit manually." />
+      <DipWatch />
       {error && <ErrorBox message={error} />}
       {loading && !data ? <Loading /> : !data?.length ? <Empty>No open positions right now.</Empty> : null}
       <div className="grid gap-4 lg:grid-cols-2">

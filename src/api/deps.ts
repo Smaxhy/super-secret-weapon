@@ -6,6 +6,8 @@ import type { ListenerStats } from '../scanner/pumpfun-listener';
 import type { DexScreener } from '../scanner/dexscreener';
 import type { MarketLeaders } from '../scanner/market-leaders';
 import type { WalletPnl } from '../learner/wallet-pnl';
+import type { DipWatcher } from '../executor/dip-watcher';
+import type { CrowdTracker } from '../scanner/crowd-tracker';
 
 export interface ApiDeps {
   liveState: LiveState;
@@ -16,6 +18,8 @@ export interface ApiDeps {
   dex?: DexScreener | null;
   leaders?: MarketLeaders | null;
   walletPnl?: WalletPnl | null;
+  dips?: DipWatcher | null;
+  crowd?: CrowdTracker | null;
 }
 
 /** Classify a token for the live feed colour code. */

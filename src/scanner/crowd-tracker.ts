@@ -23,6 +23,7 @@
 import { getConfig } from '../config/runtime-config';
 import type { AmmTradeEvent, PumpTradeEvent } from '../config/types';
 import { bondingCurvePct, PUMP_TOKEN_DECIMALS } from '../lib/pumpfun';
+import { addToCandles, type Candle } from '../evaluator/chart-reader';
 
 export interface CrowdTrade {
   /** ms */
@@ -269,6 +270,8 @@ function median(a: number[]): number {
 
 export class CrowdTracker {
   private readonly logs = new Map<string, CrowdTrade[]>();
+  /** 15-second candles per coin (last hour) — the chart the chart reader reads. */
+  private readonly candleSeries = new Map<string, Candle[]>();
   /** Coins that already crossed into the Soon zone (fire once). */
   private readonly soonSeen = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
@@ -331,7 +334,18 @@ export class CrowdTracker {
     return computeCrowdMetrics(this.trades(mint), now, { fullAttentionWallets: getConfig().focus.fullAttentionWallets, smartBuyerPct });
   }
 
+  /** 15s candles (oldest → newest), last hour. */
+  candles(mint: string): readonly Candle[] {
+    return this.candleSeries.get(mint) ?? [];
+  }
+
   private push(mint: string, x: CrowdTrade): void {
+    let series = this.candleSeries.get(mint);
+    if (!series) {
+      series = [];
+      this.candleSeries.set(mint, series);
+    }
+    addToCandles(series, x.t, x.px, x.sol, x.buy);
     let log = this.logs.get(mint);
     if (!log) {
       log = [];
@@ -346,6 +360,10 @@ export class CrowdTracker {
       const i = log.findIndex((x) => now - x.t <= KEEP_MS);
       if (i === -1) this.logs.delete(mint);
       else if (i > 0) log.splice(0, i);
+    }
+    for (const [mint, series] of this.candleSeries) {
+      const last = series[series.length - 1];
+      if (!last || now - last.t > 60 * 60_000) this.candleSeries.delete(mint);
     }
     if (this.soonSeen.size > 50_000) this.soonSeen.clear();
   }

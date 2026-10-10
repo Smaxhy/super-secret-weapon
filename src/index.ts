@@ -29,6 +29,7 @@ import { CrowdTracker } from './scanner/crowd-tracker';
 import { DexScreener } from './scanner/dexscreener';
 import { MarketLeaders } from './scanner/market-leaders';
 import { WalletPnl } from './learner/wallet-pnl';
+import { DipWatcher } from './executor/dip-watcher';
 import { TradeCoach } from './learner/trade-coach';
 import { SwingWatcher } from './executor/swing-watcher';
 import { ObservationLogger } from './learner/observation-logger';
@@ -139,6 +140,11 @@ async function main(): Promise<void> {
   const walletPnl = new WalletPnl(redis);
   registry.pnl = walletPnl;
   walletPnl.start();
+  // Don't buy the top: stretched charts wait here for a dip + bounce.
+  const dips = new DipWatcher(crowd, evaluator);
+  evaluator.dips = dips;
+  registry.onTradeApplied.push((mint) => dips.onTrade(mint));
+  dips.start();
   // Exits react to every trade on a coin we hold (not just the 1s tick); real trade highs count as peaks.
   sellManager.crowd = crowd;
   registry.onTradeApplied.push((mint) => sellManager.onTrade(mint));
@@ -250,7 +256,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -320,6 +326,7 @@ async function main(): Promise<void> {
       dex.stop();
       leaders.stop();
       walletPnl.stop();
+      dips.stop();
       stopCalibration();
       swings.stop();
       crowd.stop();

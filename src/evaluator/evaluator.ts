@@ -42,6 +42,8 @@ import type { CrowdMetrics, CrowdTracker } from '../scanner/crowd-tracker';
 import { dexPoints, type DexScreener } from '../scanner/dexscreener';
 import { kolActivity, kolPoints } from '../scanner/kol-signal';
 import type { MarketLeaders } from '../scanner/market-leaders';
+import { analyzeChart } from './chart-reader';
+import type { DipWatcher } from '../executor/dip-watcher';
 import { rememberBuyers, smartShare } from '../learner/wallet-reputation';
 import { coachFor } from '../learner/trade-coach';
 import { calibration, calibrationAdjust, type CalibrationAdjust } from '../learner/score-calibration';
@@ -64,6 +66,8 @@ export class Evaluator {
   dex: DexScreener | null = null;
   /** Top coins right now and the narratives they share (set in index.ts). */
   leaders: MarketLeaders | null = null;
+  /** Stretched charts wait here for a dip instead of being bought at the top (set in index.ts). */
+  dips: DipWatcher | null = null;
 
   constructor(
     private readonly redis: Redis,
@@ -193,6 +197,10 @@ export class Evaluator {
     const crowd: CrowdMetrics | null = this.crowd && this.crowd.trades(mint).length > 0 ? this.crowd.metrics(mint, smart.pct) : null;
     // Fake volume / bundles / chasing: over the limits = no buy; under them = points off.
     const manip = manipulationCheck(crowd, cfg.entry.manipulation);
+    // Read the chart: breaking down = no buy; a dip + bounce in an uptrend = bonus; stretched = wait for a dip.
+    const chartCfg = cfg.chart ?? DEFAULT_CONFIG.chart;
+    const chart = chartCfg.enabled && this.crowd ? analyzeChart(this.crowd.candles(mint), Date.now(), chartCfg) : null;
+    const chartPoints = chart?.verdict === 'buy_now' ? chartCfg.buyDipPoints : 0;
     // DexScreener: DEX paid / CTO / trending → bonus points (optionally required).
     const dexCfg = cfg.dex ?? DEFAULT_CONFIG.dex;
     // (only for coins that matter — DexScreener allows 60 checks a minute)
@@ -233,7 +241,7 @@ export class Evaluator {
       if (kw.blocked) socialInfo = { hasTwitter: false, blockedKeyword: kw.blocked };
     }
 
-    const rules = () => [...checkEntryRules({ safetyScore: token.safetyScore!, safetyHardFail: token.safetyHardFail!, market: market.raw, strategy: STRATEGY, entry: cfg.entry, social: socialInfo, focus: cfg.focus, crowd }), ...manip.fails, ...dexFails];
+    const rules = () => [...checkEntryRules({ safetyScore: token.safetyScore!, safetyHardFail: token.safetyHardFail!, market: market.raw, strategy: STRATEGY, entry: cfg.entry, social: socialInfo, focus: cfg.focus, crowd }), ...manip.fails, ...dexFails, ...(chart?.verdict === 'avoid' ? [`chart breaking down (${chart.summary})`] : [])];
     let ruleFails = rules();
 
     // Total fees so far use an ASSUMED priority fee + tip per trade. If fees are
@@ -261,7 +269,7 @@ export class Evaluator {
     // keep losing get marked down). `pre` (before calibration) is what calibration measures.
     const score = (f: FeatureVector): Scored => {
       const r = withOdds(scoreFeatures(f, weights), odds);
-      const pre = Math.round((r.score - manip.penalty + dexBonus.points + kolBonus.points) * 100) / 100;
+      const pre = Math.round((r.score - manip.penalty + dexBonus.points + kolBonus.points + chartPoints) * 100) / 100;
       const cal = calibrationAdjust(calibration(), STRATEGY.name, pre);
       return { ...r, score: Math.round(Math.max(0, Math.min(100, pre + cal.points)) * 100) / 100, pre, cal };
     };
@@ -324,7 +332,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, kol: kolAct ? { kols: kolAct.buyers.length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, market: market.raw, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, kol: kolAct ? { kols: kolAct.buyers.length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, market: market.raw, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },
@@ -346,8 +354,16 @@ export class Evaluator {
     // Curve snipes stop at migration (the migration strategy takes over from there).
     if (market.raw.complete && (STRATEGY.name === 'CURVE_SNIPE' || STRATEGY.name === 'SOON')) return void (await markDone());
 
+    // Don't buy the top: a stretched chart waits for a dip into the buy zone (the dip watcher
+    // re-checks the coin when it dips and bounces — that re-check skips this and the confirmation).
+    const dipEntry = job.data.dip === true;
+    if (decision === 'BUY' && !dipEntry && chart?.verdict === 'wait_dip' && chart.zone && chartCfg.dip.enabled && this.dips) {
+      this.dips.add({ mint, symbol: token.symbol, strategy: STRATEGY.name, zone: chart.zone, signalPrice: market.raw.priceSol, why: chart.summary, swing, wallet: job.data.wallet });
+      decision = 'SKIP';
+      reasons = [`waiting for a dip: ${chart.summary}`];
+    }
     // Confirmation delay: re-check a BUY signal a few seconds later before any money moves.
-    if (decision === 'BUY') {
+    if (decision === 'BUY' && !dipEntry) {
       const confirmSec = cfg.entry.confirmDelaySec ?? 0;
       const pending = job.data.confirm;
       if (confirmSec > 0 && !pending) {
@@ -404,7 +420,7 @@ export class Evaluator {
         sizeMultiplier: (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? 1) * coach.sizeFactor * conv.factor * copyMult,
         swing,
         explain: (sizeSol) =>
-          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...kolBonus.notes, ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
+          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, chartNote: chart ? `${chart.summary}${dipEntry ? ` — bought the dip: ${job.data.dipWhy ?? ''}` : ''}` : null, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...kolBonus.notes, ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
       });
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.
       if (!swing && (res.entered || res.reason === 'already traded this token')) await markDone();
@@ -430,12 +446,21 @@ export class Evaluator {
   }
 
   /** Something just happened on this token (volume spike) — check it right now. */
-  async checkNow(mint: string, strategy: StrategyName, why: string, opts: { swing?: boolean } = {}): Promise<void> {
+  async checkNow(mint: string, strategy: StrategyName, why: string, opts: { swing?: boolean; dip?: boolean; wallet?: string } = {}): Promise<void> {
     const bucket = Math.floor(Date.now() / 60_000);
+    const kind = opts.dip ? 'dip' : opts.swing ? 'swing' : 'now';
     await evaluateQueue.add(
       `now:${why}`,
-      { mint, checkpointSec: 0, final: false, strategy, ...(opts.swing ? { swing: true, swingWhy: why } : {}) },
-      { jobId: `${mint}-${strategy}-${opts.swing ? 'swing' : 'now'}-${bucket}` },
+      {
+        mint,
+        checkpointSec: 0,
+        final: false,
+        strategy,
+        ...(opts.swing ? { swing: true, swingWhy: why } : {}),
+        ...(opts.dip ? { dip: true, dipWhy: why } : {}),
+        ...(opts.wallet ? { wallet: opts.wallet } : {}),
+      },
+      { jobId: `${mint}-${strategy}-${kind}-${bucket}` },
     );
   }
 }

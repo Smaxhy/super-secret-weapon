@@ -72,6 +72,16 @@ function entryMarketCapSol(entryPriceSol: number, supply: number, ctx: EntryCont
 }
 
 export async function positionsRoutes(app: FastifyInstance, deps: ApiDeps): Promise<void> {
+  /** Coins that passed the rules but were too stretched — waiting for a dip + bounce to buy. */
+  app.get('/api/dip-watch', async () => {
+    const now = Date.now();
+    return (deps.dips?.list() ?? []).map((w) => {
+      const t = deps.crowd?.trades(w.mint);
+      const price = t && t.length ? t[t.length - 1]!.px : null;
+      return { mint: w.mint, symbol: w.symbol, strategy: w.strategy, zoneLo: w.zone.lo, zoneHi: w.zone.hi, signalPrice: w.signalPrice, price, inZone: w.lowest !== null, secondsLeft: Math.max(0, Math.round((w.expiresAt - now) / 1000)), why: w.why };
+    });
+  });
+
   app.get('/api/positions', async () => {
     const cfg = getConfig();
     const open = await prisma.position.findMany({

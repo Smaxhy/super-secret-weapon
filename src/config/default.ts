@@ -242,6 +242,30 @@ export const DEFAULT_CONFIG = {
   },
 
   /**
+   * Chart reading (src/evaluator/chart-reader.ts) on 15s candles from live trades:
+   *  - entries: a coin stretched above VWAP (> maxAboveVwapPct) / overbought (RSI > overboughtRsi) /
+   *    up > maxRun2mPct in 2 min is NOT bought at the top — it waits up to `dip.waitMinutes` for a
+   *    pullback into the buy zone (dip.minPullbackPct–maxPullbackPct off the high, near VWAP/support)
+   *    and a bounce (dip.bounceConfirmPct, buyers ≥ dip.minBuyRatio). Ran away (> runAwayPct) or
+   *    broke down (> breakdownPct under the zone) → skipped. Breaking-down charts are never bought;
+   *    a healthy dip + bounce in an uptrend gets `buyDipPoints`.
+   *  - exits: blow-off top (vertical run on a volume climax being rejected) → sell blowOffSellPct of
+   *    what's left; bearish divergence (new high, weaker RSI) → sell divergenceSellPct (once each,
+   *    only above smartSell.minMultiple).
+   */
+  chart: {
+    enabled: true as boolean,
+    minCandles: 12,
+    maxAboveVwapPct: 25,
+    overboughtRsi: 78,
+    maxRun2mPct: 35,
+    buyDip: { minPullbackPct: 8, minBouncePct: 2 },
+    buyDipPoints: 4,
+    dip: { enabled: true as boolean, minPullbackPct: 10, maxPullbackPct: 40, bounceConfirmPct: 3, minBuyRatio: 1.1, waitMinutes: 10, runAwayPct: 40, breakdownPct: 7 },
+    smartSell: { enabled: true as boolean, minMultiple: 1.4, blowOffSellPct: 50, divergenceSellPct: 30 },
+  },
+
+  /**
    * Smart-money discovery (src/learner/wallet-pnl.ts): real profit per wallet from every trade
    * the bot sees (creators and launch snipers excluded). Every `everyMin` the `top` wallets with
    * ≥ minSells sells, ≥ minWinRate wins, ≥ minPnlSol profit and ≥ minAvgPnlSol per sell (filters

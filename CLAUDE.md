@@ -75,6 +75,15 @@ smart money → learning engine → ML → social). See README.md.
   1h volume/trades/move (DexScreener's own trending isn't in the public API); `/orders/v1/solana/<mint>` →
   DEX paid (approved tokenProfile) / CTO, cached, ≤45 req/min. +4 paid, +2 CTO, up to +5 trending; tracked
   coins that start trending are checked at once; `dex.requirePaidFor` can make it mandatory. Scanner page list.
+- **Chart reading** (`chart` config, `src/evaluator/chart-reader.ts`): 15s candles per coin from the crowd
+  log (1h) → VWAP(10m), RSI(14 on 30s), EMA trend, pivots (higher lows / lower highs), pullback/bounce,
+  2-min run, blow-off top, bearish divergence. Entry verdict: `avoid` (breaking down → rule fail),
+  `buy_now` (dip ≥8% + bounce ≥2% in uptrend, +4 pts), `wait_dip` (stretched: >25% over VWAP / RSI>78 /
+  >35% in 2 min) → DipWatcher (`src/executor/dip-watcher.ts`) waits ≤10 min for the buy zone (10–40% off
+  the high near VWAP/support) + 3% bounce with buy/sell ≥1.1, then re-checks with `dip: true` (skips the
+  12s confirmation); ran +40% / broke down / timeout → dropped. Positions page "Waiting for a dip"
+  (`/api/dip-watch`). Exits: blow-off → sell 50% of what's left, divergence → 30% (≥1.4x, once each;
+  tpTiersHit markers −2 / −3).
 - KOLs (`kol` config, `src/scanner/kol-signal.ts`): TrackedWallet.kind = COPY (copy each buy) | KOL (signal only).
   Starter list `src/config/kol-wallets.ts` (Cupsey, Cented, Orangie — public-tracker addresses, unverified;
   seeded once, marker `_kolSeed`). Whale tracker records KOL buys/sells (Redis `kol:buy:/kol:sell:<mint>`);

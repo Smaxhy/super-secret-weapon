@@ -59,6 +59,7 @@ export function explainBuy(i: {
   coachNote?: string | null;
   sizeNote?: string | null;
   scoreNotes?: string[];
+  chartNote?: string | null;
 }): string {
   const m = i.market;
   const strong = Object.entries(i.features)
@@ -79,6 +80,7 @@ export function explainBuy(i: {
       `buys/sells ${m.buySellRatio.toFixed(1)}, ${m.complete ? 'trading on PumpSwap' : `curve ${pct(m.bondingCurvePct)}`}, ` +
       `dev ${pct(m.devHoldingPct, 1)}, bundlers ${pct(m.earlyBuyerPct, 1)}, top 10 ${pct(m.top10HolderPct)}, fees paid ${m.totalFeesSol.toFixed(2)} SOL.`,
     i.swingNote ? `Swing re-entry: ${i.swingNote}.` : '',
+    i.chartNote ? `Chart: ${i.chartNote}.` : '',
     i.sizeNote ? `Size: ${i.sizeNote}.` : '',
     i.scoreNotes?.length ? `Score adjustments: ${i.scoreNotes.join('; ')}.` : '',
     i.crowdSummary ? `Crowd: ${i.crowdSummary}.` : '',

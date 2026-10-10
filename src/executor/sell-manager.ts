@@ -53,6 +53,7 @@ import { insiderDumpSignal } from '../evaluator/insider-cluster';
 import { coachFor } from '../learner/trade-coach';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
 import { kolActivity } from '../scanner/kol-signal';
+import { analyzeChart } from '../evaluator/chart-reader';
 import type { Executor } from './types';
 
 const log = moduleLogger('sell-manager');
@@ -149,10 +150,15 @@ export interface ExitInput {
   recentHighSol?: number | null;
   /** KOLs that bought this coin are selling → bank it if we're in profit. */
   kolDump?: { hit: boolean; detail: string } | null;
+  /** Chart-timed selling: sell into a blow-off top / bearish divergence (from the chart reader). */
+  smartSell?: { blowOff: boolean; divergence: boolean; summary: string; minMultiple: number; blowOffSellPct: number; divergenceSellPct: number } | null;
 }
 
 /** Marker stored in `tpTiersHit` once initials are out (real tiers are all > 1). */
 export const INITIALS_MARKER = -1;
+/** Markers: the blow-off / divergence partial sells already happened (once each per position). */
+export const BLOWOFF_MARKER = -2;
+export const DIVERGENCE_MARKER = -3;
 
 export interface ActivitySample {
   t: number;
@@ -536,6 +542,25 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
     }
   }
 
+  // Sell into strength, not after the dump: a blow-off top (vertical run on a volume climax that is
+  // being rejected) or a new high on weaker momentum → take a chunk off the table (once each).
+  const ss = i.smartSell;
+  if (ss && remaining > 0 && multiple >= ss.minMultiple) {
+    if (ss.blowOff && !state.tpTiersHit.includes(BLOWOFF_MARKER)) {
+      const pct = Math.round(remaining * (ss.blowOffSellPct / 100) * 100) / 100;
+      sells.push({ pct, reason: 'TAKE_PROFIT', detail: `blow-off top at ${multiple.toFixed(2)}x (${ss.summary}) — sold ${ss.blowOffSellPct}% into the spike` });
+      state.tpTiersHit.push(BLOWOFF_MARKER);
+      remaining -= pct;
+      proceeds += valueOf(pct) - i.txFeeSol;
+    } else if (ss.divergence && !state.tpTiersHit.includes(DIVERGENCE_MARKER)) {
+      const pct = Math.round(remaining * (ss.divergenceSellPct / 100) * 100) / 100;
+      sells.push({ pct, reason: 'TAKE_PROFIT', detail: `momentum fading at ${multiple.toFixed(2)}x (new high, weaker RSI) — sold ${ss.divergenceSellPct}%` });
+      state.tpTiersHit.push(DIVERGENCE_MARKER);
+      remaining -= pct;
+      proceeds += valueOf(pct) - i.txFeeSol;
+    }
+  }
+
   // Take initials: sell just enough to get back everything we paid → the rest is house money.
   let initialsOut = state.tpTiersHit.includes(INITIALS_MARKER);
   if (!initialsOut && multiple >= rules.initials.atMultiple && remaining > 0) {
@@ -876,6 +901,12 @@ export class SellManager {
     const copyWalletSold = !!copied && (await this.redis.exists(copySoldKey(p.mint, copied))) === 1;
     const insiderDump = await readInsiderDump(this.redis, p.mint);
     const kolAct = cfg.kol?.enabled ? await kolActivity(this.redis, p.mint, cfg.kol).catch(() => null) : null;
+    // Chart-timed selling (blow-off top / bearish divergence).
+    const cc = cfg.chart;
+    const read = cc?.enabled && cc.smartSell.enabled && this.crowd ? analyzeChart(this.crowd.candles(p.mint), now, cc) : null;
+    const chartSell = read && (read.blowOff || read.bearishDivergence)
+      ? { blowOff: read.blowOff, divergence: read.bearishDivergence, summary: read.summary, minMultiple: cc.smartSell.minMultiple, blowOffSellPct: cc.smartSell.blowOffSellPct, divergenceSellPct: cc.smartSell.divergenceSellPct }
+      : null;
     const kolDump = kolAct?.dumping ? { hit: true, detail: `${kolAct.recentSellers.map((s) => s.name).slice(0, 3).join(', ')} sold` } : null;
     const volatilityPct = computeVolatilityPct(hist, now, cfg.exit.runner.volWindowSec * 1000, cfg.exit.runner.volStepSec * 1000);
     const tr = this.trail.get(p.id) ?? { breachSinceMs: null, breachTicks: 0, volatilityPct: null };
@@ -931,6 +962,7 @@ export class SellManager {
         instantPeak: true,
         recentHighSol,
         kolDump,
+        smartSell: chartSell,
       },
       cfg.exit,
     );

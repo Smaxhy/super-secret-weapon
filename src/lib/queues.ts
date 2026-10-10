@@ -35,6 +35,9 @@ export interface EvaluateJob {
   swing?: boolean;
   /** Why the swing check fired (for the buy explanation). */
   swingWhy?: string;
+  /** Dip entry: the dip watcher saw the dip + bounce (skips the chart wait and the confirmation). */
+  dip?: boolean;
+  dipWhy?: string;
   /** Confirmation re-check of a BUY signal (price + score when it fired). */
   confirm?: { priceSol: number; at: number; score: number };
   /** Copy trades: the tracked wallet whose buy triggered this check. */
