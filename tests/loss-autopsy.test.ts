@@ -62,3 +62,24 @@ describe('autopsy self-tuning per strategy', () => {
     expect(bandOf('kols', { strategy: 'S', mcUsd: 1, ageMin: 1, curvePct: 1, score: 1, hourUtc: 0 })).toBeNull();
   });
 });
+
+describe('potential hold (owner: sells too early in the minus)', () => {
+  it('waits out the soft stop and time stops while real buyers are in control; the hard limit still fires', async () => {
+    const { decideExit } = await import('../src/executor/sell-manager');
+    const NOW = 1_760_000_000_000;
+    const base = {
+      entryPriceSol: 1, peakPriceSol: 1, remainingPct: 100, tpTiersHit: [] as number[], trailingActive: false, refPriceSol: 1, lastMoveAtMs: NOW,
+      staleMinutes: 120, priceSol: 0.86, migratedNoMarket: false, bundlePctEntry: 0, bundlePctNow: 0, devHoldingPctEntry: 0, devHoldingPctNow: 0,
+      top10PctEntry: 0, top10PctNow: 0, nowMs: NOW, copyWalletSold: false, risk: 0, riskWhy: '', openedAtMs: NOW - 2.5 * 60_000, maxHoldMinutes: 720,
+      resistance: { hit: false, level: 0, touches: 0 }, sizeSol: 1, costSol: 1.0015, proceedsSol: 0, volatilityPct: null, txFeeSol: 0.0015, strategy: 'CURVE_SNIPE' as const,
+      breachSinceMs: NOW - 10_000, breachTicks: 5,
+    };
+    const ex = DEFAULT_CONFIG.exit;
+    expect(decideExit(base, ex).sells.length).toBe(1); // without potential it is sold (stop or time stop)
+    const p = { hit: true, why: 'buyers in control', extraMin: 10 };
+    expect(decideExit({ ...base, potential: p }, ex).sells).toEqual([]);
+    expect(decideExit({ ...base, potential: p, priceSol: 0.75 }, ex).sells[0]?.reason).toBe('STOP_LOSS');
+    // Flat and no follow-through: the time stop waits too while buyers keep coming.
+    expect(decideExit({ ...base, priceSol: 1, breachSinceMs: null, breachTicks: 0, potential: p }, ex).sells).toEqual([]);
+  });
+});

@@ -101,6 +101,17 @@ export function scanVerdict(f: OrganicFlow | null, mcUsd: number | null, c: Migr
   return null;
 }
 
+/**
+ * Runner scanner (owner: "stop skipping coins that then go 2–4×"): the same organic-flow test on CURVE
+ * coins between the new-pair window and the Soon zone. A coin whose real buying takes off after the first
+ * checks passed on it is evaluated as a RUNNER (stretched ones wait for their first pullback in the dip
+ * watcher, like every other buy).
+ */
+export interface RunnerScanConfig extends MigratedScanConfig {
+  minCurvePct: number;
+  maxCurvePct: number;
+}
+
 export class MigratedScanner {
   private timer: NodeJS.Timeout | null = null;
   private readonly lastCheck = new Map<string, number>();
@@ -110,10 +121,21 @@ export class MigratedScanner {
     private readonly crowd: CrowdTracker,
     private readonly check: (mint: string, why: string) => Promise<void>,
     private readonly held: (mint: string) => boolean = () => false,
+    /** 'migrated' = PumpSwap coins (MIGRATION_MOMENTUM); 'runner' = curve coins (RUNNER). */
+    private readonly mode: 'migrated' | 'runner' = 'migrated',
   ) {}
 
   private cfg(): MigratedScanConfig {
+    if (this.mode === 'runner') return getConfig().runner?.scan ?? DEFAULT_CONFIG.runner.scan;
     return getConfig().focus.migrated?.scan ?? DEFAULT_CONFIG.focus.migrated.scan;
+  }
+
+  private candidates(now: number): string[] {
+    if (this.mode === 'runner') {
+      const c = this.cfg() as RunnerScanConfig;
+      return this.crowd.activeCurveMints(120_000, c.minCurvePct, c.maxCurvePct, now);
+    }
+    return this.crowd.activeAmmMints(120_000, now);
   }
 
   start(): void {
@@ -132,7 +154,7 @@ export class MigratedScanner {
       this.stats.scans++;
       const sol = await getSolUsd().catch(() => null);
       const hot: Array<{ mint: string; f: OrganicFlow }> = [];
-      for (const mint of this.crowd.activeAmmMints(120_000, now)) {
+      for (const mint of this.candidates(now)) {
         if (this.held(mint)) continue;
         if (now - (this.lastCheck.get(mint) ?? 0) < c.cooldownMin * 60_000) continue;
         const f = organicFlow(this.crowd.trades(mint), now);

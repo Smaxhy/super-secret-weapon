@@ -61,6 +61,15 @@ export const STRATEGIES: Record<StrategyName, StrategyParams> = {
     staleExitMinutes: 120,
     maxSlippageBps: 1500,
   },
+  RUNNER: {
+    name: 'RUNNER',
+    description: 'Curve coins (past the new-pair window, before the Soon zone) that show strong organic momentum after the normal checks passed on them — found by the runner scanner; a stretched one waits for its first pullback (src/scanner/migrated-scanner.ts runners).',
+    minHolders: 30,
+    entryWindowMinutes: { min: 3, max: 24 * 60 },
+    curveProgressRange: { min: 15, max: 95 },
+    staleExitMinutes: 15,
+    maxSlippageBps: 800,
+  },
   SWING: {
     name: 'SWING',
     description: 'Bigger, established migrated coins (watchlist, trending tabs, our own grown coins) bought on a confirmed dip-and-bounce when they have shown bounce-back power (src/evaluator/swing.ts).',

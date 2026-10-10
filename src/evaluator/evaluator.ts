@@ -14,6 +14,7 @@
  * To keep the database lean, an Evaluation row is stored only for BUYs,
  * REJECTs, "interesting" scores (≥ 60) and each token's final checkpoint.
  */
+import { organicFlow, scanVerdict } from '../scanner/migrated-scanner';
 import { priceShape, staircase } from './price-shape';
 import { aiRuleVerdict, flattenFeatures } from '../learner/ai-coach';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
@@ -233,6 +234,7 @@ export class Evaluator {
       (STRATEGY.name === 'SMART_MONEY_COPY' && !kolFollow ? cfg.copy.scoreThresholdDelta : 0) +
       tune.barDelta +
       (STRATEGY.name === 'CURVE_SNIPE' ? npCfg.scoreThresholdDelta : 0) +
+      (STRATEGY.name === 'RUNNER' ? (cfg.runner ?? DEFAULT_CONFIG.runner).scoreThresholdDelta : 0) +
       (focusRules?.scoreThresholdDelta ?? 0) +
       coach.thresholdDelta +
       cfg.regimeAdjustments[regime].scoreThresholdDelta;
@@ -303,6 +305,13 @@ export class Evaluator {
     const kolAct = kolCfg.enabled ? await kolActivity(this.redis, mint, kolCfg).catch(() => null) : null;
     const kolBonus = kolPoints(kolAct, kolCfg);
     if (kolAct?.dumping) dexFails.push(`KOLs dumping (${kolAct.recentSellers.length} sold)`);
+    // RUNNER: the organic flow that triggered it must still be there now (no coins that already faded).
+    if (STRATEGY.name === 'RUNNER' && this.crowd) {
+      if (market.raw.complete || market.raw.onAmm) dexFails.push('migrated — runners are curve coins');
+      const rc = (cfg.runner ?? DEFAULT_CONFIG.runner).scan;
+      const why = scanVerdict(organicFlow(this.crowd.trades(mint), Date.now()), market.raw.marketCapUsd ?? null, rc);
+      if (why) dexFails.push(`runner flow faded: ${why}`);
+    }
     // Staircase chart (owner: "avoid odd-looking staircase charts") → no buy, whatever the score.
     if (stair?.hit) dexFails.push(stair.why);
     // KOL follow (owner: "trade more alongside coins a lot of KOLs buy"): the KOLs must still be in;
@@ -568,7 +577,7 @@ export class Evaluator {
         kolFollow,
         sizeMultiplier: tune.sizeFactor * (explore
           ? ex.sizeMultiplier * coach.sizeFactor * (trend?.sizeFactor ?? 1)
-          : (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? (STRATEGY.name === 'CURVE_SNIPE' ? npCfg.sizeMultiplier : 1)) * coach.sizeFactor * conv.factor * copyMult * (trend?.sizeFactor ?? 1)),
+          : (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? (STRATEGY.name === 'CURVE_SNIPE' ? npCfg.sizeMultiplier : STRATEGY.name === 'RUNNER' ? (cfg.runner ?? DEFAULT_CONFIG.runner).sizeMultiplier : 1)) * coach.sizeFactor * conv.factor * copyMult * (trend?.sizeFactor ?? 1)),
         swing,
         explore,
         explain: (sizeSol) =>

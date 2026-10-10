@@ -202,7 +202,7 @@ export function setCoachCache(states: readonly CoachState[]): void {
   cache = new Map(states.map((s) => [s.strategy, s]));
 }
 
-const STRATEGIES: StrategyName[] = ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'SMART_MONEY_COPY', 'SWING'];
+const STRATEGIES: StrategyName[] = ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'SMART_MONEY_COPY', 'SWING', 'RUNNER'];
 
 export async function readReviews(redis: Redis, limit = 50): Promise<TradeReview[]> {
   const raw = await redis.lrange(K_REVIEWS, 0, limit - 1);

@@ -35,6 +35,7 @@ const STRATEGY: Record<string, string> = {
   SMART_MONEY_COPY: 'copy trade',
   SOON: '"Soon" play (about to graduate)',
   SWING: 'swing trade on a bigger coin (bought the dip after it bounced)',
+  RUNNER: 'runner (a coin whose real buying took off after the first checks)',
 };
 
 /** Plain-English recap of a SWING buy (bigger coin, dip + bounce). */

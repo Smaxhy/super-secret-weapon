@@ -274,6 +274,8 @@ export class CrowdTracker {
   private readonly logs = new Map<string, CrowdTrade[]>();
   /** Migrated (PumpSwap) coins → time of their last trade (for the migrated-coin scanner). */
   private readonly ammLast = new Map<string, number>();
+  /** Curve coins → last trade time + curve % (for the runner scanner). */
+  private readonly curveLast = new Map<string, { t: number; pct: number }>();
   /** 15-second candles per coin (last hour) — the chart the chart reader reads. */
   private readonly candleSeries = new Map<string, Candle[]>();
   /** Coins that already crossed into the Soon zone (fire once). */
@@ -303,6 +305,7 @@ export class CrowdTracker {
       this.onSoon?.(ev.mint, pct);
     }
     if (pct < f.crowdLogFromCurvePct && !this.logs.has(ev.mint)) return;
+    this.curveLast.set(ev.mint, { t: now, pct });
     const tok = Number(ev.tokenAmount) / 10 ** PUMP_TOKEN_DECIMALS;
     const sol = Number(ev.solAmount) / 1e9;
     const pp = ev.virtualTokenReserves > 0n ? Number(ev.virtualSolReserves) / 1e9 / (Number(ev.virtualTokenReserves) / 10 ** PUMP_TOKEN_DECIMALS) : undefined;
@@ -316,6 +319,16 @@ export class CrowdTracker {
     const pp = ammPostTradePrice(ev) ?? undefined;
     this.ammLast.set(mint, now);
     this.push(mint, { t: now, w: ev.user, buy: ev.isBuy, sol, tok, px: tok > 0 ? sol / tok : 0, ...(pp ? { pp } : {}), s: slot || undefined });
+  }
+
+  /** Curve coins that traded within `withinMs` with the curve between minPct and maxPct. */
+  activeCurveMints(withinMs: number, minPct: number, maxPct: number, now = Date.now()): string[] {
+    const out: string[] = [];
+    for (const [m, x] of this.curveLast) {
+      if (now - x.t > KEEP_MS) this.curveLast.delete(m);
+      else if (now - x.t <= withinMs && x.pct >= minPct && x.pct <= maxPct) out.push(m);
+    }
+    return out;
   }
 
   /** Migrated coins that traded within `withinMs`. */

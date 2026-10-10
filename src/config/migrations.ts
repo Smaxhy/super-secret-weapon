@@ -190,6 +190,17 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['trading', ['maxConcurrentPositions'], 10],
     ],
   },
+  {
+    version: 10,
+    note: 'v9.4 (owner: stop skipping coins that then go 2–4×): RUNNER strategy (20% of capital, 4 open), 12 positions',
+    set: [
+      ['trading', ['allocation'], { CURVE_SNIPE: 0.25, MIGRATION_MOMENTUM: 0.25, SOON: 0.05, SMART_MONEY_COPY: 0.1, SWING: 0.15, RUNNER: 0.2 }],
+      ['trading', ['enabledStrategies', 'RUNNER'], true],
+      ['trading', ['maxOpenByStrategy', 'RUNNER'], 4],
+      ['trading', ['maxConcurrentPositions'], 12],
+      ['explore', ['strategies'], ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'RUNNER']],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

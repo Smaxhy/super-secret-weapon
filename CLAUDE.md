@@ -283,6 +283,17 @@ smart money → learning engine → ML → social). See README.md.
   feature for the AI. Autopsy: a band covering ≥90% of a strategy's trades (e.g. "migrated" for MIGRATION) is never
   blocked (strategy tuning handles it); `autopsy.blockMode` 'small' (default) = losing kinds still trade at the minimum
   size as learning trades instead of being refused; tuning adds "badly losing" (avg+SE < −10%) → bar +10, size ×0.4.
+- **v9.4 (Oct 10): RUNNER strategy + potential hold** (owner: "stop skipping coins that go 2–4× after we skip them, swing
+  them more"; "it sells too early in the minus — hold longer if it sees potential"). New Prisma enum value RUNNER (all
+  per-strategy maps, explain, dashboard labels, Controls). Runner scanner = `MigratedScanner` mode 'runner'
+  (`crowd.activeCurveMints`, curve 15–92%, `runner.scan`: ≥25 real buyers, ≥4 SOL, buyers ≥58%, ≥60% organic, MC ≥$8k;
+  once per coin per 4 min) → checkNow RUNNER `rescan`. Evaluator RUNNER: bar −20 (`runner.scoreThresholdDelta`), size
+  ×0.8, flow re-checked (`runner flow faded`), curve coins only; stretched → dip watcher as usual. Exits
+  `exit.byStrategy.RUNNER` (35% 1.3x, 25% 1.7x, 15% 3x, trail 14→18→20% from 1.3x, spike sell +25%/60 s), stop max 14%,
+  time stop 4 / stall 6 / max hold 60 / stale 15 min. Allocation NEW 25 / MIG 25 / RUNNER 20 / SWING 15 / KOL 10 /
+  SOON 5, RUNNER max 4, 12 positions (migration v10). **Potential hold** (`exit.potentialHold`): organic flow over 120 s
+  (≥8 buyers, ≥60% buys, ≥1.5 SOL) and no rug signal → soft stop, early risk exit, stale and time stops wait (time
+  stops ≤10 min longer); the hard limit always fires.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

@@ -134,6 +134,9 @@ async function main(): Promise<void> {
   // Migrated coins with strong organic flow → checked any time, not only in their first hour.
   const migratedScanner = new MigratedScanner(crowd, (mint, why) => evaluator.checkNow(mint, 'MIGRATION_MOMENTUM', why, { rescan: true, bucketSec: 300 }), (mint) => sellManager.isHolding(mint));
   migratedScanner.start();
+  // Runners: curve coins whose real buying took off after the first checks passed on them.
+  const runnerScanner = new MigratedScanner(crowd, (mint, why) => evaluator.checkNow(mint, 'RUNNER', why, { rescan: true, bucketSec: 240 }), (mint) => sellManager.isHolding(mint), 'runner');
+  runnerScanner.start();
   // AI coach: Claude reads the trades for behaviour patterns → rules that must prove themselves first.
   const aiCoach = new AiCoach(redis, () => getConfig().aiCoach ?? DEFAULT_CONFIG.aiCoach);
   aiCoach.start();

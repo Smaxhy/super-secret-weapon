@@ -179,7 +179,7 @@ export function priceFor(model: string, promptTokens = 0): { in: number; out: nu
 }
 
 const K = { rules: 'ai:rules', insights: 'ai:insights', last: 'ai:lastRun', lastDeep: 'ai:lastDeep', spend: (d: string) => `ai:spend:${d}` };
-const STRATS = ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'SMART_MONEY_COPY', 'SWING'];
+const STRATS = ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'SMART_MONEY_COPY', 'SWING', 'RUNNER'];
 
 const OUTPUT_SCHEMA = {
   type: 'object',

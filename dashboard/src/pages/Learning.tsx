@@ -35,7 +35,7 @@ const VERDICT: Record<string, string> = {
   late_entry: 'Late entry', gave_back_profit: 'Gave back profit', stopped_then_ran: 'Stopped, then it ran', slow_loser: 'Slow loser',
   good_cut: 'Good cut', sold_too_early: 'Sold too early', good_exit: 'Good exit', rug: 'Rug', manual_exit: 'You closed it',
 };
-const STRAT: Record<string, string> = { CURVE_SNIPE: 'New pair', SOON: 'Soon', MIGRATION_MOMENTUM: 'Migration', SMART_MONEY_COPY: 'Copy', SWING: 'Swing' };
+const STRAT: Record<string, string> = { CURVE_SNIPE: 'New pair', SOON: 'Soon', MIGRATION_MOMENTUM: 'Migration', SMART_MONEY_COPY: 'Copy', SWING: 'Swing', RUNNER: 'Runner' };
 
 interface KeywordRow { word: string; winRate: number; n: number }
 

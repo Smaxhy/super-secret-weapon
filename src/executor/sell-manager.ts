@@ -59,6 +59,7 @@ import { kolActivity } from '../scanner/kol-signal';
 import { analyzeChart } from '../evaluator/chart-reader';
 import type { Executor } from './types';
 import { holderDump, sellCascade, topHolders, type Holder, type RuggerMemory } from './rug-watch';
+import { organicFlow } from '../scanner/migrated-scanner';
 
 const log = moduleLogger('sell-manager');
 /** Fallback check for every open position (quiet coins, stale/max-hold exits). */
@@ -140,6 +141,12 @@ export interface ExitInput {
   breachTicks?: number;
   /** Insider / hidden dev wallets dumped (insiderDumpSignal) → immediate rug exit. */
   insiderDump?: { hit: boolean; detail: string } | null;
+  /**
+   * Potential hold (owner: "it sells too early when it's in the minus — hold longer if it sees potential"):
+   * real buyers still in control → the soft stop, the early risk exit and the time / stale exits wait
+   * (the hard loss limit still fires), for up to `extraMin` past the time stop.
+   */
+  potential?: { hit: boolean; why: string; extraMin: number } | null;
   /** Rug guard v2: the biggest holders at entry dumped (rug-watch.holderDump). */
   holderDump?: { hit: boolean; detail: string } | null;
   /** Rug guard v2: a sell cascade is happening right now; ignored above `maxMultiple` (the trail handles winners). */
@@ -594,7 +601,8 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   // Stop loss: 10–20% band (volatility + coach). Past the hard limit → out at once.
   const sl = stopLossLevel(i.entryPriceSol, i.volatilityPct, rules, i.coachStopBiasPct ?? 0, i.exitCostPct ?? 0, i.strategy);
   if (i.priceSol <= sl.hardPriceSol) return all('STOP_LOSS', `price ${((multiple - 1) * 100).toFixed(1)}% (hard limit −${sl.hardPct}% after fees)`);
-  if (i.priceSol <= sl.stopPriceSol) {
+  const potential = i.potential?.hit === true;
+  if (i.priceSol <= sl.stopPriceSol && !potential) {
     const tr = trailRules(rules);
     const slc = { ...DEFAULT_CONFIG.exit.stopLoss, ...((rules as Partial<ExitRules>).stopLoss ?? {}) };
     const needTicks = slc.confirmTicks ?? tr.confirmTicks;
@@ -608,16 +616,19 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
     state.breachSinceMs = since;
   }
   // Don't wait for the stop when it's clearly turning against us.
-  if (!holding && multiple <= rules.riskExit.cutLossBelowMultiple && i.risk >= rules.riskExit.threshold) {
+  if (!holding && !potential && multiple <= rules.riskExit.cutLossBelowMultiple && i.risk >= rules.riskExit.threshold) {
     return all('STOP_LOSS', `early exit at ${((multiple - 1) * 100).toFixed(0)}%: ${i.riskWhy}`);
   }
   // Time stops — a fresh-coin trade that works, works fast (only before any profit was taken):
   //  no follow-through: held N minutes, never got going and not above entry → out at a small loss;
   //  stall: no new high for N minutes while still below the first take-profit → out.
   const ts = (rules as Partial<ExitRules>).timeStop;
-  if (ts?.enabled && !holding && !i.tpTiersHit.length) {
-    const mins = (i.strategy ? (ts.minutes as Record<string, number | undefined>)[i.strategy] : undefined) ?? ts.defaultMinutes;
-    const heldMin = (i.nowMs - i.openedAtMs) / 60_000;
+  const heldMinNow = (i.nowMs - i.openedAtMs) / 60_000;
+  const tsMins = ts ? ((i.strategy ? (ts.minutes as Record<string, number | undefined>)[i.strategy] : undefined) ?? ts.defaultMinutes) : 0;
+  const waitForPotential = potential && heldMinNow < tsMins + (i.potential?.extraMin ?? 0);
+  if (ts?.enabled && !holding && !i.tpTiersHit.length && !waitForPotential) {
+    const mins = tsMins;
+    const heldMin = heldMinNow;
     const bestX = state.peakPriceSol / i.entryPriceSol;
     if (mins > 0 && heldMin >= mins && bestX < ts.minPeakMultiple && multiple <= ts.maxMultiple) {
       return all('STALE', `no follow-through: ${heldMin.toFixed(1)} min in, best ${bestX.toFixed(2)}x, now ${multiple.toFixed(2)}x`);
@@ -772,7 +783,7 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   if (Math.abs(i.priceSol / state.refPriceSol - 1) > MOVE_THRESHOLD) {
     state.refPriceSol = i.priceSol;
     state.lastMoveAtMs = i.nowMs;
-  } else if (remaining > 0 && i.nowMs - state.lastMoveAtMs >= i.staleMinutes * 60_000) {
+  } else if (remaining > 0 && !potential && i.nowMs - state.lastMoveAtMs >= i.staleMinutes * 60_000) {
     sells.push({ pct: remaining, reason: 'STALE', detail: `no movement for ${i.staleMinutes}m` });
   }
   return { sells, state };
@@ -1091,6 +1102,14 @@ export class SellManager {
     const copyWalletSold = !!copied && (await this.redis.exists(copySoldKey(p.mint, copied))) === 1;
     const insiderDump = await readInsiderDump(this.redis, p.mint);
     const guard = await this.rugGuard(p, view, crowdTrades, now);
+    const ph = cfg.exit.potentialHold ?? DEFAULT_CONFIG.exit.potentialHold;
+    let potential: { hit: boolean; why: string; extraMin: number } | null = null;
+    if (ph.enabled && !guard.holderDump && !guard.cascade && !insiderDump?.hit) {
+      const f = organicFlow(crowdTrades, now, ph.windowSec * 1000);
+      if (f && f.buyers >= ph.minBuyers && f.buySharePct >= ph.minBuySharePct && f.buySol >= ph.minBuySol) {
+        potential = { hit: true, why: `real buyers in control (${f.buyers} buyers, ${f.buySharePct}% buys, ${f.buySol} SOL in ${ph.windowSec}s)`, extraMin: ph.extraMinutes };
+      }
+    }
     const kolAct = cfg.kol?.enabled ? await kolActivity(this.redis, p.mint, cfg.kol).catch(() => null) : null;
     // Chart-timed selling (blow-off top / bearish divergence).
     const cc = cfg.chart;
@@ -1150,6 +1169,7 @@ export class SellManager {
         breachTicks: tr.breachTicks,
         insiderDump,
         holderDump: guard.holderDump,
+        potential,
         sellCascade: guard.cascade,
         coachStopBiasPct: coach.stopBiasPct,
         trailFactor: coach.trailFactor * autopsyTuneFor(p.strategy).trailFactor,

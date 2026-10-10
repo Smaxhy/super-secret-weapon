@@ -16,7 +16,7 @@ export const DEFAULT_CONFIG = {
     minPositionSol: 0.05,
     maxPositionSolCeiling: 0.3, // the dashboard slider can't go above this
     /** v7: 8 (owner: trade more often so the bot learns; swing trades on bigger coins add up to 3). */
-    maxConcurrentPositions: 10,
+    maxConcurrentPositions: 12,
     /**
      * Conviction sizing: maxPositionSol is the size of an AVERAGE-conviction buy.
      * Strong setups (score well over the bar, good learned odds, healthy crowd) go up
@@ -35,14 +35,16 @@ export const DEFAULT_CONFIG = {
      * rule in public tests (2 s late = their exit liquidity) → off.
      */
     allocation: {
-      CURVE_SNIPE: 0.3,
+      CURVE_SNIPE: 0.25,
       // v9.2: more on migrated coins with real volume (migrated-scanner).
       MIGRATION_MOMENTUM: 0.25,
-      SOON: 0.1,
+      SOON: 0.05,
+      // v9.4 (owner: "stop skipping coins that then go 2–4×"): curve coins with proven organic momentum.
+      RUNNER: 0.2,
       // v8.9: KOL follow (kol.follow) — coins several KOLs / smart wallets bought.
-      SMART_MONEY_COPY: 0.15,
+      SMART_MONEY_COPY: 0.1,
       // v7 (owner): swing trade bigger coins that keep bouncing back (src/evaluator/swing.ts).
-      SWING: 0.2,
+      SWING: 0.15,
     } satisfies Record<StrategyName, number>,
     enabledStrategies: {
       MIGRATION_MOMENTUM: true,
@@ -50,9 +52,10 @@ export const DEFAULT_CONFIG = {
       SMART_MONEY_COPY: true,
       CURVE_SNIPE: true,
       SWING: true,
+      RUNNER: true,
     } satisfies Record<StrategyName, boolean>,
     /** At most this many open positions per strategy (fresh pairs: 4, swings on bigger coins: 3). */
-    maxOpenByStrategy: { CURVE_SNIPE: 4, SOON: 2, MIGRATION_MOMENTUM: 4, SMART_MONEY_COPY: 3, SWING: 3 } as Partial<Record<StrategyName, number>>,
+    maxOpenByStrategy: { CURVE_SNIPE: 4, SOON: 2, MIGRATION_MOMENTUM: 4, SMART_MONEY_COPY: 3, SWING: 3, RUNNER: 4 } as Partial<Record<StrategyName, number>>,
     /**
      * Strategy cool-off: once a strategy has `minTrades` closed trades among its last `lastN` and they
      * average worse than `maxAvgPnlPct` per trade, it takes no new entries for `pauseMinutes`
@@ -574,7 +577,21 @@ export const DEFAULT_CONFIG = {
     // coins up to droughtScoreMargin under the bar (still every rule passed, still half size).
     droughtMinutes: 45,
     droughtScoreMargin: 10,
-    strategies: ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM'] as StrategyName[],
+    strategies: ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'RUNNER'] as StrategyName[],
+  },
+
+  /**
+   * RUNNER (v9.4, owner: "stop skipping good coins — they went 2–4× after we skipped them"): curve coins
+   * (15–92% curve, ≥3 min old) whose 5-min ORGANIC flow takes off: ≥25 real buyers, ≥4 SOL real buying,
+   * buyers ≥58% and ≥60% organic, MC ≥ $8k → evaluated as RUNNER: the score bar is `scoreThresholdDelta`
+   * lower (the flow is the proof; the scorer under-rates these), size ×`sizeMultiplier`, every safety / rug /
+   * staircase / vamp rule still applies, stretched coins wait for a pullback (dip watcher), own exits
+   * (exit.byStrategy.RUNNER). Once per coin per 4 min.
+   */
+  runner: {
+    scoreThresholdDelta: -20,
+    sizeMultiplier: 0.8,
+    scan: { enabled: true as boolean, everySec: 15, minOrganicBuyers5m: 25, minOrganicBuySol5m: 4, minBuySharePct: 58, minOrganicPct: 60, maxRun3mPct: 300, minMarketCapUsd: 8_000, cooldownMin: 4, maxChecksPerTick: 8, minCurvePct: 15, maxCurvePct: 92 },
   },
 
   /**
@@ -836,11 +853,11 @@ export const DEFAULT_CONFIG = {
      */
     timeStop: {
       enabled: true as boolean,
-      minutes: { CURVE_SNIPE: 1.5, SOON: 3, MIGRATION_MOMENTUM: 10, SMART_MONEY_COPY: 3, SWING: 30 } as Partial<Record<StrategyName, number>>,
+      minutes: { CURVE_SNIPE: 1.5, SOON: 3, MIGRATION_MOMENTUM: 10, SMART_MONEY_COPY: 3, SWING: 30, RUNNER: 4 } as Partial<Record<StrategyName, number>>,
       defaultMinutes: 5,
       minPeakMultiple: 1.1,
       maxMultiple: 1.02,
-      stallMinutes: { CURVE_SNIPE: 3, SOON: 5, MIGRATION_MOMENTUM: 10, SMART_MONEY_COPY: 5, SWING: 45 } as Partial<Record<StrategyName, number>>,
+      stallMinutes: { CURVE_SNIPE: 3, SOON: 5, MIGRATION_MOMENTUM: 10, SMART_MONEY_COPY: 5, SWING: 45, RUNNER: 6 } as Partial<Record<StrategyName, number>>,
     },
     /**
      * Coins bought on the curve that graduate: sell `sellPct` while pump.fun's BOOST is buying
@@ -884,6 +901,7 @@ export const DEFAULT_CONFIG = {
       SMART_MONEY_COPY: 60,
       // Swings: in and out within hours (the runner gets 2× this).
       SWING: 240,
+      RUNNER: 60,
     } satisfies Record<StrategyName, number>,
     /**
      * Let a winner on a BIG coin run (owner: "it's allowed to hold bigger MC coins if it sees
@@ -925,7 +943,34 @@ export const DEFAULT_CONFIG = {
         spikeSell: { enabled: true, risePct: 8, windowSec: 120, sellPct: 50, minMultiple: 1.04 },
         holdLonger: { enabled: true, minMarketCapUsd: 60_000, maxHours: 8 },
       },
+      // v9.4 RUNNER: momentum already proven → take profit early and often, trail tight, out fast if it stalls.
+      RUNNER: {
+        takeProfitTiers: [
+          { multiple: 1.3, sellPct: 35 },
+          { multiple: 1.7, sellPct: 25 },
+          { multiple: 3, sellPct: 15 },
+        ],
+        trailingStopActivateMultiple: 1.3,
+        trail: {
+          breakEvenAfterMultiple: 1.3,
+          ladder: [
+            { fromMultiple: 1.3, pct: 14 },
+            { fromMultiple: 2, pct: 18 },
+            { fromMultiple: 3, pct: 20 },
+          ],
+        },
+        protectProfit: { afterMultiple: 1.2, floorMultiple: 1.03 },
+        spikeSell: { enabled: true, risePct: 25, windowSec: 60, sellPct: 40, minMultiple: 1.15 },
+      },
     } as Partial<Record<StrategyName, Record<string, unknown>>>,
+    /**
+     * Potential hold (owner: "it sells too early in the minus — hold longer if it sees potential"): while real
+     * buyers are in control over the last `windowSec` (≥ minBuyers different wallets, ≥ minBuySharePct % of the
+     * volume, ≥ minBuySol SOL; bots / churners / dust removed) and no rug signal, the soft stop, the early risk
+     * exit, the stale exit and the time stops wait (time stops up to `extraMinutes` longer). The hard limit
+     * (the bottom of the owner's 10–20% band per strategy) always fires.
+     */
+    potentialHold: { enabled: true as boolean, windowSec: 120, minBuyers: 8, minBuySharePct: 60, minBuySol: 1.5, extraMinutes: 10 },
     /** Old hard stop (kept for saved configs) — the real limit is stopLoss.maxPct. */
     hardStopLossPct: 20,
     /**
@@ -941,7 +986,7 @@ export const DEFAULT_CONFIG = {
       volMultiplier: 2,
       fallbackPct: 15,
       /** Tighter max per strategy (migration plays: 15%). */
-      maxPctByStrategy: { MIGRATION_MOMENTUM: 15, SWING: 12 } as Partial<Record<StrategyName, number>>,
+      maxPctByStrategy: { MIGRATION_MOMENTUM: 15, SWING: 12, RUNNER: 14 } as Partial<Record<StrategyName, number>>,
       /** Tighter minimum per strategy (swings: 10–12%, the bottom of the owner's 10–20% band). */
       minPctByStrategy: { SWING: 10 } as Partial<Record<StrategyName, number>>,
       /** A dip under the stop (not the hard limit) must hold this long before selling (no wick sells). */
@@ -961,6 +1006,7 @@ export const DEFAULT_CONFIG = {
       MIGRATION_MOMENTUM: 60,
       SMART_MONEY_COPY: 60,
       SWING: 45,
+      RUNNER: 15,
     } satisfies Record<StrategyName, number>,
     dailyLossCircuitBreakerPct: 20,
     /**

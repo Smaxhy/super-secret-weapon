@@ -19,6 +19,7 @@ const STRATS: Array<[string, string]> = [
   ['MIGRATION_MOMENTUM', 'After migration'],
   ['SMART_MONEY_COPY', 'Copy tracked wallets'],
   ['SWING', 'Swing trades on bigger coins (dips that bounce)'],
+  ['RUNNER', 'Runners (real buying took off after the first checks)'],
 ];
 
 function NumberField({ label, value, onChange, step = 1, min, max, suffix, hint }: { label: string; value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; suffix?: string; hint?: string }) {
