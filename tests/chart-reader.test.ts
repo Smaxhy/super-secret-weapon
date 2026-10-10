@@ -53,7 +53,7 @@ describe('entry verdicts', () => {
     const offHi = (1 - r.zone!.hi / r.recentHigh) * 100;
     const offLo = (1 - r.zone!.lo / r.recentHigh) * 100;
     expect(offHi).toBeGreaterThan(12);
-    expect(offHi).toBeLessThan(25);
+    expect(offHi).toBeLessThanOrEqual(15.01);
     expect(offLo).toBeGreaterThan(offHi);
     expect(offLo).toBeLessThan(38);
   });
@@ -100,7 +100,7 @@ describe('sell-side reading', () => {
 
 describe('dip watcher', () => {
   const rules = DEFAULT_CONFIG.chart.dip;
-  const w = (): DipWatch => ({ mint: 'm', symbol: 'S', strategy: 'SOON', zone: { lo: 0.8, hi: 0.9 }, signalPrice: 1, startedAt: 0, expiresAt: 600_000, lowest: null, why: '' });
+  const w = (): DipWatch => ({ mint: 'm', symbol: 'S', strategy: 'SOON', zone: { lo: 0.8, hi: 0.9 }, signalPrice: 1, high: 1, startedAt: 0, expiresAt: 600_000, lowest: null, why: '' });
   it('buys the dip only after it bounces with buyers in control', () => {
     const x = w();
     expect(dipDecision(x, 0.97, 2, 1000, rules).action).toBe('wait');
@@ -111,8 +111,25 @@ describe('dip watcher', () => {
     expect(d.action).toBe('buy');
     expect(d.why).toContain('bounced');
   });
+  it('moves the zone up with new highs until the dip starts', () => {
+    const x = w();
+    expect(dipDecision(x, 1.2, 2, 1000, rules).action).toBe('wait');
+    expect(x.zone.hi).toBeCloseTo(1.08);
+    expect(dipDecision(x, 1.05, 2, 2000, rules).action).toBe('wait'); // dip into the new zone
+    expect(dipDecision(x, 1.12, 2, 3000, rules).action).toBe('buy'); // bounced — the zone stays put once in it
+    expect(x.zone.hi).toBeCloseTo(1.08);
+  });
+  it('does not chase a bounce that already ran far above the zone', () => {
+    const x = w();
+    dipDecision(x, 0.85, 2, 1000, rules);
+    expect(dipDecision(x, 1.1, 2, 2000, rules).action).toBe('wait'); // missed it
+    expect(x.lowest).toBeNull();
+    expect(x.zone.hi).toBeCloseTo(0.99); // re-anchored to the new high
+    dipDecision(x, 0.97, 2, 3000, rules);
+    expect(dipDecision(x, 1.0, 2, 4000, rules).action).toBe('buy');
+  });
   it('gives up when it runs away, breaks down or takes too long', () => {
-    expect(dipDecision(w(), 1.45, 2, 1000, rules).action).toBe('drop');
+    expect(dipDecision(w(), 2.05, 2, 1000, rules).action).toBe('drop');
     expect(dipDecision(w(), 0.7, 2, 1000, rules).why).toContain('broke down');
     expect(dipDecision(w(), 0.95, 2, 700_000, rules).why).toContain('no dip');
   });

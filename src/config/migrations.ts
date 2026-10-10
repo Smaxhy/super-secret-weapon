@@ -55,6 +55,14 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['paper', ['latencyMaxMs'], 500],
     ],
   },
+  {
+    version: 3,
+    note: 'dip buy zone starts 10–15% below the high and follows new highs; watch until +100% from the signal',
+    set: [
+      ['chart', ['dip', 'zoneTopMaxPct'], 15],
+      ['chart', ['dip', 'runAwayPct'], 100],
+    ],
+  },
 ];
 
 /** Pure: apply `set` to saved rows. Returns only the rows that changed (sections never saved are skipped). */

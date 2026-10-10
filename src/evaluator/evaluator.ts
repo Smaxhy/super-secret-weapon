@@ -358,7 +358,7 @@ export class Evaluator {
     // re-checks the coin when it dips and bounces — that re-check skips this and the confirmation).
     const dipEntry = job.data.dip === true;
     if (decision === 'BUY' && !dipEntry && chart?.verdict === 'wait_dip' && chart.zone && chartCfg.dip.enabled && this.dips) {
-      this.dips.add({ mint, symbol: token.symbol, strategy: STRATEGY.name, zone: chart.zone, signalPrice: market.raw.priceSol, why: chart.summary, swing, wallet: job.data.wallet });
+      this.dips.add({ mint, symbol: token.symbol, strategy: STRATEGY.name, zone: chart.zone, signalPrice: market.raw.priceSol, high: chart.recentHigh, why: chart.summary, swing, wallet: job.data.wallet });
       decision = 'SKIP';
       reasons = [`waiting for a dip: ${chart.summary}`];
     }
