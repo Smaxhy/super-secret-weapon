@@ -76,6 +76,12 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       return deps.autopsy?.snapshot() ?? null;
     });
     secured.post('/api/autopsy/run', async () => (await deps.autopsy?.run()) ?? null);
+    // AI coach: insights + rules under test / live, spend; POST = review now.
+    secured.get('/api/ai-coach', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return deps.aiCoach ? deps.aiCoach.snapshot() : null;
+    });
+    secured.post('/api/ai-coach/run', async () => (deps.aiCoach ? deps.aiCoach.review(true) : { ran: false, why: 'AI coach not running' }));
     // Update button: ask the VPS updater to pull + rebuild now (force = rebuild even without new code).
     secured.get('/api/update', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');

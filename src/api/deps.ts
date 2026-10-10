@@ -14,6 +14,7 @@ import type { TrendingHub } from '../scanner/trending-hub';
 import type { SwingUniverse } from '../scanner/swing-universe';
 import type { SwingTrader } from '../executor/swing-trader';
 import type { LossAutopsy } from '../learner/loss-autopsy';
+import type { AiCoach } from '../learner/ai-coach';
 
 export interface ApiDeps {
   liveState: LiveState;
@@ -31,6 +32,7 @@ export interface ApiDeps {
   trending?: TrendingHub | null;
   swing?: { universe: SwingUniverse; trader: SwingTrader } | null;
   autopsy?: LossAutopsy | null;
+  aiCoach?: AiCoach | null;
 }
 
 /** Classify a token for the live feed colour code. */

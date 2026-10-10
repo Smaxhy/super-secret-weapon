@@ -19,6 +19,7 @@ import { startCalibration, stopCalibration } from './learner/score-calibration';
 import { screenEntry } from './executor/rug-screen';
 import { RuggerMemory } from './executor/rug-watch';
 import { LossAutopsy } from './learner/loss-autopsy';
+import { AiCoach } from './learner/ai-coach';
 import { Evaluator } from './evaluator/evaluator';
 import { WalletAnalyzer } from './evaluator/wallet-analyzer';
 import { PaperExecutor } from './executor/paper-trader';
@@ -128,6 +129,9 @@ async function main(): Promise<void> {
   const ruggers = new RuggerMemory(redis);
   sellManager.ruggers = ruggers;
   trader.screen = (req) => screenEntry(req, { liveState, redis, crowd, ruggers });
+  // AI coach: Claude reads the trades for behaviour patterns → rules that must prove themselves first.
+  const aiCoach = new AiCoach(redis, () => getConfig().aiCoach ?? DEFAULT_CONFIG.aiCoach);
+  aiCoach.start();
   // Loss autopsy: what keeps going wrong → the kinds of trades that keep losing are blocked.
   const autopsy = new LossAutopsy(redis, () => getConfig().autopsy ?? DEFAULT_CONFIG.autopsy);
   autopsy.start();
@@ -383,7 +387,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });

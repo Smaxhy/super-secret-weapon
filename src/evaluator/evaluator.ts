@@ -14,6 +14,7 @@
  * To keep the database lean, an Evaluation row is stored only for BUYs,
  * REJECTs, "interesting" scores (≥ 60) and each token's final checkpoint.
  */
+import { aiRuleVerdict, flattenFeatures } from '../learner/ai-coach';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
 import { Worker, type Job } from 'bullmq';
@@ -396,6 +397,25 @@ export class Evaluator {
       features = { ...features, ...walletFeatures(profile) };
       result = score(features);
     }
+
+    // AI coach rules (tested on new trades before they go live): avoid → no buy, prefer → easier bar.
+    // Same feature shape as the stored evaluation, so live and backtest read identical numbers.
+    const aiFlat = flattenFeatures(
+      {
+        market: market.raw,
+        crowd,
+        manipulation: manip,
+        newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null,
+        trending: trend && (trend.points || trend.fails.length) ? trend : null,
+        kol: kolAct ? { kols: kolAct.buyers.length, dumping: kolAct.dumping } : null,
+        chart: chart ? { vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, pullbackPct: chart.pullbackPct } : null,
+        swing,
+      },
+      { score: result.score, kols: kolsIn, mcUsd: market.raw.marketCapUsd ?? null, ageMin: market.raw.ageSec / 60, hourUtc: new Date().getUTCHours() },
+    );
+    const aiVerdict = aiRuleVerdict(STRATEGY.name, aiFlat, cfg.aiCoach ?? DEFAULT_CONFIG.aiCoach);
+    if (aiVerdict.fail) ruleFails = [...ruleFails, aiVerdict.fail];
+    threshold += aiVerdict.barDelta;
 
     let { decision, reasons } = decide(result.score, threshold, ruleFails, token.safetyHardFail);
 

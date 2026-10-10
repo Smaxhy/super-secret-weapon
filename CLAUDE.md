@@ -253,6 +253,16 @@ smart money → learning engine → ML → social). See README.md.
   KOLs still holding ≥2 required; bar −6 (2) / −10 (3+), size ×1 / ×1.3; own limit maxOpen 3; allocation now NEW 35 /
   SWING 25 / MIGRATION 15 / SOON 10 / KOL 15. **Labels fixed**: learning win = 1.4x before 0.85x (was 1.8x / 0.7x —
   the scorer was learning a target the bot never trades). Config migration v8.
+- **v9 (Oct 10): AI coach** (owner: "learn from behaviours, not only statistics"; `src/learner/ai-coach.ts`, `aiCoach`
+  config, `@anthropic-ai/sdk`). Key `ANTHROPIC_API_KEY` ONLY in the VPS .env (+ optional `AI_MODEL` default
+  claude-opus-5-5, `AI_DAILY_BUDGET_USD` default 2, `AI_PRICE_IN/OUT_PER_MTOK` 4/20). Hourly (≥5 new closed trades, budget
+  left): beta messages + `fallbacks: "default"` (server-side-fallback-2026-07-01), effort medium, structured output (JSON
+  schema) → ≤6 insights + ≤4 rules over the flattened entry features (`flattenFeatures`: market/crowd/manipulation/
+  newPair/trending/kol/chart/swing numeric leaves + entry.score/kols/mcUsd/ageMin/hourUtc; invented feature names dropped).
+  Rules (Redis HASH `ai:rules`): testing → backtest disagrees → retired; forward ≥8 new trades ≥5 pts better/worse
+  (± SE) → live; stops holding → retired (`nextStatus`, refresh every 10 min, no AI call). Live rules in the evaluator
+  (`aiRuleVerdict`, same feature shape as the stored evaluation): avoid → rule fail (1 in 5 probes), prefer → bar −4.
+  Spend per day from real usage (`ai:spend:<day>`). GET `/api/ai-coach`, POST `/api/ai-coach/run`; Performance card "AI coach".
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
