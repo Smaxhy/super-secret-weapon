@@ -201,6 +201,16 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['explore', ['strategies'], ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'RUNNER']],
     ],
   },
+  {
+    version: 11,
+    note: 'v9.6 (owner: not trading enough): safety bar 55 (soft insider flags no longer stack it out), learning trades within 8 points, 4 open, 10 an hour',
+    set: [
+      ['entry', ['minSafetyScore'], 55],
+      ['explore', ['scoreMargin'], 8],
+      ['explore', ['maxOpen'], 4],
+      ['explore', ['maxPerHour'], 10],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

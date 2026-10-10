@@ -65,7 +65,10 @@ export const DEFAULT_CONFIG = {
   },
 
   entry: {
-    minSafetyScore: 70,
+    // v9.6 (owner: "it isn't trading enough"): 55 — soft insider flags (bursts, transfers, dev-slot sells) used to
+    // stack under 70 on normal busy coins; hard fails (mint / freeze authority, bad extensions…) still block,
+    // and the rug guard (dump risk, launch whale, staircase, holder dumps) covers the rest at entry.
+    minSafetyScore: 55,
     minCombinedScore: 70,
     minHoldersCurveSnipe: 15,
     minHoldersMigration: 40,
@@ -568,11 +571,12 @@ export const DEFAULT_CONFIG = {
   explore: {
     enabled: true as boolean,
     // v8: only just-missed coins (owner: stop trading stupidly), never swings (owner: be very strict there).
-    scoreMargin: 5,
+    // v9.6: wider and more of them (owner: trade a lot more) — still every rule passed, still half size.
+    scoreMargin: 8,
     // Half size (0.1 SOL at the default 0.2): smaller and the fixed tx costs (~3% round trip) distort what it learns.
     sizeMultiplier: 0.5,
-    maxOpen: 2,
-    maxPerHour: 4,
+    maxOpen: 4,
+    maxPerHour: 10,
     // No entry at all for this long (owner: "it hasn't traded in an hour") → learning trades may take
     // coins up to droughtScoreMargin under the bar (still every rule passed, still half size).
     droughtMinutes: 45,

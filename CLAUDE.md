@@ -301,11 +301,14 @@ smart money → learning engine → ML → social). See README.md.
   username, tweets/:id (+author), communities/:id (member_count — endpoint availability depends on the X plan), search/
   recent for the CONTRACT ADDRESS. `xVerdict` −8…+10 points (lowers/raises the bar), notes "X: …" in the buy
   explanation, `features.x` + AI section `x`. Untested against the live X API (sandbox can't reach it).
+- **v9.6 (Oct 10): trade more** (owner: "it isn't trading enough"): `entry.minSafetyScore` 70 → 55 (soft insider flags
+  burst 10 / transfer 10 / dev-slot sells 15 stacked busy coins under 70; hard fails still block, rug guard covers the
+  rest); learning trades `explore` margin 8, maxOpen 4, maxPerHour 10. Config migration v11.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).
-- Owner's entry rules: min $12k volume, min $12k MC, min 1 SOL total fees paid (terminal-style), score ≥ 70
+- Owner's entry rules: min $12k volume, min $12k MC, min 1 SOL total fees paid (terminal-style), safety ≥ 55 (v9.6), score ≥ 70
   (copy 60), anti-rug limits (bundlers ≤18%, top10 ≤50%, single wallet ≤10%, dev ≤10%); strong coins breaking
   only concentration limits (within 30/65/15%) are bought at half size; near-misses go on a watchlist;
   volume spikes trigger immediate checks; X hot keywords (needs TWITTER_BEARER_TOKEN) boost narrative.

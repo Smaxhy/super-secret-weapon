@@ -65,7 +65,7 @@ describe('entry rules', () => {
     expect(checkEntryRules({ ...base, market: { ...goodMarket, complete: true } })).toContain('curve already complete');
   });
   it('lists every failed rule', () => {
-    const fails = checkEntryRules({ ...base, safetyScore: 60, market: { ...goodMarket, holders: 5, devHoldingPct: 15, liquiditySol: 2 } });
+    const fails = checkEntryRules({ ...base, safetyScore: 50, market: { ...goodMarket, holders: 5, devHoldingPct: 15, liquiditySol: 2 } });
     expect(fails).toHaveLength(4);
   });
   it('enforces USD volume, USD market cap and total fees minimums', () => {
