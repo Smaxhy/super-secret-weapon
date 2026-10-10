@@ -76,6 +76,8 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       return deps.autopsy?.snapshot() ?? null;
     });
     secured.post('/api/autopsy/run', async () => (await deps.autopsy?.run()) ?? null);
+    // Best hours / days to trade (market motion + our results) and what that means right now.
+    secured.get('/api/timing', async () => deps.timing?.snapshot() ?? null);
     // AI coach: insights + rules under test / live, spend; POST = review now.
     secured.get('/api/ai-coach', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');

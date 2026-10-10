@@ -14,6 +14,7 @@
  */
 import { priceShape } from '../evaluator/price-shape';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
+import { timingNow } from '../learner/timing';
 import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
 import type { Prisma } from '@prisma/client';
 import { getAssociatedTokenAddressSync } from '@solana/spl-token';
@@ -226,7 +227,7 @@ export class SwingTrader {
         top10Pct: coin.holders?.top10Pct ?? null,
         kolDumping: !!kol?.dumping,
         kolBuyers: kol?.buyers.length ?? 0,
-        barDelta: coach.thresholdDelta + cfg.regimeAdjustments[regime].scoreThresholdDelta + autopsyTuneFor('SWING').barDelta,
+        barDelta: coach.thresholdDelta + cfg.regimeAdjustments[regime].scoreThresholdDelta + autopsyTuneFor('SWING').barDelta + timingNow().barDelta,
       },
       c,
     );

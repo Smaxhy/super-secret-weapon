@@ -18,6 +18,7 @@ import { markStrategySince, oneTimeUpgrade, runConfigMigrations } from './config
 import { startCalibration, stopCalibration } from './learner/score-calibration';
 import { screenEntry } from './executor/rug-screen';
 import { RuggerMemory } from './executor/rug-watch';
+import { TimingLearner } from './learner/timing';
 import { LossAutopsy } from './learner/loss-autopsy';
 import { MigratedScanner } from './scanner/migrated-scanner';
 import { RunningCoins } from './scanner/running-coins';
@@ -144,6 +145,10 @@ async function main(): Promise<void> {
   // Loss autopsy: what keeps going wrong → the kinds of trades that keep losing are blocked.
   const autopsy = new LossAutopsy(redis, () => getConfig().autopsy ?? DEFAULT_CONFIG.autopsy);
   autopsy.start();
+  // Best hours / days to trade: market motion per hour + weekday and our results → size and bar for now.
+  const timing = new TimingLearner(redis, () => getConfig().timing ?? DEFAULT_CONFIG.timing);
+  timing.start();
+  aiCoach.timingSource = () => timing.snapshot();
   aiCoach.autopsySource = () => autopsy.snapshot();
   trader.bandCheck = (req) =>
     autopsy.check({
@@ -153,6 +158,7 @@ async function main(): Promise<void> {
       curvePct: req.market.complete || req.market.onAmm ? 'migrated' : req.market.bondingCurvePct,
       score: req.score,
       hourUtc: new Date().getUTCHours(),
+      dowUtc: new Date().getUTCDay(),
       ...(() => {
         const sh = priceShape(crowd.candles(req.mint), Date.now());
         return { run3m: sh?.run3m ?? null, offHigh10m: sh?.offHigh10m ?? null };
@@ -404,7 +410,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -417,6 +423,7 @@ async function main(): Promise<void> {
   let lastCreates = 0;
   let lastTrades = 0;
   let lastAmm = 0;
+  let lastCompletes = -1;
   const statsTimer = setInterval(async () => {
     const s = statsOf();
     const [balance, openPositions] = await Promise.all([
@@ -446,9 +453,16 @@ async function main(): Promise<void> {
       },
       '📊 stats',
     );
+    // (first minute after a start has no baseline → not recorded)
+    if (lastCompletes >= 0) {
+      void timing
+        .recordMinute({ trades: (s?.trades ?? 0) - lastTrades, ammTrades: (s?.ammTrades ?? 0) - lastAmm, launches: (s?.creates ?? 0) - lastCreates, migrations: Math.max(0, (s?.completes ?? 0) - lastCompletes) })
+        .catch(() => undefined);
+    }
     lastCreates = s?.creates ?? 0;
     lastAmm = s?.ammTrades ?? 0;
     lastTrades = s?.trades ?? 0;
+    lastCompletes = s?.completes ?? 0;
   }, 60_000);
 
   // Graceful shutdown

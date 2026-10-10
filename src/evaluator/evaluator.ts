@@ -19,6 +19,7 @@ import { organicFlow, scanVerdict } from '../scanner/migrated-scanner';
 import { priceShape, staircase } from './price-shape';
 import { aiRuleVerdict, flattenFeatures } from '../learner/ai-coach';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
+import { timingNow } from '../learner/timing';
 import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
 import { Worker, type Job } from 'bullmq';
 import type { Redis } from 'ioredis';
@@ -238,7 +239,9 @@ export class Evaluator {
       (STRATEGY.name === 'RUNNER' ? (cfg.runner ?? DEFAULT_CONFIG.runner).scoreThresholdDelta : 0) +
       (focusRules?.scoreThresholdDelta ?? 0) +
       coach.thresholdDelta +
-      cfg.regimeAdjustments[regime].scoreThresholdDelta;
+      cfg.regimeAdjustments[regime].scoreThresholdDelta +
+      // best / worst hours and days to trade (market motion + our own results at this time)
+      timingNow().barDelta;
     // How people behave on this coin right now (dip buying, paper hands, bots, smart wallets, eyes).
     const buyers = this.crowd?.recentBuyers(mint) ?? [];
     const smart = buyers.length ? await smartShare(this.redis, buyers) : { pct: null };
@@ -447,7 +450,7 @@ export class Evaluator {
         shape,
         x: xv?.features ?? null,
       },
-      { score: result.score, kols: kolsIn, mcUsd: market.raw.marketCapUsd ?? null, ageMin: market.raw.ageSec / 60, hourUtc: new Date().getUTCHours() },
+      { score: result.score, kols: kolsIn, mcUsd: market.raw.marketCapUsd ?? null, ageMin: market.raw.ageSec / 60, hourUtc: new Date().getUTCHours(), dowUtc: new Date().getUTCDay() },
     );
     const aiVerdict = aiRuleVerdict(STRATEGY.name, aiFlat, cfg.aiCoach ?? DEFAULT_CONFIG.aiCoach);
     if (aiVerdict.fail) ruleFails = [...ruleFails, aiVerdict.fail];

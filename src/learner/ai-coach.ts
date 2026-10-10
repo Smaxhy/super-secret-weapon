@@ -21,6 +21,7 @@ import type { Redis } from 'ioredis';
 import { prisma } from '../lib/prisma';
 import { moduleLogger } from '../lib/logger';
 import { learningSince } from './labels';
+import { DAY_NAMES, type TimingProfile } from './timing';
 import type { Autopsy } from './loss-autopsy';
 import { readHistory } from '../executor/position-history';
 import { afterEntry } from '../evaluator/price-shape';
@@ -212,7 +213,7 @@ const SYSTEM = `You are the trading coach of an autonomous Solana pump.fun paper
 
 You get its recent closed trades: the measurable picture at entry (flattened feature names such as market.top10HolderPct or crowd.paperHandsPct), why it bought, how the trade ended, the peak it reached, and the trade coach's lesson. You also get the rules already being tested and how they are doing.
 
-"shape.*" features describe the price action in the 10 minutes BEFORE the buy (run1m/run3m/run10m = % change, offHigh10m = % under the 10-min high, spikes10m/dumps10m = 15-second candles that moved 15%+, greenStreak, wickTopPct = upper wicks = selling into the push, volAccel, buyShare2m). "afterBuy" is what the price did after the buy as multiples of the entry price: min1m (lowest in the first minute), max5m/min5m, peak and secToPeak — e.g. min1m 0.85 with peak 1.0 means it bought the exact top. "whatKeepsGoingWrong" is the bot's own statistical report on its losses.
+"shape.*" features describe the price action in the 10 minutes BEFORE the buy (run1m/run3m/run10m = % change, offHigh10m = % under the 10-min high, spikes10m/dumps10m = 15-second candles that moved 15%+, greenStreak, wickTopPct = upper wicks = selling into the push, volAccel, buyShare2m). "afterBuy" is what the price did after the buy as multiples of the entry price: min1m (lowest in the first minute), max5m/min5m, peak and secToPeak — e.g. min1m 0.85 with peak 1.0 means it bought the exact top. "whatKeepsGoingWrong" is the bot's own statistical report on its losses. "bestTimesUtc" is market activity (1 = an average hour) and our results per UTC hour / weekday; "entry.hourUtc" / "entry.dowUtc" (0 = Sunday) let a rule target times.
 
 Focus hardest on ENTRIES: when in a move does it buy — after a vertical spike, at the top of a green streak, on a pullback, into fading volume — and which entries worked. Also look for trends across trades (time of day, kinds of coins, crowd behaviour) and repeated spike patterns.
 
@@ -230,6 +231,8 @@ export class AiCoach {
   lastError: string | null = null;
   /** The loss autopsy's latest report (set in index.ts) — "what keeps going wrong" goes to the AI too. */
   autopsySource: (() => Autopsy | null) | null = null;
+  /** Best hours / days to trade (src/learner/timing.ts) — set in index.ts. */
+  timingSource: (() => TimingProfile | null) | null = null;
 
   constructor(
     private readonly redis: Redis,
@@ -336,6 +339,7 @@ export class AiCoach {
           mcUsd: ec.marketCapUsd ?? null,
           ageMin: p.token ? (p.openedAt.getTime() - p.token.createdAt.getTime()) / 60_000 : null,
           hourUtc: p.openedAt.getUTCHours(),
+          dowUtc: p.openedAt.getUTCDay(),
         }),
       };
     });
@@ -403,7 +407,17 @@ export class AiCoach {
       // What the price did right after each buy (from the position's price history).
       const after = await Promise.all(sample.map(async (t) => afterEntry(await readHistory(t.id).catch(() => []), t.entryPriceSol, t.openedAtMs)));
       const au = this.autopsySource?.() ?? null;
+      const tm = this.timingSource?.() ?? null;
       const input = {
+        bestTimesUtc: tm
+          ? {
+              busiestHours: tm.busiestHours,
+              bestHours: tm.bestHours,
+              worstHours: tm.worstHours,
+              bestDays: tm.bestDays.map((d) => DAY_NAMES[d]),
+              byHour: tm.hours.map((h, i) => ({ hour: i, activity: h.activity, trades: h.trades, avgPct: h.avgPct })).filter((h) => h.trades > 0 || h.activity !== null),
+            }
+          : null,
         whatKeepsGoingWrong: au
           ? { findings: au.findings, losers: au.losers, overall: { winRatePct: au.overall.winRatePct, neededWinRatePct: au.overall.neededWinRatePct, avgWinPct: au.overall.avgWinPct, avgLossPct: au.overall.avgLossPct }, worstKinds: au.worst.slice(0, 6).map((w) => ({ strategy: w.strategy, kind: w.band, n: w.n, avgPct: w.avgPct, pnlSol: w.pnlSol })), bestKinds: au.best.slice(0, 4).map((w) => ({ strategy: w.strategy, kind: w.band, n: w.n, avgPct: w.avgPct })) }
           : null,

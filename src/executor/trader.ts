@@ -24,6 +24,7 @@ import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import { logTrade } from '../learner/trade-logger';
 import { currentHourFactor, currentRegime } from '../learner/regime-detector';
+import { timingNow } from '../learner/timing';
 import type { MarketRaw } from '../evaluator/market-analyzer';
 import type { Executor } from './types';
 
@@ -160,7 +161,7 @@ export class Trader {
     const reserve = cfg.paper.txFeeSol * 4 + 0.01; // keep enough to pay for the exits
     // Market mood scales position size (e.g. ×1.2 when hot, ×0.5 when rug-heavy).
     // …and by time of day: hours that historically produce more winners get bigger size.
-    const sized = Math.min(cfg.trading.maxPositionSol * cfg.regimeAdjustments[currentRegime()].sizeMultiplier * currentHourFactor(), cfg.trading.maxPositionSolCeiling);
+    const sized = Math.min(cfg.trading.maxPositionSol * cfg.regimeAdjustments[currentRegime()].sizeMultiplier * currentHourFactor() * timingNow().sizeFactor, cfg.trading.maxPositionSolCeiling);
     // Conviction & other multipliers scale around maxPositionSol, capped at ×maxConvictionMultiple
     // of it and at maxPositionPctOfCapital % of capital.
     const t = cfg.trading;

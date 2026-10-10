@@ -48,6 +48,8 @@ export interface EntryShape {
   curvePct: number | 'migrated' | null;
   score: number | null;
   hourUtc: number;
+  /** Day of the week (UTC, 0 = Sunday); undefined = unknown. */
+  dowUtc?: number | null;
   /** KOLs (incl. discovered smart wallets) holding it when we bought; null = unknown. */
   kols?: number | null;
   /** Price shape before the buy (evaluator/price-shape.ts): % run over 3 min, % under the 10-min high. */
@@ -65,8 +67,9 @@ export interface ClosedTrade extends EntryShape {
   explore: boolean;
 }
 
-type Dim = 'mc' | 'age' | 'curve' | 'score' | 'hour' | 'kols' | 'chase' | 'entry';
-const DIMS: Dim[] = ['mc', 'age', 'curve', 'score', 'hour', 'kols', 'chase', 'entry'];
+type Dim = 'mc' | 'age' | 'curve' | 'score' | 'hour' | 'day' | 'kols' | 'chase' | 'entry';
+const DIMS: Dim[] = ['mc', 'age', 'curve', 'score', 'hour', 'day', 'kols', 'chase', 'entry'];
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 const band = (v: number, edges: number[], labels: string[]) => {
   for (let i = 0; i < edges.length; i++) if (v < edges[i]!) return labels[i]!;
@@ -86,6 +89,8 @@ export function bandOf(dim: Dim, s: EntryShape): string | null {
       return s.score === null ? null : band(s.score, [70, 80, 90], ['score <70', 'score 70–80', 'score 80–90', 'score 90+']);
     case 'hour':
       return band(s.hourUtc, [4, 8, 12, 16, 20], ['00–04 UTC', '04–08 UTC', '08–12 UTC', '12–16 UTC', '16–20 UTC', '20–24 UTC']);
+    case 'day':
+      return s.dowUtc === null || s.dowUtc === undefined ? null : `${DAYS[s.dowUtc] ?? '?'} (UTC)`;
     case 'chase':
       return s.run3m === null || s.run3m === undefined ? null : band(s.run3m, [0, 20, 50, 100], ['falling 3 min before', 'up 0–20% in 3 min', 'up 20–50% in 3 min', 'up 50–100% in 3 min', 'up 100%+ in 3 min']);
     case 'entry':
@@ -398,6 +403,7 @@ export class LossAutopsy {
           curvePct: mk ? (mk.complete ? 'migrated' : (mk.bondingCurvePct ?? null)) : p.strategy === 'SWING' ? 'migrated' : null,
           score: p.evaluation?.combinedScore ?? null,
           hourUtc: p.openedAt.getUTCHours(),
+          dowUtc: p.openedAt.getUTCDay(),
           kols: typeof ec.kols === 'number' ? ec.kols : null,
           run3m: typeof ef.shape?.run3m === 'number' ? ef.shape.run3m : null,
           offHigh10m: typeof ef.shape?.offHigh10m === 'number' ? ef.shape.offHigh10m : null,

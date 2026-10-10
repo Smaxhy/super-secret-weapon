@@ -327,6 +327,13 @@ smart money → learning engine → ML → social). See README.md.
   rebuilds on `dashboard/**` changes, so the site's SHA lags. Banner/panel now compare the bot to GitHub
   (`/api/update` last.remote). Restarts: every push redeploys (44 pushes ≈ 41 restarts) → crashes counted apart
   (`bot:crashes`, `crashes24h`); the banner warns on ≥3 crashes, not on restarts.
+- **v9.12: best times to trade** (owner: "check which hours / days are best to trade, most motion"; `src/learner/timing.ts`,
+  `timing` config). Every minute the stats timer records trades / PumpSwap trades / launches / migrations per UTC hour
+  (Redis `timing:d:<date>`, 35 days; minutes with 0 trades = stream down, skipped). Every 15 min `buildProfile`: activity
+  per hour (≥3 days) and weekday vs average + our closed PAPER trades (30 days) per hour / weekday (avg, win rate, edge
+  shrunk n/(n+20), ≥8 trades). `timingNow()` → size ×0.75–1.25 (trader, × hour factor) and bar −3…+4 (evaluator +
+  swing trader); never blocks. Autopsy band `day` (dowUtc), AI features `entry.dowUtc` + input `bestTimesUtc`.
+  GET `/api/timing`; Performance card "Best times to trade" (hour bars in the viewer's time zone + result strip + days).
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

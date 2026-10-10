@@ -620,6 +620,13 @@ export const DEFAULT_CONFIG = {
    * even after one standard error, and lost ≥0.1 SOL, is blocked; 1 in 5 of its trades still goes
    * through at the minimum size so it can prove itself again.
    */
+  /**
+   * Best times to trade (src/learner/timing.ts; owner: "check which hours / days are best, most motion"):
+   * market activity per UTC hour + weekday (recorded every minute) and our own results per hour / day
+   * → size ×0.75–1.25 and buy bar −3…+4 for the current hour. Never blocks trading by itself.
+   */
+  timing: { enabled: true as boolean, minDays: 3, minTrades: 8, shrinkTrades: 20, quietRatio: 0.6, busyRatio: 1.3, sizeMin: 0.75, sizeMax: 1.25, barMin: -3, barMax: 4 },
+
   autopsy: { enabled: true as boolean, everyMin: 30, lookbackDays: 14, minTrades: 15, maxAvgPct: -3, minLossSol: 0.1, probeEvery: 5, blockMode: 'small' as 'small' | 'block' },
 
   /**
