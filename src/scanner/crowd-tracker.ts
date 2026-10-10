@@ -344,13 +344,24 @@ export class CrowdTracker {
     return this.candleSeries.get(mint) ?? [];
   }
 
+  /** Coins with a trade in the last `withinMs`, most recently traded first (max `limit`). */
+  activeMints(withinMs: number, limit = 500, now = Date.now()): string[] {
+    const out: Array<[string, number]> = [];
+    for (const [mint, log] of this.logs) {
+      const t = log[log.length - 1]?.t ?? 0;
+      if (now - t <= withinMs) out.push([mint, t]);
+    }
+    return out.sort((a, b) => b[1] - a[1]).slice(0, limit).map(([m]) => m);
+  }
+
   private push(mint: string, x: CrowdTrade): void {
     let series = this.candleSeries.get(mint);
     if (!series) {
       series = [];
       this.candleSeries.set(mint, series);
     }
-    addToCandles(series, x.t, x.px, x.sol, x.buy);
+    // Candles follow the pool price after each trade (what the chart really shows), else the trade price.
+    addToCandles(series, x.t, x.pp && x.pp > 0 ? x.pp : x.px, x.sol, x.buy);
     let log = this.logs.get(mint);
     if (!log) {
       log = [];

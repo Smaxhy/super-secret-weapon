@@ -24,6 +24,7 @@ import { ScannerStats } from './pages/ScannerStats';
 import { TokenDetail } from './pages/TokenDetail';
 import { Wallets } from './pages/Wallets';
 import { Controls } from './pages/Controls';
+import { Strategies } from './pages/Strategies';
 
 const NAV = [
   { to: '/', label: 'Overview', icon: '◎' },
@@ -31,6 +32,7 @@ const NAV = [
   { to: '/positions', label: 'Positions', icon: '▤' },
   { to: '/history', label: 'History', icon: '☰' },
   { to: '/performance', label: 'Performance', icon: '↗' },
+  { to: '/strategies', label: 'Strategies', icon: '⌁' },
   { to: '/wallets', label: 'Wallets', icon: '◈' },
   { to: '/learning', label: 'Learning', icon: '✦' },
   { to: '/scanner', label: 'Scanner', icon: '◉' },
@@ -145,6 +147,7 @@ function Shell() {
             <Route path="/positions" element={<Positions />} />
             <Route path="/history" element={<History />} />
             <Route path="/performance" element={<Performance />} />
+            <Route path="/strategies" element={<Strategies />} />
             <Route path="/wallets" element={<Wallets />} />
             <Route path="/learning" element={<Learning />} />
             <Route path="/controls" element={<Controls />} />

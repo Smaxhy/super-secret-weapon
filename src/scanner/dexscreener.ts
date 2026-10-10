@@ -110,11 +110,17 @@ export function parseOrders(orders: unknown): Omit<DexPaidInfo, 'checkedAt'> {
   };
 }
 
-/** Score points for the DexScreener picture of a coin (shown in the buy explanation). Pure. */
-export function dexPoints(paid: DexPaidInfo | null, trending: TrendingCoin | null, c: { paidPoints: number; ctoPoints: number; trendingPoints: number }): { points: number; notes: string[] } {
+/**
+ * Score points for the DexScreener picture of a coin (shown in the buy explanation). Pure.
+ * Paid promotion on a coin under an hour old earns nothing (research: early paid profiles/ads
+ * are often the dev marketing before a dump — trendScore() penalises it with bundles).
+ */
+export function dexPoints(paid: DexPaidInfo | null, trending: TrendingCoin | null, c: { paidPoints: number; ctoPoints: number; trendingPoints: number }, ageSec = Infinity): { points: number; notes: string[] } {
   let points = 0;
   const notes: string[] = [];
-  if (paid?.paid) {
+  if (paid?.paid && ageSec < 3600) {
+    notes.push('DEX paid on a fresh coin (no bonus)');
+  } else if (paid?.paid) {
     points += c.paidPoints;
     notes.push('DEX paid');
   } else if (paid?.cto) {

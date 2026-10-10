@@ -27,6 +27,12 @@ export async function performanceRoutes(app: FastifyInstance, deps: ApiDeps): Pr
    * Strategy lab: how each exit setup did on the same live signals (virtual trades, real
    * costs). BUY signals and near-misses are reported separately; `live` = the setup in use.
    */
+  /** Chart strategies: each one's live record (virtual trades) vs random entries; `proven` = has a say in buys. */
+  app.get('/api/ta-lab', async () => {
+    if (!deps.taLab) return { enabled: false, strategies: [], baseline: null, open: 0 };
+    return { enabled: true, ...(await deps.taLab.report()) };
+  });
+
   app.get('/api/lab', async () => {
     if (!deps.lab) return { enabled: false, variants: [], applied: null, open: 0, autoApply: false, minTrades: 0 };
     return { enabled: true, ...(await deps.lab.report()) };

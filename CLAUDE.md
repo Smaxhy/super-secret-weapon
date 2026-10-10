@@ -85,6 +85,37 @@ smart money → learning engine → ML → social). See README.md.
   real win rate per strategy per 5-pt band (7d) → −10…+4 pts and ×0.7–1.3 size (stored `preCalibrationScore`).
   **Conviction sizing**: maxPositionSol = average size; ×0.4–1.6 by score margin, band record, crowd; capped at
   ×1.6 and 6% of capital. Insider same-size bursts: same slot only, first 3 min only, terminal presets ignored.
+- **v6 (Oct 10): chart-strategy library + live lab + trending tabs** (owner: "learn many more strategies like
+  Fibonacci… keep the trending tab in check"). Research: costs (~6% round trip) kill small edges — only big
+  moves pay (bursts, deep-pullback reclaims, breakouts); Fibonacci evidence is weak → test it vs control depths;
+  judge everything vs a random-entry control; many strategies tested at once → false-discovery control.
+  - `src/evaluator/ta/indicators.ts` (EMA/SMA/RSI/MACD/Bollinger/ATR/anchored VWAP±σ/OBV/CVD/Supertrend/
+    Heikin-Ashi/StochRSI/swings/`lastImpulse` = last swing leg (stops at an earlier peak ≥20% above)/fib levels)
+    and `src/evaluator/ta/strategies.ts`: 28 strategies on completed 15 s candles (gaps filled; `taContext`
+    adds 1 m, trades + creator): fib golden pocket (0.5–0.7 reclaim, void <0.786, close > prev high, 1-min
+    buy/sell ≥1.2) + CONTROL depths pullback_shallow (0.3–0.45) / pullback_deep (0.7–0.85), fib extension
+    breakout, EMA ribbon pullback, Supertrend / Heikin-Ashi flips, MACD cross, RSI oversold bounce, RSI bull
+    divergence, StochRSI cross, VWAP reclaim, VWAP −1σ bounce, capitulation wick, climax→retest, Bollinger
+    squeeze, Donchian, tight range, Keltner, opening range (3–20 min old), ATH breakout, BOS after a higher low,
+    liquidity sweep, bull flag, double bottom, CVD divergence, OBV lead, organic buying burst (≥20 organic
+    wallets/min, imbalance ≥40%, ≥3 SOL net, +5…25%). Candles now use the pool price after each trade (`pp`).
+  - **TA lab** (`src/learner/ta-lab.ts`, `ta` config, shared engine `src/learner/virtual-book.ts` — the exit
+    lab uses it too): every 15 s the ≤150 most active coins (≥6 trades/2 min, MC ≥$3k, top10 ≤50%, dev ≤15%,
+    bundles ≤25%) run all strategies; each signal = virtual trade with live exits (once per coin+strategy per
+    30 min); `baseline_random` (1 in 40 looks) is the yardstick; external signals `trend_pump` / `trend_gecko`
+    (coin newly on a trending tab) are measured the same way. Redis `talab:res:<id>`. **Proven** (provenStrategies):
+    ≥60 results, avg ≥ baseline+2 pts, mean−2SE >0, profit factor ≥1.2, positive without its 3 best trades,
+    and Benjamini–Hochberg (q 0.1) across all strategies. Proven ones add up to +8 score points (3 × edge/10
+    each) and trigger an immediate evaluation when they fire. Nothing is proven by default. ~0.25 s CPU per
+    tick, yields every 10 coins. `/api/ta-lab`, dashboard **Strategies** page (explanations + live records).
+  - **Trending tabs** (`src/scanner/trending-feeds.ts`, `trending-hub.ts`, `trending` config): pump.fun
+    frontend-api-v3 currently-live (real viewer counts `num_participants`) / king-of-the-hill / for-you /
+    top-runners (≤6 req/min), GeckoTerminal trending_pools 5m+1h (every 3 min), DexScreener metas/trending →
+    hot keywords; circuit breaker (403 HTML → 5 min pause, 429 → reset). New list entry → checkNow + lab
+    signal (never a direct buy: lists catch coins after the move). trendScore: +2 per organic list (max +6),
+    live ≥50 viewers rising +2, KOTH ≥5 min stalled −3 / accelerating +3, fresh (<1h) + paid + bundled/insiders
+    −8 & half size (dev selling → no buy), banned / downranked / Mayhem → no buy; DEX paid bonus only for
+    coins ≥1 h old. `/api/trending`, Scanner page "Trending tabs" card. (Sandbox can't reach these hosts; VPS can.)
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

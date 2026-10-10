@@ -12,7 +12,7 @@
 import { startApi } from './api/server';
 import { env, rpcEndpoints } from './config/env';
 import { bus } from './lib/bus';
-import { startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
+import { getConfig, startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
 import { markStrategySince, oneTimeUpgrade, runConfigMigrations } from './config/migrations';
 import { startCalibration, stopCalibration } from './learner/score-calibration';
 import { screenEntry } from './executor/rug-screen';
@@ -32,6 +32,10 @@ import { WalletPnl } from './learner/wallet-pnl';
 import { DipWatcher } from './executor/dip-watcher';
 import { StrategyLab } from './learner/strategy-lab';
 import { NewPairWatcher } from './scanner/new-pair-watcher';
+import { TaLab } from './learner/ta-lab';
+import { TrendingFeeds } from './scanner/trending-feeds';
+import { TrendingHub } from './scanner/trending-hub';
+import { deriveMetrics } from './scanner/live-state';
 import { TradeCoach } from './learner/trade-coach';
 import { SwingWatcher } from './executor/swing-watcher';
 import { ObservationLogger } from './learner/observation-logger';
@@ -161,6 +165,34 @@ async function main(): Promise<void> {
   evaluator.lab = lab;
   registry.onTradeApplied.push((mint) => lab.onTrade(mint));
   lab.start();
+  // Chart strategies (Fibonacci, EMA, breakouts, divergences…) forward-tested live vs random entries;
+  // the proven ones get a say in real buys.
+  const taLab = new TaLab(redis, crowd, liveState);
+  taLab.evaluator = evaluator;
+  evaluator.ta = taLab;
+  registry.onTradeApplied.push((mint) => taLab.onTrade(mint));
+  taLab.start();
+  // Trending tabs (pump.fun live / KOTH / for-you / runners, GeckoTerminal, DexScreener narratives):
+  // a coin newly on a list is checked at once (never bought just for that) and paper-tested by the lab.
+  const trendFeeds = new TrendingFeeds();
+  const trending = new TrendingHub(trendFeeds);
+  evaluator.trending = trending;
+  trendFeeds.onEntry = (source, coin) => {
+    trending.sample();
+    const tc = getConfig().trending;
+    if (!liveState.isTracked(coin.mint) || coin.banned || coin.mayhem) return;
+    void liveState
+      .read(coin.mint)
+      .then(async (view) => {
+        if (!view) return;
+        const strategy = view.complete ? 'MIGRATION_MOMENTUM' : deriveMetrics(view).bondingCurvePct >= 70 ? 'SOON' : 'CURVE_SNIPE';
+        if (tc.checkOnEntry) await evaluator.checkNow(coin.mint, strategy, `trend:${source}`, { bucketSec: 60 });
+        if (tc.labOnEntry) await taLab.externalSignal(source.startsWith('pump') ? 'trend_pump' : 'trend_gecko', coin.mint, `new on ${source}`);
+      })
+      .catch(() => undefined);
+  };
+  trendFeeds.start();
+  trending.start();
   // Exits react to every trade on a coin we hold (not just the 1s tick); real trade highs count as peaks.
   sellManager.crowd = crowd;
   registry.onTradeApplied.push((mint) => sellManager.onTrade(mint));
@@ -272,7 +304,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -344,6 +376,9 @@ async function main(): Promise<void> {
       walletPnl.stop();
       dips.stop();
       lab.stop();
+      taLab.stop();
+      trendFeeds.stop();
+      trending.stop();
       stopCalibration();
       swings.stop();
       crowd.stop();

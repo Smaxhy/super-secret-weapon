@@ -375,6 +375,61 @@ export const DEFAULT_CONFIG = {
   leaders: { enabled: true as boolean, everyMin: 5, topOwn: 15, minLeaders: 2, maxKeywords: 12 },
 
   /**
+   * Trending tabs (src/scanner/trending-feeds.ts + trending-hub.ts): pump.fun live / King of the
+   * Hill / for-you / top runners (≤ 6 req/min of the ~50 allowed), GeckoTerminal 5m + 1h trending
+   * pools, DexScreener trending narratives. A coin newly on a list is checked at once
+   * (checkOnEntry) and paper-traded by the chart lab (labOnEntry) so list entries are MEASURED
+   * against random entries; +pointsPerSource per organic list (max maxSourcePoints), live with
+   * ≥ liveViewers viewers and rising +2, banned / Mayhem coins never bought. See trendScore().
+   */
+  trending: {
+    enabled: true as boolean,
+    pump: { enabled: true as boolean, liveSec: 30, kothSec: 30, forYouSec: 60, runnersSec: 60 },
+    gecko: { enabled: true as boolean, everySec: 180 },
+    dexMetas: { enabled: true as boolean, everySec: 300, maxWords: 10 },
+    pointsPerSource: 2,
+    maxSourcePoints: 6,
+    liveViewers: 50,
+    checkOnEntry: true as boolean,
+    labOnEntry: true as boolean,
+  },
+
+  /**
+   * Chart strategies (src/evaluator/ta/strategies.ts) + their live lab (src/learner/ta-lab.ts).
+   * Every `everySec` the most active coins (≤ maxCoinsPerTick, ≥ minTradesLast2m trades in 2 min,
+   * passing the cheap gates) are run through every strategy; each signal opens a VIRTUAL trade
+   * (once per coin + strategy per cooldownMin) with the live exits — against a random-entry
+   * baseline (1 in baselineOneIn looks). A strategy is PROVEN with ≥ minTrades results, a
+   * cautious average > 0 and an average ≥ minEdgePct better than random; proven strategies add
+   * up to maxPoints to a coin's score (pointsPerSignal each, scaled by their edge) and, with
+   * triggerChecks, make the bot check a coin the moment one fires. `disabled` = ids to skip.
+   */
+  ta: {
+    enabled: true as boolean,
+    labEnabled: true as boolean,
+    everySec: 15,
+    maxCoinsPerTick: 150,
+    minTradesLast2m: 6,
+    minMarketCapUsd: 3_000,
+    maxTop10Pct: 50,
+    maxDevHoldingPct: 15,
+    maxBundlePct: 25,
+    baselineOneIn: 40,
+    cooldownMin: 30,
+    maxOpen: 800,
+    keepResults: 400,
+    /** Promotion (see provenStrategies): results needed, edge over random, profit factor, false-discovery rate. */
+    minTrades: 60,
+    minEdgePct: 2,
+    minProfitFactor: 1.2,
+    fdrQ: 0.1,
+    pointsPerSignal: 3,
+    maxPoints: 8,
+    triggerChecks: true as boolean,
+    disabled: [] as string[],
+  },
+
+  /**
    * Strategy lab (src/learner/strategy-lab.ts): every BUY signal and near-miss is also traded
    * VIRTUALLY by each variant below (same live prices, same costs, the bot's own exit logic with
    * the variant's settings layered on top). The dashboard shows which setup makes money; with

@@ -9,6 +9,8 @@ import type { WalletPnl } from '../learner/wallet-pnl';
 import type { DipWatcher } from '../executor/dip-watcher';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
 import type { StrategyLab } from '../learner/strategy-lab';
+import type { TaLab } from '../learner/ta-lab';
+import type { TrendingHub } from '../scanner/trending-hub';
 
 export interface ApiDeps {
   liveState: LiveState;
@@ -22,6 +24,8 @@ export interface ApiDeps {
   dips?: DipWatcher | null;
   crowd?: CrowdTracker | null;
   lab?: StrategyLab | null;
+  taLab?: TaLab | null;
+  trending?: TrendingHub | null;
 }
 
 /** Classify a token for the live feed colour code. */

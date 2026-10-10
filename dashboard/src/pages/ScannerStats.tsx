@@ -1,5 +1,6 @@
 import { SystemPanel } from '../components/SystemHealth';
 import { DexTrending } from '../components/DexTrending';
+import { TrendingTabs } from '../components/TrendingTabs';
 import { MarketLeadersCard } from '../components/MarketLeaders';
 import { CountBars } from '../components/Charts';
 import { Card, ErrorBox, Loading, PageHeader, StatTile } from '../components/ui';
@@ -111,6 +112,7 @@ export function ScannerStats() {
             <p className="text-ink-2">{d.regime ?? 'Hot / normal / cold detection arrives with the learning engine (Phase 7).'}</p>
           </Card>
           <MarketLeadersCard />
+          <TrendingTabs />
           <DexTrending />
           <SystemPanel />
         </>

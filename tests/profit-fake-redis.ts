@@ -18,7 +18,7 @@ export class FakeRedis {
     if (!h) this.data.set(k, (h = new Map()));
     return h;
   }
-  private set(k: string): Set<string> {
+  private setOf(k: string): Set<string> {
     let s = this.data.get(k) as Set<string> | undefined;
     if (!s) this.data.set(k, (s = new Set()));
     return s;
@@ -82,18 +82,41 @@ export class FakeRedis {
     return this.hdel(k, m);
   }
   async pfadd(k: string, m: string): Promise<number> {
-    this.set(k).add(m);
+    this.setOf(k).add(m);
     return 1;
   }
   async pfcount(k: string): Promise<number> {
     return (this.data.get(k) as Set<string> | undefined)?.size ?? 0;
   }
   async sadd(k: string, m: string): Promise<number> {
-    this.set(k).add(m);
+    this.setOf(k).add(m);
     return 1;
   }
   async smembers(k: string): Promise<string[]> {
     return [...((this.data.get(k) as Set<string> | undefined) ?? [])];
+  }
+  async lpush(k: string, ...vals: string[]): Promise<number> {
+    const l = (this.data.get(k) as string[] | undefined) ?? [];
+    for (const v of vals) l.unshift(v);
+    this.data.set(k, l as never);
+    return l.length;
+  }
+  async ltrim(k: string, start: number, stop: number): Promise<string> {
+    const l = (this.data.get(k) as string[] | undefined) ?? [];
+    this.data.set(k, l.slice(start, stop + 1) as never);
+    return 'OK';
+  }
+  async lrange(k: string, start: number, stop: number): Promise<string[]> {
+    const l = (this.data.get(k) as string[] | undefined) ?? [];
+    return l.slice(start, stop < 0 ? undefined : stop + 1);
+  }
+  async get(k: string): Promise<string | null> {
+    const v = this.data.get(k);
+    return typeof v === 'string' ? v : null;
+  }
+  async set(k: string, v: string): Promise<string> {
+    this.data.set(k, v as never);
+    return 'OK';
   }
   async del(...ks: string[]): Promise<number> {
     ks.forEach((k) => this.data.delete(k));

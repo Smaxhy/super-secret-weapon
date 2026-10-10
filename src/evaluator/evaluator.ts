@@ -46,6 +46,9 @@ import { analyzeChart } from './chart-reader';
 import { computeEarlyFlow, newPairCheck, type EarlyFlow } from './new-pair';
 import type { DipWatcher } from '../executor/dip-watcher';
 import type { StrategyLab } from '../learner/strategy-lab';
+import { taPoints, type TaLab } from '../learner/ta-lab';
+import { runStrategies, taContext } from './ta/strategies';
+import { trendScore, type TrendingHub } from '../scanner/trending-hub';
 import { rememberBuyers, smartShare } from '../learner/wallet-reputation';
 import { coachFor } from '../learner/trade-coach';
 import { calibration, calibrationAdjust, type CalibrationAdjust } from '../learner/score-calibration';
@@ -72,6 +75,10 @@ export class Evaluator {
   dips: DipWatcher | null = null;
   /** Forward-tests exit setups on every BUY signal and near-miss (set in index.ts). */
   lab: StrategyLab | null = null;
+  /** Chart strategies with a proven edge (live-tested vs random entries) add points (set in index.ts). */
+  ta: TaLab | null = null;
+  /** Trending tabs (pump.fun / GeckoTerminal / DexScreener narratives) (set in index.ts). */
+  trending: TrendingHub | null = null;
 
   constructor(
     private readonly redis: Redis,
@@ -222,13 +229,41 @@ export class Evaluator {
     const chartCfg = cfg.chart ?? DEFAULT_CONFIG.chart;
     const chart = chartCfg.enabled && this.crowd ? analyzeChart(this.crowd.candles(mint), Date.now(), chartCfg) : null;
     const chartPoints = chart?.verdict === 'buy_now' ? chartCfg.buyDipPoints : 0;
+    // Chart strategies (Fibonacci, EMA pullback, breakouts …) that PROVED themselves in the live lab.
+    const taCfg = cfg.ta ?? DEFAULT_CONFIG.ta;
+    let taBonus: { points: number; notes: string[] } = { points: 0, notes: [] };
+    if (taCfg.enabled && this.ta && this.crowd && this.ta.provenNow().size) {
+      const tr = this.crowd.trades(mint);
+      const lt = tr[tr.length - 1];
+      if (lt) {
+        const fired = runStrategies(taContext(this.crowd.candles(mint), lt.pp && lt.pp > 0 ? lt.pp : lt.px, Date.now(), market.raw.ageSec, 15_000, { trades: tr, creator: token.creator }), [...this.ta.provenNow().keys()]);
+        taBonus = taPoints(fired, this.ta.provenNow(), taCfg);
+      }
+    }
     // DexScreener: DEX paid / CTO / trending → bonus points (optionally required).
     const dexCfg = cfg.dex ?? DEFAULT_CONFIG.dex;
     // (only for coins that matter — DexScreener allows 60 checks a minute)
     const wantPaid = STRATEGY.name !== 'CURVE_SNIPE' || !!job.data.confirm;
     const dexPaid = dexCfg.enabled && wantPaid ? (this.dex?.paidInfo(mint) ?? null) : null;
     const dexTrend = dexCfg.enabled ? (this.dex?.trendingInfo(mint) ?? null) : null;
-    const dexBonus = dexPoints(dexPaid, dexTrend, dexCfg);
+    const dexBonus = dexPoints(dexPaid, dexTrend, dexCfg, market.raw.ageSec);
+    // Trending tabs: organic lists it's on, live viewers, KOTH, fresh-and-paid red flags, banned/Mayhem.
+    const trCfg = cfg.trending ?? DEFAULT_CONFIG.trending;
+    const trend = trCfg.enabled && this.trending
+      ? trendScore(
+          {
+            info: this.trending.info(mint),
+            ageSec: market.raw.ageSec,
+            curveVelocity: market.raw.curveVelocity,
+            dexPaid: !!dexPaid?.paid,
+            boosts: dexTrend?.boosts ?? 0,
+            bundlePct: market.raw.effectiveBundlePct ?? market.raw.earlyBuyerPct,
+            insiderFlags: !!market.raw.insiderReasons?.length,
+            devSoldFraction: market.raw.devSoldFraction,
+          },
+          trCfg,
+        )
+      : null;
     const dexFails: string[] = [];
     // KOLs (Cupsey, Cented…) in this coin: points per KOL; KOLs dumping = no buy.
     const kolCfg = cfg.kol ?? DEFAULT_CONFIG.kol;
@@ -240,7 +275,7 @@ export class Evaluator {
     let socialInfo: { hasTwitter: boolean; blockedKeyword: string | null } | undefined;
     let socialFeatures = NEUTRAL_SOCIAL_FEATURES;
     // Hot right now: keywords trending on X + narratives shared by today's top coins.
-    const hot = [...hotKeywords(), ...(this.leaders?.keywords() ?? [])];
+    const hot = [...hotKeywords(), ...(this.leaders?.keywords() ?? []), ...(this.trending?.narratives() ?? [])];
     // Your boost list + keywords currently hot on X (e.g. from Elon's latest post).
     const kw = keywordCheck(`${token.name} ${token.symbol} ${token.description ?? ''}`, [...cfg.keywords.boost, ...hot], cfg.keywords.block);
     // Narrative quality: keywords (static + hot + learned win odds), copycats, trends, description/socials quality.
@@ -262,7 +297,7 @@ export class Evaluator {
       if (kw.blocked) socialInfo = { hasTwitter: false, blockedKeyword: kw.blocked };
     }
 
-    const rules = () => [...checkEntryRules({ safetyScore: token.safetyScore!, safetyHardFail: token.safetyHardFail!, market: market.raw, strategy: STRATEGY, entry: cfg.entry, social: socialInfo, focus: cfg.focus, crowd }), ...manip.fails, ...dexFails, ...(newPair?.fails ?? []), ...(chart?.verdict === 'avoid' ? [`chart breaking down (${chart.summary})`] : [])];
+    const rules = () => [...checkEntryRules({ safetyScore: token.safetyScore!, safetyHardFail: token.safetyHardFail!, market: market.raw, strategy: STRATEGY, entry: cfg.entry, social: socialInfo, focus: cfg.focus, crowd }), ...manip.fails, ...dexFails, ...(newPair?.fails ?? []), ...(trend?.fails ?? []), ...(chart?.verdict === 'avoid' ? [`chart breaking down (${chart.summary})`] : [])];
     let ruleFails = rules();
 
     // Total fees so far use an ASSUMED priority fee + tip per trade. If fees are
@@ -290,7 +325,7 @@ export class Evaluator {
     // keep losing get marked down). `pre` (before calibration) is what calibration measures.
     const score = (f: FeatureVector): Scored => {
       const r = withOdds(scoreFeatures(f, weights), odds);
-      const pre = Math.round((r.score - manip.penalty + dexBonus.points + kolBonus.points + chartPoints + (newPair?.points ?? 0)) * 100) / 100;
+      const pre = Math.round((r.score - manip.penalty + dexBonus.points + kolBonus.points + chartPoints + (newPair?.points ?? 0) + taBonus.points + (trend?.points ?? 0)) * 100) / 100;
       const cal = calibrationAdjust(calibration(), STRATEGY.name, pre);
       return { ...r, score: Math.round(Math.max(0, Math.min(100, pre + cal.points)) * 100) / 100, pre, cal };
     };
@@ -353,7 +388,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, kol: kolAct ? { kols: kolAct.buyers.length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, market: market.raw, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, market: market.raw, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },
@@ -450,10 +485,10 @@ export class Evaluator {
         maxSlippageBps: STRATEGY.maxSlippageBps,
         features,
         copiedWallet: job.data.wallet,
-        sizeMultiplier: (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? (STRATEGY.name === 'CURVE_SNIPE' ? npCfg.sizeMultiplier : 1)) * coach.sizeFactor * conv.factor * copyMult,
+        sizeMultiplier: (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? (STRATEGY.name === 'CURVE_SNIPE' ? npCfg.sizeMultiplier : 1)) * coach.sizeFactor * conv.factor * copyMult * (trend?.sizeFactor ?? 1),
         swing,
         explain: (sizeSol) =>
-          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, chartNote: chart ? `${chart.summary}${dipEntry ? ` — bought the dip: ${job.data.dipWhy ?? ''}` : ''}` : null, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...(newPair?.notes ?? []), ...kolBonus.notes, ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
+          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, chartNote: chart ? `${chart.summary}${dipEntry ? ` — bought the dip: ${job.data.dipWhy ?? ''}` : ''}` : null, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...(newPair?.notes ?? []), ...taBonus.notes.map((n) => `chart setup: ${n}`), ...(trend?.notes ?? []), ...kolBonus.notes, ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
       });
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.
       if (!swing && (res.entered || res.reason === 'already traded this token')) await markDone();

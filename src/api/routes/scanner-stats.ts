@@ -8,6 +8,10 @@ import type { ApiDeps } from '../deps';
 export async function scannerStatsRoutes(app: FastifyInstance, deps: ApiDeps): Promise<void> {
   /** Top coins right now + the narratives they share. */
   app.get('/api/market-leaders', async () => deps.leaders?.snapshot() ?? { leaders: [], narratives: [], updatedAt: null });
+  /** Trending tabs: coins on pump.fun / GeckoTerminal lists now, feed health, DexScreener narratives. */
+  app.get('/api/trending', async () =>
+    deps.trending ? { coins: deps.trending.snapshot(40), health: deps.trending.feedHealth(), narratives: deps.trending.narratives() } : { coins: [], health: [], narratives: [] },
+  );
 
   /** DexScreener trending (our ranking of its boosted/profiled Solana coins) + whether we track each coin. */
   app.get('/api/dexscreener', async () => {

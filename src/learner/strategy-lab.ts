@@ -20,8 +20,7 @@ import type { StrategyName } from '../config/types';
 import { recordEvent } from '../lib/bot-events';
 import { moduleLogger } from '../lib/logger';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
-import { decideExit, exitCostPctFor, settledHigh, trailRules, type ExitInput } from '../executor/sell-manager';
-import { poolFeeBps } from '../lib/pumpfun';
+import { VirtualBook, type VirtualResult } from './virtual-book';
 
 const log = moduleLogger('strategy-lab');
 type ExitRules = BotConfigShape['exit'];
@@ -65,31 +64,12 @@ export interface LabStats {
   profitFactor: number | null;
   /** mean − 1 standard error: a cautious estimate of the true average. */
   lowerPct: number;
-}
-
-interface VPos {
-  variant: string;
-  mint: string;
-  symbol: string;
-  strategy: StrategyName;
-  kind: 'buy' | 'near';
-  onAmm: boolean;
-  sizeSol: number;
-  costSol: number;
-  tokens: number;
-  entryPriceSol: number;
-  openedAt: number;
-  remainingPct: number;
-  proceedsSol: number;
-  peakPriceSol: number;
-  trailingActive: boolean;
-  tpTiersHit: number[];
-  refPriceSol: number;
-  lastMoveAtMs: number;
-  breachSinceMs: number | null;
-  breachTicks: number;
-  lastCheck: number;
-  peakAtMs: number;
+  /** Standard error of the average, points. */
+  sePct: number;
+  /** mean − 2 standard errors (≈ 97.5% one-sided): a strict lower bound. */
+  lower2Pct: number;
+  /** Average without the 3 best results — is it more than a couple of lucky moonshots? */
+  trimmedAvgPct: number;
 }
 
 /** Pure: summary of one variant's results. */
@@ -106,6 +86,8 @@ export function labStats(id: string, name: string, rows: readonly Pick<LabResult
   const grossWin = wins.reduce((a, b) => a + b, 0);
   const grossLoss = -losses.reduce((a, b) => a + b, 0);
   const r1 = (x: number) => Math.round(x * 10) / 10;
+  const se = n > 1 ? sd / Math.sqrt(n) : 0;
+  const trimmed = sorted.slice(0, Math.max(0, n - 3));
   return {
     id,
     name,
@@ -118,7 +100,10 @@ export function labStats(id: string, name: string, rows: readonly Pick<LabResult
     avgWinPct: r1(wins.length ? grossWin / wins.length : 0),
     avgLossPct: r1(losses.length ? -grossLoss / losses.length : 0),
     profitFactor: grossLoss > 0 ? Math.round((grossWin / grossLoss) * 100) / 100 : wins.length ? null : 0,
-    lowerPct: r1(n > 1 ? mean - sd / Math.sqrt(n) : mean),
+    lowerPct: r1(n > 1 ? mean - se : mean),
+    sePct: Math.round(se * 100) / 100,
+    lower2Pct: r1(n > 1 ? mean - 2 * se : mean),
+    trimmedAvgPct: r1(trimmed.length ? trimmed.reduce((a, b) => a + b, 0) / trimmed.length : 0),
   };
 }
 
@@ -144,8 +129,7 @@ export function variantRules(live: ExitRules, v: Pick<LabVariant, 'exit' | 'owne
 }
 
 export class StrategyLab {
-  private readonly open = new Map<string, VPos>();
-  private readonly lastStep = new Map<string, number>();
+  private readonly book: VirtualBook;
   /** Last signal per coin + strategy (one lab trade per coin + strategy per `SIGNAL_COOLDOWN_MS`). */
   private readonly lastSignal = new Map<string, number>();
   private timer: NodeJS.Timeout | null = null;
@@ -153,15 +137,25 @@ export class StrategyLab {
 
   constructor(
     private readonly redis: Redis,
-    private readonly crowd: CrowdTracker,
-  ) {}
+    crowd: CrowdTracker,
+  ) {
+    this.book = new VirtualBook(
+      crowd,
+      (tag, live) => {
+        const v = (this.cfg().variants as LabVariant[]).find((x) => x.id === tag.variant);
+        return v ? variantRules(live, v) : null;
+      },
+      (r) => this.save(r),
+      () => this.cfg().maxOpen,
+    );
+  }
 
   private cfg(): BotConfigShape['lab'] {
     return getConfig().lab ?? DEFAULT_CONFIG.lab;
   }
 
   start(): void {
-    this.timer = setInterval(() => this.stepAll(), 1_000);
+    this.timer = setInterval(() => this.book.stepAll(), 1_000);
     this.timer.unref?.();
     this.applyTimer = setInterval(() => void this.maybeApply(), 15 * 60_000);
     this.applyTimer.unref?.();
@@ -173,7 +167,7 @@ export class StrategyLab {
   }
 
   openCount(): number {
-    return this.open.size;
+    return this.book.size;
   }
 
   /**
@@ -184,172 +178,39 @@ export class StrategyLab {
   onSignal(s: { mint: string; symbol: string; strategy: StrategyName; kind: 'buy' | 'near'; priceSol: number; onAmm: boolean }, now = Date.now()): void {
     const c = this.cfg();
     if (!c.enabled || !(s.priceSol > 0)) return;
-    if (this.open.size >= c.maxOpen) return;
     // One lab trade per coin + strategy per half hour (a coin re-checked every minute isn't 30 samples).
     const sk = `${s.mint}:${s.strategy}`;
     if (now - (this.lastSignal.get(sk) ?? 0) < SIGNAL_COOLDOWN_MS) return;
     this.lastSignal.set(sk, now);
     if (this.lastSignal.size > 20_000) for (const [k, t] of this.lastSignal) if (now - t > SIGNAL_COOLDOWN_MS) this.lastSignal.delete(k);
-    const p = getConfig().paper;
-    const feeBps = poolFeeBps(p, s.onAmm, s.priceSol * 1e9);
-    const sizeSol = getConfig().trading.maxPositionSol;
-    const tokens = (sizeSol * (1 - feeBps / 10_000) * (1 - p.slippagePct / 100)) / s.priceSol;
-    if (!(tokens > 0)) return;
     for (const v of c.variants) {
-      const key = `${v.id}:${s.mint}:${s.strategy}`;
-      if (this.open.has(key)) continue;
-      this.open.set(key, {
-        variant: v.id,
-        mint: s.mint,
-        symbol: s.symbol,
-        strategy: s.strategy,
-        kind: s.kind,
-        onAmm: s.onAmm,
-        sizeSol,
-        costSol: sizeSol + p.txFeeSol,
-        tokens,
-        entryPriceSol: sizeSol / tokens,
-        openedAt: now,
-        remainingPct: 100,
-        proceedsSol: 0,
-        peakPriceSol: sizeSol / tokens,
-        trailingActive: false,
-        tpTiersHit: [],
-        refPriceSol: sizeSol / tokens,
-        lastMoveAtMs: now,
-        breachSinceMs: null,
-        breachTicks: 0,
-        lastCheck: now,
-        peakAtMs: now,
-      });
+      this.book.add({ key: `${v.id}:${s.mint}:${s.strategy}`, mint: s.mint, symbol: s.symbol, strategy: s.strategy, onAmm: s.onAmm, priceSol: s.priceSol, tag: { variant: v.id, kind: s.kind } }, now);
     }
   }
 
   /** A trade happened on `mint` (wired from the token registry): step its virtual positions. */
   onTrade(mint: string, now = Date.now()): void {
-    if ((now - (this.lastStep.get(mint) ?? 0)) < 200) return;
-    let any = false;
-    for (const vp of this.open.values()) {
-      if (vp.mint !== mint) continue;
-      any = true;
-      this.step(vp, now);
-    }
-    if (any) this.lastStep.set(mint, now);
+    this.book.onTrade(mint, now);
   }
 
-  private stepAll(now = Date.now()): void {
-    for (const vp of [...this.open.values()]) this.step(vp, now);
-    if (this.lastStep.size > 5_000) this.lastStep.clear();
-  }
-
-  private step(vp: VPos, now: number): void {
-    const key = `${vp.variant}:${vp.mint}:${vp.strategy}`;
-    const variant = this.cfg().variants.find((v) => v.id === vp.variant);
-    if (!variant) {
-      this.open.delete(key);
-      return;
-    }
-    const trades = this.crowd.trades(vp.mint);
-    const last = trades[trades.length - 1];
-    const price = last ? (last.pp && last.pp > 0 ? last.pp : last.px) : 0;
-    // No price for a long time (coin went quiet / dropped from the log) → close at the last price we had.
-    if (!(price > 0)) {
-      if (now - vp.openedAt > 60 * 60_000) this.finish(vp, key, vp.refPriceSol, 'no price', now);
-      return;
-    }
-    const cfg = getConfig();
-    const rules = variantRules(cfg.exit, variant);
-    const holdMs = trailRules(rules).peakHoldMs ?? 1_200;
-    const since = Math.max(vp.openedAt, vp.lastCheck - holdMs - 2_000);
-    vp.lastCheck = now;
-    const p = cfg.paper;
-    const input: ExitInput = {
-      entryPriceSol: vp.entryPriceSol,
-      peakPriceSol: vp.peakPriceSol,
-      remainingPct: vp.remainingPct,
-      tpTiersHit: vp.tpTiersHit,
-      trailingActive: vp.trailingActive,
-      refPriceSol: vp.refPriceSol,
-      lastMoveAtMs: vp.lastMoveAtMs,
-      staleMinutes: cfg.exit.staleMinutes[vp.strategy],
-      priceSol: price,
-      migratedNoMarket: false,
-      bundlePctEntry: 0,
-      bundlePctNow: 0,
-      devHoldingPctEntry: 0,
-      devHoldingPctNow: 0,
-      top10PctEntry: 0,
-      top10PctNow: 0,
-      nowMs: now,
-      copyWalletSold: false,
-      risk: 0,
-      riskWhy: '',
-      openedAtMs: vp.openedAt,
-      maxHoldMinutes: cfg.exit.maxHoldMinutes[vp.strategy],
-      resistance: { hit: false, level: 0, touches: 0 },
-      sizeSol: vp.sizeSol,
-      costSol: vp.costSol,
-      proceedsSol: vp.proceedsSol,
-      volatilityPct: null,
-      txFeeSol: p.txFeeSol,
-      priceTrusted: true,
-      breachSinceMs: vp.breachSinceMs,
-      breachTicks: vp.breachTicks,
-      exitCostPct: exitCostPctFor(p, vp.onAmm, (vp.sizeSol * vp.remainingPct) / 100, price * 1e9),
-      strategy: vp.strategy,
-      instantPeak: true,
-      recentHighSol: settledHigh(trades, since, now, holdMs, price * 2.5),
-      peakAtMs: vp.peakAtMs,
-      migratedAgoSec: null,
-    };
-    const d = decideExit(input, rules);
-    vp.peakPriceSol = d.state.peakPriceSol;
-    vp.trailingActive = d.state.trailingActive;
-    vp.refPriceSol = d.state.refPriceSol;
-    vp.lastMoveAtMs = d.state.lastMoveAtMs;
-    vp.tpTiersHit = d.state.tpTiersHit;
-    vp.breachSinceMs = d.state.breachSinceMs;
-    vp.breachTicks = d.state.breachTicks;
-    vp.peakAtMs = d.state.peakAtMs;
-    const feeBps = poolFeeBps(p, vp.onAmm, price * 1e9);
-    for (const s of d.sells) {
-      const pct = Math.min(s.pct, vp.remainingPct);
-      if (!(pct > 0)) continue;
-      // Same costs as a paper sell: pool fee, slippage, tx fee.
-      vp.proceedsSol += ((vp.tokens * pct) / 100) * price * (1 - feeBps / 10_000) * (1 - p.slippagePct / 100) - p.txFeeSol;
-      vp.remainingPct = Math.max(0, vp.remainingPct - pct);
-      if (vp.remainingPct <= 0.01) {
-        this.finish(vp, key, price, `${s.reason}: ${s.detail}`, now);
-        return;
-      }
-    }
-  }
-
-  private finish(vp: VPos, key: string, price: number, reason: string, now: number): void {
-    this.open.delete(key);
-    const p = getConfig().paper;
-    const feeBps = poolFeeBps(p, vp.onAmm, price * 1e9);
-    if (vp.remainingPct > 0.01) {
-      vp.proceedsSol += ((vp.tokens * vp.remainingPct) / 100) * price * (1 - feeBps / 10_000) * (1 - p.slippagePct / 100) - p.txFeeSol;
-      vp.remainingPct = 0;
-    }
+  private save(v: VirtualResult): void {
     const r: LabResult = {
-      variant: vp.variant,
-      mint: vp.mint,
-      symbol: vp.symbol,
-      strategy: vp.strategy,
-      kind: vp.kind,
-      pnlPct: Math.round(((vp.proceedsSol - vp.costSol) / vp.costSol) * 10_000) / 100,
-      peakX: Math.round((vp.peakPriceSol / vp.entryPriceSol) * 1000) / 1000,
-      holdSec: Math.round((now - vp.openedAt) / 1000),
-      reason: reason.slice(0, 160),
-      at: now,
+      variant: String(v.tag.variant),
+      mint: v.mint,
+      symbol: v.symbol,
+      strategy: v.strategy,
+      kind: v.tag.kind === 'near' ? 'near' : 'buy',
+      pnlPct: v.pnlPct,
+      peakX: v.peakX,
+      holdSec: v.holdSec,
+      reason: v.reason,
+      at: v.at,
     };
     const keep = this.cfg().keepResults;
     void this.redis
       .multi()
-      .lpush(resKey(vp.variant), JSON.stringify(r))
-      .ltrim(resKey(vp.variant), 0, keep - 1)
+      .lpush(resKey(r.variant), JSON.stringify(r))
+      .ltrim(resKey(r.variant), 0, keep - 1)
       .exec()
       .catch((err: Error) => log.warn({ err: err.message }, 'lab result not saved'));
   }
@@ -369,7 +230,7 @@ export class StrategyLab {
       const rows = await this.results(v.id);
       out.push({ ...labStats(v.id, v.name, rows.filter((r) => r.kind === 'buy')), live: v.id === current, ownerOnly: !!v.ownerOnly, near: labStats(v.id, v.name, rows.filter((r) => r.kind === 'near')) });
     }
-    return { variants: out, applied, open: this.open.size, autoApply: c.autoApply, minTrades: c.minTrades };
+    return { variants: out, applied, open: this.book.size, autoApply: c.autoApply, minTrades: c.minTrades };
   }
 
   private async appliedVariant(): Promise<{ id: string; at: number } | null> {
