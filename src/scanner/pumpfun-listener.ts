@@ -164,6 +164,9 @@ export class PumpFunListener extends EventEmitter {
       this.stats.connected = false;
       this.clearTimers();
       if (this.stopped) return;
+      // Public RPC nodes drop long-lived sockets (1006) every minute or so: a connection that was
+      // healthy for a while reconnects at once instead of waiting out a backoff (fewer missed trades).
+      if (Date.now() - downSince > 30_000) this.backoffMs = 250;
       log.warn({ code, reason: reason.toString() }, `websocket closed, reconnecting in ${this.backoffMs}ms`);
       this.emit('disconnected', downSince);
       this.scheduleReconnect();

@@ -274,6 +274,35 @@ export class LiveState {
     return candidates.filter((_, i) => Number(res[i * 2]?.[1] ?? 0) < minHolders && res[i * 2 + 1]?.[1] !== '1');
   }
 
+  /**
+   * Dead launches to forget completely (memory + Redis): older than `minAgeSec`, fewer than
+   * `minHolders`, never migrated, not adopted and no trade for `quietSec`. Checked in chunks
+   * so a sweep never blocks the event loop for long.
+   */
+  async deadMints(minAgeSec: number, minHolders: number, quietSec: number, now = Date.now(), limit = 5_000): Promise<string[]> {
+    const cutoff = now / 1000 - minAgeSec;
+    const candidates = [...this.tracked.entries()].filter(([, t]) => t.createdSec < cutoff).map(([m]) => m);
+    const out: string[] = [];
+    for (let i = 0; i < candidates.length && out.length < limit; i += 500) {
+      const chunk = candidates.slice(i, i + 500);
+      const p = this.r.pipeline();
+      for (const m of chunk) {
+        p.hlen(key.bal(m));
+        p.hmget(key.live(m), 'complete', 'adopted', 'lastTradeAt');
+      }
+      const res = (await p.exec()) ?? [];
+      chunk.forEach((m, j) => {
+        const holders = Number(res[j * 2]?.[1] ?? 0);
+        const [complete, adopted, lastTradeAt] = (res[j * 2 + 1]?.[1] as Array<string | null> | undefined) ?? [];
+        if (holders >= minHolders || complete === '1' || adopted === '1') return;
+        if (lastTradeAt && now - Number(lastTradeAt) < quietSec * 1000) return;
+        out.push(m);
+      });
+      await new Promise((r) => setImmediate(r));
+    }
+    return out.slice(0, limit);
+  }
+
   isTracked(mint: string): boolean {
     return this.tracked.has(mint);
   }

@@ -200,6 +200,11 @@ smart money → learning engine → ML → social). See README.md.
   = ≥$2k 5-min volume, ≥20 trades, price rising, ≥50% buys; `mergeHot` appends 5-min-only coins (`hot5mRank`). A coin
   newly on either list → checkNow; points use the better rank. Scanner card tabs "Last 5 min / Last hour".
   Config migration v7. DexScreener's real trending ranking still isn't in the public API.
+- **v8.3 (Oct 10): smoother VPS** (owner: "crashes a lot"; diagnose: 2 GB box, 324 MB free + 618 MB swap, Redis
+  446 MB/1 GB noeviction, 48.6k tracked coins, public RPC socket 1006 every ~1 min). Dead launches (≥30 min, <10
+  holders, not migrated/adopted, no trade 15 min, not held) are now `forget()`-ed every 5 min (`liveState.deadMints`)
+  instead of sitting 26 h in memory + Redis. A socket that was up >30 s reconnects after 250 ms. diagnose.sh prints
+  `docker stats` and no longer lists stats lines as errors. Note: every push redeploys → one restart each.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

@@ -12,6 +12,7 @@ echo "bot restarts (docker): $(docker inspect -f '{{.RestartCount}}' "$(docker c
 echo "bot OOM-killed last time: $(docker inspect -f '{{.State.OOMKilled}}' "$(docker compose ps -q bot 2>/dev/null)" 2>/dev/null || echo '?')"
 line "memory / disk"
 free -m
+docker stats --no-stream --format '{{.Name}}  cpu {{.CPUPerc}}  mem {{.MemUsage}}' 2>/dev/null
 df -h / | tail -1
 docker compose exec -T redis redis-cli info memory 2>/dev/null | grep -E '^used_memory_human|^maxmemory_human'
 line "health"
@@ -20,6 +21,6 @@ line "last updates"
 tail -n 8 ~/bot-update.log 2>/dev/null || echo "no ~/bot-update.log"
 crontab -l 2>/dev/null | grep -c auto-update | sed 's/^/auto-update cron entries: /'
 line "bot errors (last 30 min)"
-docker compose logs --since 30m bot 2>/dev/null | grep -Ei 'error|fatal|exiting|out of memory|killed' | tail -n 15
+docker compose logs --since 30m bot 2>/dev/null | grep -v '📊 stats' | grep -Ei 'error|fatal|exiting|out of memory|killed' | tail -n 15
 line "kernel OOM kills"
 dmesg 2>/dev/null | grep -i 'killed process' | tail -n 3 || true

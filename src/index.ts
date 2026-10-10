@@ -224,6 +224,27 @@ async function main(): Promise<void> {
   };
   const vampPrune = setInterval(() => void vamp.prune().catch(() => undefined), 30 * 60_000);
   vampPrune.unref();
+  // Memory: dead launches (30+ min old, < 10 holders, no trade for 15 min) are forgotten for good —
+  // otherwise ~50k of them pile up in memory and Redis (26 h TTL) and the small VPS starts swapping.
+  let sweeping = false;
+  const deadSweep = setInterval(async () => {
+    if (sweeping) return;
+    sweeping = true;
+    try {
+      const held = new Set((await prisma.position.findMany({ where: { status: { in: ['OPEN', 'CLOSING'] } }, select: { mint: true } })).map((p) => p.mint));
+      const dead = (await liveState.deadMints(30 * 60, 10, 15 * 60)).filter((m) => !held.has(m));
+      for (let i = 0; i < dead.length; i++) {
+        await liveState.forget(dead[i]!);
+        if (i % 200 === 199) await new Promise((r) => setImmediate(r));
+      }
+      if (dead.length) log.info({ forgotten: dead.length, tracked: liveState.trackedCount }, '🧹 forgot dead launches');
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'dead-launch sweep failed');
+    } finally {
+      sweeping = false;
+    }
+  }, 5 * 60_000);
+  deadSweep.unref();
   // Coins traded in the last 3 days (before the guard existed) count as originals too — oldest first.
   void prisma.position
     .findMany({ where: { openedAt: { gte: new Date(Date.now() - 3 * 86_400_000) } }, orderBy: { openedAt: 'asc' }, select: { mint: true, entryContext: true, token: { select: { symbol: true, name: true } } } })
@@ -420,6 +441,7 @@ async function main(): Promise<void> {
       swingTrader.stop();
       swingUniverse.stop();
       clearInterval(vampPrune);
+      clearInterval(deadSweep);
       stopCalibration();
       swings.stop();
       crowd.stop();
