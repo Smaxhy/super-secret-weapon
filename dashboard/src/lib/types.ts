@@ -10,6 +10,8 @@ export interface Overview {
   uptimeSec: number;
   balanceSol: number;
   startingBalanceSol: number;
+  /** Paper SOL added since the last reset (older bots don't send it). */
+  addedSol?: number;
   openPositions: number;
   maxPositions: number;
   totalPnlSol: number;
@@ -132,6 +134,7 @@ export interface TradeRowData {
 export interface PerformanceData {
   mode: string;
   startingBalanceSol: number;
+  addedSol?: number;
   totalPnlSol: number;
   trades: number;
   wins: number;

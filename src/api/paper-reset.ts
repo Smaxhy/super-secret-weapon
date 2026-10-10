@@ -47,6 +47,20 @@ export function parseStartingBalance(v: unknown): number | undefined | null {
   return Math.round(n * 1e4) / 1e4;
 }
 
+/**
+ * Add fake SOL to the paper balance WITHOUT a reset (trades, stats and everything learned stay).
+ * Kept apart from the starting balance so profit stays profit: the top-up is capital, not a win.
+ */
+export const MAX_ADD_SOL = 1000;
+export async function addPaperFunds(sol: number): Promise<{ ok: true; addedSol: number; totalAddedSol: number; startingBalanceSol: number }> {
+  const p = getConfig().paper;
+  const total = Math.round(((p.addedSol ?? 0) + sol) * 1e4) / 1e4;
+  await updateConfigSection('paper', { addedSol: total } as never);
+  void recordEvent({ module: 'controls', type: 'paper_topup', message: `Added ${sol} paper SOL (total added since the last reset: ${total} SOL)` });
+  bus.publish({ type: 'stats', data: { topUp: true } });
+  return { ok: true, addedSol: sol, totalAddedSol: total, startingBalanceSol: p.startingBalanceSol };
+}
+
 let resetting = false;
 export const isResetting = () => resetting;
 
@@ -69,7 +83,8 @@ export async function resetPaperAccount(opts: { startingBalanceSol?: number; set
     const ids = (await prisma.position.findMany({ where: { mode: 'PAPER' }, select: { id: true } })).map((p) => p.id);
     const [t, p] = await prisma.$transaction([prisma.trade.deleteMany({ where: { mode: 'PAPER' } }), prisma.position.deleteMany({ where: { mode: 'PAPER' } })]);
 
-    if (opts.startingBalanceSol !== undefined) await updateConfigSection('paper', { startingBalanceSol: opts.startingBalanceSol } as never);
+    // A fresh account starts without the old top-ups.
+    await updateConfigSection('paper', { ...(opts.startingBalanceSol !== undefined ? { startingBalanceSol: opts.startingBalanceSol } : {}), addedSol: 0 } as never);
     const resetAt = now.toISOString();
     try {
       await redis.set(PAPER_RESET_AT_KEY, resetAt);

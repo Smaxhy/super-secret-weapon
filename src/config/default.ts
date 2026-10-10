@@ -1043,6 +1043,8 @@ export const DEFAULT_CONFIG = {
   /** Paper-trading simulation settings. Kept pessimistic so paper results aren't fantasy. */
   paper: {
     startingBalanceSol: 10,
+    /** Fake SOL added on top since the last reset ("Add paper SOL" — owner: top up without resetting the learning). */
+    addedSol: 0,
     /** Pump.fun curve fee (protocol + creator), basis points per side. Approximate. */
     curveFeeBps: 125,
     /** Extra adverse price movement assumed between decision and fill (latency). */

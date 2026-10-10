@@ -16,7 +16,7 @@
  * WARN 'suspicious_fill' bot event. Real runs still pay: the reference moves
  * with every real trade.
  *
- * Balance = starting balance − SOL spent on buys − tx fees + SOL from sells,
+ * Balance = starting balance + added SOL − SOL spent on buys − tx fees + SOL from sells,
  * all from the PAPER trades in the database, so it survives restarts.
  */
 import { getConfig } from '../config/runtime-config';
@@ -36,7 +36,9 @@ export class PaperExecutor implements Executor {
   constructor(private readonly liveState: LiveState) {}
 
   async getBalanceSol(): Promise<number> {
-    const start = getConfig().paper.startingBalanceSol;
+    const p = getConfig().paper;
+    // Starting balance + top-ups since the last reset.
+    const start = p.startingBalanceSol + (p.addedSol ?? 0);
     const [buys, sells] = await Promise.all([
       prisma.trade.aggregate({ where: { mode: 'PAPER', side: 'BUY', status: 'SIMULATED' }, _sum: { amountSol: true, feeSol: true } }),
       prisma.trade.aggregate({ where: { mode: 'PAPER', side: 'SELL', status: 'SIMULATED' }, _sum: { amountSol: true, feeSol: true } }),

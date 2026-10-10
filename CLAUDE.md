@@ -334,6 +334,10 @@ smart money → learning engine → ML → social). See README.md.
   shrunk n/(n+20), ≥8 trades). `timingNow()` → size ×0.75–1.25 (trader, × hour factor) and bar −3…+4 (evaluator +
   swing trader); never blocks. Autopsy band `day` (dowUtc), AI features `entry.dowUtc` + input `bestTimesUtc`.
   GET `/api/timing`; Performance card "Best times to trade" (hour bars in the viewer's time zone + result strip + days).
+- **v9.13: add paper SOL without a reset** (owner: "if it runs out I can't fix it without resetting"). `paper.addedSol`
+  (top-ups since the last reset; reset sets 0): balance = start + addedSol − buys + sells; POST `/api/controls/add-funds`
+  {sol 0.01–1000} (`addPaperFunds`, event `paper_topup`); % / drawdown use start + added (a top-up is capital, not profit).
+  Overview profit card ⋯ menu → "+ Add paper SOL…" (`components/AddFunds.tsx`).
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

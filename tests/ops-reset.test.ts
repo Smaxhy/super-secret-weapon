@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const cfg = { state: { paused: false, killSwitch: false }, paper: { startingBalanceSol: 10 } };
+const cfg = { state: { paused: false, killSwitch: false }, paper: { startingBalanceSol: 10, addedSol: 0 } as { startingBalanceSol: number; addedSol: number } };
 const calls: string[] = [];
 const redisStore = new Map<string, string>();
 const deleted: string[] = [];
@@ -39,7 +39,7 @@ vi.mock('../src/lib/prisma', () => ({
   },
 }));
 
-const { parseStartingBalance, resetPaperAccount, PAPER_RESET_AT_KEY } = await import('../src/api/paper-reset');
+const { addPaperFunds, parseStartingBalance, resetPaperAccount, PAPER_RESET_AT_KEY } = await import('../src/api/paper-reset');
 
 describe('parseStartingBalance', () => {
   it('accepts 0.1–1000, treats empty as keep', () => {
@@ -76,7 +76,7 @@ describe('resetPaperAccount', () => {
       'state:{"paused":true}',
       'freeze:CLOSED:paused=true',
       'tx',
-      'paper:{"startingBalanceSol":25}',
+      'paper:{"startingBalanceSol":25,"addedSol":0}',
       'state:{"paused":false}',
     ]);
     expect(redisStore.get(PAPER_RESET_AT_KEY)).toBe(r.resetAt);
@@ -107,5 +107,21 @@ describe('resetPaperAccount', () => {
     const first = resetPaperAccount({ settleMs: 30 });
     await expect(resetPaperAccount({ settleMs: 0 })).rejects.toThrow(/already running/);
     await first;
+  });
+});
+
+describe('add paper SOL without a reset', () => {
+  it('adds up the top-ups, and a reset clears them', async () => {
+    cfg.paper.addedSol = 0;
+    calls.length = 0;
+    const a = await addPaperFunds(5);
+    const b = await addPaperFunds(2.5);
+    expect(a.totalAddedSol).toBe(5);
+    expect(b.totalAddedSol).toBe(7.5);
+    expect(cfg.paper.addedSol).toBe(7.5);
+    // a top-up deletes nothing and doesn't pause trading
+    expect(calls).toEqual(['paper:{"addedSol":5}', 'paper:{"addedSol":7.5}']);
+    await resetPaperAccount({ settleMs: 0 });
+    expect(cfg.paper.addedSol).toBe(0);
   });
 });

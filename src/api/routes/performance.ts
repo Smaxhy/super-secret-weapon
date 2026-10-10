@@ -40,8 +40,10 @@ export async function performanceRoutes(app: FastifyInstance, deps: ApiDeps): Pr
 
   app.get('/api/performance', async () => {
     const mode = deps.executor.mode;
-    const start = getConfig().paper.startingBalanceSol;
-    return { mode, startingBalanceSol: start, ...summarise(await closedTrades(mode), start) };
+    const p = getConfig().paper;
+    const start = p.startingBalanceSol;
+    // Drawdown / % use everything put in (start + top-ups).
+    return { mode, startingBalanceSol: start, addedSol: p.addedSol ?? 0, ...summarise(await closedTrades(mode), start + (p.addedSol ?? 0)) };
   });
 
   app.get('/api/overview', async () => {
@@ -56,7 +58,7 @@ export async function performanceRoutes(app: FastifyInstance, deps: ApiDeps): Pr
       realisedPnlToday(mode),
       prisma.token.count({ where: { createdAt: { gte: dayStart } } }),
     ]);
-    const s = summarise(closed, cfg.paper.startingBalanceSol);
+    const s = summarise(closed, cfg.paper.startingBalanceSol + (cfg.paper.addedSol ?? 0));
     const ls = deps.listenerStats();
     return {
       mode,
@@ -67,6 +69,7 @@ export async function performanceRoutes(app: FastifyInstance, deps: ApiDeps): Pr
       uptimeSec: Math.round((Date.now() - deps.startedAt) / 1000),
       balanceSol: balance,
       startingBalanceSol: cfg.paper.startingBalanceSol,
+      addedSol: cfg.paper.addedSol ?? 0,
       openPositions: open,
       maxPositions: cfg.trading.maxConcurrentPositions,
       totalPnlSol: s.totalPnlSol,

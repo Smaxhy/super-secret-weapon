@@ -7,6 +7,7 @@
  *   POST /api/controls/resume        clear pause + kill switch
  *   POST /api/controls/reset-paper   { confirm: "RESET", startingBalanceSol?: 0.1–1000 } wipe paper trades/positions
  *                                    (open ones too) and optionally set a new starting balance
+ *   POST /api/controls/add-funds     { sol: 0.01–1000 } add paper SOL without resetting anything
  *   POST /api/positions/:id/sell     manual sell of one position
  */
 import type { FastifyInstance } from 'fastify';
@@ -14,7 +15,7 @@ import { getConfig, updateConfigSection } from '../../config/runtime-config';
 import { recordEvent } from '../../lib/bot-events';
 import { prisma } from '../../lib/prisma';
 import type { ApiDeps } from '../deps';
-import { isResetting, MAX_START_SOL, MIN_START_SOL, parseStartingBalance, resetPaperAccount } from '../paper-reset';
+import { addPaperFunds, isResetting, MAX_ADD_SOL, MAX_START_SOL, MIN_START_SOL, parseStartingBalance, resetPaperAccount } from '../paper-reset';
 
 const num = (v: unknown, min: number, max: number): number | undefined => {
   const n = Number(v);
@@ -105,6 +106,13 @@ export async function controlsRoutes(app: FastifyInstance, deps: ApiDeps): Promi
     if (isResetting()) return reply.code(409).send({ error: 'A reset is already running' });
     // Open positions are frozen and removed too (entries are paused while it runs).
     return resetPaperAccount({ startingBalanceSol: start });
+  });
+
+  app.post<{ Body: { sol?: unknown } }>('/api/controls/add-funds', async (req, reply) => {
+    if (deps.executor.mode !== 'PAPER') return reply.code(400).send({ error: 'Only the paper account can be topped up' });
+    const sol = Number(req.body?.sol);
+    if (!Number.isFinite(sol) || sol < 0.01 || sol > MAX_ADD_SOL) return reply.code(400).send({ error: `Amount must be 0.01–${MAX_ADD_SOL} SOL` });
+    return addPaperFunds(Math.round(sol * 1e4) / 1e4);
   });
 
   app.post<{ Params: { id: string } }>('/api/positions/:id/sell', async (req, reply) => {

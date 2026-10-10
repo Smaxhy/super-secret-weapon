@@ -23,7 +23,7 @@ export function Performance() {
       {d && d.trades > 0 && (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <StatTile label="Total profit" value={<Pnl value={d.totalPnlSol} />} sub={`${pct((d.totalPnlSol / d.startingBalanceSol) * 100, 1, true)} of starting balance`} />
+            <StatTile label="Total profit" value={<Pnl value={d.totalPnlSol} />} sub={`${pct((d.totalPnlSol / (d.startingBalanceSol + (d.addedSol ?? 0))) * 100, 1, true)} of the money put in`} />
             <StatTile label="Win rate" value={pct(d.winRate, 0)} sub={`${d.wins} wins · ${d.losses} losses`} />
             <StatTile label="Avg win / avg loss" value={<span className="text-base sm:text-xl"><Pnl value={d.avgWinSol} /> <span className="text-muted">/</span> <Pnl value={d.avgLossSol} /></span>} />
             <StatTile label="Max drawdown" value={`−${d.maxDrawdownSol.toFixed(3)} SOL`} sub={`${d.maxDrawdownPct.toFixed(1)}% from peak`} />

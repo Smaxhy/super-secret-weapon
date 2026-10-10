@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ResetPaperDialog } from '../components/ResetPaper';
+import { AddFundsDialog } from '../components/AddFunds';
 import { HealthBanner } from '../components/SystemHealth';
 import { UpdateCard } from '../components/UpdateCard';
 import { PnlChart } from '../components/Charts';
@@ -49,7 +50,8 @@ export function Overview() {
                   <Pnl value={d.totalPnlSol} />
                 </div>
                 <div className="mt-1 text-sm text-muted">
-                  {pct((d.totalPnlSol / d.startingBalanceSol) * 100, 1, true)} of the {sol(d.startingBalanceSol, 0)} start
+                  {pct((d.totalPnlSol / (d.startingBalanceSol + (d.addedSol ?? 0))) * 100, 1, true)} of the {sol(d.startingBalanceSol, 0)} start
+                  {(d.addedSol ?? 0) > 0 ? ` + ${sol(d.addedSol ?? 0, 2)} added` : ''}
                 </div>
               </div>
               <dl className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-4 border-t border-line pt-4 sm:gap-x-6 lg:grid-cols-4 xl:grid-cols-2 xl:border-t-0 xl:pt-0 2xl:grid-cols-4">
@@ -109,10 +111,11 @@ export function Overview() {
   );
 }
 
-/** Small "⋯" menu on the profit card — currently just "Reset paper account". */
+/** Small "⋯" menu on the profit card — "Add paper SOL" and "Reset paper account". */
 function HeroMenu({ startingBalanceSol }: { startingBalanceSol: number }) {
   const [open, setOpen] = useState(false);
   const [dialog, setDialog] = useState(false);
+  const [add, setAdd] = useState(false);
   return (
     <div className="relative shrink-0">
       <button
@@ -134,6 +137,17 @@ function HeroMenu({ startingBalanceSol }: { startingBalanceSol: number }) {
               role="menuitem"
               onClick={() => {
                 setOpen(false);
+                setAdd(true);
+              }}
+              className="w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium text-ink hover:bg-surface-2"
+            >
+              + Add paper SOL…
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
                 setDialog(true);
               }}
               className="w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium text-down hover:bg-surface-2"
@@ -144,6 +158,7 @@ function HeroMenu({ startingBalanceSol }: { startingBalanceSol: number }) {
         </>
       )}
       <ResetPaperDialog open={dialog} onClose={() => setDialog(false)} defaultBalance={startingBalanceSol || 10} />
+      <AddFundsDialog open={add} onClose={() => setAdd(false)} />
     </div>
   );
 }
