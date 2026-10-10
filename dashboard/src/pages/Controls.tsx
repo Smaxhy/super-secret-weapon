@@ -15,9 +15,10 @@ interface ControlsData {
 
 const STRATS: Array<[string, string]> = [
   ['SOON', 'Soon (curve 70%+, about to graduate)'],
-  ['CURVE_SNIPE', 'Early curve entries'],
+  ['CURVE_SNIPE', 'New pairs (after the launch snipers)'],
   ['MIGRATION_MOMENTUM', 'After migration'],
   ['SMART_MONEY_COPY', 'Copy tracked wallets'],
+  ['SWING', 'Swing trades on bigger coins (dips that bounce)'],
 ];
 
 function NumberField({ label, value, onChange, step = 1, min, max, suffix, hint }: { label: string; value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; suffix?: string; hint?: string }) {

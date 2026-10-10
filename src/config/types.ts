@@ -12,7 +12,7 @@
 
 export type TradingMode = 'PAPER' | 'LIVE';
 
-export type StrategyName = 'CURVE_SNIPE' | 'SOON' | 'MIGRATION_MOMENTUM' | 'SMART_MONEY_COPY';
+export type StrategyName = 'CURVE_SNIPE' | 'SOON' | 'MIGRATION_MOMENTUM' | 'SMART_MONEY_COPY' | 'SWING';
 
 export type MarketRegime = 'HOT' | 'NORMAL' | 'COLD' | 'RUG_HEAVY';
 
@@ -80,6 +80,9 @@ export interface AmmPoolEvent {
   pool: string;
   baseMint: string; // the token
   quoteMint: string; // normally wrapped SOL
+  /** Pool creator (pump.fun's pool-authority PDA for a real migration) and pool index — from the CreatePoolEvent. */
+  creator?: string;
+  index?: number;
   /** 0 = unknown → derived from the token's final bonding-curve state. */
   baseReserve: bigint; // raw token units
   quoteReserve: bigint; // lamports

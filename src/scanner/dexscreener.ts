@@ -25,11 +25,15 @@ export interface DexPair {
   dexId?: string;
   url?: string;
   baseToken?: { address: string; name?: string; symbol?: string };
+  quoteToken?: { address: string; name?: string; symbol?: string };
   priceUsd?: string;
+  /** Price in the quote token (SOL for pump.fun pools). */
+  priceNative?: string;
   txns?: Record<string, { buys?: number; sells?: number }>;
   volume?: Record<string, number>;
   priceChange?: Record<string, number>;
-  liquidity?: { usd?: number };
+  /** usd = both sides; base / quote = whole tokens / SOL in the pool. */
+  liquidity?: { usd?: number; base?: number; quote?: number };
   marketCap?: number;
   fdv?: number;
   pairCreatedAt?: number;
@@ -146,6 +150,8 @@ export class DexScreener {
   private readonly inflight = new Set<string>();
   /** Requests to the 60/min endpoints in the current minute. */
   private window = { start: 0, used: 0 };
+  /** Requests to /tokens/v1 (allowed 300/min) for other modules (swing universe) — kept ≤ 60/min. */
+  private pairWindow = { start: 0, used: 0 };
   /** A tracked coin just entered the trending list. */
   onTrending: ((coin: TrendingCoin) => void) | null = null;
 
@@ -237,6 +243,28 @@ export class DexScreener {
       this.lastError = (err as Error).message;
       log.warn({ err: this.lastError }, 'DexScreener refresh failed');
     }
+  }
+
+  /**
+   * Live pair data for any coins (≤ 30 per request; e.g. the swing universe). Coins over the
+   * per-minute budget or a failed request simply come back without pairs. Never throws.
+   */
+  async pairsFor(mints: readonly string[], now = Date.now()): Promise<DexPair[]> {
+    if (!getConfig().dex.enabled) return [];
+    const out: DexPair[] = [];
+    const list = [...new Set(mints)];
+    for (let i = 0; i < list.length; i += 30) {
+      if (now - this.pairWindow.start >= 60_000) this.pairWindow = { start: now, used: 0 };
+      if (this.pairWindow.used >= 60) break;
+      this.pairWindow.used++;
+      try {
+        const res = await this.get(`/tokens/v1/solana/${list.slice(i, i + 30).join(',')}`);
+        if (Array.isArray(res)) out.push(...(res as DexPair[]));
+      } catch (err) {
+        log.debug({ err: (err as Error).message }, 'DexScreener pairs request failed');
+      }
+    }
+    return out;
   }
 
   /** Simple per-minute budget for the 60 req/min endpoints (kept under 45). */

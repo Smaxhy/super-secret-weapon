@@ -10,7 +10,7 @@
 import type { BotConfigShape } from '../config/default';
 import { getConfig } from '../config/runtime-config';
 import type { StrategyName } from '../config/types';
-import { decideExit, exitCostPctFor, trailRules, type ExitInput } from '../executor/sell-manager';
+import { decideExit, exitCostPctFor, exitRulesFor, trailRules, type ExitInput } from '../executor/sell-manager';
 import { poolFeeBps } from '../lib/pumpfun';
 import { settledHigh } from '../lib/settled-price';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
@@ -141,7 +141,8 @@ export class VirtualBook {
 
   private step(vp: VPos, now: number): void {
     const cfg = getConfig();
-    const rules = this.rulesFor(vp.tag, cfg.exit);
+    // Live rules incl. the strategy's own (exit.byStrategy), then the lab's variant on top.
+    const rules = this.rulesFor(vp.tag, exitRulesFor(vp.strategy, cfg.exit));
     if (!rules) {
       this.open.delete(vp.key);
       return;

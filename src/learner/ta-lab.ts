@@ -45,7 +45,8 @@ const EXTERNAL_BY_ID = new Map(EXTERNAL_SIGNALS.map((x) => [x.id, x]));
 export interface TaLabResult {
   id: string;
   mint: string;
-  phase: 'curve' | 'amm';
+  /** curve = bonding curve, amm = migrated, big = bigger established coin (swing exits). */
+  phase: 'curve' | 'amm' | 'big';
   strength: number;
   pnlPct: number;
   peakX: number;
@@ -226,7 +227,8 @@ export class TaLab {
         if (!strategy) continue;
         // Proven strategies firing → the real evaluator checks this coin now (all its rules still apply).
         const provenHits = sigs.filter((s) => this.proven.has(s.id));
-        if (c.triggerChecks && this.evaluator && provenHits.length && now - (this.lastCheckReq.get(mint) ?? 0) >= 60_000) {
+        // (bigger coins are the swing trader's — it checks its coins every few seconds and counts proven hits itself)
+        if (c.triggerChecks && this.evaluator && strategy !== 'SWING' && provenHits.length && now - (this.lastCheckReq.get(mint) ?? 0) >= 60_000) {
           this.lastCheckReq.set(mint, now);
           void this.evaluator.checkNow(mint, strategy, `ta:${provenHits.map((s) => s.id).join('+')}`, { bucketSec: 30 }).catch(() => undefined);
         }
@@ -252,11 +254,15 @@ export class TaLab {
     const m = deriveMetrics(view);
     if (labGate(m, solUsd, c)) return null;
     const onAmm = view.ammBaseReserve !== null && view.ammBaseReserve > 0n;
-    const strategy: StrategyName = view.complete ? 'MIGRATION_MOMENTUM' : m.bondingCurvePct >= 70 ? 'SOON' : 'CURVE_SNIPE';
+    // Bigger, established coins (the swing universe) are tested with the swing exits.
+    const sw = getConfig().swing ?? DEFAULT_CONFIG.swing;
+    const big = view.complete && (!!view.adopted || (solUsd !== null && m.marketCapSol * solUsd >= sw.minMarketCapUsd && !!view.migratedAtMs && now - view.migratedAtMs >= sw.minAgeMin * 60_000));
+    const strategy: StrategyName = big ? 'SWING' : view.complete ? 'MIGRATION_MOMENTUM' : m.bondingCurvePct >= 70 ? 'SOON' : 'CURVE_SNIPE';
+    const phase = big ? 'big' : onAmm ? 'amm' : 'curve';
     for (const s of fresh) {
       this.lastFire.set(`${s.id}:${mint}`, now);
       this.stats.signals++;
-      if (this.book.add({ key: `${s.id}:${mint}`, mint, symbol: '', strategy, onAmm, priceSol: price > 0 ? price : m.priceSol, tag: { id: s.id, phase: onAmm ? 'amm' : 'curve', strength: s.strength } }, now)) this.stats.opened++;
+      if (this.book.add({ key: `${s.id}:${mint}`, mint, symbol: '', strategy, onAmm, priceSol: price > 0 ? price : m.priceSol, tag: { id: s.id, phase, strength: s.strength } }, now)) this.stats.opened++;
     }
     return strategy;
   }
@@ -277,7 +283,7 @@ export class TaLab {
 
   private save(v: VirtualResult): void {
     const id = String(v.tag.id);
-    const r: TaLabResult = { id, mint: v.mint, phase: v.tag.phase === 'amm' ? 'amm' : 'curve', strength: Number(v.tag.strength ?? 0), pnlPct: v.pnlPct, peakX: v.peakX, holdSec: v.holdSec, reason: v.reason, at: v.at };
+    const r: TaLabResult = { id, mint: v.mint, phase: v.tag.phase === 'big' ? 'big' : v.tag.phase === 'amm' ? 'amm' : 'curve', strength: Number(v.tag.strength ?? 0), pnlPct: v.pnlPct, peakX: v.peakX, holdSec: v.holdSec, reason: v.reason, at: v.at };
     void this.redis
       .multi()
       .lpush(resKey(id), JSON.stringify(r))
@@ -291,9 +297,9 @@ export class TaLab {
     return raw.map((x) => JSON.parse(x) as TaLabResult);
   }
 
-  private async allStats(): Promise<{ stats: LabStats[]; baseline: LabStats | null; byPhase: Map<string, { curve: LabStats; amm: LabStats }> }> {
+  private async allStats(): Promise<{ stats: LabStats[]; baseline: LabStats | null; byPhase: Map<string, { curve: LabStats; amm: LabStats; big: LabStats }> }> {
     const stats: LabStats[] = [];
-    const byPhase = new Map<string, { curve: LabStats; amm: LabStats }>();
+    const byPhase = new Map<string, { curve: LabStats; amm: LabStats; big: LabStats }>();
     let baseline: LabStats | null = null;
     for (const id of [BASELINE_ID, ...TA_STRATEGIES.map((s) => s.id), ...EXTERNAL_SIGNALS.map((x) => x.id)]) {
       const rows = await this.results(id);
@@ -301,7 +307,7 @@ export class TaLab {
       const st = labStats(id, name, rows);
       if (id === BASELINE_ID) baseline = st;
       else stats.push(st);
-      byPhase.set(id, { curve: labStats(id, name, rows.filter((r) => r.phase === 'curve')), amm: labStats(id, name, rows.filter((r) => r.phase === 'amm')) });
+      byPhase.set(id, { curve: labStats(id, name, rows.filter((r) => r.phase === 'curve')), amm: labStats(id, name, rows.filter((r) => r.phase === 'amm')), big: labStats(id, name, rows.filter((r) => r.phase === 'big')) });
     }
     return { stats, baseline, byPhase };
   }
@@ -322,7 +328,7 @@ export class TaLab {
   /** Dashboard: every strategy with its live record vs the random baseline. */
   async report(): Promise<{
     baseline: LabStats | null;
-    strategies: Array<LabStats & { family: string; summary: string; proven: boolean; edgePct: number | null; curve: LabStats; amm: LabStats }>;
+    strategies: Array<LabStats & { family: string; summary: string; proven: boolean; edgePct: number | null; curve: LabStats; amm: LabStats; big: LabStats }>;
     open: number;
     stats: TaLab['stats'];
     minTrades: number;
@@ -332,7 +338,7 @@ export class TaLab {
     const strategies = stats.map((s) => {
       const def = TA_BY_ID.get(s.id) ?? EXTERNAL_BY_ID.get(s.id);
       const ph = byPhase.get(s.id)!;
-      return { ...s, family: def?.family ?? '', summary: def?.summary ?? '', proven: this.proven.has(s.id), edgePct: baseline && baseline.n >= 20 && s.n ? Math.round((s.avgPnlPct - baseline.avgPnlPct) * 10) / 10 : null, curve: ph.curve, amm: ph.amm };
+      return { ...s, family: def?.family ?? '', summary: def?.summary ?? '', proven: this.proven.has(s.id), edgePct: baseline && baseline.n >= 20 && s.n ? Math.round((s.avgPnlPct - baseline.avgPnlPct) * 10) / 10 : null, curve: ph.curve, amm: ph.amm, big: ph.big };
     });
     strategies.sort((a, b) => Number(b.proven) - Number(a.proven) || b.lowerPct - a.lowerPct);
     const c = this.cfg();

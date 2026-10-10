@@ -38,6 +38,8 @@ import { TrendingHub } from './scanner/trending-hub';
 import { deriveMetrics } from './scanner/live-state';
 import { TradeCoach } from './learner/trade-coach';
 import { SwingWatcher } from './executor/swing-watcher';
+import { SwingTrader } from './executor/swing-trader';
+import { SwingUniverse } from './scanner/swing-universe';
 import { ObservationLogger } from './learner/observation-logger';
 import { requestAdjustment, scheduleDailyAdjuster } from './learner/daily-adjuster';
 import { startBeliefCache, stopBeliefCache } from './learner/bayesian-updater';
@@ -193,6 +195,14 @@ async function main(): Promise<void> {
   };
   trendFeeds.start();
   trending.start();
+  // Swing trading BIGGER coins (watchlist, trending tabs, our own grown coins): follow them live,
+  // measure their bounce-back power, buy confirmed dips (owner: "swing more, especially bigger coins").
+  const swingUniverse = new SwingUniverse(redis, liveState, registry, dex, trendFeeds, leaders);
+  swingUniverse.start();
+  const swingTrader = new SwingTrader(redis, liveState, crowd, swingUniverse, trader, outcomes);
+  swingTrader.ta = taLab;
+  swingTrader.trending = trending;
+  swingTrader.start();
   // Exits react to every trade on a coin we hold (not just the 1s tick); real trade highs count as peaks.
   sellManager.crowd = crowd;
   registry.onTradeApplied.push((mint) => sellManager.onTrade(mint));
@@ -304,7 +314,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader } }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -379,6 +389,8 @@ async function main(): Promise<void> {
       taLab.stop();
       trendFeeds.stop();
       trending.stop();
+      swingTrader.stop();
+      swingUniverse.stop();
       stopCalibration();
       swings.stop();
       crowd.stop();

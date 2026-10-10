@@ -80,6 +80,11 @@ export class MarketLeaders {
     if (this.computeTimer) clearInterval(this.computeTimer);
   }
 
+  /** Our own tracked coins with the most SOL traded in the last hour (from the minute samples). */
+  ownTop(limit = 20, now = Date.now()): Array<{ mint: string; volume1h: number }> {
+    return topByHourVolume(this.samples, now, limit);
+  }
+
   /** Hot narrative words right now (feed into narrative scoring). */
   keywords(): string[] {
     return getConfig().leaders?.enabled === false ? [] : this.narratives.map((n) => n.word);

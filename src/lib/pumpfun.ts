@@ -238,8 +238,8 @@ function decodeComplete(r: BorshReader): PumpCompleteEvent {
 
 function decodeAmmCreatePool(r: BorshReader): AmmPoolEvent {
   const timestamp = Number(r.i64());
-  r.u16(); // index
-  r.pubkey(); // creator
+  const index = r.u16();
+  const creator = r.pubkey();
   const baseMint = r.pubkey();
   const quoteMint = r.pubkey();
   r.u8(); // base decimals
@@ -253,7 +253,7 @@ function decodeAmmCreatePool(r: BorshReader): AmmPoolEvent {
   r.u64(); // lp_token_amount_out
   r.u8(); // pool_bump
   const pool = r.pubkey();
-  return { kind: 'ammPool', pool, baseMint, quoteMint, baseReserve, quoteReserve, timestamp };
+  return { kind: 'ammPool', pool, baseMint, quoteMint, baseReserve, quoteReserve, timestamp, creator, index };
 }
 
 function decodeAmmTrade(r: BorshReader, isBuy: boolean): AmmTradeEvent {

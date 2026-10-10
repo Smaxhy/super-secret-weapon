@@ -4,6 +4,7 @@ import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl } from '../components/u
 import { McCompare } from '../components/McCompare';
 import { PositionChart } from '../components/PositionChart';
 import { DipWatch } from '../components/DipWatch';
+import { SwingCoins } from '../components/SwingCoins';
 import { useLivePositions } from '../hooks/useLivePositions';
 import { ago, multiple, num, pct, price, sol, STRATEGY_LABEL } from '../lib/format';
 
@@ -14,6 +15,7 @@ export function Positions() {
     <>
       <PageHeader title="Open positions" subtitle="Prices and market caps update live on every trade. Tap Sell now to exit manually." />
       <DipWatch />
+      <SwingCoins />
       {error && <ErrorBox message={error} />}
       {loading && !data ? <Loading /> : !data?.length ? <Empty>No open positions right now.</Empty> : null}
       <div className="grid gap-4 lg:grid-cols-2">

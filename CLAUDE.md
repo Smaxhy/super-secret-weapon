@@ -116,6 +116,46 @@ smart money → learning engine → ML → social). See README.md.
     live ≥50 viewers rising +2, KOTH ≥5 min stalled −3 / accelerating +3, fresh (<1h) + paid + bundled/insiders
     −8 & half size (dev selling → no buy), banned / downranked / Mayhem → no buy; DEX paid bonus only for
     coins ≥1 h old. `/api/trending`, Scanner page "Trending tabs" card. (Sandbox can't reach these hosts; VPS can.)
+- **v7 (Oct 10): SWING trading bigger coins + more trades** (owner: "swing more, especially bigger coins like
+  $clude that keep bouncing back — allowed to hold bigger MC coins if it sees potential; trade more often, once an
+  hour won't teach it anything"). New strategy **SWING** (Prisma enum + every per-strategy map; 30% allocation, max 3
+  open; allocation now NEW PAIRS 40 / SWING 30 / MIGRATION 15 / SOON 15; max 8 positions; config migration v5).
+  - **Adopting already-migrated coins** (we never saw their launch): `src/lib/pump-pda.ts` derives pump.fun's
+    CANONICAL PumpSwap pool (seeds copied from @pump-fun/pump-swap-sdk 2.1 `pda.ts`; live self-check `pdaCheck` on
+    every real migration event, shown in /api/swing) → `liveState.adoptPool` (creator `(adopted)`, `adopted`/`adoptedAt`
+    in the live hash, ZSET scored by adoption time + `keepAlive`, seed reserves never block the first real trade) +
+    `registry.adoptMigrated` (Token row, safety check). Ledger-based rug exits (dev/bundle/top-10) are neutral for
+    adopted coins (their ledger only starts at adoption). All PumpSwap trades were already on the stream.
+  - **Universe** (`src/scanner/swing-universe.ts`, `swing` config, every 60 s): your watchlist (`swing.watchlist`, mint
+    addresses, Positions page "Swing coins" card, POST/DELETE `/api/swing/watchlist`), trending tabs coins that migrated
+    (pump.fun complete / GeckoTerminal PumpSwap pools), DexScreener trending pump coins, our own grown coins
+    (`leaders.ownTop`). DexScreener `/tokens/v1` (`dex.pairsFor`, ≤60/min) → MC, liquidity, volume, changes and the pair —
+    must be the canonical pool (`pickPumpSwapPair`; a dominant non-canonical one only while `pdaCheck.match` is 0).
+    Kept: migrated ≥60 min, MC $40k–$25M, liquidity ≥$10k, 24h vol ≥$100k; top 30 (+ watchlist) followed live;
+    dropped coins let go after 90 min (`swing:adopted` set survives restarts). GeckoTerminal OHLCV 5m×288 in SOL
+    (`currency=token`, ≤4 calls/min, every 20 min) → bounce-back power + 3-hour high.
+  - **Decision** (`src/evaluator/swing.ts`, pure): `bounceBack` (dips ≥20% from a running high that won back ≥60% of
+    the drop vs failed — ≥60% down or 6 h without recovery; score 0–1 `swingResilience`), `swingSetup` (live 15 s closes:
+    12–45% off the recent/3-h high, a higher low that held ≥30 s, bounce 3–12% — not chasing — buy/sell ≥1.15 over 2 min,
+    room back to the high), `swingDecision` (hard rules: safety, MC/liquidity/volume/age, ≥20 trades in 10 min, falling
+    knife −40%/1h, fake volume, top-3 volume, KOLs dumping, top-10 holders via RPC getTokenLargestAccounts ≤55% (>40% half
+    size, pool vault excluded), bounce-back ≥0.25 unless watchlist; score = 40 + resilience 25 + setup 15 (+ confirming
+    dip-type TA strategies `swing.taStrategies`) + trend 10 + flow 10 + trending/KOL/proven bonuses; bar 70, watchlist −5,
+    + coach + regime; score calibration per strategy). `src/executor/swing-trader.ts` checks live coins every 10 s (cheap
+    setup scan first, RPC/DB only on a setup), stores BUY evaluations only (their real trade results feed calibration).
+    Explanation `explainSwingBuy`. Launch-scorer learning (weight tuning, Bayesian odds, keywords) ignores SWING rows.
+  - **Exits** (`exit.byStrategy.SWING`, layered by `exitRulesFor` everywhere: sell manager, virtual book, positions API):
+    30% at 1.25x, 30% at 1.6x, 15% at 3x, trail + break-even floor from 1.25x (ladder 12→15→18→20%), peak hold 4 s, stop
+    12–15%, no follow-through 60 min / stall 120 min, max hold 12 h (runner 24 h). **Hold longer** (`exit.holdLonger`,
+    all strategies): profit banked + MC ≥$60k + chart uptrend + low risk → no max-hold / stale exit (≤48 h; trail still on).
+  - **Re-entries** (`swingReentryReason`): 20 min after a win, 2 h after a loss, ≤4 a day per coin, 2 losses in a row →
+    24 h pause, never after a rug. TA lab: bigger coins get phase `big` with SWING exits (Strategies page shows it).
+  - **More trades**: **learning trades** (`explore` config): passes every rule, score ≤8 under the bar → ×0.5 size, ≤2
+    open, ≤4/hour (entryContext.explore; excluded from the strategy cool-off and the trade coach; calibration learns from
+    them). New-pair demand loosened a little (buyers 10, first-timers 6, net +1 SOL, buy/sell 1.2 SOL / 1.3 count, gap 20 s).
+  - E2E (/var/lib/e2e/e2e-swing.ts): watchlist coin adopted (canonical pool verified) → bounce-back 0.9 → bought 27%
+    under the high after the bounce → 1.25x tier + trail at 1.24x = +20.7%; DUD → −15.6% stop; re-entry cooldown works.
+    e2e-explore.ts: score 81 vs bar 84 → learning buy.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
@@ -128,12 +168,12 @@ smart money → learning engine → ML → social). See README.md.
 - Focus (`focus` config, v5 numbers above): SOON fires when the curve crosses 70% (CrowdTracker.onSoon →
   evaluator.scheduleSoon), rules ≥3 SOL fees, ≥$10k volume, ≥25 active wallets (5m), curve 70–90%.
   MIGRATION_MOMENTUM: ≥9 SOL fees, ≥$25k MC, ≥$2k liquidity (both sides, USD), ≥20 active wallets, not in the
-  BOOST window. Allocation v5: NEW PAIRS 55% / MIGRATION 25% / SOON 20% / COPY 0%.
+  BOOST window. Allocation v7: NEW PAIRS 40% / SWING 30% / MIGRATION 15% / SOON 15% / COPY 0% (v5 was 55/25/20).
 - Crowd behaviour (`src/scanner/crowd-tracker.ts`, in-memory trade log for curve ≥40% / migrated coins):
   active wallets 5m ("eyes" — pump.fun's own viewer count isn't public), dip buying, paper hands, bot churn,
   retail share, buy acceleration, smart-wallet share → features `crowd` + `attention`. Wallet reputation
   (`src/learner/wallet-reputation.ts`): buyers at scoring time get the coin's 1h label → finds smart wallets.
-- Swing trading (`focus.swing`, `src/executor/swing-watcher.ts`): after a SOON/migration exit (not rug) the coin
+- Swing RE-ENTRIES (older, `focus.swing`, `src/executor/swing-watcher.ts` — separate from the v7 SWING strategy above): after a SOON/migration exit (not rug) the coin
   is watched 2h; 15–45% pullback + bounce with buy/sell ≥1.2 → re-evaluation as a swing (v5: only after a
   profitable exit, ≤1 re-entry).
 - Trade coach (`src/learner/trade-coach.ts`): 30 min after every close it reviews the trade (late entry,

@@ -15,6 +15,7 @@
  * last free slot.
  */
 import type { Strategy } from '@prisma/client';
+import { DEFAULT_CONFIG } from '../config/default';
 import { getConfig } from '../config/runtime-config';
 import { strategySince } from '../config/migrations';
 import { recordEvent } from '../lib/bot-events';
@@ -40,8 +41,10 @@ export interface EntryRequest {
   copiedWallet?: string;
   /** < 1 for higher-risk entries (e.g. bundled tokens bought at half size). */
   sizeMultiplier?: number;
-  /** Swing re-entry: may buy a token we traded before (up to focus.swing.maxReentries). */
+  /** Swing re-entry: may buy a token we traded before (up to focus.swing.maxReentries; SWING: see swingReentryReason). */
   swing?: boolean;
+  /** Learning trade (config `explore`): a near-miss bought small so the bot learns from it. */
+  explore?: boolean;
   /** Builds the human-readable "why we bought" once the size is known. */
   explain?: (sizeSol: number) => string;
 }
@@ -101,8 +104,24 @@ export class Trader {
     if (cool) return refuse(cool);
     // Copy trades are heavily restricted.
     if (req.strategy === 'SMART_MONEY_COPY' && open.filter((p) => p.strategy === 'SMART_MONEY_COPY').length >= (cfg.copy.maxOpen ?? 1)) return refuse('copy trade limit reached');
+    // Learning trades: a few at a time, a few per hour.
+    if (req.explore) {
+      const ex = cfg.explore ?? DEFAULT_CONFIG.explore;
+      if (!ex.enabled) return refuse('learning trades are off');
+      if (open.filter(isExplore).length >= ex.maxOpen) return refuse(`max ${ex.maxOpen} learning trades open`);
+      const lastHour = await prisma.position.findMany({ where: { mode, openedAt: { gte: new Date(Date.now() - 3600_000) } }, select: { entryContext: true } });
+      if (lastHour.filter(isExplore).length >= ex.maxPerHour) return refuse(`max ${ex.maxPerHour} learning trades per hour`);
+    }
     const before = await prisma.position.findMany({ where: { mint: req.mint, mode }, select: { status: true, closedAt: true, exitReason: true, realizedPnlSol: true } });
-    if (before.length) {
+    if (before.length && req.strategy === 'SWING') {
+      // Swing trading a coin that keeps bouncing means trading it again and again — with cooldowns.
+      const why = swingReentryReason(
+        before.map((p) => ({ status: p.status, closedAtMs: p.closedAt?.getTime() ?? null, exitReason: p.exitReason, pnlSol: p.realizedPnlSol })),
+        Date.now(),
+        cfg.swing ?? DEFAULT_CONFIG.swing,
+      );
+      if (why) return refuse(why);
+    } else if (before.length) {
       const sw = cfg.focus.swing;
       if (!req.swing || !sw.enabled) return refuse('already traded this token');
       if (before.some((p) => p.status !== 'CLOSED')) return refuse('still holding this token');
@@ -125,7 +144,9 @@ export class Trader {
     // of it and at maxPositionPctOfCapital % of capital.
     const t = cfg.trading;
     const cap = Math.min(t.maxPositionSol * (t.maxConvictionMultiple ?? 1.6), (capital * (t.maxPositionPctOfCapital ?? 100)) / 100);
-    const size = Math.min(sized * (req.sizeMultiplier ?? 1), cap, budget, balance - reserve);
+    let size = Math.min(sized * (req.sizeMultiplier ?? 1), cap, budget, balance - reserve);
+    // A learning trade is small on purpose — the minimum size, if the budget allows it.
+    if (req.explore && size < cfg.trading.minPositionSol && Math.min(cap, budget, balance - reserve) >= cfg.trading.minPositionSol) size = cfg.trading.minPositionSol;
     if (size < cfg.trading.minPositionSol) {
       return refuse(`size ${size.toFixed(3)} SOL below minimum (balance ${balance.toFixed(3)}, ${req.strategy} budget ${budget.toFixed(3)})`);
     }
@@ -163,6 +184,7 @@ export class Trader {
             earlyBuyerPct: req.market.earlyBuyerPct,
             copiedWallet: req.copiedWallet ?? null,
             swing: req.swing === true,
+            explore: req.explore === true,
             // Counted into each sell's cost basis so P&L includes the buy's gas/tip.
             buyFeeSol: fill.feeSol,
             explanation,
@@ -208,8 +230,41 @@ async function strategyCoolOff(strategy: Strategy, mode: 'PAPER' | 'LIVE', b: { 
   if (!b?.enabled) return null;
   // Only trades of the current strategy version count (the old setup's losses aren't this one's).
   const since = await strategySince();
-  const rows = await prisma.position.findMany({ where: { strategy, mode, status: 'CLOSED', ...(since ? { openedAt: { gte: since } } : {}) }, orderBy: { closedAt: 'desc' }, take: b.lastN, select: { realizedPnlSol: true, sizeSol: true, closedAt: true } });
+  // Learning trades (near-misses bought small) don't count: they're expected to lose more often.
+  const rows = (await prisma.position.findMany({ where: { strategy, mode, status: 'CLOSED', ...(since ? { openedAt: { gte: since } } : {}) }, orderBy: { closedAt: 'desc' }, take: b.lastN * 2, select: { realizedPnlSol: true, sizeSol: true, closedAt: true, entryContext: true } }))
+    .filter((r) => !isExplore(r))
+    .slice(0, b.lastN);
   return coolOffReason(rows.map((r) => ({ pnlPct: r.sizeSol > 0 ? (r.realizedPnlSol / r.sizeSol) * 100 : 0, closedAtMs: r.closedAt?.getTime() ?? 0 })), Date.now(), b);
+}
+
+/** A learning trade (entryContext.explore)? */
+export function isExplore(p: { entryContext?: unknown }): boolean {
+  return (p.entryContext as { explore?: boolean } | null | undefined)?.explore === true;
+}
+
+/**
+ * SWING re-entries (pure): a coin that keeps bouncing is traded again and again — but not right
+ * after a close (`reentryCooldownMin`, `lossCooldownMin` after a loss), at most
+ * `maxTradesPerCoinPerDay` a day, never after a rug, and two losses in a row pause it for
+ * `lossStreakPauseHours`. Returns the reason to refuse, or null.
+ */
+export function swingReentryReason(
+  before: ReadonlyArray<{ status: string; closedAtMs: number | null; exitReason: string | null; pnlSol: number }>,
+  now: number,
+  c: { reentryCooldownMin: number; lossCooldownMin: number; maxTradesPerCoinPerDay: number; lossStreakPauseHours: number },
+): string | null {
+  if (before.some((p) => p.status !== 'CLOSED')) return 'still holding this token';
+  if (before.some((p) => p.exitReason === 'RUG_DETECTED')) return 'rugged before — no more swings on it';
+  const closed = before.filter((p): p is typeof p & { closedAtMs: number } => p.closedAtMs !== null).sort((a, b) => b.closedAtMs - a.closedAtMs);
+  const last = closed[0];
+  if (last) {
+    const wait = (last.pnlSol > 0 ? c.reentryCooldownMin : c.lossCooldownMin) * 60_000;
+    if (now - last.closedAtMs < wait) return `swing cooldown (${Math.ceil((wait - (now - last.closedAtMs)) / 60_000)} min left${last.pnlSol > 0 ? '' : ' after a loss'})`;
+  }
+  const today = closed.filter((p) => now - p.closedAtMs < 24 * 3600_000).length;
+  if (today >= c.maxTradesPerCoinPerDay) return `traded ${today}× in 24 h (max ${c.maxTradesPerCoinPerDay})`;
+  if (closed.length >= 2 && closed[0]!.pnlSol <= 0 && closed[1]!.pnlSol <= 0 && now - closed[0]!.closedAtMs < c.lossStreakPauseHours * 3600_000) return 'lost twice in a row on this coin — paused';
+  return null;
 }
 
 /** Sum of realised P&L from sells since 00:00 UTC. */

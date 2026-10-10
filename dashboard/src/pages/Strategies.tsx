@@ -27,6 +27,7 @@ interface Row extends Stats {
   edgePct: number | null;
   curve: Stats;
   amm: Stats;
+  big?: Stats;
 }
 interface TaLabData {
   enabled: boolean;
@@ -119,6 +120,7 @@ export function Strategies() {
                           <p className="mb-1">{r.summary}</p>
                           <p className="text-xs text-muted">
                             On the curve: {r.curve.n} tests, {r.curve.n ? signed(r.curve.avgPnlPct) : '—'} · Migrated: {r.amm.n} tests, {r.amm.n ? signed(r.amm.avgPnlPct) : '—'}
+                            {r.big ? ` · Bigger coins (swing exits): ${r.big.n} tests, ${r.big.n ? signed(r.big.avgPnlPct) : '—'}` : ''}
                             {r.n ? ` · avg win ${signed(r.avgWinPct)} / avg loss ${signed(r.avgLossPct)}` : ''}
                           </p>
                         </td>

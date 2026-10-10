@@ -17,13 +17,14 @@ import { recordEvent } from '../lib/bot-events';
 import { bus } from '../lib/bus';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
-import { QUEUE_NAMES, type SafetyJob } from '../lib/queues';
+import { QUEUE_NAMES, safetyQueue, type SafetyJob } from '../lib/queues';
 import { bullConnection } from '../lib/redis';
 import type { SafetyChecker } from '../evaluator/safety-checker';
 import type { ObservationLogger } from '../learner/observation-logger';
 import type { Evaluator } from '../evaluator/evaluator';
-import type { LiveState } from './live-state';
+import { ADOPTED_CREATOR, type LiveState } from './live-state';
 import { curvePriceSol } from '../lib/pumpfun';
+import { bondingCurveAddress, checkPoolEvent } from '../lib/pump-pda';
 import type { InsiderTracker } from '../evaluator/insider-cluster';
 import type { CrowdTracker } from './crowd-tracker';
 import type { WalletPnl } from '../learner/wallet-pnl';
@@ -174,9 +175,49 @@ export class TokenRegistry {
     log.info({ mint: ev.mint }, '👀 now tracking a token a watched wallet bought');
   }
 
+  /**
+   * Start following a coin that ALREADY migrated (swing trading bigger coins): a Token row (it
+   * never had a create event here), its canonical PumpSwap pool → live state, and a safety check
+   * (1 RPC call: mint / freeze authority, token program, extensions). Returns 'adopted' for a coin
+   * new to us, 'tracked' if we already follow it.
+   */
+  async adoptMigrated(c: { mint: string; pool: string; symbol: string; name: string; uri?: string | null; createdAtMs: number | null; migratedAtMs: number | null; baseReserve?: bigint | null; quoteReserve?: bigint | null }): Promise<'adopted' | 'tracked'> {
+    const res = await this.liveState.adoptPool(c);
+    if (res === 'tracked') return res;
+    const now = Date.now();
+    const createdAt = new Date(c.createdAtMs ?? c.migratedAtMs ?? now);
+    const token = await prisma.token.upsert({
+      where: { mint: c.mint },
+      update: {},
+      create: {
+        mint: c.mint,
+        name: (c.name || c.symbol || c.mint.slice(0, 6)).slice(0, 64),
+        symbol: (c.symbol || c.mint.slice(0, 5)).slice(0, 24),
+        uri: c.uri ?? '',
+        bondingCurve: bondingCurveAddress(c.mint) ?? '',
+        creator: ADOPTED_CREATOR,
+        createSignature: `adopt:${c.mint}`,
+        createSlot: 0n,
+        createdAt,
+        detectedAt: new Date(now),
+        initialVirtualSolReserves: PUMP_DEFAULT_INITIAL_VIRTUAL_SOL_RESERVES,
+        initialVirtualTokenReserves: PUMP_DEFAULT_INITIAL_VIRTUAL_TOKEN_RESERVES,
+        initialRealTokenReserves: PUMP_DEFAULT_INITIAL_REAL_TOKEN_RESERVES,
+        totalSupply: PUMP_DEFAULT_TOTAL_SUPPLY,
+        status: 'COMPLETED',
+        completedAt: c.migratedAtMs ? new Date(c.migratedAtMs) : createdAt,
+      },
+      select: { safetyScore: true },
+    });
+    if (token.safetyScore === null && env.ENABLE_SAFETY_CHECKS) await safetyQueue.add('check', { mint: c.mint }, { jobId: `safety-${c.mint}` }).catch(() => undefined);
+    log.info({ mint: c.mint, symbol: c.symbol, pool: c.pool }, `🔭 following ${c.symbol || c.mint.slice(0, 6)} (bigger coin, for swing trading)`);
+    return res;
+  }
+
   /** A tracked token's PumpSwap pool appeared: it can be traded again → start migration checkpoints. */
   private async onAmmPool(ev: AmmPoolEvent): Promise<void> {
     try {
+      checkPoolEvent(ev);
       const mint = await this.liveState.onAmmPool(ev);
       if (!mint) return;
       await prisma.token.updateMany({ where: { mint, status: { not: 'COMPLETED' } }, data: { status: 'COMPLETED', completedAt: new Date(ev.timestamp * 1000) } });

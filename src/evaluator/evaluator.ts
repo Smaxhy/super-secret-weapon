@@ -154,6 +154,8 @@ export class Evaluator {
 
   private async process(job: Job<EvaluateJob>): Promise<void> {
     const { mint, checkpointSec, final } = job.data;
+    // Swing trades on bigger coins have their own decision maker (executor/swing-trader.ts).
+    if (job.data.strategy === 'SWING') return;
     const STRATEGY = STRATEGIES[job.data.strategy ?? 'CURVE_SNIPE'];
     const doneKey = `eval:${mint}:${STRATEGY.name}:done`;
     // Swing re-entries re-check a token we already finished with.
@@ -374,6 +376,15 @@ export class Evaluator {
       decision = 'BUY';
       reasons = [`higher-risk entry at ${re.sizeMultiplier}× size: ${risky}`, `score ${result.score.toFixed(1)} ≥ ${threshold + re.extraScore}`];
     }
+    // Learning trade (owner: trade more often so it learns): passes EVERY rule, just short on score
+    // → bought at a small size. Score calibration then learns whether that score band really pays.
+    const ex = cfg.explore ?? DEFAULT_CONFIG.explore;
+    let explore = false;
+    if (decision === 'SKIP' && ex.enabled && ex.strategies.includes(STRATEGY.name) && ruleFails.length === 0 && !token.safetyHardFail && result.score >= threshold - ex.scoreMargin) {
+      explore = true;
+      decision = 'BUY';
+      reasons = [`learning trade: score ${result.score.toFixed(1)} vs bar ${threshold.toFixed(0)} (within ${ex.scoreMargin}) — bought at ${ex.sizeMultiplier}× size`];
+    }
     const store = decision !== 'SKIP' || final || result.score >= cfg.scoring.storeAboveScore;
 
     let evaluationId: string | null = null;
@@ -459,13 +470,13 @@ export class Evaluator {
     // (rules pass, score just short) is traded virtually by each exit setup under test.
     if (this.lab) {
       const labCfg = cfg.lab ?? DEFAULT_CONFIG.lab;
-      const near = decision === 'SKIP' && ruleFails.length === 0 && !dipEntry && result.score >= threshold - labCfg.nearMissMargin && !reasons.some((r) => r.startsWith('waiting for a dip') || r.startsWith("didn't confirm"));
-      if (decision === 'BUY' || near) this.lab.onSignal({ mint, symbol: token.symbol, strategy: STRATEGY.name, kind: decision === 'BUY' ? 'buy' : 'near', priceSol: market.raw.priceSol, onAmm: market.raw.onAmm });
+      const near = (decision === 'SKIP' || explore) && ruleFails.length === 0 && !dipEntry && result.score >= threshold - labCfg.nearMissMargin && !reasons.some((r) => r.startsWith('waiting for a dip') || r.startsWith("didn't confirm"));
+      if ((decision === 'BUY' && !explore) || near) this.lab.onSignal({ mint, symbol: token.symbol, strategy: STRATEGY.name, kind: decision === 'BUY' && !explore ? 'buy' : 'near', priceSol: market.raw.priceSol, onAmm: market.raw.onAmm });
     }
 
     if (decision === 'BUY') {
       this.stats.buys++;
-      log.info({ mint, symbol: token.symbol, score: result.score, checkpointSec, holders: market.raw.holders, curvePct: +market.raw.bondingCurvePct.toFixed(1) }, `🎯 BUY ${token.symbol} confirmed (${result.score.toFixed(1)})`);
+      log.info({ mint, symbol: token.symbol, score: result.score, checkpointSec, holders: market.raw.holders, curvePct: +market.raw.bondingCurvePct.toFixed(1), explore }, `🎯 ${explore ? 'learning ' : ''}BUY ${token.symbol} confirmed (${result.score.toFixed(1)})`);
       // Conviction sizing: more on the strongest setups, less on borderline ones.
       const conv = convictionFactor({
         scoreMargin: result.score - threshold,
@@ -485,10 +496,13 @@ export class Evaluator {
         maxSlippageBps: STRATEGY.maxSlippageBps,
         features,
         copiedWallet: job.data.wallet,
-        sizeMultiplier: (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? (STRATEGY.name === 'CURVE_SNIPE' ? npCfg.sizeMultiplier : 1)) * coach.sizeFactor * conv.factor * copyMult * (trend?.sizeFactor ?? 1),
+        sizeMultiplier: explore
+          ? ex.sizeMultiplier * coach.sizeFactor * (trend?.sizeFactor ?? 1)
+          : (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? (STRATEGY.name === 'CURVE_SNIPE' ? npCfg.sizeMultiplier : 1)) * coach.sizeFactor * conv.factor * copyMult * (trend?.sizeFactor ?? 1),
         swing,
+        explore,
         explain: (sizeSol) =>
-          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, chartNote: chart ? `${chart.summary}${dipEntry ? ` — bought the dip: ${job.data.dipWhy ?? ''}` : ''}` : null, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...(newPair?.notes ?? []), ...taBonus.notes.map((n) => `chart setup: ${n}`), ...(trend?.notes ?? []), ...kolBonus.notes, ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
+          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, chartNote: chart ? `${chart.summary}${dipEntry ? ` — bought the dip: ${job.data.dipWhy ?? ''}` : ''}` : null, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: explore ? `learning trade ×${ex.sizeMultiplier} (score just under the bar)` : conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...(explore ? [`LEARNING TRADE: score ${result.score.toFixed(1)} is just under the bar ${threshold.toFixed(0)} — bought small so the bot learns whether these near-misses pay`] : []), ...(newPair?.notes ?? []), ...taBonus.notes.map((n) => `chart setup: ${n}`), ...(trend?.notes ?? []), ...kolBonus.notes, ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
       });
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.
       if (!swing && (res.entered || res.reason === 'already traded this token')) await markDone();

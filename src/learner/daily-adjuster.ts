@@ -102,6 +102,7 @@ export async function loadLabelled(r: Redis = defaultRedis, withFeatures = true)
                features->'features' AS f, features->'outcome' AS o, features->'tradeResult' AS t
         FROM "Evaluation"
         WHERE "outcomeLabeledAt" IS NOT NULL AND "createdAt" >= ${since}
+          AND (strategy IS NULL OR strategy::text <> 'SWING')
         ORDER BY "createdAt" DESC LIMIT 20000`
     : await prisma.$queryRaw<Row[]>`
         SELECT mint, decision::text AS decision, "createdAt", "outcomeMax", "outcomeMin",

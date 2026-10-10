@@ -33,6 +33,10 @@ import {
   type CurveParams,
   WSOL_MINT,
   PUMP_MIGRATION_POOL_TOKENS,
+  PUMP_DEFAULT_INITIAL_REAL_TOKEN_RESERVES,
+  PUMP_DEFAULT_INITIAL_VIRTUAL_SOL_RESERVES,
+  PUMP_DEFAULT_INITIAL_VIRTUAL_TOKEN_RESERVES,
+  PUMP_DEFAULT_TOTAL_SUPPLY,
 } from '../lib/pumpfun';
 
 const log = moduleLogger('live-state');
@@ -156,7 +160,17 @@ export interface LiveTokenView {
   /** Raw tokens the dev bought / sold in total. */
   devBought: bigint;
   devSold: bigint;
+  /**
+   * Adopted after it migrated (swing trading bigger coins): we never saw its launch, so the trade
+   * counters and the holder ledger only cover trades since `adoptedAtMs` — holder %, dev and bundle
+   * numbers from the ledger mean nothing for it.
+   */
+  adopted?: boolean;
+  adoptedAtMs?: number | null;
 }
+
+/** Creator placeholder for adopted coins (never matches a wallet). */
+export const ADOPTED_CREATOR = '(adopted)';
 
 export interface DerivedMetrics {
   priceSol: number;
@@ -393,6 +407,74 @@ export class LiveState {
     return mint;
   }
 
+  /**
+   * Start following an ALREADY-MIGRATED coin we never saw launch (swing trading bigger coins):
+   * `pool` — its canonical PumpSwap pool (lib/pump-pda.ts) — becomes its market. There is no
+   * history: counters and the holder ledger start now (`adopted`). Known reserves (e.g. the pool
+   * liquidity DexScreener reports) seed the price until the first real trade replaces them with
+   * the program's effective reserves (onAmmTrade). Idempotent: a coin we already track keeps its
+   * state — it only gets the pool if it had none — and is kept alive (see keepAlive).
+   */
+  async adoptPool(a: { mint: string; pool: string; createdAtMs: number | null; migratedAtMs: number | null; baseReserve?: bigint | null; quoteReserve?: bigint | null }, now = Date.now()): Promise<'adopted' | 'tracked'> {
+    const k = key.live(a.mint);
+    if (this.tracked.has(a.mint)) {
+      const current = await this.r.hget(k, 'ammPool');
+      if (!current || current.startsWith('amm:')) {
+        if (current) {
+          this.pools.delete(current);
+          await this.r.hdel(POOLS_KEY, current);
+        }
+        this.pools.set(a.pool, a.mint);
+        // (its `complete` flag stays the stream's call — a coin still on the curve has no trades on this pool)
+        await this.r.multi().hset(POOLS_KEY, a.pool, a.mint).hset(k, { ammPool: a.pool, ...(a.migratedAtMs ? { migratedAt: String(a.migratedAtMs) } : {}) }).exec();
+      }
+      await this.keepAlive(a.mint, now);
+      return 'tracked';
+    }
+    const createdMs = a.createdAtMs ?? a.migratedAtMs ?? now - 24 * 3600_000;
+    // createdSec is the real launch time: the "bought within 1 s of launch" sniper rule never fires.
+    this.tracked.set(a.mint, { createdSec: Math.floor(createdMs / 1000), creator: ADOPTED_CREATOR });
+    this.pools.set(a.pool, a.mint);
+    const seeded = a.baseReserve && a.quoteReserve && a.baseReserve > 0n && a.quoteReserve > 0n;
+    const px = seeded ? Number(a.quoteReserve) / 1e9 / (Number(a.baseReserve) / 1e6) : 0;
+    await this.r
+      .multi()
+      .hset(k, {
+        creator: ADOPTED_CREATOR,
+        createdAt: String(createdMs),
+        buys: '0',
+        sells: '0',
+        buyVol: '0',
+        sellVol: '0',
+        vSol: '0',
+        vTok: '0',
+        initVSol: PUMP_DEFAULT_INITIAL_VIRTUAL_SOL_RESERVES.toString(),
+        initVTok: PUMP_DEFAULT_INITIAL_VIRTUAL_TOKEN_RESERVES.toString(),
+        initRTok: PUMP_DEFAULT_INITIAL_REAL_TOKEN_RESERVES.toString(),
+        supply: PUMP_DEFAULT_TOTAL_SUPPLY.toString(),
+        complete: '1',
+        devBought: '0',
+        devSold: '0',
+        ammPool: a.pool,
+        migratedAt: String(a.migratedAtMs ?? createdMs),
+        adopted: '1',
+        adoptedAt: String(now),
+        ...(seeded ? { ammBase: a.baseReserve!.toString(), ammQuote: a.quoteReserve!.toString(), refPx: String(px), refAt: String(now) } : {}),
+      })
+      .expire(k, LIVE_STATE_TTL_SECONDS)
+      .hset(POOLS_KEY, a.pool, a.mint)
+      // Scored by adoption time (not launch time) so a restart doesn't drop it as expired.
+      .zadd(TRACKED_KEY, now, a.mint)
+      .exec();
+    return 'adopted';
+  }
+
+  /** Keep a coin across restarts while something still wants it (restore() drops entries older than ~26 h). */
+  async keepAlive(mint: string, now = Date.now()): Promise<void> {
+    if (!this.tracked.has(mint)) return;
+    await this.r.multi().zadd(TRACKED_KEY, now, mint).expire(key.live(mint), LIVE_STATE_TTL_SECONDS).exec();
+  }
+
   /** Which tracked token a PumpSwap pool belongs to (null if not ours). */
   mintForPool(pool: string): string | null {
     return this.pools.get(pool) ?? null;
@@ -424,7 +506,9 @@ export class LiveState {
   async onAmmTrade(ev: AmmTradeEvent): Promise<string | null> {
     const mint = this.pools.get(ev.pool);
     if (!mint) return null;
-    const [primary, pb, pq] = await this.r.hmget(key.live(mint), 'ammPool', 'ammBase', 'ammQuote');
+    const [primary, pb, pq, adoptedS, tradesS] = await this.r.hmget(key.live(mint), 'ammPool', 'ammBase', 'ammQuote', 'adopted', 'ammTrades');
+    // An adopted coin's seed reserves (from an outside API) never block its first real trade's price.
+    const firstOfAdopted = adoptedS === '1' && !Number(tradesS ?? 0);
     // Only the token's own market moves its price (old pools / stale mappings are ignored).
     if (primary && primary !== ev.pool) return null;
     const b0 = BigInt(pb ?? '0');
@@ -454,7 +538,7 @@ export class LiveState {
       if (baseReserve <= 0n || quoteReserve <= 0n) return mint;
     } else {
       if (baseReserve <= 0n || quoteReserve <= 0n || Number(quoteReserve) > 1e17) return this.rejectAmm(mint, 'bad reserves');
-      const prev = b0 > 0n && q0 > 0n ? Number(q0) / Number(b0) : 0;
+      const prev = b0 > 0n && q0 > 0n && !firstOfAdopted ? Number(q0) / Number(b0) : 0;
       if (priced) {
         // The vault balances in the event are NOT the price the program trades at: BOOST pools
         // carry (signed) virtual quote reserves and unswept fees sit in the vault (pump.fun docs:
@@ -645,6 +729,8 @@ export class LiveState {
       earlyBuyers: earlyRes[1] ?? [],
       devBought: big(h.devBought),
       devSold: big(h.devSold),
+      adopted: h.adopted === '1',
+      adoptedAtMs: h.adoptedAt ? Number(h.adoptedAt) : null,
     };
   }
 

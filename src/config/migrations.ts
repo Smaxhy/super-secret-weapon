@@ -102,6 +102,22 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['chart', ['smartSell', 'minMultiple'], 1.6],
     ],
   },
+  {
+    version: 5,
+    note: 'v7 (owner: swing more, especially bigger coins; trade more often to learn): SWING strategy (30% of capital, max 3 open), up to 8 positions, a little looser new-pair demand rules',
+    set: [
+      ['trading', ['allocation'], { CURVE_SNIPE: 0.4, MIGRATION_MOMENTUM: 0.15, SOON: 0.15, SMART_MONEY_COPY: 0, SWING: 0.3 }],
+      ['trading', ['enabledStrategies', 'SWING'], true],
+      ['trading', ['maxConcurrentPositions'], 8],
+      ['trading', ['maxOpenByStrategy'], { CURVE_SNIPE: 4, SOON: 2, MIGRATION_MOMENTUM: 2, SMART_MONEY_COPY: 1, SWING: 3 }],
+      ['focus', ['newPair', 'minBuyers60s'], 10],
+      ['focus', ['newPair', 'minNewBuyers60s'], 6],
+      ['focus', ['newPair', 'minNetFlowSol60s'], 1],
+      ['focus', ['newPair', 'minBuyRatioSol'], 1.2],
+      ['focus', ['newPair', 'minBuyRatioCount'], 1.3],
+      ['focus', ['newPair', 'maxGapSec'], 20],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

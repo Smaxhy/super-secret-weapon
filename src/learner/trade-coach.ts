@@ -44,6 +44,8 @@ export interface TradeReview {
   symbol: string;
   strategy: StrategyName;
   swing: boolean;
+  /** A learning trade (near-miss bought small) — reviewed, but it doesn't steer the coach. */
+  explore?: boolean;
   pnlSol: number;
   pnlPct: number;
   /** Best / worst price while we held, × entry. */
@@ -111,7 +113,8 @@ export function classifyTrade(r: {
 
 /** Pure: per-strategy adjustments from recent reviews (newest first). */
 export function computeCoachState(strategy: StrategyName, reviewsNewestFirst: readonly TradeReview[]): CoachState {
-  const list = reviewsNewestFirst.filter((r) => r.strategy === strategy).slice(0, WINDOW);
+  // Learning trades are near-misses by design — their losses mustn't tighten the real trades.
+  const list = reviewsNewestFirst.filter((r) => r.strategy === strategy && !r.explore).slice(0, WINDOW);
   const st = NEUTRAL(strategy);
   st.trades = list.length;
   if (list.length < 3) return st;
@@ -180,7 +183,7 @@ export function setCoachCache(states: readonly CoachState[]): void {
   cache = new Map(states.map((s) => [s.strategy, s]));
 }
 
-const STRATEGIES: StrategyName[] = ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'SMART_MONEY_COPY'];
+const STRATEGIES: StrategyName[] = ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'SMART_MONEY_COPY', 'SWING'];
 
 export async function readReviews(redis: Redis, limit = 50): Promise<TradeReview[]> {
   const raw = await redis.lrange(K_REVIEWS, 0, limit - 1);
@@ -279,7 +282,7 @@ export class TradeCoach {
     const hist = await readHistory(p.id).catch(() => []);
     const low = hist.length ? Math.min(...hist.map((h) => h.priceSol).filter((x) => x > 0)) : exitPx;
     const entry = p.entryPriceSol;
-    const ctx = (p.entryContext ?? {}) as { buyFeeSol?: number; swing?: boolean };
+    const ctx = (p.entryContext ?? {}) as { buyFeeSol?: number; swing?: boolean; explore?: boolean };
     const cost = p.sizeSol + Number(ctx.buyFeeSol ?? 0);
     const base = {
       pnlSol: p.realizedPnlSol,
@@ -296,6 +299,7 @@ export class TradeCoach {
       symbol: p.token.symbol,
       strategy: p.strategy as StrategyName,
       swing: ctx.swing === true,
+      explore: ctx.explore === true,
       ...base,
       pnlPct: cost > 0 ? (p.realizedPnlSol / cost) * 100 : 0,
       lowMultiple: Number.isFinite(low) && low > 0 ? Math.min(low, exitPx) / entry : exitPx / entry,

@@ -61,4 +61,14 @@ export const STRATEGIES: Record<StrategyName, StrategyParams> = {
     staleExitMinutes: 120,
     maxSlippageBps: 1500,
   },
+  SWING: {
+    name: 'SWING',
+    description: 'Bigger, established migrated coins (watchlist, trending tabs, our own grown coins) bought on a confirmed dip-and-bounce when they have shown bounce-back power (src/evaluator/swing.ts).',
+    minHolders: 0,
+    entryWindowMinutes: { min: 60, max: 365 * 24 * 60 },
+    curveProgressRange: { min: 100, max: 100 },
+    staleExitMinutes: 120,
+    // Deep pools: a fill more than 4% worse than the decision price = something moved → no trade.
+    maxSlippageBps: 400,
+  },
 };

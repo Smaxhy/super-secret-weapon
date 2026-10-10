@@ -56,6 +56,7 @@ export const STRATEGY_LABEL: Record<string, string> = {
   SOON: 'Soon',
   MIGRATION_MOMENTUM: 'Migration',
   SMART_MONEY_COPY: 'Smart money',
+  SWING: 'Swing',
 };
 
 export const EXIT_LABEL: Record<string, string> = {

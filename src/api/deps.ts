@@ -11,6 +11,8 @@ import type { CrowdTracker } from '../scanner/crowd-tracker';
 import type { StrategyLab } from '../learner/strategy-lab';
 import type { TaLab } from '../learner/ta-lab';
 import type { TrendingHub } from '../scanner/trending-hub';
+import type { SwingUniverse } from '../scanner/swing-universe';
+import type { SwingTrader } from '../executor/swing-trader';
 
 export interface ApiDeps {
   liveState: LiveState;
@@ -26,6 +28,7 @@ export interface ApiDeps {
   lab?: StrategyLab | null;
   taLab?: TaLab | null;
   trending?: TrendingHub | null;
+  swing?: { universe: SwingUniverse; trader: SwingTrader } | null;
 }
 
 /** Classify a token for the live feed colour code. */

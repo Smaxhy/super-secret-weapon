@@ -30,6 +30,7 @@ import { tradesRoutes } from './routes/trades';
 import { walletsRoutes } from './routes/wallets';
 import { learnerRoutes } from './routes/learner';
 import { controlsRoutes } from './routes/controls';
+import { swingRoutes } from './routes/swing';
 import { registerWebSocket } from './websocket';
 import { healthSnapshot } from '../lib/bot-health';
 
@@ -77,6 +78,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     await walletsRoutes(secured, deps);
     await learnerRoutes(secured);
     await controlsRoutes(secured, deps);
+    await swingRoutes(secured, deps);
   });
 
   app.setErrorHandler((error, req, reply) => {

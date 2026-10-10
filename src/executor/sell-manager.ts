@@ -36,7 +36,8 @@
  */
 import type { ExitReason, Position, Prisma } from '@prisma/client';
 import { DEFAULT_CONFIG, type BotConfigShape } from '../config/default';
-import { getConfig, refreshConfig } from '../config/runtime-config';
+import { deepMerge, getConfig, refreshConfig } from '../config/runtime-config';
+import { getSolUsd } from '../lib/sol-price';
 import { bus } from '../lib/bus';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
@@ -163,6 +164,11 @@ export interface ExitInput {
   peakAtMs?: number | null;
   /** Seconds since the coin migrated to PumpSwap (null = still on the curve / unknown). */
   migratedAgoSec?: number | null;
+  /**
+   * A winner on a BIG coin that still trends up (see holdLongerNow): the max-hold and no-movement
+   * exits are skipped — the trailing stop and break-even floor still protect it.
+   */
+  holdLonger?: boolean;
 }
 
 /** Marker stored in `tpTiersHit` once initials are out (real tiers are all > 1). */
@@ -462,6 +468,43 @@ export function normaliseInsiderSignal(sig: unknown): { hit: boolean; detail: st
   return { hit, detail: detail ?? 'insiders dumping' };
 }
 
+const strategyRulesCache = new WeakMap<object, Map<string, ExitRules>>();
+
+/**
+ * Exit rules for one strategy: the shared rules with `exit.byStrategy[strategy]` layered on top
+ * (any field; arrays replace). Cached per config object. Pure.
+ */
+export function exitRulesFor(strategy: string | null | undefined, rules: ExitRules): ExitRules {
+  const over = strategy ? ((rules as Partial<ExitRules>).byStrategy as Record<string, Record<string, unknown> | undefined> | undefined)?.[strategy] : undefined;
+  if (!over || !Object.keys(over).length) return rules;
+  let m = strategyRulesCache.get(rules);
+  if (!m) strategyRulesCache.set(rules, (m = new Map()));
+  let r = m.get(strategy!);
+  if (!r) m.set(strategy!, (r = deepMerge(rules, over) as ExitRules));
+  return r;
+}
+
+/**
+ * "Allowed to hold bigger MC coins if it sees potential" (owner): profit is already banked
+ * (initials out or a take-profit hit), the market cap is ≥ holdLonger.minMarketCapUsd, the chart
+ * still trends up (uptrend, or a range of higher lows — not breaking down), the risk score is low,
+ * and it's held less than holdLonger.maxHours. Pure.
+ */
+export function holdLongerNow(i: {
+  rules: ExitRules;
+  tpTiersHit: readonly number[];
+  marketCapUsd: number | null;
+  chart: { trend: string; higherLows: boolean; verdict: string } | null;
+  risk: number;
+  heldMs: number;
+}): boolean {
+  const hl = (i.rules as Partial<ExitRules>).holdLonger;
+  if (!hl?.enabled || i.marketCapUsd === null || i.marketCapUsd < hl.minMarketCapUsd || i.heldMs >= hl.maxHours * 3600_000) return false;
+  const banked = i.tpTiersHit.some((t) => t === INITIALS_MARKER || t > 1);
+  const up = !!i.chart && i.chart.verdict !== 'avoid' && (i.chart.trend === 'up' || (i.chart.trend === 'range' && i.chart.higherLows));
+  return banked && up && i.risk < i.rules.riskExit.threshold;
+}
+
 export interface ExitDecision {
   /** Sells to execute now, each as % of the ORIGINAL position. */
   sells: Array<{ pct: number; reason: ExitReason; detail: string }>;
@@ -669,9 +712,16 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
     }
   }
 
-  // Don't hold forever (the runner gets longer to play out).
+  // Don't hold forever (the runner gets longer to play out; a big coin still trending up rides on).
   const maxHold = initialsOut ? i.maxHoldMinutes * rules.runner.maxHoldMultiplier : i.maxHoldMinutes;
   if (holding) return { sells, state };
+  if (i.holdLonger) {
+    if (Math.abs(i.priceSol / state.refPriceSol - 1) > MOVE_THRESHOLD) {
+      state.refPriceSol = i.priceSol;
+      state.lastMoveAtMs = i.nowMs;
+    }
+    return { sells, state };
+  }
   if (remaining > 0 && i.nowMs - i.openedAtMs >= maxHold * 60_000) {
     sells.push({ pct: remaining, reason: multiple >= 1 ? 'TAKE_PROFIT' : 'STALE', detail: `max hold ${maxHold}m reached at ${multiple.toFixed(2)}x` });
     return { sells, state };
@@ -890,6 +940,8 @@ export class SellManager {
 
   private async manage(p: Position, symbol: string, out: PositionUpdate[]): Promise<void> {
     const cfg = getConfig();
+    // Shared exit rules + this strategy's own (exit.byStrategy, e.g. SWING).
+    const ex = exitRulesFor(p.strategy, cfg.exit);
     const view = await this.liveState.read(p.mint);
     if (!view) {
       log.warn({ mint: p.mint }, 'no live state for open position — closing as STALE at zero value');
@@ -903,7 +955,7 @@ export class SellManager {
     // Recent activity for the risk score (kept in memory, last ~3 minutes).
     const now = Date.now();
     const hist = this.samples.get(p.id) ?? [];
-    const trusted = priceTrusted(m.priceSol, view.refPriceSol, trailRules(cfg.exit).peakRefTolerancePct);
+    const trusted = priceTrusted(m.priceSol, view.refPriceSol, trailRules(ex).peakRefTolerancePct);
     const prevPriceSol = [...hist].reverse().find((x) => x.trusted !== false)?.priceSol ?? null;
     // The peak = the highest level the price really HELD since the last check (≥ peakHoldMs),
     // so a sandwiched buy printing +20% for a few ms can't arm the trailing stop. The raw
@@ -912,13 +964,13 @@ export class SellManager {
     this.lastCheck.set(p.id, now);
     const sane = Math.max(m.priceSol, view.refPriceSol ?? 0) * 2.5;
     const crowdTrades = this.crowd?.trades(p.mint) ?? [];
-    const holdMs = trailRules(cfg.exit).peakHoldMs ?? 1_200;
+    const holdMs = trailRules(ex).peakHoldMs ?? 1_200;
     const recentHighSol = crowdTrades.length ? settledHigh(crowdTrades, Math.max(p.openedAt.getTime(), since - holdMs - 2_000), now, holdMs, sane) : null;
     const spikeHighSol = crowdTrades.reduce((mx, x) => (x.t > since && x.sol >= 0.02 && x.px > 0 && x.px <= sane ? Math.max(mx, x.px) : mx), 0) || null;
     // Samples for risk / resistance / volatility stay ~1.5s apart (checks can be 5×/s).
     const lastSample = hist[hist.length - 1];
     if (!lastSample || now - lastSample.t >= SAMPLE_GAP_MS) hist.push({ t: now, buys: view.buys, sells: view.sells, holders: m.holderCount, priceSol: m.priceSol, trusted });
-    while (hist.length && now - hist[0]!.t > Math.max(180_000, cfg.exit.resistance.windowSec * 1000, cfg.exit.runner.volWindowSec * 1000)) hist.shift();
+    while (hist.length && now - hist[0]!.t > Math.max(180_000, ex.resistance.windowSec * 1000, ex.runner.volWindowSec * 1000)) hist.shift();
     this.samples.set(p.id, hist);
     const { risk, why } = computeRisk(hist, Math.max(p.peakPriceSol, m.priceSol), now);
     {
@@ -949,12 +1001,12 @@ export class SellManager {
     const kolAct = cfg.kol?.enabled ? await kolActivity(this.redis, p.mint, cfg.kol).catch(() => null) : null;
     // Chart-timed selling (blow-off top / bearish divergence).
     const cc = cfg.chart;
-    const read = cc?.enabled && cc.smartSell.enabled && this.crowd ? analyzeChart(this.crowd.candles(p.mint), now, cc) : null;
-    const chartSell = read && (read.blowOff || read.bearishDivergence)
+    const read = cc?.enabled && this.crowd ? analyzeChart(this.crowd.candles(p.mint), now, cc) : null;
+    const chartSell = read && cc.smartSell.enabled && (read.blowOff || read.bearishDivergence)
       ? { blowOff: read.blowOff, divergence: read.bearishDivergence, summary: read.summary, minMultiple: cc.smartSell.minMultiple, blowOffSellPct: cc.smartSell.blowOffSellPct, divergenceSellPct: cc.smartSell.divergenceSellPct }
       : null;
     const kolDump = kolAct?.dumping ? { hit: true, detail: `${kolAct.recentSellers.map((s) => s.name).slice(0, 3).join(', ')} sold` } : null;
-    const volatilityPct = computeVolatilityPct(hist, now, cfg.exit.runner.volWindowSec * 1000, cfg.exit.runner.volStepSec * 1000);
+    const volatilityPct = computeVolatilityPct(hist, now, ex.runner.volWindowSec * 1000, ex.runner.volStepSec * 1000);
     const tr = this.trail.get(p.id) ?? { breachSinceMs: null, breachTicks: 0, volatilityPct: null };
     // Money in vs money out, for "take initials". realizedPnlSol already subtracts
     // the cost of every slice sold, so adding that cost back gives what we received.
@@ -963,6 +1015,8 @@ export class SellManager {
 
     // What the trade coach learned from recent exits of this strategy.
     const coach = coachFor(p.strategy);
+    const tiers = Array.isArray(p.tpTiersHit) ? (p.tpTiersHit as number[]).filter((n) => typeof n === 'number') : [];
+    const solUsd = await getSolUsd().catch(() => null);
     // Selling costs (so the 10–20% stop band is the real loss after fees).
     const exitCostPct = exitCostPctFor(cfg.paper, !!view.ammBaseReserve, (p.sizeSol * p.remainingPct) / 100, m.marketCapSol);
     const decision = decideExit(
@@ -970,26 +1024,28 @@ export class SellManager {
         entryPriceSol: p.entryPriceSol,
         peakPriceSol: p.peakPriceSol,
         remainingPct: p.remainingPct,
-        tpTiersHit: Array.isArray(p.tpTiersHit) ? (p.tpTiersHit as number[]).filter((n) => typeof n === 'number') : [],
+        tpTiersHit: tiers,
         trailingActive: p.trailingActive,
         refPriceSol: p.refPriceSol ?? p.entryPriceSol,
         lastMoveAtMs: (p.lastMoveAt ?? p.openedAt).getTime(),
-        staleMinutes: cfg.exit.staleMinutes[p.strategy],
+        staleMinutes: ex.staleMinutes[p.strategy],
         priceSol: m.priceSol,
         migratedNoMarket: completedLongAgo,
-        bundlePctEntry: entry.earlyBuyerPct ?? m.earlyBuyerPct,
-        bundlePctNow: m.earlyBuyerPct,
-        devHoldingPctEntry: entry.devHoldingPct ?? 0,
-        devHoldingPctNow: m.devHoldingPct,
-        top10PctEntry: entry.top10HolderPct ?? m.top10HolderPct,
-        top10PctNow: m.top10HolderPct,
+        // An adopted (bigger, older) coin's ledger only covers trades since we started following it, so
+        // its holder / dev / bundle numbers can't flag a rug — the stop loss and insider exits still can.
+        bundlePctEntry: view.adopted ? 0 : (entry.earlyBuyerPct ?? m.earlyBuyerPct),
+        bundlePctNow: view.adopted ? 0 : m.earlyBuyerPct,
+        devHoldingPctEntry: view.adopted ? 0 : (entry.devHoldingPct ?? 0),
+        devHoldingPctNow: view.adopted ? 0 : m.devHoldingPct,
+        top10PctEntry: view.adopted ? 0 : (entry.top10HolderPct ?? m.top10HolderPct),
+        top10PctNow: view.adopted ? 0 : m.top10HolderPct,
         nowMs: now,
         copyWalletSold,
         risk,
         riskWhy: why,
         openedAtMs: p.openedAt.getTime(),
-        maxHoldMinutes: cfg.exit.maxHoldMinutes[p.strategy],
-        resistance: detectResistance(hist, now, cfg.exit.resistance),
+        maxHoldMinutes: ex.maxHoldMinutes[p.strategy],
+        resistance: detectResistance(hist, now, ex.resistance),
         sizeSol: p.sizeSol,
         costSol,
         proceedsSol,
@@ -1011,8 +1067,9 @@ export class SellManager {
         smartSell: chartSell,
         peakAtMs: tr.peakAtMs ?? null,
         migratedAgoSec: view.complete && view.migratedAtMs ? Math.max(0, (now - view.migratedAtMs) / 1000) : null,
+        holdLonger: holdLongerNow({ rules: ex, tpTiersHit: tiers, marketCapUsd: solUsd ? m.marketCapSol * solUsd : null, chart: read, risk, heldMs: now - p.openedAt.getTime() }),
       },
-      cfg.exit,
+      ex,
     );
 
     const s = decision.state;

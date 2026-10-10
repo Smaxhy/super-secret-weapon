@@ -48,6 +48,9 @@ export interface TrendCoin {
   /** pump.fun moderation / agent flags — never buy these. */
   banned: boolean;
   mayhem: boolean;
+  /** The coin's pool (GeckoTerminal: the trending pool; pump.fun: its PumpSwap pool) and which DEX it's on. */
+  pool?: string | null;
+  dex?: string | null;
   /** GeckoTerminal: price change and volume. */
   priceChange5mPct?: number | null;
   priceChange1hPct?: number | null;
@@ -88,6 +91,8 @@ export function parsePumpCoin(raw: unknown, rank: number): TrendCoin | null {
     replyCount: num(o.reply_count),
     banned: o.is_banned === true || (banUntil !== null && banUntil > Date.now()) || (downrank !== null && downrank > 0),
     mayhem,
+    pool: str(o.pump_swap_pool) || null,
+    dex: str(o.pump_swap_pool) ? 'pumpswap' : null,
   };
 }
 
@@ -114,8 +119,9 @@ export function parseGeckoTrending(body: unknown): TrendCoin[] {
   if (!Array.isArray(data)) return [];
   const out: TrendCoin[] = [];
   data.forEach((p, i) => {
-    const pool = p as { attributes?: Record<string, unknown>; relationships?: Record<string, { data?: { id?: string } }> };
+    const pool = p as { id?: string; attributes?: Record<string, unknown>; relationships?: Record<string, { data?: { id?: string } }> };
     const id = pool.relationships?.base_token?.data?.id ?? '';
+    const poolId = typeof pool.id === 'string' && pool.id.startsWith('solana_') ? pool.id.slice('solana_'.length) : str(pool.attributes?.address) || null;
     const mint = id.startsWith('solana_') ? id.slice('solana_'.length) : '';
     if (!mint) return;
     const a = pool.attributes ?? {};
@@ -139,6 +145,8 @@ export function parseGeckoTrending(body: unknown): TrendCoin[] {
       priceChange5mPct: num(pc.m5),
       priceChange1hPct: num(pc.h1),
       volume1hUsd: num(vol.h1),
+      pool: poolId,
+      dex: pool.relationships?.dex?.data?.id ?? null,
     });
     void i;
   });

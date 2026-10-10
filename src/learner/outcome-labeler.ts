@@ -160,6 +160,12 @@ export class OutcomeLabeler {
     else this.stats.losses++;
     const ownBuy = ev.decision === 'BUY';
     const lc = getConfig().learning ?? DEFAULT_CONFIG.learning;
+    // Swing evaluations (bigger coins) use their own score — they don't teach the launch scorer's
+    // pattern odds or keywords (score calibration still learns from them, per strategy).
+    if (ev.strategy === 'SWING') {
+      await recordIfMissed({ mint, evaluationId, decision: ev.decision, score: ev.combinedScore, max: path.max, min: path.min });
+      return;
+    }
     await updateBeliefs(patternsOf(feats, ev.strategy), res.win);
     // Who was buying when we scored it? Credit / debit those wallets (smart-wallet learning).
     await learnFromLabel(this.redis, evaluationId, res.win);

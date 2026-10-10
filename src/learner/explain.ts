@@ -34,7 +34,48 @@ const STRATEGY: Record<string, string> = {
   MIGRATION_MOMENTUM: 'post-migration momentum play',
   SMART_MONEY_COPY: 'copy trade',
   SOON: '"Soon" play (about to graduate)',
+  SWING: 'swing trade on a bigger coin (bought the dip after it bounced)',
 };
+
+/** Plain-English recap of a SWING buy (bigger coin, dip + bounce). */
+export function explainSwingBuy(i: {
+  symbol: string;
+  sizeSol: number;
+  score: number;
+  threshold: number;
+  parts: Record<string, number>;
+  marketCapUsd: number | null;
+  liquidityUsd: number | null;
+  resilience: number;
+  bounce: string;
+  setup: string;
+  notes: readonly string[];
+  sources: readonly string[];
+  explore: boolean;
+  sizeNote: string;
+  coachNote?: string | null;
+  calibrationNote?: string | null;
+}): string {
+  const usd = (x: number | null) => (x === null ? '?' : x >= 1e6 ? `$${(x / 1e6).toFixed(2)}M` : `$${Math.round(x / 1000)}k`);
+  const parts = Object.entries(i.parts)
+    .filter(([k]) => k !== 'base')
+    .map(([k, v]) => `${k} ${v > 0 ? '+' : ''}${v}`)
+    .join(', ');
+  const src = i.sources.length ? ` (found via ${i.sources.join(' / ')})` : '';
+  return [
+    `Bought ${i.sizeSol.toFixed(3)} SOL of ${i.symbol} as a ${i.explore ? 'small LEARNING ' : ''}swing trade on a bigger coin${src}: MC ${usd(i.marketCapUsd)}, liquidity ${usd(i.liquidityUsd)}.`,
+    `Bounce-back power ${i.resilience.toFixed(2)}: ${i.bounce}.`,
+    `Entry: ${i.setup}.`,
+    `Score ${i.score.toFixed(0)} vs ${i.threshold.toFixed(0)} needed (${parts}).${i.explore ? ' It was just short of the bar — bought small so the bot learns whether these near-misses pay.' : ''}`,
+    i.notes.length ? `Also: ${i.notes.slice(0, 5).join('; ')}.` : '',
+    `Size: ${i.sizeNote}.`,
+    i.calibrationNote ? `Score check: ${i.calibrationNote}.` : '',
+    i.coachNote ? `Coach: ${i.coachNote}.` : '',
+    'Plan: 30% at 1.25x, 30% at 1.6x, 15% at 3x, trailing stop + break-even floor from 1.25x, stop 12–15% after fees; a winner on a big coin that keeps trending may ride longer.',
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
 
 const pct = (v: number, dp = 0) => `${v.toFixed(dp)}%`;
 

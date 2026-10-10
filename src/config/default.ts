@@ -15,7 +15,8 @@ export const DEFAULT_CONFIG = {
     maxPositionSol: 0.2,
     minPositionSol: 0.05,
     maxPositionSolCeiling: 0.3, // the dashboard slider can't go above this
-    maxConcurrentPositions: 5,
+    /** v7: 8 (owner: trade more often so the bot learns; swing trades on bigger coins add up to 3). */
+    maxConcurrentPositions: 8,
     /**
      * Conviction sizing: maxPositionSol is the size of an AVERAGE-conviction buy.
      * Strong setups (score well over the bar, good learned odds, healthy crowd) go up
@@ -32,19 +33,22 @@ export const DEFAULT_CONFIG = {
      * rule in public tests (2 s late = their exit liquidity) → off.
      */
     allocation: {
-      CURVE_SNIPE: 0.55,
-      MIGRATION_MOMENTUM: 0.25,
-      SOON: 0.2,
+      CURVE_SNIPE: 0.4,
+      MIGRATION_MOMENTUM: 0.15,
+      SOON: 0.15,
       SMART_MONEY_COPY: 0,
+      // v7 (owner): swing trade bigger coins that keep bouncing back (src/evaluator/swing.ts).
+      SWING: 0.3,
     } satisfies Record<StrategyName, number>,
     enabledStrategies: {
       MIGRATION_MOMENTUM: true,
       SOON: true,
       SMART_MONEY_COPY: false,
       CURVE_SNIPE: true,
+      SWING: true,
     } satisfies Record<StrategyName, boolean>,
-    /** At most this many open positions per strategy (fresh pairs: 3 — research). */
-    maxOpenByStrategy: { CURVE_SNIPE: 3, SOON: 2, MIGRATION_MOMENTUM: 2, SMART_MONEY_COPY: 1 } as Partial<Record<StrategyName, number>>,
+    /** At most this many open positions per strategy (fresh pairs: 4, swings on bigger coins: 3). */
+    maxOpenByStrategy: { CURVE_SNIPE: 4, SOON: 2, MIGRATION_MOMENTUM: 2, SMART_MONEY_COPY: 1, SWING: 3 } as Partial<Record<StrategyName, number>>,
     /**
      * Strategy cool-off: once a strategy has `minTrades` closed trades among its last `lastN` and they
      * average worse than `maxAvgPnlPct` per trade, it takes no new entries for `pauseMinutes`
@@ -210,17 +214,18 @@ export const DEFAULT_CONFIG = {
       maxTop10Pct: 30,
       maxTop10EarlyShare: 0.8,
       minOfHighPct: 80,
-      // organic demand (last 60 s)
-      minBuyers60s: 12,
-      minNewBuyers60s: 8,
-      minNetFlowSol60s: 1.5,
-      minBuyRatioSol: 1.3,
-      minBuyRatioCount: 1.5,
+      // organic demand (last 60 s) — v7: a little looser (owner: one trade an hour is too few to learn from;
+      // the absorption rules above, which protect against the sniper dump, are unchanged)
+      minBuyers60s: 10,
+      minNewBuyers60s: 6,
+      minNetFlowSol60s: 1,
+      minBuyRatioSol: 1.2,
+      minBuyRatioCount: 1.3,
       requireAcceleration: true as boolean,
       minSizeCv: 0.5,
       maxSameSizePct: 25,
       minMedianBuySol: 0.05,
-      maxGapSec: 15,
+      maxGapSec: 20,
       maxBotVolumePct: 40,
       // trigger
       nearHighPct: 7,
@@ -392,6 +397,98 @@ export const DEFAULT_CONFIG = {
     liveViewers: 50,
     checkOnEntry: true as boolean,
     labOnEntry: true as boolean,
+  },
+
+  /**
+   * SWING trading bigger coins (v7, owner: "swing trading more often, especially on bigger coins like
+   * $clude that keep bouncing back — it's allowed to hold bigger MC coins if it sees potential").
+   *  - Universe (src/scanner/swing-universe.ts, every `refreshSec`): your `watchlist` (mint addresses,
+   *    Scanner page), coins on the trending tabs / DexScreener trending that already migrated, and our
+   *    own tracked coins that grew. Kept: on PumpSwap (pump.fun's own pool) ≥ `minAgeMin`, market cap
+   *    `minMarketCapUsd`–`maxMarketCapUsd`, pool liquidity ≥ `minLiquidityUsd`, 24 h volume ≥
+   *    `minVolume24hUsd`. The best `maxCoins` (+ the watchlist) are followed live, trade by trade.
+   *  - Bounce-back power (src/evaluator/swing.ts): 24 h of 5-min candles (GeckoTerminal, ≤ `history.maxPerMin`
+   *    calls/min) → dips of ≥ `dipPct`% that won back ≥ `recoverPct`% of the drop vs dips that kept falling.
+   *  - Entry: pulled back `minPullbackPct`–`maxPullbackPct` from its recent high, bounced `minBouncePct`–
+   *    `maxBouncePct` off the low with buyers in control (buy/sell ≥ `minBuyRatio`) and a higher low —
+   *    or one of the dip-type chart strategies (`taStrategies`) firing; score ≥ `minScore` (watchlist
+   *    coins `watchlistScoreDelta` easier). Top-10 holders (RPC, every `holdersCheckMin`) > `maxTop10Pct`%
+   *    → no buy, > `halfSizeTop10Pct`% → half size.
+   *  - Re-trading a coin is the point (it keeps bouncing): `reentryCooldownMin` after a close
+   *    (`lossCooldownMin` after a loss), ≤ `maxTradesPerCoinPerDay`, 2 losses in a row → paused
+   *    `lossStreakPauseHours`. Exits: `exit.byStrategy.SWING`.
+   */
+  swing: {
+    enabled: true as boolean,
+    /** Mint addresses you want swing-traded (e.g. a coin you know keeps bouncing back). */
+    watchlist: [] as string[],
+    refreshSec: 60,
+    everySec: 10,
+    maxCoins: 30,
+    maxWatchlist: 20,
+    minMarketCapUsd: 40_000,
+    maxMarketCapUsd: 25_000_000,
+    minLiquidityUsd: 10_000,
+    minVolume24hUsd: 100_000,
+    minAgeMin: 60,
+    /** Stop following a coin this long after it left the universe (never while we hold it). */
+    evictAfterMin: 90,
+    history: { enabled: true as boolean, refreshMin: 20, maxPerMin: 4 },
+    dipPct: 20,
+    recoverPct: 60,
+    minPullbackPct: 12,
+    maxPullbackPct: 45,
+    minBouncePct: 3,
+    maxBouncePct: 12,
+    minBuyRatio: 1.15,
+    /** Real trades in the last 10 minutes (we only buy coins that are trading right now). */
+    minTrades10m: 20,
+    minScore: 70,
+    watchlistScoreDelta: -5,
+    /** Bounce-back power below this (0–1) → no buy (watchlist coins exempt). */
+    minResilience: 0.25,
+    maxTop10Pct: 55,
+    halfSizeTop10Pct: 40,
+    holdersCheckMin: 30,
+    sizeMultiplier: 1,
+    reentryCooldownMin: 20,
+    lossCooldownMin: 120,
+    maxTradesPerCoinPerDay: 4,
+    lossStreakPauseHours: 24,
+    /** Dip / reversal chart strategies that count as a swing entry setup. */
+    taStrategies: [
+      'fib_golden_pocket',
+      'pullback_shallow',
+      'pullback_deep',
+      'ema_pullback',
+      'rsi_oversold_bounce',
+      'rsi_bull_divergence',
+      'vwap_reclaim',
+      'vwap_band_bounce',
+      'capitulation_reversal',
+      'liquidity_sweep',
+      'double_bottom',
+      'cvd_divergence',
+      'climax_retest',
+      'break_of_structure',
+    ] as string[],
+  },
+
+  /**
+   * Learning trades (v7, owner: "trade more frequently, not once every hour — it won't learn like that").
+   * A coin that passes EVERY rule but scores up to `scoreMargin` points under the bar is bought at
+   * `sizeMultiplier`× size (≤ `maxOpen` at a time, ≤ `maxPerHour` per hour). Score calibration learns
+   * from their real results: if near-misses win, their score band gets marked up and they become normal
+   * buys; if they lose, they stay small learning trades. They don't count for the strategy cool-off.
+   */
+  explore: {
+    enabled: true as boolean,
+    scoreMargin: 8,
+    // Half size (0.1 SOL at the default 0.2): smaller and the fixed tx costs (~3% round trip) distort what it learns.
+    sizeMultiplier: 0.5,
+    maxOpen: 2,
+    maxPerHour: 4,
+    strategies: ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'SWING'] as StrategyName[],
   },
 
   /**
@@ -635,11 +732,11 @@ export const DEFAULT_CONFIG = {
      */
     timeStop: {
       enabled: true as boolean,
-      minutes: { CURVE_SNIPE: 1.5, SOON: 3, MIGRATION_MOMENTUM: 10, SMART_MONEY_COPY: 3 } as Partial<Record<StrategyName, number>>,
+      minutes: { CURVE_SNIPE: 1.5, SOON: 3, MIGRATION_MOMENTUM: 10, SMART_MONEY_COPY: 3, SWING: 60 } as Partial<Record<StrategyName, number>>,
       defaultMinutes: 5,
       minPeakMultiple: 1.1,
       maxMultiple: 1.02,
-      stallMinutes: { CURVE_SNIPE: 3, SOON: 5, MIGRATION_MOMENTUM: 10, SMART_MONEY_COPY: 5 } as Partial<Record<StrategyName, number>>,
+      stallMinutes: { CURVE_SNIPE: 3, SOON: 5, MIGRATION_MOMENTUM: 10, SMART_MONEY_COPY: 5, SWING: 120 } as Partial<Record<StrategyName, number>>,
     },
     /**
      * Coins bought on the curve that graduate: sell `sellPct` while pump.fun's BOOST is buying
@@ -676,7 +773,46 @@ export const DEFAULT_CONFIG = {
       SOON: 45,
       MIGRATION_MOMENTUM: 240,
       SMART_MONEY_COPY: 60,
+      // Swings on bigger coins play out over hours (the runner gets 2× this).
+      SWING: 720,
     } satisfies Record<StrategyName, number>,
+    /**
+     * Let a winner on a BIG coin run (owner: "it's allowed to hold bigger MC coins if it sees
+     * potential"): once initials are out (or the first take-profit is in), the market cap is at least
+     * `minMarketCapUsd` and the chart still trends up (not breaking down, risk low), the max-hold and
+     * no-movement exits are skipped — the trailing stop / break-even floor still protect it — up to
+     * `maxHours` in total.
+     */
+    holdLonger: { enabled: true as boolean, minMarketCapUsd: 60_000, maxHours: 48 },
+    /**
+     * Per-strategy exit settings layered on top of everything above (any field can be overridden).
+     * SWING (bigger coins, slower and smaller moves than fresh pairs, but more of them): first profit
+     * at 1.25x (30%), more at 1.6x (30%) and 3x (15%), trail + break-even floor from 1.25x, 12–15%
+     * stop, no follow-through after an hour / no new high for 2 hours → out.
+     */
+    byStrategy: {
+      SWING: {
+        takeProfitTiers: [
+          { multiple: 1.25, sellPct: 30 },
+          { multiple: 1.6, sellPct: 30 },
+          { multiple: 3, sellPct: 15 },
+        ],
+        trailingStopActivateMultiple: 1.25,
+        trail: {
+          breakEvenAfterMultiple: 1.25,
+          ladder: [
+            { fromMultiple: 1.25, pct: 12 },
+            { fromMultiple: 1.6, pct: 15 },
+            { fromMultiple: 2, pct: 18 },
+            { fromMultiple: 3, pct: 20 },
+          ],
+          // Deep pools: one big print is rarer, but a level still has to hold 4 s to count.
+          peakHoldMs: 4000,
+        },
+        protectProfit: { afterMultiple: 1.25, floorMultiple: 1.02 },
+        timeStop: { minPeakMultiple: 1.08, maxMultiple: 1.0 },
+      },
+    } as Partial<Record<StrategyName, Record<string, unknown>>>,
     /** Old hard stop (kept for saved configs) — the real limit is stopLoss.maxPct. */
     hardStopLossPct: 20,
     /**
@@ -692,7 +828,7 @@ export const DEFAULT_CONFIG = {
       volMultiplier: 2,
       fallbackPct: 15,
       /** Tighter max per strategy (migration plays: 15%). */
-      maxPctByStrategy: { MIGRATION_MOMENTUM: 15 } as Partial<Record<StrategyName, number>>,
+      maxPctByStrategy: { MIGRATION_MOMENTUM: 15, SWING: 15 } as Partial<Record<StrategyName, number>>,
       /** A dip under the stop (not the hard limit) must hold this long before selling (no wick sells). */
       confirmTicks: 1,
       confirmSec: 2,
@@ -709,6 +845,7 @@ export const DEFAULT_CONFIG = {
       SOON: 20,
       MIGRATION_MOMENTUM: 60,
       SMART_MONEY_COPY: 60,
+      SWING: 120,
     } satisfies Record<StrategyName, number>,
     dailyLossCircuitBreakerPct: 20,
   },

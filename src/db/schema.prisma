@@ -34,6 +34,7 @@ enum Strategy {
   SOON
   MIGRATION_MOMENTUM
   SMART_MONEY_COPY
+  SWING
 }
 
 enum TokenStatus {

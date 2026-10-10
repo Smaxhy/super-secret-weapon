@@ -81,6 +81,23 @@ export class FakeRedis {
   async zrem(k: string, m: string): Promise<number> {
     return this.hdel(k, m);
   }
+  async zremrangebyscore(k: string, min: string, max: string): Promise<number> {
+    const h = this.data.get(k) as Map<string, string> | undefined;
+    if (!h) return 0;
+    const lo = min === '-inf' ? -Infinity : Number(min);
+    const hi = max === '+inf' ? Infinity : Number(max);
+    let n = 0;
+    for (const [m, sc] of [...h]) if (Number(sc) >= lo && Number(sc) <= hi) n += h.delete(m) ? 1 : 0;
+    return n;
+  }
+  async zrange(k: string, _start: string, _stop: string, withScores?: string): Promise<string[]> {
+    const h = (this.data.get(k) as Map<string, string> | undefined) ?? new Map<string, string>();
+    const rows = [...h].sort((a, b) => Number(a[1]) - Number(b[1]));
+    return withScores ? rows.flatMap(([m, sc]) => [m, sc]) : rows.map(([m]) => m);
+  }
+  async srem(k: string, m: string): Promise<number> {
+    return (this.data.get(k) as Set<string> | undefined)?.delete(m) ? 1 : 0;
+  }
   async pfadd(k: string, m: string): Promise<number> {
     this.setOf(k).add(m);
     return 1;
