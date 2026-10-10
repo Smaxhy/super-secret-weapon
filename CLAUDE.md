@@ -294,6 +294,13 @@ smart money → learning engine → ML → social). See README.md.
   SOON 5, RUNNER max 4, 12 positions (migration v10). **Potential hold** (`exit.potentialHold`): organic flow over 120 s
   (≥8 buyers, ≥60% buys, ≥1.5 SOL) and no rug signal → soft stop, early risk exit, stale and time stops wait (time
   stops ≤10 min longer); the hard limit always fires.
+- **v9.5 (Oct 10): X check per coin** (owner: "check X communities and tweets"; `src/evaluator/x-check.ts`, `x.check`).
+  Free: `parseXLink` (profile / post / community / none) + reuse of the same community / post id (`reuse:xc:` / `reuse:xp:`,
+  recorded in social-analyzer `fetchAndStore`) and handle (`reuse:tw:`). Live (TWITTER_BEARER_TOKEN, only when every rule
+  passes and the score is within 12 of the bar, cached 30 min `x:check:<mint>`, ≤300 reads/day `x:reads:<day>`): users/by/
+  username, tweets/:id (+author), communities/:id (member_count — endpoint availability depends on the X plan), search/
+  recent for the CONTRACT ADDRESS. `xVerdict` −8…+10 points (lowers/raises the bar), notes "X: …" in the buy
+  explanation, `features.x` + AI section `x`. Untested against the live X API (sandbox can't reach it).
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

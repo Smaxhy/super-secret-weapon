@@ -14,6 +14,7 @@
  * Paid checks (does the X account really exist, followers, mentions,
  * sentiment) come later with the X API — see social-scanner.ts.
  */
+import { recordXLink } from './x-check';
 import type { Redis } from 'ioredis';
 import type { FeatureName } from '../config/default';
 import { moduleLogger } from '../lib/logger';
@@ -350,6 +351,8 @@ export class SocialAnalyzer {
       const p = this.redis.multi();
       const handle = twitterInfo(socials.twitter).handle;
       if (handle) p.sadd(`reuse:tw:${handle}`, mint).expire(`reuse:tw:${handle}`, REUSE_WINDOW_SECONDS);
+      // Same X community / post used by other launches (handles are covered above).
+      void recordXLink(this.redis, mint, socials.twitter).catch(() => undefined);
       const site = domainOf(socials.website);
       if (site) p.sadd(`reuse:web:${site}`, mint).expire(`reuse:web:${site}`, REUSE_WINDOW_SECONDS);
       await p.exec();

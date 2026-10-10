@@ -736,6 +736,13 @@ export const DEFAULT_CONFIG = {
     pollSec: 300,
     /** How long a keyword stays hot after a post. */
     hotHours: 6,
+    /**
+     * Per-coin X check (src/evaluator/x-check.ts; owner: "check X communities and X tweets"). Free part always:
+     * link kind + copy-paste reuse of the same community / post / profile. Live part (TWITTER_BEARER_TOKEN, pay
+     * per read) only for coins passing every rule within `liveWithinPoints` of the bar: profile, post, community
+     * stats + recent posts with the contract address; ≤ maxReadsPerDay reads a day, cached 30 min per coin.
+     */
+    check: { enabled: true as boolean, live: true as boolean, liveWithinPoints: 12, maxReadsPerDay: 300 },
   },
 
   /** Keyword lists matched against name, ticker and description (whole words, case-insensitive). */

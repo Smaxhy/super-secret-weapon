@@ -14,6 +14,7 @@
  * To keep the database lean, an Evaluation row is stored only for BUYs,
  * REJECTs, "interesting" scores (≥ 60) and each token's final checkpoint.
  */
+import { parseXLink, xLinkReuse, xLive, xVerdict, type XVerdict } from './x-check';
 import { organicFlow, scanVerdict } from '../scanner/migrated-scanner';
 import { priceShape, staircase } from './price-shape';
 import { aiRuleVerdict, flattenFeatures } from '../learner/ai-coach';
@@ -415,6 +416,17 @@ export class Evaluator {
       result = score(features);
     }
 
+    // X: what the coin's X link is (profile / post / community), copy-paste reuse, and — close to a buy,
+    // with a token — live followers / engagement / members / who is posting the contract address.
+    const xc = cfg.x?.check ?? DEFAULT_CONFIG.x.check;
+    let xv: XVerdict | null = null;
+    if (xc.enabled && token.metadataFetchedAt) {
+      const reused = await xLinkReuse(this.redis, token.twitter).catch(() => 0);
+      const live = xc.live && ruleFails.length === 0 && !token.safetyHardFail && result.score >= threshold - xc.liveWithinPoints ? await xLive(this.redis, mint, token.twitter, xc.maxReadsPerDay).catch(() => null) : null;
+      xv = xVerdict(parseXLink(token.twitter), reused, live);
+      threshold -= xv.points;
+    }
+
     // AI coach rules (tested on new trades before they go live): avoid → no buy, prefer → easier bar.
     // Same feature shape as the stored evaluation, so live and backtest read identical numbers.
     const aiFlat = flattenFeatures(
@@ -428,6 +440,7 @@ export class Evaluator {
         chart: chart ? { vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, pullbackPct: chart.pullbackPct } : null,
         swing,
         shape,
+        x: xv?.features ?? null,
       },
       { score: result.score, kols: kolsIn, mcUsd: market.raw.marketCapUsd ?? null, ageMin: market.raw.ageSec / 60, hourUtc: new Date().getUTCHours() },
     );
@@ -473,7 +486,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, market: market.raw, shape, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, market: market.raw, shape, x: xv ? { ...xv.features, points: xv.points } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },
@@ -581,7 +594,7 @@ export class Evaluator {
         swing,
         explore,
         explain: (sizeSol) =>
-          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, chartNote: chart ? `${chart.summary}${dipEntry ? ` — bought the dip: ${job.data.dipWhy ?? ''}` : ''}` : null, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: explore ? `learning trade ×${ex.sizeMultiplier} (score just under the bar)` : conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...(explore ? [`LEARNING TRADE: score ${result.score.toFixed(1)} is just under the bar ${threshold.toFixed(0)} — bought small so the bot learns whether these near-misses pay`] : []), ...(newPair?.notes ?? []), ...taBonus.notes.map((n) => `chart setup: ${n}`), ...(trend?.notes ?? []), ...aiVerdict.notes, ...kolBonus.notes, ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
+          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, chartNote: chart ? `${chart.summary}${dipEntry ? ` — bought the dip: ${job.data.dipWhy ?? ''}` : ''}` : null, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: explore ? `learning trade ×${ex.sizeMultiplier} (score just under the bar)` : conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...(explore ? [`LEARNING TRADE: score ${result.score.toFixed(1)} is just under the bar ${threshold.toFixed(0)} — bought small so the bot learns whether these near-misses pay`] : []), ...(newPair?.notes ?? []), ...taBonus.notes.map((n) => `chart setup: ${n}`), ...(trend?.notes ?? []), ...aiVerdict.notes, ...(xv?.notes ?? []).map((n) => `X: ${n}`), ...kolBonus.notes, ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
       });
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.
       if (!swing && (res.entered || res.reason === 'already traded this token')) await markDone();
