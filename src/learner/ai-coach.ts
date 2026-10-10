@@ -166,6 +166,15 @@ export function aiRuleVerdict(strategy: string, flat: Readonly<Record<string, nu
 // The coach
 // ---------------------------------------------------------------------------
 
+/** $ per million tokens (input / output) for the models this coach may use. */
+export function priceFor(model: string, promptTokens = 0): { in: number; out: number } {
+  if (/haiku-5-5/.test(model)) return promptTokens > 100_000 ? { in: 0.5, out: 2.5 } : { in: 0.1, out: 0.5 };
+  if (/sonnet-5/.test(model)) return { in: 2, out: 10 };
+  if (/fable/.test(model)) return { in: 10, out: 50 };
+  if (/opus-5-5/.test(model)) return { in: 4, out: 20 };
+  return { in: 5, out: 25 };
+}
+
 const K = { rules: 'ai:rules', insights: 'ai:insights', last: 'ai:lastRun', spend: (d: string) => `ai:spend:${d}` };
 const STRATS = ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'SMART_MONEY_COPY', 'SWING'];
 
@@ -221,7 +230,8 @@ export class AiCoach {
   }
 
   get model(): string {
-    return process.env.AI_MODEL?.trim() || 'claude-opus-5-5';
+    // Owner: Haiku to keep costs down (AI_MODEL in .env overrides).
+    return process.env.AI_MODEL?.trim() || 'claude-haiku-5-5';
   }
   get budgetUsd(): number {
     const b = Number(process.env.AI_DAILY_BUDGET_USD ?? 2);
@@ -366,7 +376,7 @@ export class AiCoach {
           const s = [...vs].sort((a, b) => a - b);
           return { name: k, min: r1(s[0]!), median: r1(s[Math.floor(s.length / 2)]!), max: r1(s[s.length - 1]!) };
         })
-        .slice(0, 120);
+        .slice(0, 80);
       const allowed = new Set(featureList.map((f) => f.name));
       const input = {
         features: featureList,
@@ -385,18 +395,21 @@ export class AiCoach {
         retiredRules: rules.filter((r) => r.status === 'retired').slice(0, 10).map((r) => ({ title: r.title, why: r.statusWhy })),
       };
 
+      // Server-side refusal fallback exists for the Opus / Sonnet / Fable models, not for Haiku.
+      const fallback = /haiku/.test(this.model) ? {} : { betas: ['server-side-fallback-2026-07-01'] as Anthropic.Beta.AnthropicBeta[], fallbacks: 'default' as const };
       const res = await this.client.beta.messages.create({
         model: this.model,
         max_tokens: 16000,
-        betas: ['server-side-fallback-2026-07-01'],
-        fallbacks: 'default',
+        ...fallback,
         system: SYSTEM,
         output_config: { effort: 'medium', format: { type: 'json_schema', schema: OUTPUT_SCHEMA as unknown as Record<string, unknown> } },
         messages: [{ role: 'user', content: `Here are the bot's ${sample.length} most recent closed trades (newest first) as JSON:\n\n${JSON.stringify(input)}` }],
       });
-      // Cost from the real usage (defaults: Claude Opus 5.5 $4 / $20 per million tokens).
-      const inP = Number(process.env.AI_PRICE_IN_PER_MTOK ?? 4);
-      const outP = Number(process.env.AI_PRICE_OUT_PER_MTOK ?? 20);
+      // Cost from the real usage at the model's price (AI_PRICE_IN/OUT_PER_MTOK override).
+      const promptTokens = res.usage.input_tokens + (res.usage.cache_read_input_tokens ?? 0) + (res.usage.cache_creation_input_tokens ?? 0);
+      const price = priceFor(this.model, promptTokens);
+      const inP = Number(process.env.AI_PRICE_IN_PER_MTOK ?? price.in);
+      const outP = Number(process.env.AI_PRICE_OUT_PER_MTOK ?? price.out);
       const cost = ((res.usage.input_tokens + (res.usage.cache_read_input_tokens ?? 0) * 0.1 + (res.usage.cache_creation_input_tokens ?? 0) * 1.25) * inP + res.usage.output_tokens * outP) / 1e6;
       const day = new Date().toISOString().slice(0, 10);
       await this.redis.multi().incrbyfloat(K.spend(day), cost).expire(K.spend(day), 3 * 86_400).exec();

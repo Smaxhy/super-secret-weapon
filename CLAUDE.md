@@ -255,7 +255,7 @@ smart money → learning engine → ML → social). See README.md.
   the scorer was learning a target the bot never trades). Config migration v8.
 - **v9 (Oct 10): AI coach** (owner: "learn from behaviours, not only statistics"; `src/learner/ai-coach.ts`, `aiCoach`
   config, `@anthropic-ai/sdk`). Key `ANTHROPIC_API_KEY` ONLY in the VPS .env (+ optional `AI_MODEL` default
-  claude-opus-5-5, `AI_DAILY_BUDGET_USD` default 2, `AI_PRICE_IN/OUT_PER_MTOK` 4/20). Hourly (≥5 new closed trades, budget
+  claude-haiku-5-5 (owner: Haiku to cut costs; no server-side fallback on Haiku), `AI_DAILY_BUDGET_USD` default 2, prices per model in `priceFor`). Hourly (≥5 new closed trades, budget
   left): beta messages + `fallbacks: "default"` (server-side-fallback-2026-07-01), effort medium, structured output (JSON
   schema) → ≤6 insights + ≤4 rules over the flattened entry features (`flattenFeatures`: market/crowd/manipulation/
   newPair/trending/kol/chart/swing numeric leaves + entry.score/kols/mcUsd/ageMin/hourUtc; invented feature names dropped).
