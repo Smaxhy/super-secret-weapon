@@ -48,6 +48,15 @@ describe('entry verdicts', () => {
     expect(r.zone!.hi).toBeLessThanOrEqual(r.recentHigh * 0.9 + 1e-9);
     expect(r.summary).toContain('waiting for a dip');
   });
+  it('the buy zone is a 38–62% retrace of the run-up (not a 40% crash)', () => {
+    const r = analyzeChart(series([...ramp(1, 1.2, 30), ...ramp(1.25, 2.2, 10)]), NOW, cfg);
+    const offHi = (1 - r.zone!.hi / r.recentHigh) * 100;
+    const offLo = (1 - r.zone!.lo / r.recentHigh) * 100;
+    expect(offHi).toBeGreaterThan(12);
+    expect(offHi).toBeLessThan(25);
+    expect(offLo).toBeGreaterThan(offHi);
+    expect(offLo).toBeLessThan(38);
+  });
   it('a healthy dip that is bouncing in an uptrend is the buy', () => {
     const r = analyzeChart(series([...ramp(1, 1.6, 30), ...ramp(1.6, 1.38, 6), ...ramp(1.38, 1.45, 3)]), NOW, cfg);
     expect(r.pullbackPct).toBeGreaterThan(10);

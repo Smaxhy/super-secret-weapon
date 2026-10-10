@@ -243,10 +243,18 @@ export function analyzeChart(c15: readonly Candle[], now: number, cfg: ChartConf
     bits.push('breaking down');
   } else if (extended && (pullbackPct < cfg.buyDip.minPullbackPct || recovered > 0.6)) {
     out.verdict = 'wait_dip';
-    // Buy zone: back toward VWAP / support, but at least `dip.minPullbackPct` off the high.
-    const anchor = Math.max(vwap ?? 0, support ?? 0, recentHigh * (1 - cfg.dip.maxPullbackPct / 100));
-    const hi = Math.min(recentHigh * (1 - cfg.dip.minPullbackPct / 100), anchor * 1.05);
-    const lo = Math.max(recentHigh * (1 - cfg.dip.maxPullbackPct / 100), Math.min(anchor, hi) * 0.92);
+    // Buy zone: a 38–62% retrace of the last run-up (where pullbacks in a strong move usually
+    // find buyers), kept between dip.minPullbackPct and dip.maxPullbackPct off the high and not
+    // below VWAP if VWAP sits inside it.
+    const before = last10.slice(Math.max(0, hiIdx - 20), hiIdx + 1); // up to 5 min before the high
+    const impulseLow = Math.min(...before.map((c) => c.l), recentHigh);
+    const run = recentHigh - impulseLow;
+    let hi = recentHigh - 0.382 * run;
+    let lo = recentHigh - 0.618 * run;
+    hi = Math.min(hi, recentHigh * (1 - cfg.dip.minPullbackPct / 100));
+    lo = Math.max(lo, recentHigh * (1 - cfg.dip.maxPullbackPct / 100));
+    if (vwap !== null && vwap > lo && vwap < hi) lo = vwap;
+    if (!(lo < hi)) lo = hi * 0.95;
     out.zone = { lo: Math.min(lo, hi), hi };
     bits.push('stretched — waiting for a dip');
   } else if (pullbackPct >= cfg.buyDip.minPullbackPct && bouncePct >= cfg.buyDip.minBouncePct && recovered <= 0.6 && (trend !== 'down' || higherLows) && (vwap === null || price >= vwap * 0.95)) {
