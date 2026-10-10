@@ -190,7 +190,8 @@ export function analyzeChart(c15: readonly Candle[], now: number, cfg: ChartConf
     if (c.h >= last10[hiIdx]!.h) hiIdx = i;
   });
   const recentHigh = last10[hiIdx]?.h ?? price;
-  const lowSinceHigh = Math.min(...last10.slice(hiIdx).map((c) => c.l), price);
+  // Only prices AFTER the high count (the high candle's own low usually came before its high).
+  const lowSinceHigh = Math.min(last10[hiIdx]?.c ?? price, ...last10.slice(hiIdx + 1).map((c) => c.l), price);
   const pullbackPct = recentHigh > 0 ? (1 - lowSinceHigh / recentHigh) * 100 : 0;
   const bouncePct = lowSinceHigh > 0 ? (price / lowSinceHigh - 1) * 100 : 0;
   // How much of the dip it has already won back (0 = at the low, 1 = back at the high).
