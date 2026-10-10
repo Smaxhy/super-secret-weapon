@@ -18,12 +18,15 @@ describe('rug guard v2: dump risk at entry', () => {
     expect(dumpImpactPct(0n, tok(800_000_000))).toBe(0);
   });
   it('flags coins whose top holders can crash them, passes spread-out ones', () => {
-    const concentrated = new Map([['a', tok(120_000_000)], ['b', tok(80_000_000)], ['c', tok(60_000_000)], ['d', tok(5_000_000)]]);
-    const spread = new Map(Array.from({ length: 40 }, (_, i) => [`w${i}`, tok(5_000_000)] as [string, bigint]));
-    const reserve = tok(500_000_000); // late curve: few tokens left in it
+    // A fresh PumpSwap pool holds only ~206M tokens (~20% of supply).
+    const reserve = tok(206_000_000);
+    const concentrated = new Map([['a', tok(200_000_000)], ['b', tok(150_000_000)], ['c', tok(100_000_000)], ['d', tok(5_000_000)]]);
+    // Normal migrated coin: top holders 4% / 3% / 3% — this used to be refused (one 3% holder "could dump it 25%").
+    const normal = new Map([['a', tok(40_000_000)], ['b', tok(30_000_000)], ['c', tok(30_000_000)], ...Array.from({ length: 40 }, (_, i) => [`w${i}`, tok(5_000_000)] as [string, bigint])]);
     const bad = dumpRisk(concentrated, reserve);
-    const good = dumpRisk(spread, reserve);
-    expect(bad.top3Pct).toBeGreaterThan(G.maxTop3DumpImpactPct);
+    const good = dumpRisk(normal, reserve);
+    expect(bad.top1Pct).toBeGreaterThan(G.maxTopDumpImpactPct);
+    expect(good.top1Pct).toBeLessThan(G.maxTopDumpImpactPct);
     expect(good.top3Pct).toBeLessThan(G.maxTop3DumpImpactPct);
     const snap = { devHoldingPct: 1, devSoldFraction: 0, earlyBuyerPct: 2, top10HolderPct: 20, liquiditySol: 40, priceSol: 1 };
     const base: RugScreenInput = { atSignal: snap, now: snap, onAmm: false, flow60s: null, insider: null, maxDevHoldingPct: 10, guard: G };

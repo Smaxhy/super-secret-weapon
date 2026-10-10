@@ -181,12 +181,16 @@ export const DEFAULT_CONFIG = {
     // ---- Rug guard v2 (src/executor/rug-watch.ts; owner: "still gets rugged way too much") ----
     rugGuard: {
       enabled: true as boolean,
-      /** No buy when the 3 biggest holders dumping everything would crash the price this much… */
-      maxTop3DumpImpactPct: 45,
-      /** …or the single biggest holder alone this much. */
-      maxTopDumpImpactPct: 25,
-      /** Wallets that dumped on us before (+ devs of coins that rugged us): this many among the top holders → no buy (dev = 2). */
-      ruggerWalletMin: 2,
+      /**
+       * No buy when the 3 biggest holders dumping everything would crash the price this much…
+       * (was 45 / 25: a PumpSwap pool only holds ~20% of the supply, so ONE normal 3% holder already
+       * "could dump it 25%" → nearly every migrated / late-curve coin was refused — the bot stopped trading)
+       */
+      maxTop3DumpImpactPct: 80,
+      /** …or the single biggest holder alone this much (≈ a 10%+ holder on a fresh PumpSwap pool). */
+      maxTopDumpImpactPct: 60,
+      /** Wallets that dumped on us before (+ devs of coins that rugged us): this many among the top-10 holders → no buy (dev = 2). */
+      ruggerWalletMin: 3,
       ruggerMemoryDays: 14,
       /** While holding: the biggest holders at entry sold this % of the supply → out. */
       holderDumpPct: 4,

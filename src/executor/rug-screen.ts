@@ -125,9 +125,11 @@ export async function screenEntry(
       const reserve = view.ammBaseReserve && view.ammBaseReserve > 0n ? view.ammBaseReserve : view.virtualTokenReserves;
       dumpRiskNow = dumpRisk(view.balances, reserve);
       if (deps.ruggers) {
-        const top = topHolders(view.balances, 20).map((h) => h.w);
-        const flagged = await deps.ruggers.flagged([view.creator, ...top, ...view.earlyBuyers.slice(0, 30)], g.ruggerMemoryDays, now).catch(() => new Set<string>());
-        ruggers = ruggerVerdict(flagged, view.creator, [...new Set([...top, ...view.earlyBuyers.slice(0, 30)])], g.ruggerWalletMin);
+        // Top-10 holders only: sniper bots are early buyers (and sellers) in almost every launch, so counting
+        // early buyers / the top 20 refused nearly every coin once a few snipers were on the list.
+        const top = topHolders(view.balances, 10).map((h) => h.w);
+        const flagged = await deps.ruggers.flagged([view.creator, ...top], g.ruggerMemoryDays, now).catch(() => new Set<string>());
+        ruggers = ruggerVerdict(flagged, view.creator, top, g.ruggerWalletMin);
       }
     }
     // Even, wickless green steps with narrow buying = a laddered chart waiting for its one red candle.

@@ -318,6 +318,11 @@ smart money → learning engine → ML → social). See README.md.
   update more, but more trades"): `trading.minPositionSol` 0.1 (0.05 lost ~6% to gas+tips per round trip),
   `entry.minCombinedScore` 65, explore maxOpen 6 / maxPerHour 20, runner scan ≥18 buyers / ≥3 SOL / buys ≥55%.
   Migration v13. Owner wants NO further changes for now — let it collect 200–300 trades, then tune from the autopsy.
+- **v9.10 (Oct 10): "legit never trading" fix** — the rug guard v2 dump-risk check (v8.6) refused nearly every
+  migrated / late-curve / runner coin: a fresh PumpSwap pool holds only ~20% of the supply, so ONE normal 3% holder
+  "could dump it 25%". Now top-1 > 60% / top-3 > 80% impact (≈ a 10%+ / 25%+ holder on a fresh pool). Rugger memory
+  counted early buyers (sniper bots are in every launch and get recorded as dumpers) → now only the top-10 holders,
+  3 needed (dev still counts 2). Config migration v14. If it still doesn't trade: Scanner → Bot health → top refusals.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

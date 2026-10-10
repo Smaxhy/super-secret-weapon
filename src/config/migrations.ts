@@ -235,6 +235,15 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['explore', ['maxPerHour'], 20],
     ],
   },
+  {
+    version: 14,
+    note: 'v9.10 (owner: "legit never trading"): rug-guard dump risk 60% / 80% (was 25 / 45 — refused nearly every migrated coin), rugger memory needs 3 of the top-10 holders',
+    set: [
+      ['antiRug', ['rugGuard', 'maxTopDumpImpactPct'], 60],
+      ['antiRug', ['rugGuard', 'maxTop3DumpImpactPct'], 80],
+      ['antiRug', ['rugGuard', 'ruggerWalletMin'], 3],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */
