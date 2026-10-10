@@ -9,9 +9,18 @@
  *     1–2 s after it — the price has already moved) and real costs. That decides whether copying
  *     can work at all, before any SOL is risked.
  * Pure analysis (`analyzeSwaps`) + a cached fetcher (`walletReport`).
+ * History source: Solscan (needs a plan level that includes wallet activity) or — default fallback —
+ * the bot's own Solana RPC: each transaction's balance changes (SOL + token) give the swap, for any DEX.
+ * Costs ~1 RPC credit per transaction (500 transactions ≈ 500 of Helius' 1M/month).
  */
+import { PublicKey, type VersionedTransactionResponse } from '@solana/web3.js';
+import { moduleLogger } from '../lib/logger';
+import { prisma } from '../lib/prisma';
 import { redis } from '../lib/redis';
-import { walletSwaps, type SolscanSwap } from '../lib/solscan';
+import { solscanKey, walletSwaps, type SolscanSwap } from '../lib/solscan';
+import { getConnection } from '../lib/solana';
+
+const log = moduleLogger('wallet-report');
 
 const SOL_MINTS = new Set(['So11111111111111111111111111111111111111112', 'So11111111111111111111111111111111111111111']);
 
@@ -280,25 +289,112 @@ export function analyzeSwaps(address: string, swaps: readonly Swap[], symbols: R
   };
 }
 
+/**
+ * Pure: one transaction → a swap by `wallet` (SOL for exactly one token or back), from its balance
+ * changes. Wrapped SOL counts as SOL; the network fee isn't part of the trade. null = not a swap.
+ */
+export function swapFromTx(tx: Pick<VersionedTransactionResponse, 'blockTime' | 'meta' | 'transaction'>, wallet: string): Swap | null {
+  const meta = tx.meta;
+  if (!meta || meta.err || !tx.blockTime) return null;
+  const keys = tx.transaction.message.staticAccountKeys.map((k) => k.toBase58());
+  const i = keys.indexOf(wallet);
+  if (i < 0) return null;
+  let sol = ((meta.postBalances[i] ?? 0) - (meta.preBalances[i] ?? 0) + (i === 0 ? meta.fee : 0)) / 1e9;
+  const tok = new Map<string, number>();
+  const add = (b: { mint: string; owner?: string; uiTokenAmount: { uiAmount: number | null } }, sign: 1 | -1) => {
+    if (b.owner !== wallet) return;
+    const v = (b.uiTokenAmount.uiAmount ?? 0) * sign;
+    if (SOL_MINTS.has(b.mint)) sol += v;
+    else tok.set(b.mint, (tok.get(b.mint) ?? 0) + v);
+  };
+  for (const b of meta.postTokenBalances ?? []) add(b, 1);
+  for (const b of meta.preTokenBalances ?? []) add(b, -1);
+  const changed = [...tok.entries()].filter(([, v]) => Math.abs(v) > 1e-9);
+  if (changed.length !== 1) return null;
+  const [mint, d] = changed[0]!;
+  const sig = tx.transaction.signatures[0] ?? '';
+  if (d > 0 && sol < -1e-6) return { t: tx.blockTime * 1000, sig, mint, buy: true, sol: -sol, tokens: d };
+  if (d < 0 && sol > 1e-6) return { t: tx.blockTime * 1000, sig, mint, buy: false, sol, tokens: -d };
+  return null;
+}
+
+/** The wallet's last `maxTx` transactions from our own RPC → swaps (batched, rate-limited). */
+async function rpcSwaps(address: string, maxTx: number): Promise<Swap[]> {
+  const conn = getConnection();
+  const key = new PublicKey(address);
+  const sigs: string[] = [];
+  let before: string | undefined;
+  while (sigs.length < maxTx) {
+    const page = await conn.getSignaturesForAddress(key, { limit: Math.min(1000, maxTx - sigs.length), ...(before ? { before } : {}) });
+    if (!page.length) break;
+    sigs.push(...page.filter((x) => !x.err).map((x) => x.signature));
+    before = page[page.length - 1]!.signature;
+    if (page.length < 1000) break;
+  }
+  const out: Swap[] = [];
+  const opts = { maxSupportedTransactionVersion: 0, commitment: 'confirmed' } as const;
+  let batched = true;
+  for (let i = 0; i < sigs.length; i += 50) {
+    const chunk = sigs.slice(i, i + 50);
+    let txs: Array<VersionedTransactionResponse | null> = [];
+    if (batched) {
+      try {
+        txs = await conn.getTransactions(chunk, opts);
+      } catch (err) {
+        // Some plans (e.g. free tiers) refuse batch requests → one by one (same credit cost).
+        log.info({ err: (err as Error).message }, 'batch getTransactions refused — fetching one by one');
+        batched = false;
+      }
+    }
+    if (!batched) {
+      for (let j = 0; j < chunk.length; j += 5) txs.push(...(await Promise.all(chunk.slice(j, j + 5).map((sg) => conn.getTransaction(sg, opts).catch(() => null)))));
+    }
+    for (const tx of txs) {
+      const s = tx ? swapFromTx(tx, address) : null;
+      if (s) out.push(s);
+    }
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+
 const CACHE_SEC = 30 * 60;
 
-/** Fetch `pages` × 100 swaps (newest first) from Solscan and analyse. Cached 30 min per wallet + pages. */
-export async function walletReport(address: string, pages = 5, refresh = false): Promise<WalletReport & { cached: boolean }> {
+/** Read the last `pages` × 100 swaps (Solscan) / transactions (RPC) and analyse. Cached 30 min per wallet + pages. */
+export async function walletReport(address: string, pages = 5, refresh = false): Promise<WalletReport & { cached: boolean; source?: string }> {
   const n = Math.max(1, Math.min(10, Math.round(pages)));
   const key = `wreport:${address}:${n}`;
   if (!refresh) {
     const hit = await redis.get(key);
     if (hit) return { ...(JSON.parse(hit) as WalletReport), cached: true };
   }
-  const rows: SolscanSwap[] = [];
   const symbols: Record<string, string | undefined> = {};
-  for (let p = 1; p <= n; p++) {
-    const page = await walletSwaps(address, p);
-    rows.push(...page.swaps);
-    for (const [m, t] of Object.entries(page.tokens)) symbols[m] = t.token_symbol ?? t.token_name;
-    if (page.swaps.length < 100) break; // no more history
+  let swaps: Swap[] | null = null;
+  let source: 'solscan' | 'rpc' = 'rpc';
+  // Solscan first when a key is set; its wallet-activity endpoint needs a higher plan level —
+  // any refusal falls back to our own RPC.
+  if (solscanKey() && (await redis.get('solscan:noActivity')) === null) {
+    try {
+      const rows: SolscanSwap[] = [];
+      for (let p = 1; p <= n; p++) {
+        const page = await walletSwaps(address, p);
+        rows.push(...page.swaps);
+        for (const [m, t] of Object.entries(page.tokens)) symbols[m] = t.token_symbol ?? t.token_name;
+        if (page.swaps.length < 100) break; // no more history
+      }
+      swaps = toSwaps(rows);
+      source = 'solscan';
+    } catch (err) {
+      const msg = (err as Error).message;
+      log.info({ err: msg }, 'Solscan unavailable for wallet history — using RPC');
+      // Plan doesn't include it → don't spend a call asking again for a day.
+      if (/upgrade|unauthori|level/i.test(msg)) await redis.set('solscan:noActivity', msg.slice(0, 200), 'EX', 86_400);
+    }
   }
-  const report = analyzeSwaps(address, toSwaps(rows), symbols);
+  if (!swaps) swaps = await rpcSwaps(address, n * 100);
+  // Names from our own database (free).
+  const unknown = [...new Set(swaps.map((x) => x.mint))].filter((m) => !symbols[m]);
+  if (unknown.length) for (const t of await prisma.token.findMany({ where: { mint: { in: unknown } }, select: { mint: true, symbol: true } })) symbols[t.mint] = t.symbol;
+  const report = { ...analyzeSwaps(address, swaps, symbols), source };
   await redis.set(key, JSON.stringify(report), 'EX', CACHE_SEC);
   return { ...report, cached: false };
 }

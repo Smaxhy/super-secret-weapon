@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeSwaps, coinTrades, simulateCopy, toSwaps } from '../src/learner/wallet-report';
+import { analyzeSwaps, coinTrades, simulateCopy, swapFromTx, toSwaps } from '../src/learner/wallet-report';
 import type { SolscanSwap } from '../src/lib/solscan';
 
 const SOL = 'So11111111111111111111111111111111111111112';
@@ -35,5 +35,30 @@ describe('wallet analyzer (Solscan)', () => {
     expect(r.winRatePct).toBe(100);
     expect(r.verdict).toMatch(/Not copyable|Only works/);
     expect(r.style[0]).toMatch(/very fast/);
+  });
+});
+
+describe('wallet history from RPC (balance changes)', () => {
+  const W = '7BNaxx6KdUYrjACNQZ9He26NBFoFxujQMAfNLnArLGH5';
+  const OTHER = '11111111111111111111111111111111';
+  const tx = (solDeltaLamports: number, tokDelta: number, opts: { wsol?: number; fee?: number; err?: unknown } = {}) =>
+    ({
+      blockTime: T0,
+      meta: {
+        err: opts.err ?? null,
+        fee: opts.fee ?? 5000,
+        preBalances: [10e9, 0],
+        postBalances: [10e9 + solDeltaLamports - (opts.fee ?? 5000), 0],
+        preTokenBalances: [{ accountIndex: 2, mint: 'MINT', owner: W, uiTokenAmount: { uiAmount: 100 } }, ...(opts.wsol ? [{ accountIndex: 3, mint: SOL, owner: W, uiTokenAmount: { uiAmount: 0 } }] : [])],
+        postTokenBalances: [{ accountIndex: 2, mint: 'MINT', owner: W, uiTokenAmount: { uiAmount: 100 + tokDelta } }, ...(opts.wsol ? [{ accountIndex: 3, mint: SOL, owner: W, uiTokenAmount: { uiAmount: opts.wsol } }] : [])],
+      },
+      transaction: { signatures: ['sig1'], message: { staticAccountKeys: [{ toBase58: () => W }, { toBase58: () => OTHER }] } },
+    }) as never;
+  it('turns balance changes into a buy / sell, ignoring the network fee', () => {
+    expect(swapFromTx(tx(-1e9, 5000), W)).toMatchObject({ buy: true, sol: 1, tokens: 5000, mint: 'MINT' });
+    expect(swapFromTx(tx(0, -100, { wsol: 2.5 }), W)).toMatchObject({ buy: false, sol: 2.5, tokens: 100 });
+    expect(swapFromTx(tx(-1e9, 0), W)).toBeNull(); // a plain SOL transfer
+    expect(swapFromTx(tx(-1e9, 5000, { err: { x: 1 } }), W)).toBeNull(); // failed tx
+    expect(swapFromTx(tx(-1e9, 5000), OTHER.replace(/1/g, '2'))).toBeNull(); // not our wallet
   });
 });

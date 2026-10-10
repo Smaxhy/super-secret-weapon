@@ -1,4 +1,4 @@
-/** Wallets page: analyze any wallet's trading from Solscan (patterns + "could we copy it?"). */
+/** Wallets page: analyze any wallet's trading (Solscan or our own RPC) — patterns + "could we copy it?". */
 import { useState, type FormEvent } from 'react';
 import { api } from '../lib/api';
 import { shortAddr } from '../lib/format';
@@ -11,6 +11,7 @@ interface Report {
   medianBuySol: number; avgBuySol: number; closedCoins: number; winRatePct: number; realisedPnlSol: number; profitFactor: number | null; medianWinPct: number; medianLossPct: number;
   medianHoldMin: number | null; medianFirstSellSec: number | null; busiestHoursUtc: number[]; style: string[]; best: Coin[]; worst: Coin[]; recent: Coin[]; copy: Sim[]; verdict: string;
   usage?: { today: number; cap: number };
+  source?: string;
 }
 
 const hold = (s: number | null) => (s === null ? 'open' : s < 120 ? `${s}s` : s < 7200 ? `${Math.round(s / 60)}m` : `${(s / 3600).toFixed(1)}h`);
@@ -37,7 +38,7 @@ export function WalletAnalyzer() {
   };
 
   return (
-    <Card title="Analyze a wallet (Solscan)" className="mb-4">
+    <Card title="Analyze a wallet" className="mb-4">
       <form onSubmit={(e) => void run(e)} className="grid gap-3 sm:grid-cols-[2fr_auto_auto] sm:items-end">
         <label className="flex min-w-0 flex-col gap-1 text-sm text-ink-2">
           Wallet address
@@ -46,16 +47,19 @@ export function WalletAnalyzer() {
         <label className="flex flex-col gap-1 text-sm text-ink-2">
           History
           <select value={pages} onChange={(e) => setPages(Number(e.target.value))} className="rounded-lg border border-line bg-page px-3 py-2.5 text-sm text-ink">
-            <option value={2}>last 200 swaps</option>
-            <option value={5}>last 500 swaps</option>
-            <option value={10}>last 1000 swaps</option>
+            <option value={2}>last 200 transactions</option>
+            <option value={5}>last 500 transactions</option>
+            <option value={10}>last 1000 transactions</option>
           </select>
         </label>
         <button type="submit" disabled={busy} className="rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
           {busy ? 'Reading…' : 'Analyze'}
         </button>
       </form>
-      <p className="mt-2 text-xs text-muted">Each 100 swaps = 1 Solscan call. Results are kept 30 min (no extra calls).{r?.usage ? ` Used today: ${r.usage.today}/${r.usage.cap} calls.` : ''}</p>
+      <p className="mt-2 text-xs text-muted">
+        Reads the wallet's history from the Solana node (~1 Helius credit per transaction) or Solscan when your plan allows it. Results are kept 30 min (no extra cost).
+        {r?.source ? ` Source: ${r.source === 'rpc' ? 'Solana RPC' : 'Solscan'}.` : ''}
+      </p>
       {error && <p className="mt-2 text-sm text-down">{error}</p>}
       {r && (
         <div className="mt-4 space-y-4 text-sm">
