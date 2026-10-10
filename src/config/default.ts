@@ -188,6 +188,13 @@ export const DEFAULT_CONFIG = {
       bigSellerSoldPct: 60,
       /** Sell cascade: ≥20% under the 20-second high, sells ≥3× buys, ≥2 sellers → out at once (not above 1.3x: the trail handles winners). */
       cascade: { enabled: true as boolean, windowSec: 20, dropPct: 20, sellBuyRatio: 3, minSellers: 2, maxMultiple: 1.3 },
+      /**
+       * Launch-whale pump (owner: "a dev or someone buys A LOT at the start → huge spike → a bunch of new
+       * wallets buy it"): a wallet that bought ≥5% of the supply in the first 30 s and still holds ≥5% → no
+       * buy; one that paid ≥30% of the launch buying, spiked it ≥1.8x, and then ≥15 wallets — ≥75% of them
+       * never seen trading other coins — piled in → no buy even if it sold some.
+       */
+      launchPump: { enabled: true as boolean, windowSec: 30, whaleSupplyPct: 5, maxWhaleHoldPct: 5, spikeMultiple: 1.8, whaleBuySharePct: 30, swarmMinBuyers: 15, swarmFreshPct: 75 },
     },
   },
 

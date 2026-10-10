@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../src/config/default';
 import { decideExit, type ExitInput } from '../src/executor/sell-manager';
 import { rugScreen, type RugScreenInput } from '../src/executor/rug-screen';
-import { dumpImpactPct, dumpRisk, holderDump, ruggerVerdict, sellCascade, topHolders } from '../src/executor/rug-watch';
+import { dumpImpactPct, dumpRisk, holderDump, launchPump, launchPumpVerdict, ruggerVerdict, sellCascade, topHolders } from '../src/executor/rug-watch';
 import type { CrowdTrade } from '../src/scanner/crowd-tracker';
 
 const M = 1_000_000n; // 1 whole token = 1e6 raw
@@ -73,5 +73,34 @@ describe('rug guard v2: while holding', () => {
     expect(decideExit({ ...exitBase, sellCascade: cascade }, ex).sells[0]).toMatchObject({ reason: 'RUG_DETECTED' });
     // A big winner dipping hard is the trailing stop's job, not a rug.
     expect(decideExit({ ...exitBase, priceSol: 1.6, peakPriceSol: 1.6, sellCascade: cascade }, ex).sells.some((s) => s.reason === 'RUG_DETECTED')).toBe(false);
+  });
+});
+
+describe('launch-whale pump (owner: dev buys a lot at the start → spike → swarm of new wallets)', () => {
+  const LP = DEFAULT_CONFIG.antiRug.rugGuard.launchPump;
+  const T0 = NOW - 10 * 60_000;
+  const t = (sec: number, w: string, buy: boolean, tokM: number, px: number): CrowdTrade => ({ t: T0 + sec * 1000, w, buy, sol: tokM * 1e6 * px, tok: tokM * 1e6, px, pp: px });
+  const swarm = Array.from({ length: 20 }, (_, i) => t(40 + i * 5, `fresh${i}`, true, 2, 4e-8));
+  const pumpTrades = [t(1, 'dev', true, 80, 2e-8), t(3, 'x1', true, 5, 2.4e-8), t(10, 'dev', true, 40, 3e-8), t(25, 'x2', true, 3, 4.2e-8), ...swarm];
+  const ctx = (devHolds: number) => ({ creator: 'dev', createdAtMs: T0, balances: new Map([['dev', tok(devHolds)]]), supplyRaw: SUPPLY });
+
+  it('a dev who bought 12% at launch and still holds it → no buy', () => {
+    const lp = launchPump(pumpTrades, ctx(120_000_000), LP);
+    expect(lp?.whale).toMatchObject({ w: 'dev', isDev: true });
+    expect(lp!.whale!.boughtSupplyPct).toBeCloseTo(12, 0);
+    expect(launchPumpVerdict(lp, 10, LP)).toMatch(/the dev bought 12% at launch and still holds 12/);
+  });
+  it('whale sold down but spiked it and a swarm of brand-new wallets piled in → still no buy', () => {
+    const lp = launchPump(pumpTrades, ctx(20_000_000), LP);
+    expect(lp!.spikeMultiple).toBeGreaterThanOrEqual(LP.spikeMultiple);
+    expect(lp!.swarm.length).toBe(20);
+    expect(launchPumpVerdict(lp, 90, LP)).toMatch(/pump set-up/);
+    // The same swarm made of known traders is real demand.
+    expect(launchPumpVerdict(lp, 30, LP)).toBeNull();
+  });
+  it('an organic launch (no wallet buying ≥5%) passes; a log that misses the launch is ignored', () => {
+    const organic = [t(1, 'dev', true, 10, 2e-8), ...Array.from({ length: 10 }, (_, i) => t(2 + i, `w${i}`, true, 3, 2.2e-8)), ...swarm];
+    expect(launchPumpVerdict(launchPump(organic, ctx(10_000_000), LP), 95, LP)).toBeNull();
+    expect(launchPump(pumpTrades.slice(4), ctx(0), LP)).toBeNull();
   });
 });

@@ -157,3 +157,88 @@ export function ruggerVerdict(flagged: ReadonlySet<string>, creator: string, hol
   if (score < min) return null;
   return flagged.has(creator) ? `dev rugged us before${hits.length ? ` (+${hits.length} known dumper${hits.length > 1 ? 's' : ''} holding)` : ''}` : `${hits.length} wallets that dumped on us before are top holders`;
 }
+
+/**
+ * Launch-whale pump (owner: "a dev or someone buys A LOT at the start, it spikes, then a bunch of
+ * new wallets pile in" — the classic set-up: the whale's bag becomes the exit for the swarm).
+ */
+export interface LaunchPumpConfig {
+  enabled: boolean;
+  /** Buys within this many seconds of the first trade count as launch buys. */
+  windowSec: number;
+  /** A wallet that bought ≥ this % of the supply at launch is a launch whale… */
+  whaleSupplyPct: number;
+  /** …and blocks the buy while it still holds ≥ this % of the supply. */
+  maxWhaleHoldPct: number;
+  /** Spike: the price ≥ this × the first trade's within the window, the whale paying ≥ whaleBuySharePct of the buys. */
+  spikeMultiple: number;
+  whaleBuySharePct: number;
+  /** Swarm: ≥ swarmMinBuyers different wallets bought in the 3 min after, ≥ swarmFreshPct % never seen trading elsewhere. */
+  swarmMinBuyers: number;
+  swarmFreshPct: number;
+}
+
+export interface LaunchPump {
+  whale: { w: string; isDev: boolean; boughtSupplyPct: number; holdsSupplyPct: number; sol: number } | null;
+  spikeMultiple: number;
+  whaleBuySharePct: number;
+  /** Buyers in the 3 minutes after the launch window (excluding the whale and the dev). */
+  swarm: string[];
+}
+
+/** Pure: read the launch from the trade log. null when the log doesn't reach back to the launch. */
+export function launchPump(
+  trades: readonly CrowdTrade[],
+  ctx: { creator: string; createdAtMs: number; balances: ReadonlyMap<string, bigint>; supplyRaw: bigint },
+  c: Pick<LaunchPumpConfig, 'windowSec' | 'whaleSupplyPct'>,
+): LaunchPump | null {
+  const first = trades[0];
+  // The log must start at the launch (older coins' first trades were pruned).
+  if (!first || first.t - ctx.createdAtMs > 15_000) return null;
+  const cut = first.t + c.windowSec * 1000;
+  const supplyTok = Number(ctx.supplyRaw) / 1e6 || 1e9;
+  const early = trades.filter((x) => x.t <= cut);
+  const bought = new Map<string, { tok: number; sol: number }>();
+  let buySol = 0;
+  for (const x of early) {
+    if (!x.buy) continue;
+    buySol += x.sol;
+    const b = bought.get(x.w) ?? { tok: 0, sol: 0 };
+    b.tok += x.tok;
+    b.sol += x.sol;
+    bought.set(x.w, b);
+  }
+  let whale: LaunchPump['whale'] = null;
+  for (const [w, b] of bought) {
+    const pct = (b.tok / supplyTok) * 100;
+    if (pct >= c.whaleSupplyPct && (!whale || pct > whale.boughtSupplyPct)) {
+      whale = { w, isDev: w === ctx.creator, boughtSupplyPct: pct, holdsSupplyPct: (Number(ctx.balances.get(w) ?? 0n) / Number(ctx.supplyRaw || 1n)) * 100, sol: b.sol };
+    }
+  }
+  const px = (x: CrowdTrade) => (x.pp && x.pp > 0 ? x.pp : x.px);
+  const firstPx = early.find((x) => x.px > 0) ? px(early.find((x) => x.px > 0)!) : 0;
+  const highPx = early.reduce((m, x) => Math.max(m, px(x)), 0);
+  const swarm = [...new Set(trades.filter((x) => x.buy && x.t > cut && x.t <= cut + 180_000 && x.w !== ctx.creator && x.w !== whale?.w).map((x) => x.w))];
+  return {
+    whale,
+    spikeMultiple: firstPx > 0 ? highPx / firstPx : 1,
+    whaleBuySharePct: whale && buySol > 0 ? (whale.sol / buySol) * 100 : 0,
+    swarm,
+  };
+}
+
+/** Pure: the reason to refuse, or null. `freshPct` = share of the swarm never seen trading elsewhere (null = unknown). */
+export function launchPumpVerdict(lp: LaunchPump | null, freshPct: number | null, c: LaunchPumpConfig): string | null {
+  if (!c.enabled || !lp?.whale) return null;
+  const who = lp.whale.isDev ? 'the dev' : 'one wallet';
+  const w = lp.whale;
+  if (w.holdsSupplyPct >= c.maxWhaleHoldPct) {
+    return `${who} bought ${w.boughtSupplyPct.toFixed(0)}% at launch and still holds ${w.holdsSupplyPct.toFixed(1)}%`;
+  }
+  const spiked = lp.spikeMultiple >= c.spikeMultiple && lp.whaleBuySharePct >= c.whaleBuySharePct;
+  const swarmed = lp.swarm.length >= c.swarmMinBuyers && freshPct !== null && freshPct >= c.swarmFreshPct;
+  if (spiked && swarmed) {
+    return `pump set-up: ${who} bought ${w.boughtSupplyPct.toFixed(0)}% at launch (${lp.spikeMultiple.toFixed(1)}x spike), then ${lp.swarm.length} mostly brand-new wallets (${freshPct!.toFixed(0)}%) piled in`;
+  }
+  return null;
+}

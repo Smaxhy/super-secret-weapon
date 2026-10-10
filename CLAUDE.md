@@ -221,6 +221,10 @@ smart money → learning engine → ML → social). See README.md.
   no buy. Exit (sell manager `rugGuard()`): top-15 holders snapshotted at the first check (`rug:holders:<positionId>`,
   3 days) — they sold ≥4% of supply, or one ≥2%-holder sold ≥60% → RUG_DETECTED; **sell cascade** (20 s: −20% from
   the high, sells ≥3× buys, ≥2 sellers, only ≤1.3x) → RUG_DETECTED. Every RUG_DETECTED records the dumpers + dev.
+  **Launch-whale pump** (owner: "dev/someone buys A LOT at the start → spike → bunch of new wallets buy";
+  `launchPump` / `launchPumpVerdict`, `rugGuard.launchPump`, crowd log must reach the launch): a wallet that bought
+  ≥5% of supply in the first 30 s and still holds ≥5% → no buy; or it paid ≥30% of launch buys, spiked ≥1.8x, then
+  ≥15 buyers in 3 min with ≥75% "fresh" (no record in `wpnl:n`) → no buy.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

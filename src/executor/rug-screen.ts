@@ -15,7 +15,7 @@
 import type { Redis } from 'ioredis';
 import { DEFAULT_CONFIG } from '../config/default';
 import { getConfig } from '../config/runtime-config';
-import { dumpRisk, ruggerVerdict, topHolders, type RuggerMemory } from './rug-watch';
+import { dumpRisk, launchPump, launchPumpVerdict, ruggerVerdict, topHolders, type RuggerMemory } from './rug-watch';
 import { insiderDumpSignal } from '../evaluator/insider-cluster';
 import type { MarketRaw } from '../evaluator/market-analyzer';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
@@ -45,6 +45,8 @@ export interface RugScreenInput {
   dumpRisk?: { top1Pct: number; top3Pct: number } | null;
   /** Known dumpers / ruggers among the holders (reason) or null. */
   ruggers?: string | null;
+  /** Launch-whale pump set-up (rug-watch.launchPumpVerdict) or null. */
+  launchPump?: string | null;
   guard?: { maxTop3DumpImpactPct: number; maxTopDumpImpactPct: number } | null;
 }
 
@@ -55,6 +57,7 @@ export function rugScreen(i: RugScreenInput): string | null {
   if (i.insider?.dumping) return `insiders dumping (${i.insider.reason})`;
   if (i.kolDump) return `KOLs dumping (${i.kolDump})`;
   if (i.ruggers) return `rugger memory: ${i.ruggers}`;
+  if (i.launchPump) return i.launchPump;
   if (i.dumpRisk && i.guard) {
     if (i.dumpRisk.top1Pct > i.guard.maxTopDumpImpactPct) return `one holder could dump it ${i.dumpRisk.top1Pct.toFixed(0)}% (max ${i.guard.maxTopDumpImpactPct}%)`;
     if (i.dumpRisk.top3Pct > i.guard.maxTop3DumpImpactPct) return `top-3 holders could dump it ${i.dumpRisk.top3Pct.toFixed(0)}% (max ${i.guard.maxTop3DumpImpactPct}%)`;
@@ -102,7 +105,19 @@ export async function screenEntry(
     const g = getConfig().antiRug?.rugGuard ?? DEFAULT_CONFIG.antiRug.rugGuard;
     let dumpRiskNow: { top1Pct: number; top3Pct: number } | null = null;
     let ruggers: string | null = null;
+    let launch: string | null = null;
     if (g.enabled && !view.adopted) {
+      // Launch whale + spike + swarm of brand-new wallets = the classic pump-and-dump set-up.
+      const lpc = g.launchPump ?? DEFAULT_CONFIG.antiRug.rugGuard.launchPump;
+      const lp = lpc.enabled && deps.crowd ? launchPump(deps.crowd.trades(req.mint), { creator: view.creator, createdAtMs: view.createdAtMs, balances: view.balances, supplyRaw: view.curve.totalSupply }, lpc) : null;
+      let freshPct: number | null = null;
+      if (lp?.whale && lp.swarm.length >= lpc.swarmMinBuyers) {
+        // "Brand-new" = no trading record in the smart-money ledger (wallets that bought AND sold other coins).
+        const sample = lp.swarm.slice(0, 60);
+        const known = await deps.redis.hmget('wpnl:n', ...sample).catch(() => null);
+        if (known) freshPct = (known.filter((x) => x === null).length / sample.length) * 100;
+      }
+      launch = launchPumpVerdict(lp, freshPct, lpc);
       const reserve = view.ammBaseReserve && view.ammBaseReserve > 0n ? view.ammBaseReserve : view.virtualTokenReserves;
       dumpRiskNow = dumpRisk(view.balances, reserve);
       if (deps.ruggers) {
@@ -112,6 +127,7 @@ export async function screenEntry(
       }
     }
     return rugScreen({
+      launchPump: launch,
       dumpRisk: dumpRiskNow,
       ruggers,
       guard: g.enabled ? g : null,
