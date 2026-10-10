@@ -584,7 +584,7 @@ export const DEFAULT_CONFIG = {
    * and proposes insights + rules; a rule goes live only after ≥ minForward new trades prove it
    * (≥ edgePct points better/worse than the rest). Live avoid rules let 1 in probeEvery through small.
    */
-  aiCoach: { enabled: true as boolean, everyMin: 60, minNewTrades: 5, tradesPerReview: 40, maxRules: 12, minForward: 8, edgePct: 5, probeEvery: 5, preferBarDelta: -4 },
+  aiCoach: { enabled: true as boolean, everyMin: 120, minNewTrades: 8, tradesPerReview: 30, maxRules: 12, minForward: 8, edgePct: 5, probeEvery: 5, preferBarDelta: -4 },
 
   /**
    * Loss autopsy (src/learner/loss-autopsy.ts; owner: "it keeps losing — scan what goes wrong and learn"):

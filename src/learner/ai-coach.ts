@@ -247,11 +247,13 @@ export class AiCoach {
     return process.env.AI_DEEP_MODEL?.trim() || 'claude-sonnet-5-5';
   }
   get budgetUsd(): number {
-    const b = Number(process.env.AI_DAILY_BUDGET_USD ?? 2);
-    return Number.isFinite(b) && b >= 0 ? b : 2;
+    const b = Number(process.env.AI_DAILY_BUDGET_USD ?? 0.5);
+    return Number.isFinite(b) && b >= 0 ? b : 0.5;
   }
 
   start(): void {
+    // The first deep (stronger, pricier) review comes 24 h after the coach first starts, not at once.
+    void this.redis.set(K.lastDeep, new Date().toISOString(), 'NX');
     void this.refreshRules();
     this.statsTimer = setInterval(() => void this.refreshRules(), 10 * 60_000);
     this.statsTimer.unref?.();
@@ -326,7 +328,7 @@ export class AiCoach {
         exitReason: p.exitReason ?? 'UNKNOWN',
         peakMultiple: p.entryPriceSol > 0 ? Math.round((p.peakPriceSol / p.entryPriceSol) * 100) / 100 : 1,
         heldMin: p.closedAt ? Math.round((p.closedAt.getTime() - p.openedAt.getTime()) / 6_000) / 10 : 0,
-        explanation: (ec.explanation ?? '').slice(0, 500),
+        explanation: (ec.explanation ?? '').slice(0, 250),
         lesson: ec.review?.lesson ?? null,
         flat: flattenFeatures(p.evaluation?.features, {
           score: p.evaluation?.combinedScore ?? null,
@@ -382,7 +384,7 @@ export class AiCoach {
       if (trades.length < 10) return { ran: false, why: `only ${trades.length} closed trades so far` };
       // Deep review: once every 24 h (or when asked) — stronger model, twice the trades, more effort.
       const lastDeepAt = Date.parse((await this.redis.get(K.lastDeep)) ?? '') || 0;
-      const deep = !!this.deepModel && this.deepModel !== 'off' && (deepAsked || Date.now() - lastDeepAt >= 24 * 3600_000);
+      const deep = !!this.deepModel && this.deepModel !== 'off' && (deepAsked || (Date.now() - lastDeepAt >= 24 * 3600_000 && spent < this.budgetUsd * 0.4));
       const model = deep ? this.deepModel : this.model;
 
       const rules = await this.rules();
@@ -396,7 +398,7 @@ export class AiCoach {
           const s = [...vs].sort((a, b) => a - b);
           return { name: k, min: r1(s[0]!), median: r1(s[Math.floor(s.length / 2)]!), max: r1(s[s.length - 1]!) };
         })
-        .slice(0, 80);
+        .slice(0, 50);
       const allowed = new Set(featureList.map((f) => f.name));
       // What the price did right after each buy (from the position's price history).
       const after = await Promise.all(sample.map(async (t) => afterEntry(await readHistory(t.id).catch(() => []), t.entryPriceSol, t.openedAtMs)));
