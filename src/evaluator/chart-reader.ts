@@ -41,7 +41,7 @@ export interface ChartConfig {
   overboughtRsi: number;
   maxRun2mPct: number;
   buyDip: { minPullbackPct: number; minBouncePct: number };
-  dip: { minPullbackPct: number; maxPullbackPct: number };
+  dip: { minPullbackPct: number; maxPullbackPct: number; zoneTopMaxPct?: number };
 }
 
 export interface ChartRead {
@@ -251,8 +251,10 @@ export function analyzeChart(c15: readonly Candle[], now: number, cfg: ChartConf
     const run = recentHigh - impulseLow;
     let hi = recentHigh - 0.382 * run;
     let lo = recentHigh - 0.618 * run;
-    hi = Math.min(hi, recentHigh * (1 - cfg.dip.minPullbackPct / 100));
-    lo = Math.max(lo, recentHigh * (1 - cfg.dip.maxPullbackPct / 100));
+    // The zone starts between minPullbackPct and zoneTopMaxPct below the high (a normal dip
+    // qualifies even after a huge run) and reaches down to the 62% retrace (never past maxPullbackPct).
+    hi = Math.max(Math.min(hi, recentHigh * (1 - cfg.dip.minPullbackPct / 100)), recentHigh * (1 - (cfg.dip.zoneTopMaxPct ?? 20) / 100));
+    lo = Math.min(Math.max(lo, recentHigh * (1 - cfg.dip.maxPullbackPct / 100)), hi * 0.92);
     if (vwap !== null && vwap > lo && vwap < hi) lo = vwap;
     if (!(lo < hi)) lo = hi * 0.95;
     out.zone = { lo: Math.min(lo, hi), hi };

@@ -261,7 +261,7 @@ export const DEFAULT_CONFIG = {
     maxRun2mPct: 35,
     buyDip: { minPullbackPct: 8, minBouncePct: 2 },
     buyDipPoints: 4,
-    dip: { enabled: true as boolean, minPullbackPct: 10, maxPullbackPct: 40, bounceConfirmPct: 3, minBuyRatio: 1.1, waitMinutes: 10, runAwayPct: 40, breakdownPct: 7 },
+    dip: { enabled: true as boolean, minPullbackPct: 10, zoneTopMaxPct: 20, maxPullbackPct: 40, bounceConfirmPct: 3, minBuyRatio: 1.1, waitMinutes: 10, runAwayPct: 40, breakdownPct: 7 },
     smartSell: { enabled: true as boolean, minMultiple: 1.4, blowOffSellPct: 50, divergenceSellPct: 30 },
   },
 

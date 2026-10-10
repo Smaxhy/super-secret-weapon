@@ -79,8 +79,8 @@ smart money → learning engine → ML → social). See README.md.
   log (1h) → VWAP(10m), RSI(14 on 30s), EMA trend, pivots (higher lows / lower highs), pullback/bounce,
   2-min run, blow-off top, bearish divergence. Entry verdict: `avoid` (breaking down → rule fail),
   `buy_now` (dip ≥8% + bounce ≥2% in uptrend, +4 pts), `wait_dip` (stretched: >25% over VWAP / RSI>78 /
-  >35% in 2 min) → DipWatcher (`src/executor/dip-watcher.ts`) waits ≤10 min for the buy zone (10–40% off
-  the high near VWAP/support) + 3% bounce with buy/sell ≥1.1, then re-checks with `dip: true` (skips the
+  >35% in 2 min) → DipWatcher (`src/executor/dip-watcher.ts`) waits ≤10 min for the buy zone (38–62% fib
+  retrace of the last run; top clamped 10–20% off the high, bottom ≤40%, VWAP floor) + 3% bounce with buy/sell ≥1.1, then re-checks with `dip: true` (skips the
   12s confirmation); ran +40% / broke down / timeout → dropped. Positions page "Waiting for a dip"
   (`/api/dip-watch`). Exits: blow-off → sell 50% of what's left, divergence → 30% (≥1.4x, once each;
   tpTiersHit markers −2 / −3).
