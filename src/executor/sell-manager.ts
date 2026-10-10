@@ -53,6 +53,7 @@ import { getConnection } from '../lib/solana';
 import { copySoldKey } from '../scanner/whale-tracker';
 import { insiderDumpSignal } from '../evaluator/insider-cluster';
 import { coachFor } from '../learner/trade-coach';
+import { autopsyTuneFor } from '../learner/loss-autopsy';
 import type { CrowdTrade, CrowdTracker } from '../scanner/crowd-tracker';
 import { kolActivity } from '../scanner/kol-signal';
 import { analyzeChart } from '../evaluator/chart-reader';
@@ -1147,7 +1148,7 @@ export class SellManager {
         holderDump: guard.holderDump,
         sellCascade: guard.cascade,
         coachStopBiasPct: coach.stopBiasPct,
-        trailFactor: coach.trailFactor,
+        trailFactor: coach.trailFactor * autopsyTuneFor(p.strategy).trailFactor,
         exitCostPct,
         strategy: p.strategy,
         minHoldUntilMs: p.strategy === 'SMART_MONEY_COPY' ? p.openedAt.getTime() + (cfg.copy.minHoldSec ?? 0) * 1000 : null,

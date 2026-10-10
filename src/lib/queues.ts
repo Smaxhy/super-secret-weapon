@@ -42,6 +42,8 @@ export interface EvaluateJob {
   confirm?: { priceSol: number; at: number; score: number };
   /** Copy trades: the tracked wallet whose buy triggered this check. */
   wallet?: string;
+  /** KOL follow: several KOLs / smart wallets bought this coin (strategy SMART_MONEY_COPY). */
+  kolFollow?: boolean;
 }
 
 export interface SafetyJob {

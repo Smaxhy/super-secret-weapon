@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../src/config/default';
-import { bandOf, blockedBand, runAutopsy, type ClosedTrade } from '../src/learner/loss-autopsy';
+import { bandOf, blockedBand, runAutopsy, tuneStrategies, type ClosedTrade } from '../src/learner/loss-autopsy';
 
 const C = DEFAULT_CONFIG.autopsy;
 const trade = (o: Partial<ClosedTrade>): ClosedTrade => ({
@@ -38,5 +38,24 @@ describe('loss autopsy (owner: "scan what keeps going wrong and learn")', () => 
     expect(bandOf('curve', { strategy: 'S', mcUsd: 1, ageMin: 1, curvePct: 'migrated', score: 1, hourUtc: 0 })).toBe('migrated');
     expect(bandOf('curve', { strategy: 'S', mcUsd: 1, ageMin: 1, curvePct: null, score: 1, hourUtc: 0 })).toBeNull();
     expect(bandOf('mc', { strategy: 'S', mcUsd: 2e6, ageMin: 1, curvePct: 1, score: 1, hourUtc: 0 })).toBe('MC >$1M');
+  });
+});
+
+describe('autopsy self-tuning per strategy', () => {
+  const mk = (n: number, f: (i: number) => Partial<ClosedTrade>) => Array.from({ length: n }, (_, i) => trade(f(i)));
+  it('stricter + smaller when losers never went up; easier + bigger when it works; sell sooner when profit is given back', () => {
+    const bad = mk(20, (i) => ({ strategy: 'CURVE_SNIPE', pnlPct: -13 + (i % 3), pnlSol: -0.025, peakMultiple: 1.01 }));
+    const good = mk(20, (i) => ({ strategy: 'SWING', pnlPct: i % 5 === 0 ? -10 : 15, pnlSol: i % 5 === 0 ? -0.02 : 0.03, peakMultiple: 1.2, exitReason: 'TAKE_PROFIT' }));
+    const giver = mk(20, (i) => ({ strategy: 'SOON', pnlPct: i % 2 ? -12 : 4, pnlSol: i % 2 ? -0.024 : 0.008, peakMultiple: i % 2 ? 1.3 : 1.1 }));
+    const t = tuneStrategies([...bad, ...good, ...giver], 15);
+    const by = (s: string) => t.find((x) => x.strategy === s)!;
+    expect(by('CURVE_SNIPE')).toMatchObject({ barDelta: 6, sizeFactor: 0.7 });
+    expect(by('SWING')).toMatchObject({ barDelta: -3, sizeFactor: 1.2, trailFactor: 1 });
+    expect(by('SOON').trailFactor).toBe(0.75);
+    expect(tuneStrategies(bad.slice(0, 5), 15)[0]).toMatchObject({ barDelta: 0, sizeFactor: 1 });
+  });
+  it('learns whether KOL coins pay (its own band)', () => {
+    expect(bandOf('kols', { strategy: 'S', mcUsd: 1, ageMin: 1, curvePct: 1, score: 1, hourUtc: 0, kols: 3 })).toBe('3+ KOLs');
+    expect(bandOf('kols', { strategy: 'S', mcUsd: 1, ageMin: 1, curvePct: 1, score: 1, hourUtc: 0 })).toBeNull();
   });
 });

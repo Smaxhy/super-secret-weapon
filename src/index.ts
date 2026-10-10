@@ -280,6 +280,8 @@ async function main(): Promise<void> {
   // Several KOLs (Cupsey, Cented…) bought the same coin → check it now.
   whales.onKolCluster = (mint, kols) => {
     const why = `kols:${kols}`;
+    // KOL follow: its own trade, whatever the coin's stage (the other strategies are checked too).
+    void evaluator.scheduleKolFollow(mint, kols).catch(() => undefined);
     void liveState
       .isComplete(mint)
       .then(async (done) => {

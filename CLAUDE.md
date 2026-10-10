@@ -244,6 +244,15 @@ smart money → learning engine → ML → social). See README.md.
   (`trader.bandCheck` → refusal "this kind of trade keeps losing…"); 1 in 5 goes through as a min-size learning
   "probe" (entryContext.probe) so it can unblock. Redis `autopsy:last`; GET `/api/autopsy`, POST `/api/autopsy/run`;
   Performance page card "What keeps going wrong".
+- **v8.9 (Oct 10): the bot tunes itself + KOL follow** (owner: "actively improve; trade more alongside coins many KOLs
+  buy; only tell me the end result"). Autopsy `tuneStrategies` (recomputed every run, ≥15 trades): working (avg−SE >2%)
+  → bar −3 / size ×1.2; losing with ≥55% never-up losers → bar +6 / ×0.7; losing otherwise → +3 / ×0.85; ≥35% of losers
+  were up 15%+ → trail ×0.75. `autopsyTuneFor` is applied in the evaluator threshold + size, swing-trader barDelta +
+  size, and sell-manager trailFactor (× coach). New autopsy band `kols` (entryContext.kols). **KOL follow** (`kol.follow`,
+  strategy SMART_MONEY_COPY re-used, job `kolFollow`): whale-tracker KOL cluster (≥2) → `scheduleKolFollow` (0/30/90/180 s);
+  KOLs still holding ≥2 required; bar −6 (2) / −10 (3+), size ×1 / ×1.3; own limit maxOpen 3; allocation now NEW 35 /
+  SWING 25 / MIGRATION 15 / SOON 10 / KOL 15. **Labels fixed**: learning win = 1.4x before 0.85x (was 1.8x / 0.7x —
+  the scorer was learning a target the bot never trades). Config migration v8.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

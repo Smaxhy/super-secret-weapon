@@ -169,6 +169,18 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['dex', ['hot5mSize'], 15],
     ],
   },
+  {
+    version: 8,
+    note: 'v8.9 (owner: trade more alongside coins many KOLs buy): KOL follow gets 15% of capital and up to 3 open trades',
+    set: [
+      ['trading', ['allocation'], { CURVE_SNIPE: 0.35, MIGRATION_MOMENTUM: 0.15, SOON: 0.1, SMART_MONEY_COPY: 0.15, SWING: 0.25 }],
+      ['trading', ['enabledStrategies', 'SMART_MONEY_COPY'], true],
+      ['trading', ['maxOpenByStrategy', 'SMART_MONEY_COPY'], 3],
+      // Labels must match how the bot trades: a win = first take-profit (1.4x) before the stop (≈0.85x).
+      ['learning', ['winMultiple'], 1.4],
+      ['learning', ['drawdownLossMultiple'], 0.85],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

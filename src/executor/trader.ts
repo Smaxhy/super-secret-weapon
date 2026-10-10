@@ -46,6 +46,10 @@ export interface EntryRequest {
   swing?: boolean;
   /** Learning trade (config `explore`): a near-miss bought small so the bot learns from it. */
   explore?: boolean;
+  /** KOLs still holding this coin when we bought (for the loss autopsy). */
+  kols?: number;
+  /** A KOL-follow buy (several KOLs in) — its own open-position limit. */
+  kolFollow?: boolean;
   /** Builds the human-readable "why we bought" once the size is known. */
   explain?: (sizeSol: number) => string;
 }
@@ -114,7 +118,8 @@ export class Trader {
     // (learning trades still go through: minimum size, and the bot keeps learning while it cools off)
     if (cool && !req.explore && lossLimits) return refuse(cool);
     // Copy trades are heavily restricted.
-    if (req.strategy === 'SMART_MONEY_COPY' && open.filter((p) => p.strategy === 'SMART_MONEY_COPY').length >= (cfg.copy.maxOpen ?? 1)) return refuse('copy trade limit reached');
+    const copyMax = req.kolFollow ? (cfg.kol?.follow?.maxOpen ?? DEFAULT_CONFIG.kol.follow.maxOpen) : (cfg.copy.maxOpen ?? 1);
+    if (req.strategy === 'SMART_MONEY_COPY' && open.filter((p) => p.strategy === 'SMART_MONEY_COPY').length >= copyMax) return refuse(req.kolFollow ? 'KOL-follow limit reached' : 'copy trade limit reached');
     // Learning trades: a few at a time, a few per hour.
     if (req.explore) {
       const ex = cfg.explore ?? DEFAULT_CONFIG.explore;
@@ -211,6 +216,8 @@ export class Trader {
             copiedWallet: req.copiedWallet ?? null,
             swing: req.swing === true,
             explore: req.explore === true || probe,
+            kols: req.kols ?? null,
+            kolFollow: req.kolFollow === true,
             // A probe into a band the loss autopsy blocked (does it still lose?).
             probe,
             // Counted into each sell's cost basis so P&L includes the buy's gas/tip.

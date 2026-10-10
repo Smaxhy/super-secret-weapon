@@ -12,6 +12,7 @@
  * BUYs and interesting skips are stored as evaluations, so the outcome labeler and calibration
  * learn from them like every other strategy.
  */
+import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
 import type { Prisma } from '@prisma/client';
 import { getAssociatedTokenAddressSync } from '@solana/spl-token';
@@ -224,7 +225,7 @@ export class SwingTrader {
         top10Pct: coin.holders?.top10Pct ?? null,
         kolDumping: !!kol?.dumping,
         kolBuyers: kol?.buyers.length ?? 0,
-        barDelta: coach.thresholdDelta + cfg.regimeAdjustments[regime].scoreThresholdDelta,
+        barDelta: coach.thresholdDelta + cfg.regimeAdjustments[regime].scoreThresholdDelta + autopsyTuneFor('SWING').barDelta,
       },
       c,
     );
@@ -274,7 +275,7 @@ export class SwingTrader {
       const conv = convictionFactor({ scoreMargin: score - verdict.threshold, calibrationFactor: cal.factor, crowdScore: crowd.crowdScore, min: cfg.trading.minConvictionMultiple ?? 0.4, max: cfg.trading.maxConvictionMultiple ?? 1.6 });
       // Owner: small market caps get less, big ones more (sizeByMarketCap).
       const mcMult = swingSizeForMc(liveMc ?? coin.marketCapUsd, c.sizeByMarketCap);
-      const sizeMultiplier = explore ? ex.sizeMultiplier * coach.sizeFactor * Math.min(1, mcMult) : verdict.sizeFactor * coach.sizeFactor * conv.factor * c.sizeMultiplier * mcMult;
+      const sizeMultiplier = autopsyTuneFor('SWING').sizeFactor * (explore ? ex.sizeMultiplier * coach.sizeFactor * Math.min(1, mcMult) : verdict.sizeFactor * coach.sizeFactor * conv.factor * c.sizeMultiplier * mcMult);
       log.info({ mint, symbol: token.symbol, score, explore, setup: setup.why }, `🌊 SWING ${explore ? 'learning ' : ''}buy signal ${token.symbol} (${score})`);
       const res = await this.trader.tryEnter({
         mint,

@@ -14,6 +14,7 @@
  * To keep the database lean, an Evaluation row is stored only for BUYs,
  * REJECTs, "interesting" scores (≥ 60) and each token's final checkpoint.
  */
+import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
 import { Worker, type Job } from 'bullmq';
 import type { Redis } from 'ioredis';
@@ -133,6 +134,20 @@ export class Evaluator {
     );
   }
 
+  /** Several KOLs / smart wallets bought this coin: check it as a KOL follow now and a few times after. */
+  async scheduleKolFollow(mint: string, kols: number): Promise<void> {
+    const kf = getConfig().kol?.follow ?? DEFAULT_CONFIG.kol.follow;
+    if (!kf.enabled || kols < kf.minKols) return;
+    const bucket = Math.floor(Date.now() / 600_000);
+    await evaluateQueue.addBulk(
+      kf.checkpointsSec.map((sec, i) => ({
+        name: `kol+${sec}s`,
+        data: { mint, checkpointSec: sec, final: i === kf.checkpointsSec.length - 1, strategy: 'SMART_MONEY_COPY' as const, kolFollow: true },
+        opts: { jobId: `${mint}-kol-${sec}-${bucket}`, delay: sec * 1000 },
+      })),
+    );
+  }
+
   /** A tracked wallet just bought this token: check it now and a few times after. */
   async scheduleCopy(mint: string, wallet: string): Promise<void> {
     const cps = getConfig().copy.checkpointsSec;
@@ -207,9 +222,14 @@ export class Evaluator {
     // The trade coach moves the bar per strategy from what recent trades taught it.
     const focusRules = STRATEGY.name === 'SOON' ? cfg.focus.soon : STRATEGY.name === 'MIGRATION_MOMENTUM' ? cfg.focus.migrated : null;
     const coach = coachFor(STRATEGY.name);
-    const threshold =
+    const kolFollow = STRATEGY.name === 'SMART_MONEY_COPY' && job.data.kolFollow === true;
+    const kf = cfg.kol?.follow ?? DEFAULT_CONFIG.kol.follow;
+    // What the loss autopsy learned about this strategy (stricter when it keeps losing, easier when it works).
+    const tune = autopsyTuneFor(STRATEGY.name);
+    let threshold =
       cfg.entry.minCombinedScore +
-      (STRATEGY.name === 'SMART_MONEY_COPY' ? cfg.copy.scoreThresholdDelta : 0) +
+      (STRATEGY.name === 'SMART_MONEY_COPY' && !kolFollow ? cfg.copy.scoreThresholdDelta : 0) +
+      tune.barDelta +
       (STRATEGY.name === 'CURVE_SNIPE' ? npCfg.scoreThresholdDelta : 0) +
       (focusRules?.scoreThresholdDelta ?? 0) +
       coach.thresholdDelta +
@@ -276,6 +296,15 @@ export class Evaluator {
     const kolAct = kolCfg.enabled ? await kolActivity(this.redis, mint, kolCfg).catch(() => null) : null;
     const kolBonus = kolPoints(kolAct, kolCfg);
     if (kolAct?.dumping) dexFails.push(`KOLs dumping (${kolAct.recentSellers.length} sold)`);
+    // KOL follow (owner: "trade more alongside coins a lot of KOLs buy"): the KOLs must still be in;
+    // the more of them, the easier the bar and the bigger the size.
+    const kolsIn = kolAct?.buyers.length ?? 0;
+    let kolSize = 1;
+    if (kolFollow) {
+      if (kolsIn < kf.minKols) dexFails.push(`only ${kolsIn} KOL${kolsIn === 1 ? '' : 's'} still holding (need ${kf.minKols})`);
+      threshold += kolsIn >= 3 ? kf.barDelta3 : kf.barDelta2;
+      kolSize = kolsIn >= 3 ? kf.sizeMultiplier3 : kf.sizeMultiplier2;
+    }
     // Vamps: a copy of a coin we already traded, or of a bigger coin with the same ticker / name.
     const vampWhy = this.vamp ? await this.vamp.check(mint, token.symbol, token.name) : null;
     if (vampWhy) dexFails.push(vampWhy);
@@ -495,7 +524,7 @@ export class Evaluator {
         min: cfg.trading.minConvictionMultiple ?? 0.4,
         max: cfg.trading.maxConvictionMultiple ?? 1.6,
       });
-      const copyMult = STRATEGY.name === 'SMART_MONEY_COPY' ? (cfg.copy.sizeMultiplier ?? 0.5) : 1;
+      const copyMult = kolFollow ? kolSize : STRATEGY.name === 'SMART_MONEY_COPY' ? (cfg.copy.sizeMultiplier ?? 0.5) : 1;
       const res = await this.trader.tryEnter({
         mint,
         symbol: token.symbol,
@@ -506,9 +535,11 @@ export class Evaluator {
         maxSlippageBps: STRATEGY.maxSlippageBps,
         features,
         copiedWallet: job.data.wallet,
-        sizeMultiplier: explore
+        kols: kolsIn,
+        kolFollow,
+        sizeMultiplier: tune.sizeFactor * (explore
           ? ex.sizeMultiplier * coach.sizeFactor * (trend?.sizeFactor ?? 1)
-          : (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? (STRATEGY.name === 'CURVE_SNIPE' ? npCfg.sizeMultiplier : 1)) * coach.sizeFactor * conv.factor * copyMult * (trend?.sizeFactor ?? 1),
+          : (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? (STRATEGY.name === 'CURVE_SNIPE' ? npCfg.sizeMultiplier : 1)) * coach.sizeFactor * conv.factor * copyMult * (trend?.sizeFactor ?? 1)),
         swing,
         explore,
         explain: (sizeSol) =>

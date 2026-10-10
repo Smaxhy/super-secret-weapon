@@ -43,6 +43,8 @@ export interface EntryShape {
   curvePct: number | 'migrated' | null;
   score: number | null;
   hourUtc: number;
+  /** KOLs (incl. discovered smart wallets) holding it when we bought; null = unknown. */
+  kols?: number | null;
 }
 
 export interface ClosedTrade extends EntryShape {
@@ -55,8 +57,8 @@ export interface ClosedTrade extends EntryShape {
   explore: boolean;
 }
 
-type Dim = 'mc' | 'age' | 'curve' | 'score' | 'hour';
-const DIMS: Dim[] = ['mc', 'age', 'curve', 'score', 'hour'];
+type Dim = 'mc' | 'age' | 'curve' | 'score' | 'hour' | 'kols';
+const DIMS: Dim[] = ['mc', 'age', 'curve', 'score', 'hour', 'kols'];
 
 const band = (v: number, edges: number[], labels: string[]) => {
   for (let i = 0; i < edges.length; i++) if (v < edges[i]!) return labels[i]!;
@@ -76,6 +78,8 @@ export function bandOf(dim: Dim, s: EntryShape): string | null {
       return s.score === null ? null : band(s.score, [70, 80, 90], ['score <70', 'score 70–80', 'score 80–90', 'score 90+']);
     case 'hour':
       return band(s.hourUtc, [4, 8, 12, 16, 20], ['00–04 UTC', '04–08 UTC', '08–12 UTC', '12–16 UTC', '16–20 UTC', '20–24 UTC']);
+    case 'kols':
+      return s.kols === null || s.kols === undefined ? null : s.kols === 0 ? 'no KOLs' : s.kols === 1 ? '1 KOL' : s.kols === 2 ? '2 KOLs' : '3+ KOLs';
   }
 }
 
@@ -111,8 +115,78 @@ export interface Segment extends Record_ {
   key: string;
 }
 
+/** What the autopsy changes per strategy (recomputed from scratch every run, so it self-corrects). */
+export interface StrategyTune {
+  strategy: string;
+  /** Points added to the buy bar (+ stricter, − easier). */
+  barDelta: number;
+  /** Position size ×. */
+  sizeFactor: number;
+  /** Trailing stop distance × (< 1 = sell sooner after a peak). */
+  trailFactor: number;
+  why: string;
+}
+
+const NEUTRAL_TUNE = (strategy: string): StrategyTune => ({ strategy, barDelta: 0, sizeFactor: 1, trailFactor: 1, why: '' });
+
+/**
+ * Pure: per strategy, what the record says to do.
+ *   working (avg − SE > +2%)                → bar −3, size ×1.2 (do more of it)
+ *   losing, mostly bad entries (never up)  → bar +6, size ×0.7
+ *   losing otherwise                        → bar +3, size ×0.85
+ *   losers often were up 15%+ (gave back)   → trail ×0.75 (sell sooner after a peak)
+ */
+export function tuneStrategies(trades: readonly ClosedTrade[], minTrades: number): StrategyTune[] {
+  const out: StrategyTune[] = [];
+  for (const s of [...new Set(trades.map((t) => t.strategy))]) {
+    const ts = trades.filter((t) => t.strategy === s);
+    const t = NEUTRAL_TUNE(s);
+    if (ts.length < minTrades) {
+      out.push(t);
+      continue;
+    }
+    const r = record(ts);
+    const losers = ts.filter((x) => x.pnlSol <= 0);
+    const neverUp = losers.length ? losers.filter((x) => x.peakMultiple < 1.05).length / losers.length : 0;
+    const gaveBack = losers.length ? losers.filter((x) => x.peakMultiple >= 1.15).length / losers.length : 0;
+    const why: string[] = [];
+    if (r.avgPct - r.sePct > 2) {
+      t.barDelta = -3;
+      t.sizeFactor = 1.2;
+      why.push(`working (${r.n} trades, avg +${r.avgPct}%) → easier bar, bigger size`);
+    } else if (r.avgPct < 0) {
+      if (neverUp >= 0.55) {
+        t.barDelta = 6;
+        t.sizeFactor = 0.7;
+        why.push(`${Math.round(neverUp * 100)}% of its losers never went up → stricter entries`);
+      } else {
+        t.barDelta = 3;
+        t.sizeFactor = 0.85;
+        why.push(`losing (avg ${r.avgPct}%) → a bit stricter`);
+      }
+    }
+    if (r.avgPct < 2 && gaveBack >= 0.35) {
+      t.trailFactor = 0.75;
+      why.push(`${Math.round(gaveBack * 100)}% of its losers were up 15%+ first → sell sooner after a peak`);
+    }
+    t.why = why.join('; ');
+    out.push(t);
+  }
+  return out;
+}
+
+let tuneCache = new Map<string, StrategyTune>();
+/** The autopsy's current adjustments for a strategy (neutral until the first run). */
+export function autopsyTuneFor(strategy: string): StrategyTune {
+  return tuneCache.get(strategy) ?? NEUTRAL_TUNE(strategy);
+}
+export function setAutopsyTunes(t: readonly StrategyTune[]): void {
+  tuneCache = new Map(t.map((x) => [x.strategy, x]));
+}
+
 export interface Autopsy {
   at: string;
+  tuning: StrategyTune[];
   trades: number;
   overall: Record_ & { avgWinPct: number; avgLossPct: number; neededWinRatePct: number | null; profitFactor: number | null };
   byStrategy: Array<Record_ & { strategy: string }>;
@@ -193,8 +267,12 @@ export function runAutopsy(trades: readonly ClosedTrade[], c: AutopsyConfig, now
   if (learning.n >= 10 && learning.avgPct < all.avgPct - 3) findings.push(`Learning trades (just under the bar) average ${learning.avgPct}% vs ${all.avgPct}% overall — the score bar is doing its job.`);
   for (const b of blocked.slice(0, 5)) findings.push(`BLOCKED: ${b.strategy} with ${b.band} — ${b.n} trades, ${b.winRatePct}% wins, avg ${b.avgPct}%, ${b.pnlSol} SOL.`);
 
+  const tuning = tuneStrategies(trades, c.minTrades);
+  for (const t of tuning) if (t.why) findings.push(`ADJUSTED ${t.strategy}: ${t.why}`);
+
   return {
     at: new Date(now).toISOString(),
+    tuning,
     trades: trades.length,
     overall: { ...all, avgWinPct: r1(avgWin), avgLossPct: r1(avgLoss), neededWinRatePct: needed, profitFactor: grossL > 0 ? Math.round((grossW / grossL) * 100) / 100 : null },
     byStrategy,
@@ -261,7 +339,10 @@ export class LossAutopsy {
   private async restore(): Promise<void> {
     try {
       const raw = await this.redis.get(LAST);
-      if (raw) this.last = JSON.parse(raw) as Autopsy;
+      if (raw) {
+        this.last = JSON.parse(raw) as Autopsy;
+        setAutopsyTunes(this.last.tuning ?? []);
+      }
     } catch {
       /* fresh start */
     }
@@ -283,7 +364,7 @@ export class LossAutopsy {
         },
       });
       const trades: ClosedTrade[] = rows.map((p) => {
-        const ec = (p.entryContext ?? {}) as { marketCapUsd?: number | null; explore?: boolean };
+        const ec = (p.entryContext ?? {}) as { marketCapUsd?: number | null; explore?: boolean; kols?: number | null };
         const mk = ((p.evaluation?.features ?? {}) as { market?: { bondingCurvePct?: number; complete?: boolean } }).market;
         return {
           strategy: p.strategy,
@@ -292,6 +373,7 @@ export class LossAutopsy {
           curvePct: mk ? (mk.complete ? 'migrated' : (mk.bondingCurvePct ?? null)) : p.strategy === 'SWING' ? 'migrated' : null,
           score: p.evaluation?.combinedScore ?? null,
           hourUtc: p.openedAt.getUTCHours(),
+          kols: typeof ec.kols === 'number' ? ec.kols : null,
           pnlSol: p.realizedPnlSol,
           pnlPct: p.sizeSol > 0 ? (p.realizedPnlSol / p.sizeSol) * 100 : 0,
           sizeSol: p.sizeSol,
@@ -303,6 +385,7 @@ export class LossAutopsy {
       });
       const a = runAutopsy(trades, c, now);
       this.last = a;
+      setAutopsyTunes(a.tuning);
       await this.redis.set(LAST, JSON.stringify(a), 'EX', 7 * 86_400);
       if (a.blocked.length) log.info({ blocked: a.blocked.map((b) => `${b.strategy} ${b.band}`) }, `🔬 autopsy: ${a.trades} trades, ${a.blocked.length} losing bands blocked`);
       return a;

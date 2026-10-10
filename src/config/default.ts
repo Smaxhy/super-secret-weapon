@@ -35,22 +35,23 @@ export const DEFAULT_CONFIG = {
      * rule in public tests (2 s late = their exit liquidity) → off.
      */
     allocation: {
-      CURVE_SNIPE: 0.4,
+      CURVE_SNIPE: 0.35,
       MIGRATION_MOMENTUM: 0.15,
-      SOON: 0.15,
-      SMART_MONEY_COPY: 0,
+      SOON: 0.1,
+      // v8.9: KOL follow (kol.follow) — coins several KOLs / smart wallets bought.
+      SMART_MONEY_COPY: 0.15,
       // v7 (owner): swing trade bigger coins that keep bouncing back (src/evaluator/swing.ts).
-      SWING: 0.3,
+      SWING: 0.25,
     } satisfies Record<StrategyName, number>,
     enabledStrategies: {
       MIGRATION_MOMENTUM: true,
       SOON: true,
-      SMART_MONEY_COPY: false,
+      SMART_MONEY_COPY: true,
       CURVE_SNIPE: true,
       SWING: true,
     } satisfies Record<StrategyName, boolean>,
     /** At most this many open positions per strategy (fresh pairs: 4, swings on bigger coins: 3). */
-    maxOpenByStrategy: { CURVE_SNIPE: 4, SOON: 2, MIGRATION_MOMENTUM: 2, SMART_MONEY_COPY: 1, SWING: 3 } as Partial<Record<StrategyName, number>>,
+    maxOpenByStrategy: { CURVE_SNIPE: 4, SOON: 2, MIGRATION_MOMENTUM: 2, SMART_MONEY_COPY: 3, SWING: 3 } as Partial<Record<StrategyName, number>>,
     /**
      * Strategy cool-off: once a strategy has `minTrades` closed trades among its last `lastN` and they
      * average worse than `maxAvgPnlPct` per trade, it takes no new entries for `pauseMinutes`
@@ -356,6 +357,22 @@ export const DEFAULT_CONFIG = {
     dumpWindowMin: 5,
     dumpPenalty: 6,
     checkCooldownSec: 120,
+    /**
+     * KOL follow (owner: "trade more alongside coins that a lot of KOLs buy"): when ≥ minKols KOLs /
+     * discovered smart wallets bought a coin and are still holding, it is checked as its own trade
+     * (strategy SMART_MONEY_COPY, any curve stage / age) at 0 / 30 / 90 / 180 s: bar −6 with 2 KOLs, −10 with
+     * 3+, size ×1 / ×1.3, up to maxOpen at once. Every safety, rug and vamp check still applies.
+     */
+    follow: {
+      enabled: true as boolean,
+      minKols: 2,
+      barDelta2: -6,
+      barDelta3: -10,
+      sizeMultiplier2: 1,
+      sizeMultiplier3: 1.3,
+      maxOpen: 3,
+      checkpointsSec: [0, 30, 90, 180] as number[],
+    },
   },
 
   /**
@@ -1002,10 +1019,13 @@ export const DEFAULT_CONFIG = {
    * Flat keys on purpose: the dashboard config merge is shallow.
    */
   learning: {
-    /** A labelled token is a WIN if it reached this multiple of the evaluation price… */
-    winMultiple: 1.8,
-    /** …BEFORE it ever fell to this multiple (otherwise you'd have been stopped out first). */
-    drawdownLossMultiple: 0.7,
+    /**
+     * A labelled token is a WIN if it reached this multiple of the evaluation price… v8.9: 1.4x = the
+     * first take-profit the bot really sells at (was 1.8x — the scorer learned a target the bot never trades).
+     */
+    winMultiple: 1.4,
+    /** …BEFORE it ever fell to this multiple — 0.85 ≈ where the 12–20% stop takes it out (was 0.7). */
+    drawdownLossMultiple: 0.85,
     /** Anything that "went" more than this within the hour is treated as bad price data and excluded. */
     maxPlausibleMultiple: 25,
     /** Weight tuning runs every N minutes… */
