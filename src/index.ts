@@ -19,6 +19,7 @@ import { startCalibration, stopCalibration } from './learner/score-calibration';
 import { screenEntry } from './executor/rug-screen';
 import { RuggerMemory } from './executor/rug-watch';
 import { LossAutopsy } from './learner/loss-autopsy';
+import { priceShape } from './evaluator/price-shape';
 import { AiCoach } from './learner/ai-coach';
 import { Evaluator } from './evaluator/evaluator';
 import { WalletAnalyzer } from './evaluator/wallet-analyzer';
@@ -135,6 +136,7 @@ async function main(): Promise<void> {
   // Loss autopsy: what keeps going wrong → the kinds of trades that keep losing are blocked.
   const autopsy = new LossAutopsy(redis, () => getConfig().autopsy ?? DEFAULT_CONFIG.autopsy);
   autopsy.start();
+  aiCoach.autopsySource = () => autopsy.snapshot();
   trader.bandCheck = (req) =>
     autopsy.check({
       strategy: req.strategy,
@@ -143,6 +145,10 @@ async function main(): Promise<void> {
       curvePct: req.market.complete || req.market.onAmm ? 'migrated' : req.market.bondingCurvePct,
       score: req.score,
       hourUtc: new Date().getUTCHours(),
+      ...(() => {
+        const sh = priceShape(crowd.candles(req.mint), Date.now());
+        return { run3m: sh?.run3m ?? null, offHigh10m: sh?.offHigh10m ?? null };
+      })(),
     });
   evaluator.crowd = crowd;
   crowd.onSoon = (mint, pct) => {

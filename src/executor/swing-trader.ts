@@ -12,6 +12,7 @@
  * BUYs and interesting skips are stored as evaluations, so the outcome labeler and calibration
  * learn from them like every other strategy.
  */
+import { priceShape } from '../evaluator/price-shape';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
 import type { Prisma } from '@prisma/client';
@@ -260,7 +261,7 @@ export class SwingTrader {
           combinedScore: score,
           decision,
           reasons: decision === 'BUY' ? [explore ? `learning trade: score ${score} (bar ${verdict.threshold})` : `swing: ${setup.why}`, ...verdict.notes.slice(0, 4)] : verdict.fails.length ? verdict.fails : [`score ${score} < ${verdict.threshold}`],
-          features: json({ preCalibrationScore: verdict.score, calibration: cal, explore, swing: { parts: verdict.parts, resilience: verdict.resilience, setup, bounce: coin.bounce, liveBounce, ta, top10Pct: coin.holders?.top10Pct ?? null, sources: coin.sources, watchlist: coin.watchlist, marketCapUsd: liveMc ?? coin.marketCapUsd, liquidityUsd: liveLiq ?? coin.liquidityUsd }, market, crowd }),
+          features: json({ preCalibrationScore: verdict.score, calibration: cal, explore, shape: priceShape(candles, now), swing: { parts: verdict.parts, resilience: verdict.resilience, setup, bounce: coin.bounce, liveBounce, ta, top10Pct: coin.holders?.top10Pct ?? null, sources: coin.sources, watchlist: coin.watchlist, marketCapUsd: liveMc ?? coin.marketCapUsd, liquidityUsd: liveLiq ?? coin.liquidityUsd }, market, crowd }),
           regime,
         },
       });

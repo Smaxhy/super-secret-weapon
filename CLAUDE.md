@@ -263,6 +263,13 @@ smart money → learning engine → ML → social). See README.md.
   (± SE) → live; stops holding → retired (`nextStatus`, refresh every 10 min, no AI call). Live rules in the evaluator
   (`aiRuleVerdict`, same feature shape as the stored evaluation): avoid → rule fail (1 in 5 probes), prefer → bar −4.
   Spend per day from real usage (`ai:spend:<day>`). GET `/api/ai-coach`, POST `/api/ai-coach/run`; Performance card "AI coach".
+- **v9.1 (Oct 10): AI sees price action + what keeps going wrong** (owner: "recognise patterns, trends, the spikes it
+  moves in, much better entrances"). `src/evaluator/price-shape.ts`: `priceShape` (10 min of 15 s candles before the buy:
+  run1m/3m/10m, offHigh10m, fromLow10m, spikes10m/dumps10m (±15% candles), greenStreak, lastCandlePct, wickTopPct,
+  volAccel, buyShare2m, rangePct10m) stored as `features.shape` on every evaluation (+ swing) and fed to AI rules
+  (`shape.*`); `afterEntry` (pos:hist → min1m, max5m, min5m, peak, secToPeak = early / late / bought the top). AI input
+  now includes the autopsy (`whatKeepsGoingWrong`) + `afterBuy` per trade, prompt focuses on entry timing. Autopsy gets
+  bands `chase` (run3m) and `entry` (offHigh10m) → chasing / buying-the-top bands get blocked automatically.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

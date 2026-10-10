@@ -14,6 +14,7 @@
  * To keep the database lean, an Evaluation row is stored only for BUYs,
  * REJECTs, "interesting" scores (≥ 60) and each token's final checkpoint.
  */
+import { priceShape } from './price-shape';
 import { aiRuleVerdict, flattenFeatures } from '../learner/ai-coach';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
@@ -255,6 +256,8 @@ export class Evaluator {
     // Read the chart: breaking down = no buy; a dip + bounce in an uptrend = bonus; stretched = wait for a dip.
     const chartCfg = cfg.chart ?? DEFAULT_CONFIG.chart;
     const chart = chartCfg.enabled && this.crowd ? analyzeChart(this.crowd.candles(mint), Date.now(), chartCfg) : null;
+    // Where in the move are we buying (run-up, spikes, distance from the high) — for the AI coach + autopsy.
+    const shape = this.crowd ? priceShape(this.crowd.candles(mint), Date.now()) : null;
     const chartPoints = chart?.verdict === 'buy_now' ? chartCfg.buyDipPoints : 0;
     // Chart strategies (Fibonacci, EMA pullback, breakouts …) that PROVED themselves in the live lab.
     const taCfg = cfg.ta ?? DEFAULT_CONFIG.ta;
@@ -410,6 +413,7 @@ export class Evaluator {
         kol: kolAct ? { kols: kolAct.buyers.length, dumping: kolAct.dumping } : null,
         chart: chart ? { vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, pullbackPct: chart.pullbackPct } : null,
         swing,
+        shape,
       },
       { score: result.score, kols: kolsIn, mcUsd: market.raw.marketCapUsd ?? null, ageMin: market.raw.ageSec / 60, hourUtc: new Date().getUTCHours() },
     );
@@ -455,7 +459,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, market: market.raw, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, market: market.raw, shape, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },

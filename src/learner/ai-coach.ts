@@ -21,6 +21,9 @@ import type { Redis } from 'ioredis';
 import { prisma } from '../lib/prisma';
 import { moduleLogger } from '../lib/logger';
 import { learningSince } from './labels';
+import type { Autopsy } from './loss-autopsy';
+import { readHistory } from '../executor/position-history';
+import { afterEntry } from '../evaluator/price-shape';
 
 const log = moduleLogger('ai-coach');
 
@@ -70,7 +73,7 @@ export interface AiCoachConfig {
 // Features: one flat map of numbers per trade (same shape at entry and in the backtest)
 // ---------------------------------------------------------------------------
 
-const SECTIONS = ['market', 'crowd', 'manipulation', 'newPair', 'trending', 'kol', 'chart', 'swing'] as const;
+const SECTIONS = ['market', 'shape', 'crowd', 'manipulation', 'newPair', 'trending', 'kol', 'chart', 'swing'] as const;
 
 /** Pure: numeric (and boolean → 0/1) leaves of the evaluation features, namespaced, ≤3 levels deep. */
 export function flattenFeatures(features: unknown, extra: Record<string, number | null | undefined> = {}): Record<string, number> {
@@ -209,10 +212,14 @@ const SYSTEM = `You are the trading coach of an autonomous Solana pump.fun paper
 
 You get its recent closed trades: the measurable picture at entry (flattened feature names such as market.top10HolderPct or crowd.paperHandsPct), why it bought, how the trade ended, the peak it reached, and the trade coach's lesson. You also get the rules already being tested and how they are doing.
 
+"shape.*" features describe the price action in the 10 minutes BEFORE the buy (run1m/run3m/run10m = % change, offHigh10m = % under the 10-min high, spikes10m/dumps10m = 15-second candles that moved 15%+, greenStreak, wickTopPct = upper wicks = selling into the push, volAccel, buyShare2m). "afterBuy" is what the price did after the buy as multiples of the entry price: min1m (lowest in the first minute), max5m/min5m, peak and secToPeak — e.g. min1m 0.85 with peak 1.0 means it bought the exact top. "whatKeepsGoingWrong" is the bot's own statistical report on its losses.
+
+Focus hardest on ENTRIES: when in a move does it buy — after a vertical spike, at the top of a green streak, on a pullback, into fading volume — and which entries worked. Also look for trends across trades (time of day, kinds of coins, crowd behaviour) and repeated spike patterns.
+
 Read the trades like an experienced trader: look for BEHAVIOUR patterns that separate the losers from the winners — who was buying and selling, how the launch went, holder structure, crowd quality, timing, chart state — not just one number.
 
 Return:
-- insights: up to 6 short, concrete observations in plain English (what keeps going wrong or right, with the evidence).
+- insights: up to 6 short, concrete observations in plain English (what keeps going wrong or right, especially about entry timing and price patterns, with the evidence).
 - rules: up to 4 NEW candidate rules that would have avoided the losers or found more winners. Every condition must use a feature name that appears in the "features" list, with a threshold inside its observed range. Prefer 1-3 conditions per rule. Use strategy "ANY" only when the pattern holds across strategies. Do not repeat a rule that is already being tested. Every rule will be tested on new trades before it is used, so propose what the evidence supports, and return no rules when nothing is clear.`;
 
 export class AiCoach {
@@ -221,6 +228,8 @@ export class AiCoach {
   private running = false;
   private client: Anthropic | null = null;
   lastError: string | null = null;
+  /** The loss autopsy's latest report (set in index.ts) — "what keeps going wrong" goes to the AI too. */
+  autopsySource: (() => Autopsy | null) | null = null;
 
   constructor(
     private readonly redis: Redis,
@@ -296,17 +305,19 @@ export class AiCoach {
   }
 
   /** Closed paper trades (since the reset, 14 days) with their entry features. */
-  private async loadTrades(limit = 400): Promise<Array<CoachTrade & { symbol: string; exitReason: string; peakMultiple: number; heldMin: number; explanation: string; lesson: string | null; closedAtMs: number }>> {
+  private async loadTrades(limit = 400): Promise<Array<CoachTrade & { id: string; entryPriceSol: number; symbol: string; exitReason: string; peakMultiple: number; heldMin: number; explanation: string; lesson: string | null; closedAtMs: number }>> {
     const since = new Date(Math.max((await learningSince(this.redis))?.getTime() ?? 0, Date.now() - 14 * 86_400_000));
     const rows = await prisma.position.findMany({
       where: { mode: 'PAPER', status: 'CLOSED', closedAt: { gte: since } },
       orderBy: { closedAt: 'desc' },
       take: limit,
-      select: { strategy: true, sizeSol: true, realizedPnlSol: true, exitReason: true, entryPriceSol: true, peakPriceSol: true, openedAt: true, closedAt: true, entryContext: true, token: { select: { symbol: true, createdAt: true } }, evaluation: { select: { combinedScore: true, features: true } } },
+      select: { id: true, strategy: true, sizeSol: true, realizedPnlSol: true, exitReason: true, entryPriceSol: true, peakPriceSol: true, openedAt: true, closedAt: true, entryContext: true, token: { select: { symbol: true, createdAt: true } }, evaluation: { select: { combinedScore: true, features: true } } },
     });
     return rows.map((p) => {
       const ec = (p.entryContext ?? {}) as { marketCapUsd?: number; kols?: number; explanation?: string; review?: { lesson?: string } };
       return {
+        id: p.id,
+        entryPriceSol: p.entryPriceSol,
         strategy: p.strategy,
         symbol: p.token?.symbol ?? '?',
         pnlPct: p.sizeSol > 0 ? (p.realizedPnlSol / p.sizeSol) * 100 : 0,
@@ -387,9 +398,15 @@ export class AiCoach {
         })
         .slice(0, 80);
       const allowed = new Set(featureList.map((f) => f.name));
+      // What the price did right after each buy (from the position's price history).
+      const after = await Promise.all(sample.map(async (t) => afterEntry(await readHistory(t.id).catch(() => []), t.entryPriceSol, t.openedAtMs)));
+      const au = this.autopsySource?.() ?? null;
       const input = {
+        whatKeepsGoingWrong: au
+          ? { findings: au.findings, losers: au.losers, overall: { winRatePct: au.overall.winRatePct, neededWinRatePct: au.overall.neededWinRatePct, avgWinPct: au.overall.avgWinPct, avgLossPct: au.overall.avgLossPct }, worstKinds: au.worst.slice(0, 6).map((w) => ({ strategy: w.strategy, kind: w.band, n: w.n, avgPct: w.avgPct, pnlSol: w.pnlSol })), bestKinds: au.best.slice(0, 4).map((w) => ({ strategy: w.strategy, kind: w.band, n: w.n, avgPct: w.avgPct })) }
+          : null,
         features: featureList,
-        trades: sample.map((t) => ({
+        trades: sample.map((t, i) => ({
           strategy: t.strategy,
           symbol: t.symbol,
           resultPct: r1(t.pnlPct),
@@ -398,6 +415,7 @@ export class AiCoach {
           heldMin: t.heldMin,
           whyBought: t.explanation,
           coachLesson: t.lesson,
+          afterBuy: after[i],
           atEntry: Object.fromEntries(Object.entries(t.flat).filter(([k]) => allowed.has(k)).map(([k, v]) => [k, r1(v)])),
         })),
         rulesBeingTested: rules.filter((r) => r.status !== 'retired').map((r) => ({ title: r.title, strategy: r.strategy ?? 'ANY', action: r.action, conditions: r.conditions, status: r.status, result: r.forward ?? r.backtest })),
