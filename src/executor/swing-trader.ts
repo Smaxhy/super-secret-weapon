@@ -12,6 +12,7 @@
  * BUYs and interesting skips are stored as evaluations, so the outcome labeler and calibration
  * learn from them like every other strategy.
  */
+import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
 import type { Prisma } from '@prisma/client';
 import { getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { PublicKey } from '@solana/web3.js';
@@ -234,10 +235,12 @@ export class SwingTrader {
     let decision: 'BUY' | 'SKIP' = !verdict.fails.length && score >= verdict.threshold ? 'BUY' : 'SKIP';
     // Learning trade: passes every rule, just short on score → small size (config explore).
     const ex = cfg.explore ?? DEFAULT_CONFIG.explore;
-    const explore = decision === 'SKIP' && ex.enabled && ex.strategies.includes('SWING') && !verdict.fails.length && score >= verdict.threshold - ex.scoreMargin;
+    const explore = decision === 'SKIP' && ex.enabled && ex.strategies.includes('SWING') && !verdict.fails.length && score >= verdict.threshold - exploreMargin(ex);
     if (explore) decision = 'BUY';
     const why = verdict.fails[0] ?? (decision === 'BUY' ? setup.why : `score ${score} < ${verdict.threshold}`);
     coin.last = { at: now, score, decision: explore ? 'LEARN' : decision, why };
+    if (decision === 'BUY') noteSignal(now);
+    else noteSkip('SWING', verdict.fails[0] ?? 'score under the bar', now);
 
     // Store BUYs (incl. learning buys): their real trade results teach the score calibration. Skips
     // aren't stored — their only label would be the 1-hour "1.8x before 0.7x" price test, which

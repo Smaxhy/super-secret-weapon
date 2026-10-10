@@ -517,6 +517,10 @@ export const DEFAULT_CONFIG = {
     sizeMultiplier: 0.5,
     maxOpen: 2,
     maxPerHour: 4,
+    // No entry at all for this long (owner: "it hasn't traded in an hour") → learning trades may take
+    // coins up to droughtScoreMargin under the bar (still every rule passed, still half size).
+    droughtMinutes: 45,
+    droughtScoreMargin: 10,
     strategies: ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM'] as StrategyName[],
   },
 

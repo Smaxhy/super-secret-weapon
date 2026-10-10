@@ -12,6 +12,7 @@
  */
 import type { Redis } from 'ioredis';
 import { eventLoopLagMs } from './process-guard';
+import { blockerSnapshot, type BlockerSnapshot } from './entry-blockers';
 
 const K_RUNNING = 'bot:running';
 const K_LAST_EXIT = 'bot:lastExit';
@@ -67,6 +68,8 @@ export interface HealthSnapshot {
   recentErrors: Array<{ at: string; message: string }>;
   memory: { rssMb: number; heapMb: number };
   redisMemoryMb: number | null;
+  /** Why it is (not) buying right now. */
+  trading: BlockerSnapshot;
 }
 
 export async function healthSnapshot(now = Date.now()): Promise<HealthSnapshot> {
@@ -82,6 +85,7 @@ export async function healthSnapshot(now = Date.now()): Promise<HealthSnapshot> 
     recentErrors: [],
     memory: { rssMb: Math.round(mem.rss / 1e6), heapMb: Math.round(mem.heapUsed / 1e6) },
     redisMemoryMb: null,
+    trading: blockerSnapshot(now),
   };
   if (!redisRef) return base;
   try {

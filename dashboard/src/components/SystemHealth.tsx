@@ -16,6 +16,14 @@ interface SystemData {
   recentErrors: Array<{ at: string; message: string }>;
   memory: { rssMb: number; heapMb: number };
   redisMemoryMb: number | null;
+  trading?: {
+    lastEntryAt: string | null;
+    minutesSinceEntry: number;
+    lastHour: { evaluated: number; buySignals: number; entries: number };
+    topSkips: Array<{ reason: string; count: number }>;
+    topRefusals: Array<{ reason: string; count: number }>;
+    summary: string;
+  };
 }
 
 /** Commit the website was built from (GitHub Actions sets GITHUB_SHA). */
@@ -33,6 +41,7 @@ export function HealthBanner() {
   if (crashed(data.lastExit?.reason) && data.uptimeSec < 3600) issues.push(`last stop: ${data.lastExit!.reason}`);
   if (versionMismatch(data.version) && data.uptimeSec > 20 * 60) issues.push(`the VPS runs older code (${data.version}) than this site (${SITE_VERSION}) — its update may be stuck`);
   if ((data.eventLoopLagMs ?? 0) > 1000) issues.push(`the bot is overloaded (${data.eventLoopLagMs} ms lag)`);
+  if (data.trading && data.trading.minutesSinceEntry >= 30 && data.uptimeSec > 10 * 60) issues.push(`no buy for ${duration(data.trading.minutesSinceEntry * 60)}: ${data.trading.summary}`);
   if (!issues.length) return null;
   return (
     <div role="status" className="mb-4 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-ink">
@@ -60,6 +69,7 @@ export function SystemPanel() {
               Last stop ({new Date(data.lastExit.at).toLocaleString()}): {data.lastExit.reason}
             </p>
           )}
+          {data.trading && <WhyNoTrades t={data.trading} />}
           {data.recentErrors.length > 0 && (
             <ul className="mt-2 space-y-1 text-xs text-muted">
               {data.recentErrors.map((e) => (
@@ -72,6 +82,36 @@ export function SystemPanel() {
         </>
       )}
     </Card>
+  );
+}
+
+function WhyNoTrades({ t }: { t: NonNullable<SystemData['trading']> }) {
+  const list = (title: string, rows: Array<{ reason: string; count: number }>) =>
+    rows.length > 0 && (
+      <div className="min-w-0">
+        <div className="mb-1 text-xs text-muted">{title}</div>
+        <ul className="space-y-0.5 text-xs">
+          {rows.map((r) => (
+            <li key={r.reason} className="flex justify-between gap-2">
+              <span className="truncate text-ink-2">{r.reason}</span>
+              <span className="tabular-nums text-muted">{r.count}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  return (
+    <div className="mt-4 border-t border-line pt-3">
+      <div className="text-sm font-medium text-ink">Buying (last hour)</div>
+      <p className={`mt-1 text-sm ${t.lastHour.entries === 0 ? 'text-warning' : 'text-ink-2'}`}>
+        {t.summary}. Checked {t.lastHour.evaluated}, buy signals {t.lastHour.buySignals}, bought {t.lastHour.entries}
+        {t.lastEntryAt ? ` · last buy ${duration(t.minutesSinceEntry * 60)} ago` : ''}.
+      </p>
+      <div className="mt-2 grid gap-3 sm:grid-cols-2">
+        {list('Why coins were skipped', t.topSkips)}
+        {list('Why buy signals were refused', t.topRefusals)}
+      </div>
+    </div>
   );
 }
 

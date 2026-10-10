@@ -14,6 +14,7 @@
  * Entries run one at a time (a small mutex) so two tokens can't both grab the
  * last free slot.
  */
+import { noteEntry, noteRefusal } from '../lib/entry-blockers';
 import type { Strategy } from '@prisma/client';
 import { DEFAULT_CONFIG } from '../config/default';
 import { getConfig } from '../config/runtime-config';
@@ -78,6 +79,7 @@ export class Trader {
     const mode = this.executor.mode;
     const refuse = (reason: string): EntryResult => {
       log.info({ mint: req.mint, symbol: req.symbol, reason }, `⏭  not entering ${req.symbol}: ${reason}`);
+      noteRefusal(req.strategy, reason);
       return { entered: false, reason };
     };
 
@@ -105,7 +107,8 @@ export class Trader {
     if (perStrategy !== undefined && open.filter((p) => p.strategy === req.strategy).length >= perStrategy) return refuse(`max ${perStrategy} ${req.strategy} positions open`);
     // Strategy cool-off: its recent trades are clearly losing → no new entries for a while.
     const cool = await strategyCoolOff(req.strategy, mode, cfg.trading.strategyBreaker);
-    if (cool) return refuse(cool);
+    // (learning trades still go through: minimum size, and the bot keeps learning while it cools off)
+    if (cool && !req.explore) return refuse(cool);
     // Copy trades are heavily restricted.
     if (req.strategy === 'SMART_MONEY_COPY' && open.filter((p) => p.strategy === 'SMART_MONEY_COPY').length >= (cfg.copy.maxOpen ?? 1)) return refuse('copy trade limit reached');
     // Learning trades: a few at a time, a few per hour.
@@ -151,8 +154,9 @@ export class Trader {
     const stratMult = (t.maxPositionMultipleByStrategy as Partial<Record<string, number>> | undefined)?.[req.strategy];
     const cap = Math.min(t.maxPositionSol * Math.max(t.maxConvictionMultiple ?? 1.6, stratMult ?? 0), (capital * (t.maxPositionPctOfCapital ?? 100)) / 100);
     let size = Math.min(sized * (req.sizeMultiplier ?? 1), cap, budget, balance - reserve);
-    // A learning trade is small on purpose — the minimum size, if the budget allows it.
-    if (req.explore && size < cfg.trading.minPositionSol && Math.min(cap, budget, balance - reserve) >= cfg.trading.minPositionSol) size = cfg.trading.minPositionSol;
+    // Stacked multipliers (coach × conviction × regime × hour…) can shrink a buy under the minimum
+    // and silently stop every entry → the minimum size, if the budget allows it.
+    if (size < cfg.trading.minPositionSol && Math.min(cap, budget, balance - reserve) >= cfg.trading.minPositionSol) size = cfg.trading.minPositionSol;
     if (size < cfg.trading.minPositionSol) {
       return refuse(`size ${size.toFixed(3)} SOL below minimum (balance ${balance.toFixed(3)}, ${req.strategy} budget ${budget.toFixed(3)})`);
     }
@@ -216,6 +220,7 @@ export class Trader {
       return p;
     });
     this.onEntered?.(req);
+    noteEntry();
     return { entered: true, reason: 'entered', positionId: position.id };
   }
 }

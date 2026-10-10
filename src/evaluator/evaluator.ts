@@ -14,6 +14,7 @@
  * To keep the database lean, an Evaluation row is stored only for BUYs,
  * REJECTs, "interesting" scores (≥ 60) and each token's final checkpoint.
  */
+import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
 import { Worker, type Job } from 'bullmq';
 import type { Redis } from 'ioredis';
 import type { Prisma } from '@prisma/client';
@@ -386,10 +387,10 @@ export class Evaluator {
     // → bought at a small size. Score calibration then learns whether that score band really pays.
     const ex = cfg.explore ?? DEFAULT_CONFIG.explore;
     let explore = false;
-    if (decision === 'SKIP' && ex.enabled && ex.strategies.includes(STRATEGY.name) && ruleFails.length === 0 && !token.safetyHardFail && result.score >= threshold - ex.scoreMargin) {
+    if (decision === 'SKIP' && ex.enabled && ex.strategies.includes(STRATEGY.name) && ruleFails.length === 0 && !token.safetyHardFail && result.score >= threshold - exploreMargin(ex)) {
       explore = true;
       decision = 'BUY';
-      reasons = [`learning trade: score ${result.score.toFixed(1)} vs bar ${threshold.toFixed(0)} (within ${ex.scoreMargin}) — bought at ${ex.sizeMultiplier}× size`];
+      reasons = [`learning trade: score ${result.score.toFixed(1)} vs bar ${threshold.toFixed(0)} (within ${exploreMargin(ex)}) — bought at ${ex.sizeMultiplier}× size`];
     }
     const store = decision !== 'SKIP' || final || result.score >= cfg.scoring.storeAboveScore;
 
@@ -419,6 +420,7 @@ export class Evaluator {
       await prisma.token.update({ where: { mint }, data: { combinedScore: result.score } });
     }
 
+    if (decision === 'REJECT') noteSkip(STRATEGY.name, ruleFails[0] ?? reasons[0] ?? 'rejected');
     if (decision === 'REJECT') {
       this.stats.rejects++;
       await markDone();
@@ -480,6 +482,8 @@ export class Evaluator {
       if ((decision === 'BUY' && !explore) || near) this.lab.onSignal({ mint, symbol: token.symbol, strategy: STRATEGY.name, kind: decision === 'BUY' && !explore ? 'buy' : 'near', priceSol: market.raw.priceSol, onAmm: market.raw.onAmm });
     }
 
+    if (decision === 'BUY') noteSignal();
+    else noteSkip(STRATEGY.name, ruleFails[0] ?? (result.score < threshold ? 'score under the bar' : reasons[0] ?? 'skipped'));
     if (decision === 'BUY') {
       this.stats.buys++;
       log.info({ mint, symbol: token.symbol, score: result.score, checkpointSec, holders: market.raw.holders, curvePct: +market.raw.bondingCurvePct.toFixed(1), explore }, `🎯 ${explore ? 'learning ' : ''}BUY ${token.symbol} confirmed (${result.score.toFixed(1)})`);

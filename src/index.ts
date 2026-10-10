@@ -50,6 +50,7 @@ import { logger } from './lib/logger';
 import { installProcessGuards } from './lib/process-guard';
 import { recordError, recordExit, recordStart } from './lib/bot-health';
 import { prisma } from './lib/prisma';
+import { setLastEntryAt } from './lib/entry-blockers';
 import { closeQueues } from './lib/queues';
 import { closeRedis, redis } from './lib/redis';
 import { rpcLimiter } from './lib/solana';
@@ -88,6 +89,9 @@ async function main(): Promise<void> {
   log.info('redis connected');
   const { lastExit } = await recordStart(redis);
   if (lastExit) log.info({ lastExit }, 'previous run ended');
+  // "Why no trades": a restart shouldn't hide how long it has been since the last buy.
+  const lastPos = await prisma.position.findFirst({ orderBy: { openedAt: 'desc' }, select: { openedAt: true } }).catch(() => null);
+  setLastEntryAt(lastPos?.openedAt.getTime() ?? null);
   const liveState = new LiveState(redis);
   await liveState.restore();
 

@@ -188,6 +188,13 @@ smart money → learning engine → ML → social). See README.md.
     coins / Bigger, sort newest / best / worst. API: `learning` flag on /api/positions.
   - E2E e2e-swing.ts: spike sale 50% at 1.06x, 25% at 1.2x, trail out 1.31x after 1.46x = +11.4%; DUD −12.3% stop;
     CLUDE / BABYCLUDE vamps refused.
+- **v8.1 (Oct 10): "why no trades" + drought fixes** (owner: "it hasn't traded in 1 h"). `src/lib/entry-blockers.ts`
+  counts per minute (last hour) why coins were skipped (evaluator + swing trader: first rule fail / score under bar)
+  and why buy signals were refused (trader `refuse`) → `/api/system.trading` → Overview banner after 30 min without a
+  buy + Scanner page "Bot health" → "Buying (last hour)" lists. Fixes: the `minPositionSol` floor now applies to every
+  entry (stacked coach × conviction × regime × hour multipliers silently refused everything); learning trades pass
+  the strategy cool-off; no buy for `explore.droughtMinutes` 45 → learning margin `droughtScoreMargin` 10 (all rules
+  must still pass). Last entry time is read from the DB at start. FIRST thing to check when it doesn't trade.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
