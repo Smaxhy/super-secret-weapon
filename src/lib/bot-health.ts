@@ -7,6 +7,7 @@
  *                  usually out of memory — or crashed hard)
  *   bot:lastExit   { at, reason } of the previous run
  *   bot:starts     start times (last 50)
+ *   bot:crashes    start times that followed a run that died without shutting down (last 50)
  *   bot:errors     last 20 serious errors
  * `healthSnapshot()` adds memory, Redis memory and event-loop lag for /api/health.
  */
@@ -18,6 +19,7 @@ const K_RUNNING = 'bot:running';
 const K_LAST_EXIT = 'bot:lastExit';
 const K_STARTS = 'bot:starts';
 const K_ERRORS = 'bot:errors';
+const K_CRASHES = 'bot:crashes';
 
 /** Git commit baked into the Docker image (scripts/auto-update.sh passes it). */
 export const BOT_VERSION = (process.env.GIT_SHA ?? '').slice(0, 7) || 'dev';
@@ -33,7 +35,7 @@ export async function recordStart(redis: Redis, now = Date.now()): Promise<{ las
   if (prevRunning) {
     // The previous run never reached its shutdown handler.
     lastExit = { at: new Date(now).toISOString(), reason: 'killed or crashed without shutting down (often: out of memory)' };
-    await redis.set(K_LAST_EXIT, JSON.stringify(lastExit));
+    await redis.multi().set(K_LAST_EXIT, JSON.stringify(lastExit)).lpush(K_CRASHES, String(now)).ltrim(K_CRASHES, 0, 49).exec();
   }
   await redis.multi().set(K_RUNNING, String(now)).lpush(K_STARTS, String(now)).ltrim(K_STARTS, 0, 49).exec();
   return { lastExit };
@@ -64,6 +66,8 @@ export interface HealthSnapshot {
   uptimeSec: number;
   eventLoopLagMs: number | null;
   restarts24h: number | null;
+  /** Restarts after a crash / kill (updates and clean stops not counted). */
+  crashes24h: number | null;
   lastExit: { at: string; reason: string } | null;
   recentErrors: Array<{ at: string; message: string }>;
   memory: { rssMb: number; heapMb: number };
@@ -81,6 +85,7 @@ export async function healthSnapshot(now = Date.now()): Promise<HealthSnapshot> 
     uptimeSec: Math.round(process.uptime()),
     eventLoopLagMs: eventLoopLagMs(),
     restarts24h: null,
+    crashes24h: null,
     lastExit: null,
     recentErrors: [],
     memory: { rssMb: Math.round(mem.rss / 1e6), heapMb: Math.round(mem.heapUsed / 1e6) },
@@ -89,9 +94,10 @@ export async function healthSnapshot(now = Date.now()): Promise<HealthSnapshot> 
   };
   if (!redisRef) return base;
   try {
-    const [starts, last, errors, info] = await Promise.all([redisRef.lrange(K_STARTS, 0, 49), redisRef.get(K_LAST_EXIT), redisRef.lrange(K_ERRORS, 0, 4), redisRef.info('memory')]);
+    const [starts, last, errors, info, crashes] = await Promise.all([redisRef.lrange(K_STARTS, 0, 49), redisRef.get(K_LAST_EXIT), redisRef.lrange(K_ERRORS, 0, 4), redisRef.info('memory'), redisRef.lrange(K_CRASHES, 0, 49)]);
     // Starts in the last 24h, not counting the current run.
     base.restarts24h = Math.max(0, starts.filter((s) => now - Number(s) < 86_400_000).length - 1);
+    base.crashes24h = crashes.filter((s) => now - Number(s) < 86_400_000).length;
     base.lastExit = parse(last);
     base.recentErrors = errors.flatMap((e) => {
       const v = parse<{ at: string; message: string }>(e);

@@ -12,6 +12,8 @@ interface SystemData {
   uptimeSec: number;
   eventLoopLagMs: number | null;
   restarts24h: number | null;
+  /** Restarts after a crash / kill (updates not counted). Older bots don't send it. */
+  crashes24h?: number | null;
   lastExit: { at: string; reason: string } | null;
   recentErrors: Array<{ at: string; message: string }>;
   memory: { rssMb: number; heapMb: number };
@@ -29,17 +31,25 @@ interface SystemData {
 /** Commit the website was built from (GitHub Actions sets GITHUB_SHA). */
 export const SITE_VERSION = (import.meta.env.VITE_GIT_SHA ?? '').slice(0, 7) || 'dev';
 
+// (the site only rebuilds when the dashboard changes, so a different site version is normal — the real
+// "is the bot behind" answer is the auto-updater's: newest commit on GitHub vs what the bot runs)
 const versionMismatch = (bot: string) => bot !== 'dev' && bot !== 'unknown' && SITE_VERSION !== 'dev' && bot !== SITE_VERSION;
+interface UpdateInfo { running: string; last: { state: string; remote: string } | null }
+const botBehind = (u: UpdateInfo | null | undefined) => !!u?.last?.remote && u.running !== 'dev' && u.last.remote !== u.running;
 const crashed = (r: string | undefined) => !!r && /killed|crash/i.test(r);
 
 /** Short warning on the Overview when something is off (renders nothing when healthy). */
 export function HealthBanner() {
   const { data } = useApi<SystemData>('/api/system', 60_000);
+  const { data: upd } = useApi<UpdateInfo>('/api/update', 120_000);
   if (!data) return null;
   const issues: string[] = [];
-  if ((data.restarts24h ?? 0) >= 3) issues.push(`the bot restarted ${data.restarts24h}× in 24h`);
+  // Every update restarts the bot — only crashes are a problem.
+  if (data.crashes24h != null) {
+    if (data.crashes24h >= 3) issues.push(`the bot crashed ${data.crashes24h}× in 24h`);
+  } else if ((data.restarts24h ?? 0) >= 3) issues.push(`the bot restarted ${data.restarts24h}× in 24h (updates included)`);
   if (crashed(data.lastExit?.reason) && data.uptimeSec < 3600) issues.push(`last stop: ${data.lastExit!.reason}`);
-  if (versionMismatch(data.version) && data.uptimeSec > 20 * 60) issues.push(`the VPS runs older code (${data.version}) than this site (${SITE_VERSION}) — its update may be stuck`);
+  if (botBehind(upd) && data.uptimeSec > 20 * 60) issues.push(`the VPS runs older code (${data.version}) than GitHub (${upd!.last!.remote}) — its update may be stuck`);
   if ((data.eventLoopLagMs ?? 0) > 1000) issues.push(`the bot is overloaded (${data.eventLoopLagMs} ms lag)`);
   if (data.trading && data.trading.minutesSinceEntry >= 30 && data.uptimeSec > 10 * 60) issues.push(`no buy for ${duration(data.trading.minutesSinceEntry * 60)}: ${data.trading.summary}`);
   if (!issues.length) return null;
@@ -52,6 +62,7 @@ export function HealthBanner() {
 
 export function SystemPanel() {
   const { data, error } = useApi<SystemData>('/api/system', 30_000);
+  const { data: upd } = useApi<UpdateInfo>('/api/update', 120_000);
   return (
     <Card title="Bot health" className="mt-4">
       {error && <p className="text-sm text-down">{error}</p>}
@@ -59,10 +70,10 @@ export function SystemPanel() {
         <>
           <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             <Stat label="Running for" value={duration(data.uptimeSec)} />
-            <Stat label="Restarts (24h)" value={data.restarts24h ?? '—'} warn={(data.restarts24h ?? 0) >= 3} />
+            <Stat label="Restarts (24h)" value={data.restarts24h ?? '—'} warn={data.crashes24h != null ? data.crashes24h >= 3 : (data.restarts24h ?? 0) >= 3} sub={data.crashes24h != null ? `${data.crashes24h} crash${data.crashes24h === 1 ? '' : 'es'}, rest = updates` : undefined} />
             <Stat label="Memory" value={`${data.memory.rssMb} MB`} sub={data.redisMemoryMb !== null ? `Redis ${data.redisMemoryMb} MB` : undefined} />
             <Stat label="Lag" value={data.eventLoopLagMs !== null ? `${data.eventLoopLagMs} ms` : '—'} warn={(data.eventLoopLagMs ?? 0) > 1000} />
-            <Stat label="Bot version" value={data.version} warn={versionMismatch(data.version)} sub={`site ${SITE_VERSION}`} />
+            <Stat label="Bot version" value={data.version} warn={botBehind(upd)} sub={botBehind(upd) ? `newest ${upd!.last!.remote}` : versionMismatch(data.version) ? `up to date (site ${SITE_VERSION})` : 'up to date'} />
           </div>
           {data.lastExit && (
             <p className={`mt-3 break-words text-sm ${crashed(data.lastExit.reason) ? 'text-down' : 'text-ink-2'}`}>

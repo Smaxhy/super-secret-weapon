@@ -323,6 +323,10 @@ smart money → learning engine → ML → social). See README.md.
   "could dump it 25%". Now top-1 > 60% / top-3 > 80% impact (≈ a 10%+ / 25%+ holder on a fresh pool). Rugger memory
   counted early buyers (sniper bots are in every launch and get recorded as dumpers) → now only the top-10 holders,
   3 needed (dev still counts 2). Config migration v14. If it still doesn't trade: Scanner → Bot health → top refusals.
+- **v9.11: health banner fixes** — "VPS runs older code than this site" was a false alarm: dashboard.yml only
+  rebuilds on `dashboard/**` changes, so the site's SHA lags. Banner/panel now compare the bot to GitHub
+  (`/api/update` last.remote). Restarts: every push redeploys (44 pushes ≈ 41 restarts) → crashes counted apart
+  (`bot:crashes`, `crashes24h`); the banner warns on ≥3 crashes, not on restarts.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
