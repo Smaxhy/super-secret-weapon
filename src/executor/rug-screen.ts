@@ -15,6 +15,7 @@
 import type { Redis } from 'ioredis';
 import { DEFAULT_CONFIG } from '../config/default';
 import { getConfig } from '../config/runtime-config';
+import { staircase } from '../evaluator/price-shape';
 import { dumpRisk, launchPump, launchPumpVerdict, ruggerVerdict, topHolders, type RuggerMemory } from './rug-watch';
 import { insiderDumpSignal } from '../evaluator/insider-cluster';
 import type { MarketRaw } from '../evaluator/market-analyzer';
@@ -47,6 +48,8 @@ export interface RugScreenInput {
   ruggers?: string | null;
   /** Launch-whale pump set-up (rug-watch.launchPumpVerdict) or null. */
   launchPump?: string | null;
+  /** Staircase chart (price-shape.staircase) or null. */
+  staircase?: string | null;
   guard?: { maxTop3DumpImpactPct: number; maxTopDumpImpactPct: number } | null;
 }
 
@@ -58,6 +61,7 @@ export function rugScreen(i: RugScreenInput): string | null {
   if (i.kolDump) return `KOLs dumping (${i.kolDump})`;
   if (i.ruggers) return `rugger memory: ${i.ruggers}`;
   if (i.launchPump) return i.launchPump;
+  if (i.staircase) return i.staircase;
   if (i.dumpRisk && i.guard) {
     if (i.dumpRisk.top1Pct > i.guard.maxTopDumpImpactPct) return `one holder could dump it ${i.dumpRisk.top1Pct.toFixed(0)}% (max ${i.guard.maxTopDumpImpactPct}%)`;
     if (i.dumpRisk.top3Pct > i.guard.maxTop3DumpImpactPct) return `top-3 holders could dump it ${i.dumpRisk.top3Pct.toFixed(0)}% (max ${i.guard.maxTop3DumpImpactPct}%)`;
@@ -126,7 +130,10 @@ export async function screenEntry(
         ruggers = ruggerVerdict(flagged, view.creator, [...new Set([...top, ...view.earlyBuyers.slice(0, 30)])], g.ruggerWalletMin);
       }
     }
+    // Even, wickless green steps with narrow buying = a laddered chart waiting for its one red candle.
+    const stair = deps.crowd ? staircase(deps.crowd.candles(req.mint), deps.crowd.trades(req.mint), now) : null;
     return rugScreen({
+      staircase: stair?.hit ? stair.why : null,
       launchPump: launch,
       dumpRisk: dumpRiskNow,
       ruggers,

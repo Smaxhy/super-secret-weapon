@@ -14,7 +14,7 @@
  * To keep the database lean, an Evaluation row is stored only for BUYs,
  * REJECTs, "interesting" scores (≥ 60) and each token's final checkpoint.
  */
-import { priceShape } from './price-shape';
+import { priceShape, staircase } from './price-shape';
 import { aiRuleVerdict, flattenFeatures } from '../learner/ai-coach';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
@@ -257,7 +257,10 @@ export class Evaluator {
     const chartCfg = cfg.chart ?? DEFAULT_CONFIG.chart;
     const chart = chartCfg.enabled && this.crowd ? analyzeChart(this.crowd.candles(mint), Date.now(), chartCfg) : null;
     // Where in the move are we buying (run-up, spikes, distance from the high) — for the AI coach + autopsy.
-    const shape = this.crowd ? priceShape(this.crowd.candles(mint), Date.now()) : null;
+    const shapeBase = this.crowd ? priceShape(this.crowd.candles(mint), Date.now()) : null;
+    const stair = this.crowd ? staircase(this.crowd.candles(mint), this.crowd.trades(mint), Date.now()) : null;
+    const shape = shapeBase ? { ...shapeBase, staircase: stair?.hit ? 1 : 0, stairCandles: stair?.candles ?? 0, stairStepCv: stair?.stepCv ?? null } : null;
+
     const chartPoints = chart?.verdict === 'buy_now' ? chartCfg.buyDipPoints : 0;
     // Chart strategies (Fibonacci, EMA pullback, breakouts …) that PROVED themselves in the live lab.
     const taCfg = cfg.ta ?? DEFAULT_CONFIG.ta;
@@ -300,6 +303,8 @@ export class Evaluator {
     const kolAct = kolCfg.enabled ? await kolActivity(this.redis, mint, kolCfg).catch(() => null) : null;
     const kolBonus = kolPoints(kolAct, kolCfg);
     if (kolAct?.dumping) dexFails.push(`KOLs dumping (${kolAct.recentSellers.length} sold)`);
+    // Staircase chart (owner: "avoid odd-looking staircase charts") → no buy, whatever the score.
+    if (stair?.hit) dexFails.push(stair.why);
     // KOL follow (owner: "trade more alongside coins a lot of KOLs buy"): the KOLs must still be in;
     // the more of them, the easier the bar and the bigger the size.
     const kolsIn = kolAct?.buyers.length ?? 0;

@@ -277,6 +277,12 @@ smart money → learning engine → ML → social). See README.md.
   MIGRATION_MOMENTUM with `rescan` (ignores the finished-schedule done key; once per coin per 5 min, ≤8 per tick, not
   held). Before this a migrated coin was only checked in its first hour. Allocation now NEW 30 / MIGRATION 25 / SWING 20 /
   KOL 15 / SOON 10, MIGRATION max 4 open, 10 positions total. Config migration v9.
+- **v9.3 (Oct 10): staircase charts + autopsy blocks → small size** — `staircase()` (price-shape.ts, 1-min candles
+  over 15 min: ≥6 one-way candles, ≥80% green, no red >3%, step CV ≤0.6, wicks ≤35%, +25%, AND top-3 wallets ≥50% of
+  buys / ≤12 buyers / ≤15% sells) → rule fail in the evaluator + rug-screen refusal (all strategies), `shape.staircase`
+  feature for the AI. Autopsy: a band covering ≥90% of a strategy's trades (e.g. "migrated" for MIGRATION) is never
+  blocked (strategy tuning handles it); `autopsy.blockMode` 'small' (default) = losing kinds still trade at the minimum
+  size as learning trades instead of being refused; tuning adds "badly losing" (avg+SE < −10%) → bar +10, size ×0.4.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

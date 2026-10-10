@@ -32,6 +32,11 @@ export interface AutopsyConfig {
   minLossSol: number;
   /** Let 1 in N trades of a blocked band through (minimum size, learning trade) so it can recover. */
   probeEvery: number;
+  /**
+   * 'small' (default, owner: keep trading in paper): losing kinds still trade, at the minimum size, as
+   * learning trades. 'block': refused (1 in probeEvery goes through small).
+   */
+  blockMode?: 'small' | 'block';
 }
 
 /** What we know about a trade when it is opened (also what the trader checks a new buy against). */
@@ -161,6 +166,11 @@ export function tuneStrategies(trades: readonly ClosedTrade[], minTrades: number
       t.barDelta = -3;
       t.sizeFactor = 1.2;
       why.push(`working (${r.n} trades, avg +${r.avgPct}%) → easier bar, bigger size`);
+    } else if (r.avgPct + r.sePct < -10) {
+      // Clearly broken (e.g. SOON: 13% wins, −16% a trade): much stricter, much smaller — still trading for data.
+      t.barDelta = 10;
+      t.sizeFactor = 0.4;
+      why.push(`badly losing (${r.n} trades, ${r.winRatePct}% wins, avg ${r.avgPct}%) → much stricter, 40% size`);
     } else if (r.avgPct < 0) {
       if (neverUp >= 0.55) {
         t.barDelta = 6;
@@ -193,6 +203,7 @@ export function setAutopsyTunes(t: readonly StrategyTune[]): void {
 
 export interface Autopsy {
   at: string;
+  mode?: 'small' | 'block';
   tuning: StrategyTune[];
   trades: number;
   overall: Record_ & { avgWinPct: number; avgLossPct: number; neededWinRatePct: number | null; profitFactor: number | null };
@@ -247,7 +258,10 @@ export function runAutopsy(trades: readonly ClosedTrade[], c: AutopsyConfig, now
     }
   }
   const enough = segs.filter((x) => x.n >= c.minTrades);
-  const blocked = enough.filter((x) => x.avgPct + x.sePct < c.maxAvgPct && x.pnlSol <= -c.minLossSol).sort((a, b) => a.pnlSol - b.pnlSol);
+  // A band that is (almost) the whole strategy — e.g. "migrated" for migration trades — is not a KIND of
+  // trade to avoid, it is the strategy itself: that is the strategy tuning's job, never a block.
+  const stratN = new Map(strategies.map((st) => [st, trades.filter((t) => t.strategy === st).length]));
+  const blocked = enough.filter((x) => x.n < 0.9 * (stratN.get(x.strategy) ?? 0) && x.avgPct + x.sePct < c.maxAvgPct && x.pnlSol <= -c.minLossSol).sort((a, b) => a.pnlSol - b.pnlSol);
   const worst = [...enough].sort((a, b) => a.pnlSol - b.pnlSol).slice(0, 8);
   const best = [...enough].filter((x) => x.pnlSol > 0).sort((a, b) => b.pnlSol - a.pnlSol).slice(0, 5);
 
@@ -272,13 +286,14 @@ export function runAutopsy(trades: readonly ClosedTrade[], c: AutopsyConfig, now
   if (worstStrat && worstStrat.pnlSol < 0 && worstStrat.n >= 5) findings.push(`Worst strategy: ${worstStrat.strategy} — ${worstStrat.n} trades, ${worstStrat.winRatePct}% wins, ${worstStrat.pnlSol} SOL.`);
   const learning = record(trades.filter((t) => t.explore));
   if (learning.n >= 10 && learning.avgPct < all.avgPct - 3) findings.push(`Learning trades (just under the bar) average ${learning.avgPct}% vs ${all.avgPct}% overall — the score bar is doing its job.`);
-  for (const b of blocked.slice(0, 5)) findings.push(`BLOCKED: ${b.strategy} with ${b.band} — ${b.n} trades, ${b.winRatePct}% wins, avg ${b.avgPct}%, ${b.pnlSol} SOL.`);
+  for (const b of blocked.slice(0, 5)) findings.push(`${(c.blockMode ?? 'small') === 'small' ? 'SMALLEST SIZE ONLY' : 'BLOCKED'}: ${b.strategy} with ${b.band} — ${b.n} trades, ${b.winRatePct}% wins, avg ${b.avgPct}%, ${b.pnlSol} SOL.`);
 
   const tuning = tuneStrategies(trades, c.minTrades);
   for (const t of tuning) if (t.why) findings.push(`ADJUSTED ${t.strategy}: ${t.why}`);
 
   return {
     at: new Date(now).toISOString(),
+    mode: c.blockMode ?? 'small',
     tuning,
     trades: trades.length,
     overall: { ...all, avgWinPct: r1(avgWin), avgLossPct: r1(avgLoss), neededWinRatePct: needed, profitFactor: grossL > 0 ? Math.round((grossW / grossL) * 100) / 100 : null },
@@ -338,6 +353,8 @@ export class LossAutopsy {
     if (!c.enabled || !this.last) return { block: null, probe: false };
     const hit = blockedBand(shape, this.last.blocked);
     if (!hit) return { block: null, probe: false };
+    // Paper default: keep trading it, but at the smallest size (learning trade) — data without the losses.
+    if ((c.blockMode ?? 'small') === 'small') return { block: null, probe: true };
     this.probes++;
     if (c.probeEvery > 0 && this.probes % c.probeEvery === 0) return { block: null, probe: true };
     return { block: `this kind of trade keeps losing: ${shape.strategy} with ${hit.band} (${hit.n} trades, avg ${hit.avgPct}%, ${hit.pnlSol} SOL)`, probe: false };

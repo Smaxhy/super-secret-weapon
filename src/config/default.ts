@@ -593,7 +593,7 @@ export const DEFAULT_CONFIG = {
    * even after one standard error, and lost ≥0.1 SOL, is blocked; 1 in 5 of its trades still goes
    * through at the minimum size so it can prove itself again.
    */
-  autopsy: { enabled: true as boolean, everyMin: 30, lookbackDays: 14, minTrades: 15, maxAvgPct: -3, minLossSol: 0.1, probeEvery: 5 },
+  autopsy: { enabled: true as boolean, everyMin: 30, lookbackDays: 14, minTrades: 15, maxAvgPct: -3, minLossSol: 0.1, probeEvery: 5, blockMode: 'small' as 'small' | 'block' },
 
   /**
    * Chart strategies (src/evaluator/ta/strategies.ts) + their live lab (src/learner/ta-lab.ts).

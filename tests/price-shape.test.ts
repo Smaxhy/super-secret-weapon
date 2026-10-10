@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { afterEntry, priceShape } from '../src/evaluator/price-shape';
+import { afterEntry, priceShape, staircase } from '../src/evaluator/price-shape';
 import type { Candle } from '../src/evaluator/chart-reader';
 
 const NOW = 1_760_000_000_000;
@@ -30,5 +30,36 @@ describe('price shape before a buy', () => {
     const good = afterEntry([{ t: t0 + 10_000, priceSol: 1.1 }, { t: t0 + 120_000, priceSol: 1.5 }], 1, t0)!;
     expect(good).toMatchObject({ max5m: 1.5, peak: 1.5, secToPeak: 120 });
     expect(afterEntry([], 1, t0)).toBeNull();
+  });
+});
+
+describe('staircase charts (owner: avoid them)', () => {
+  // 15 s candles: each minute = 4 candles; build per-minute steps.
+  const stairs = (steps: number[], wick = 0.002) => {
+    const out: Candle[] = [];
+    let p = 1;
+    steps.forEach((st, m) => {
+      for (let q = 0; q < 4; q++) {
+        const o = p;
+        const c = p * (1 + st / 4);
+        out.push({ t: NOW - (steps.length - m) * 60_000 + q * 15_000, o, h: c * (1 + wick), l: o * (1 - wick), c, v: 0.5, bv: 0.5, sv: 0, n: 2 });
+        p = c;
+      }
+    });
+    return out;
+  };
+  const few = (n: number) => Array.from({ length: 30 }, (_, i) => ({ t: NOW - 500_000 + i * 15_000, w: `w${i % n}`, buy: true, sol: 0.4 }));
+  const many = Array.from({ length: 80 }, (_, i) => ({ t: NOW - 500_000 + i * 6_000, w: `w${i}`, buy: i % 3 !== 0, sol: 0.3 + (i % 7) * 0.2 }));
+  it('flags even, wickless green steps bought by a few wallets', () => {
+    const s = staircase(stairs([0.06, 0.07, 0.06, 0.065, 0.06, 0.07, 0.06, 0.065]), few(3), NOW);
+    expect(s.hit).toBe(true);
+    expect(s.why).toMatch(/staircase chart/);
+  });
+  it('leaves messy real demand alone', () => {
+    const messy = stairs([0.02, 0.15, -0.01, 0.3, 0.01, 0.12, 0.05, 0.2], 0.08);
+    expect(staircase(messy, many, NOW).hit).toBe(false);
+    // Same even steps but lots of different buyers and real selling → not flagged.
+    expect(staircase(stairs([0.06, 0.07, 0.06, 0.065, 0.06, 0.07, 0.06, 0.065]), many, NOW).hit).toBe(false);
+    expect(staircase(stairs([0.06, 0.06]), few(2), NOW).hit).toBe(false);
   });
 });

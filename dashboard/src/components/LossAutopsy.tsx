@@ -9,6 +9,7 @@ interface Rec { n: number; wins: number; winRatePct: number; pnlSol: number; avg
 interface Seg extends Rec { strategy: string; band: string; key: string }
 interface Autopsy {
   at: string;
+  mode?: 'small' | 'block';
   trades: number;
   overall: Rec & { avgWinPct: number; avgLossPct: number; neededWinRatePct: number | null; profitFactor: number | null };
   byStrategy: Array<Rec & { strategy: string }>;
@@ -59,14 +60,18 @@ export function LossAutopsy() {
           {data.findings.length > 0 && (
             <ul className="list-disc space-y-1 pl-5 text-ink">
               {data.findings.map((f) => (
-                <li key={f} className={f.startsWith('BLOCKED') ? 'text-warning' : undefined}>{f}</li>
+                <li key={f} className={f.startsWith('BLOCKED') || f.startsWith('SMALLEST') ? 'text-warning' : undefined}>{f}</li>
               ))}
             </ul>
           )}
           {data.blocked.length > 0 && (
             <div>
-              <div className="mb-1 font-medium text-ink">Blocked now ({data.blocked.length})</div>
-              <p className="mb-1 text-xs text-muted">New buys like these are refused; 1 in 5 still goes through at the smallest size so the bot sees when they start working again.</p>
+              <div className="mb-1 font-medium text-ink">{data.mode === 'block' ? 'Blocked now' : 'Losing kinds — smallest size only'} ({data.blocked.length})</div>
+              <p className="mb-1 text-xs text-muted">
+                {data.mode === 'block'
+                  ? 'New buys like these are refused; 1 in 5 still goes through at the smallest size so the bot sees when they start working again.'
+                  : 'Still traded (paper keeps collecting data), but only at the smallest size until they start winning again.'}
+              </p>
               <SegList rows={data.blocked} />
             </div>
           )}

@@ -49,7 +49,10 @@ describe('autopsy self-tuning per strategy', () => {
     const giver = mk(20, (i) => ({ strategy: 'SOON', pnlPct: i % 2 ? -12 : 4, pnlSol: i % 2 ? -0.024 : 0.008, peakMultiple: i % 2 ? 1.3 : 1.1 }));
     const t = tuneStrategies([...bad, ...good, ...giver], 15);
     const by = (s: string) => t.find((x) => x.strategy === s)!;
-    expect(by('CURVE_SNIPE')).toMatchObject({ barDelta: 6, sizeFactor: 0.7 });
+    // −12% a trade = clearly broken → much stricter, 40% size.
+    expect(by('CURVE_SNIPE')).toMatchObject({ barDelta: 10, sizeFactor: 0.4 });
+    const meh = mk(20, (i) => ({ strategy: 'MIGRATION_MOMENTUM', pnlPct: i % 3 === 0 ? 8 : -9, pnlSol: i % 3 === 0 ? 0.016 : -0.018, peakMultiple: i % 3 === 0 ? 1.2 : 1.01 }));
+    expect(tuneStrategies(meh, 15)[0]).toMatchObject({ barDelta: 6, sizeFactor: 0.7 });
     expect(by('SWING')).toMatchObject({ barDelta: -3, sizeFactor: 1.2, trailFactor: 1 });
     expect(by('SOON').trailFactor).toBe(0.75);
     expect(tuneStrategies(bad.slice(0, 5), 15)[0]).toMatchObject({ barDelta: 0, sizeFactor: 1 });

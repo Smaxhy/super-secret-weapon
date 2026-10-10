@@ -102,3 +102,94 @@ export function afterEntry(points: ReadonlyArray<{ t: number; priceSol: number }
     peak: r2(peak),
   };
 }
+
+/**
+ * Staircase (owner: "avoid odd-looking staircase charts"): a run of evenly sized green candles with
+ * tiny wicks and almost no sellers — one or a few wallets laddering the price up so others buy, then
+ * one red candle takes it all back. Real demand is messy (uneven candles, wicks, sellers, many wallets).
+ *
+ * Read on 1-minute candles (built from the 15 s ones) over the last 15 minutes + the trades behind them:
+ *   ≥ 6 candles, ≥ 80% green, no red candle bigger than 3%, steady steps (CV of the green moves ≤ 0.6),
+ *   small wicks (≤ 35% of the range on average), price up ≥ 25% over the run — AND the buying is narrow
+ *   (top-3 wallets ≥ 50% of the buy SOL, or ≤ 12 different buyers) or almost nobody sells (≤ 15%).
+ */
+export interface Staircase {
+  hit: boolean;
+  candles: number;
+  greenPct: number;
+  stepCv: number | null;
+  wickPct: number;
+  runPct: number;
+  top3BuyPct: number | null;
+  buyers: number | null;
+  sellPct: number | null;
+  why: string;
+}
+
+export function staircase(candles: readonly Candle[], trades: ReadonlyArray<{ t: number; w: string; buy: boolean; sol: number }> | null, now: number): Staircase {
+  const none = (why: string): Staircase => ({ hit: false, candles: 0, greenPct: 0, stepCv: null, wickPct: 0, runPct: 0, top3BuyPct: null, buyers: null, sellPct: null, why });
+  // 15 s → 1 min candles over the last 15 minutes.
+  const mins = new Map<number, Candle>();
+  for (const c of candles) {
+    if (c.t > now || now - c.t > 15 * 60_000 || !(c.c > 0)) continue;
+    const k = Math.floor(c.t / 60_000) * 60_000;
+    const m = mins.get(k);
+    if (!m) mins.set(k, { ...c, t: k });
+    else mins.set(k, { t: k, o: m.o, h: Math.max(m.h, c.h), l: Math.min(m.l, c.l), c: c.c, v: m.v + c.v, bv: m.bv + c.bv, sv: m.sv + c.sv, n: m.n + c.n });
+  }
+  const all = [...mins.values()].sort((a, b) => a.t - b.t);
+  // The run = the latest stretch without a red candle bigger than 3%.
+  let start = all.length;
+  for (let i = all.length - 1; i >= 0; i--) {
+    const c = all[i]!;
+    if (c.o > 0 && c.c < c.o * 0.97) break;
+    start = i;
+  }
+  const run = all.slice(start);
+  if (run.length < 6) return none('no long one-way run');
+  const green = run.filter((c) => c.c > c.o);
+  const greenPct = Math.round((green.length / run.length) * 100);
+  const steps = green.map((c) => c.c / c.o - 1);
+  const mean = steps.reduce((a, b) => a + b, 0) / (steps.length || 1);
+  const sd = Math.sqrt(steps.reduce((a, b) => a + (b - mean) ** 2, 0) / (steps.length || 1));
+  const stepCv = mean > 0 ? Math.round((sd / mean) * 100) / 100 : null;
+  const wickPct = Math.round((run.reduce((s, c) => {
+    const range = c.h - c.l;
+    return s + (range > 0 ? (range - Math.abs(c.c - c.o)) / range : 0);
+  }, 0) / run.length) * 100);
+  const runPct = Math.round((run[run.length - 1]!.c / run[0]!.o - 1) * 100);
+  let top3BuyPct: number | null = null;
+  let buyers: number | null = null;
+  let sellPct: number | null = null;
+  if (trades) {
+    const tr = trades.filter((x) => x.t >= run[0]!.t && x.t <= now);
+    const byW = new Map<string, number>();
+    let buySol = 0;
+    let sellSol = 0;
+    for (const x of tr) {
+      if (x.buy) {
+        buySol += x.sol;
+        byW.set(x.w, (byW.get(x.w) ?? 0) + x.sol);
+      } else sellSol += x.sol;
+    }
+    buyers = byW.size;
+    top3BuyPct = buySol > 0 ? Math.round(([...byW.values()].sort((a, b) => b - a).slice(0, 3).reduce((a, b) => a + b, 0) / buySol) * 100) : null;
+    sellPct = buySol + sellSol > 0 ? Math.round((sellSol / (buySol + sellSol)) * 100) : null;
+  }
+  const shape = greenPct >= 80 && stepCv !== null && stepCv <= 0.6 && wickPct <= 35 && runPct >= 25;
+  const narrow = (top3BuyPct !== null && top3BuyPct >= 50) || (buyers !== null && buyers <= 12) || (sellPct !== null && sellPct <= 15);
+  const hit = shape && (trades === null || narrow);
+  const who = top3BuyPct !== null && top3BuyPct >= 50 ? `3 wallets did ${top3BuyPct}% of the buying` : buyers !== null && buyers <= 12 ? `only ${buyers} buyers` : sellPct !== null ? `${sellPct}% sells` : 'no trade data';
+  return {
+    hit,
+    candles: run.length,
+    greenPct,
+    stepCv,
+    wickPct,
+    runPct,
+    top3BuyPct,
+    buyers,
+    sellPct,
+    why: hit ? `staircase chart: ${run.length} even green candles (+${runPct}%), tiny wicks, ${who}` : 'no staircase',
+  };
+}
