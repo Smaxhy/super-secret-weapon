@@ -13,7 +13,7 @@ export const DEFAULT_CONFIG = {
   trading: {
     mode: 'PAPER' as const,
     maxPositionSol: 0.2,
-    minPositionSol: 0.05,
+    minPositionSol: 0.1, // v9.9: 0.05 lost ~6% to gas + tips per round trip; 0.1 halves that
     maxPositionSolCeiling: 0.3, // the dashboard slider can't go above this
     /** v7: 8 (owner: trade more often so the bot learns; swing trades on bigger coins add up to 3). */
     maxConcurrentPositions: 14,
@@ -69,7 +69,7 @@ export const DEFAULT_CONFIG = {
     // stack under 70 on normal busy coins; hard fails (mint / freeze authority, bad extensions…) still block,
     // and the rug guard (dump risk, launch whale, staircase, holder dumps) covers the rest at entry.
     minSafetyScore: 55,
-    minCombinedScore: 70,
+    minCombinedScore: 65, // v9.9 (owner: more trades) — autopsy + AI coach tighten it back where it loses
     minHoldersCurveSnipe: 15,
     minHoldersMigration: 40,
     maxDevHoldingPct: 10,
@@ -577,8 +577,8 @@ export const DEFAULT_CONFIG = {
     scoreMargin: 8,
     // Half size (0.1 SOL at the default 0.2): smaller and the fixed tx costs (~3% round trip) distort what it learns.
     sizeMultiplier: 0.5,
-    maxOpen: 4,
-    maxPerHour: 10,
+    maxOpen: 6,
+    maxPerHour: 20,
     // No entry at all for this long (owner: "it hasn't traded in an hour") → learning trades may take
     // coins up to droughtScoreMargin under the bar (still every rule passed, still half size).
     droughtMinutes: 45,
@@ -597,7 +597,7 @@ export const DEFAULT_CONFIG = {
   runner: {
     scoreThresholdDelta: -20,
     sizeMultiplier: 0.8,
-    scan: { enabled: true as boolean, everySec: 15, minOrganicBuyers5m: 25, minOrganicBuySol5m: 4, minBuySharePct: 58, minOrganicPct: 60, maxRun3mPct: 300, minMarketCapUsd: 8_000, cooldownMin: 4, maxChecksPerTick: 8, minCurvePct: 15, maxCurvePct: 92 },
+    scan: { enabled: true as boolean, everySec: 15, minOrganicBuyers5m: 18, minOrganicBuySol5m: 3, minBuySharePct: 55, minOrganicPct: 60, maxRun3mPct: 300, minMarketCapUsd: 8_000, cooldownMin: 4, maxChecksPerTick: 8, minCurvePct: 15, maxCurvePct: 92 },
   },
 
   /**

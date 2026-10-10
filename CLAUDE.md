@@ -314,6 +314,10 @@ smart money → learning engine → ML → social). See README.md.
   (adopted from its next curve trade, 15 min); migrated (pump.fun complete / gecko pumpswap / dex `pumpswap`, or unknown
   with MC ≥$69k) with MC ≥$25k: `adoptMigrated` on the canonical pool (≤25 per run). Evaluator: late-joined coins
   (`view.adopted` or no creator) skip the fee / volume / holder minimums (our ledger only starts at the join).
+- **v9.9 (Oct 10): bigger + more trades, then FREEZE** (owner: "raise the size, keep everything as it is, I won't
+  update more, but more trades"): `trading.minPositionSol` 0.1 (0.05 lost ~6% to gas+tips per round trip),
+  `entry.minCombinedScore` 65, explore maxOpen 6 / maxPerHour 20, runner scan ≥18 buyers / ≥3 SOL / buys ≥55%.
+  Migration v13. Owner wants NO further changes for now — let it collect 200–300 trades, then tune from the autopsy.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

@@ -225,6 +225,16 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['trading', ['maxConcurrentPositions'], 14],
     ],
   },
+  {
+    version: 13,
+    note: 'v9.9 (owner: bigger trades, a lot more of them, then no more changes): minimum size 0.1 SOL, score bar 65, learning trades 6 open / 20 an hour',
+    set: [
+      ['trading', ['minPositionSol'], 0.1],
+      ['entry', ['minCombinedScore'], 65],
+      ['explore', ['maxOpen'], 6],
+      ['explore', ['maxPerHour'], 20],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */
