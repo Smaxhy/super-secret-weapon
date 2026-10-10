@@ -895,11 +895,10 @@ export const DEFAULT_CONFIG = {
     } satisfies Record<StrategyName, number>,
     dailyLossCircuitBreakerPct: 20,
     /**
-     * PAPER only: after the daily breaker trips, keep trading at the minimum size with at most
-     * this many positions open (0 = full stop like live). Fake money — a whole day without trades
-     * teaches the bot nothing. LIVE always stops completely.
+     * PAPER: the daily loss breaker and the strategy cool-off don't stop trading (owner: get as
+     * much data as possible — fake money, the balance can be reset). LIVE: both always apply.
      */
-    paperBreakerMaxOpen: 2,
+    paperIgnoresLossLimits: true as boolean,
   },
 
   /** Paper-trading simulation settings. Kept pessimistic so paper results aren't fantasy. */

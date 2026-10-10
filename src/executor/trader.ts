@@ -92,19 +92,16 @@ export class Trader {
     const openCost = open.reduce((s, p) => s + (p.sizeSol * p.remainingPct) / 100, 0);
     const capital = balance + openCost;
 
+    // Paper ignores the loss limits (owner: as much data as possible); live always stops.
+    const lossLimits = mode === 'LIVE' || !(cfg.exit.paperIgnoresLossLimits ?? true);
     const dailyPnl = await realisedPnlToday(mode);
-    let breakerSmall = false;
     if (dailyPnl <= -(cfg.exit.dailyLossCircuitBreakerPct / 100) * capital) {
       const day = new Date().toISOString().slice(0, 10);
       if (this.breakerTrippedDay !== day) {
         this.breakerTrippedDay = day;
-        void recordEvent({ level: 'WARN', module: 'trader', type: 'circuit_breaker', message: `Daily P&L ${dailyPnl.toFixed(3)} SOL hit the −${cfg.exit.dailyLossCircuitBreakerPct}% breaker — no new entries until 00:00 UTC` });
+        void recordEvent({ level: 'WARN', module: 'trader', type: 'circuit_breaker', message: `Daily P&L ${dailyPnl.toFixed(3)} SOL hit the −${cfg.exit.dailyLossCircuitBreakerPct}% breaker — ${lossLimits ? 'no new entries until 00:00 UTC' : 'paper mode: trading on'}` });
       }
-      // Paper: keep learning at the minimum size, a couple of positions at a time.
-      const smallMax = mode === 'PAPER' ? (cfg.exit.paperBreakerMaxOpen ?? 0) : 0;
-      if (smallMax <= 0) return refuse('daily loss circuit breaker');
-      if (open.length >= smallMax) return refuse(`daily loss circuit breaker (minimum-size mode: max ${smallMax} open)`);
-      breakerSmall = true;
+      if (lossLimits) return refuse('daily loss circuit breaker');
     }
 
     if (open.length >= cfg.trading.maxConcurrentPositions) return refuse(`max ${cfg.trading.maxConcurrentPositions} positions open`);
@@ -113,7 +110,7 @@ export class Trader {
     // Strategy cool-off: its recent trades are clearly losing → no new entries for a while.
     const cool = await strategyCoolOff(req.strategy, mode, cfg.trading.strategyBreaker);
     // (learning trades still go through: minimum size, and the bot keeps learning while it cools off)
-    if (cool && !req.explore) return refuse(cool);
+    if (cool && !req.explore && lossLimits) return refuse(cool);
     // Copy trades are heavily restricted.
     if (req.strategy === 'SMART_MONEY_COPY' && open.filter((p) => p.strategy === 'SMART_MONEY_COPY').length >= (cfg.copy.maxOpen ?? 1)) return refuse('copy trade limit reached');
     // Learning trades: a few at a time, a few per hour.
@@ -162,7 +159,6 @@ export class Trader {
     // Stacked multipliers (coach × conviction × regime × hour…) can shrink a buy under the minimum
     // and silently stop every entry → the minimum size, if the budget allows it.
     if (size < cfg.trading.minPositionSol && Math.min(cap, budget, balance - reserve) >= cfg.trading.minPositionSol) size = cfg.trading.minPositionSol;
-    if (breakerSmall) size = Math.min(size, cfg.trading.minPositionSol);
     if (size < cfg.trading.minPositionSol) {
       return refuse(`size ${size.toFixed(3)} SOL below minimum (balance ${balance.toFixed(3)}, ${req.strategy} budget ${budget.toFixed(3)})`);
     }
