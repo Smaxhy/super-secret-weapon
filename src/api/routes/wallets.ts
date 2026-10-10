@@ -6,6 +6,7 @@
  *   PATCH  /api/wallets/:address       { label?, active?, kind? } edit / pause
  *   DELETE /api/wallets/:address       remove
  *   GET    /api/kols                   coins KOLs bought in the last hour (most KOLs first)
+ *   GET    /api/wallets/:address/report  Solscan history → trading patterns + copy simulation
  */
 import type { FastifyInstance } from 'fastify';
 import { recordEvent } from '../../lib/bot-events';
@@ -14,6 +15,8 @@ import { isValidPubkey } from '../../lib/pumpfun';
 import { redis } from '../../lib/redis';
 import { getConfig } from '../../config/runtime-config';
 import { kolBoard } from '../../scanner/kol-signal';
+import { walletReport } from '../../learner/wallet-report';
+import { solscanUsage } from '../../lib/solscan';
 import type { ApiDeps } from '../deps';
 
 /**
@@ -44,6 +47,18 @@ export async function walletsRoutes(app: FastifyInstance, deps?: ApiDeps): Promi
     const rows = (await deps?.walletPnl?.leaderboard(25)) ?? [];
     const known = new Map((await prisma.trackedWallet.findMany({ where: { address: { in: rows.map((r) => r.wallet) } }, select: { address: true, label: true, kind: true, active: true } })).map((w) => [w.address, w]));
     return rows.map((r) => ({ ...r, label: known.get(r.wallet)?.label ?? null, tracked: known.get(r.wallet)?.active ?? false }));
+  });
+
+  /** Wallet analyzer (Solscan): trading patterns + copy simulation. ?pages=1–10 (100 swaps each), ?refresh=1. */
+  app.get<{ Params: { address: string }; Querystring: { pages?: string; refresh?: string } }>('/api/wallets/:address/report', async (req, reply) => {
+    const { address } = req.params;
+    if (!isValidPubkey(address)) return reply.code(400).send({ error: 'not a Solana address' });
+    try {
+      const report = await walletReport(address, Number(req.query.pages ?? 5), req.query.refresh === '1');
+      return { ...report, usage: await solscanUsage() };
+    } catch (err) {
+      return reply.code(502).send({ error: (err as Error).message });
+    }
   });
 
   app.get('/api/wallets', async () => {

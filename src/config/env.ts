@@ -58,6 +58,8 @@ const EnvSchema = z.object({
 
   ML_SERVICE_URL: optionalString,
   TWITTER_BEARER_TOKEN: optionalString,
+  /** Solscan Pro API key (wallet analyzer). Limited credits — calls are capped per day. */
+  SOLSCAN_API_KEY: optionalString,
   ANTHROPIC_API_KEY: optionalString,
 });
 

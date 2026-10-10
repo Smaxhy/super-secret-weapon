@@ -2,6 +2,7 @@
 import { useState, type FormEvent } from 'react';
 import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl } from '../components/ui';
 import { useApi } from '../hooks/useApi';
+import { WalletAnalyzer } from '../components/WalletAnalyzer';
 import { api } from '../lib/api';
 import { Link } from 'react-router-dom';
 import { ago, pct, shortAddr } from '../lib/format';
@@ -174,6 +175,7 @@ export function Wallets() {
     <>
       <PageHeader title="Wallets & KOLs" subtitle="KOLs (Cupsey, Cented…): when several buy the same coin the bot checks it right away and scores it higher; KOLs dumping = no buy / take profit. Copy wallets: each buy is checked and copied (half size, strict) if it passes the rules." />
 
+      <WalletAnalyzer />
       <KolBoard />
       <SmartMoney />
 

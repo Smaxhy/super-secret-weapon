@@ -225,6 +225,13 @@ smart money → learning engine → ML → social). See README.md.
   `launchPump` / `launchPumpVerdict`, `rugGuard.launchPump`, crowd log must reach the launch): a wallet that bought
   ≥5% of supply in the first 30 s and still holds ≥5% → no buy; or it paid ≥30% of launch buys, spiked ≥1.8x, then
   ≥15 buyers in 3 min with ≥75% "fresh" (no record in `wpnl:n`) → no buy.
+- **v8.7 (Oct 10): wallet analyzer (Solscan Pro v2)** — `src/lib/solscan.ts` (`/account/defi/activities`, swap types,
+  header `token`; key `SOLSCAN_API_KEY` ONLY in the VPS .env; every call counted `solscan:calls:<day>`, cap
+  `SOLSCAN_MAX_CALLS_PER_DAY` 200; owner has ~10M credits — be frugal, never poll) + `src/learner/wallet-report.ts`
+  (pure `toSwaps` / `coinTrades` / `simulateCopy` / `analyzeSwaps`: trades/day, buy size, hold, first-sell speed,
+  scaling out, win rate, PF, best/worst, copy sims 1 SOL @3/2%, 1 SOL @6/4%, 2 SOL @6/4% worse entry/exit + 2.5% costs
+  → verdict). Cached 30 min (`wreport:<addr>:<pages>`). GET `/api/wallets/:address/report?pages=1–10&refresh=1`;
+  Wallets page card "Analyze a wallet (Solscan)". Owner's wallet to study: 7BNaxx6KdUYrjACNQZ9He26NBFoFxujQMAfNLnArLGH5.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
