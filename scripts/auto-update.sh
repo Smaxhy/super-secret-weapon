@@ -30,7 +30,8 @@ status() { # status <state> <message>
 REQ="$(rcli GETDEL update:request | tr -d '\r')"
 MIN="$(date -u '+%M')"
 # Nothing asked and not a 5-minute mark → done (no GitHub call).
-if [[ -z "$REQ" && $((10#$MIN % 5)) -ne 0 ]]; then exit 0; fi
+# (Run by hand in a terminal → always check.)
+if [[ -z "$REQ" && ! -t 1 && $((10#$MIN % 5)) -ne 0 ]]; then exit 0; fi
 
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 DEPLOYED="$(cat .deployed-sha 2>/dev/null || true)"
