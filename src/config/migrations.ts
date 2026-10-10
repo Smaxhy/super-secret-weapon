@@ -63,7 +63,86 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['chart', ['dip', 'runAwayPct'], 100],
     ],
   },
+  {
+    version: 4,
+    note: 'v5 strategy (research): new pairs first, copy trading off, winners pay for losers (40% at 1.4x, wide trail, time stops), late-curve / BOOST-window entries cut',
+    set: [
+      ['trading', ['allocation'], { CURVE_SNIPE: 0.55, MIGRATION_MOMENTUM: 0.25, SOON: 0.2, SMART_MONEY_COPY: 0 }],
+      ['trading', ['enabledStrategies', 'SMART_MONEY_COPY'], false],
+      ['exit', ['takeProfitTiers'], [{ multiple: 1.4, sellPct: 40 }, { multiple: 5, sellPct: 15 }]],
+      ['exit', ['trailingStopActivateMultiple'], 1.4],
+      ['exit', ['trail', 'confirmSec'], 0.5],
+      ['exit', ['trail', 'breakEvenAfterMultiple'], 1.4],
+      ['exit', ['trail', 'ladder'], [
+        { fromMultiple: 1.4, pct: 20 },
+        { fromMultiple: 2, pct: 25 },
+        { fromMultiple: 3, pct: 25 },
+        { fromMultiple: 5, pct: 22 },
+        { fromMultiple: 10, pct: 20 },
+      ]],
+      ['exit', ['trail', 'volAdjust'], { min: 0.8, max: 1.2 }],
+      ['exit', ['trail', 'peakHoldMs'], 2500],
+      ['exit', ['protectProfit'], { afterMultiple: 1.4, floorMultiple: 1.03 }],
+      ['exit', ['resistance', 'minProfitMultiple'], 1.5],
+      ['exit', ['riskExit', 'minProfitMultiple'], 1.5],
+      ['exit', ['maxHoldMinutes'], { CURVE_SNIPE: 30, SOON: 45, MIGRATION_MOMENTUM: 240, SMART_MONEY_COPY: 60 }],
+      ['exit', ['stopLoss', 'minPct'], 12],
+      ['exit', ['stopLoss', 'confirmSec'], 2],
+      ['exit', ['staleMinutes'], { CURVE_SNIPE: 20, SOON: 20, MIGRATION_MOMENTUM: 60, SMART_MONEY_COPY: 60 }],
+      ['focus', ['soon', 'maxCurvePct'], 90],
+      ['focus', ['soon', 'minMarketCapUsd'], 0],
+      ['focus', ['soon', 'minVolumeUsd'], 10_000],
+      ['focus', ['soon', 'scoreThresholdDelta'], 0],
+      ['focus', ['soon', 'sizeMultiplier'], 1],
+      ['focus', ['migrated', 'scoreThresholdDelta'], 0],
+      ['focus', ['migrated', 'sizeMultiplier'], 1],
+      ['focus', ['swing', 'maxReentries'], 1],
+      ['scoring', ['checkpointsSec'], [45, 60, 75, 90, 120, 150, 180, 240, 300, 360, 480, 600, 720]],
+      ['scoring', ['migrationCheckpointsSec'], [330, 480, 660, 900, 1200, 1800, 2400, 3600]],
+      ['chart', ['smartSell', 'minMultiple'], 1.6],
+    ],
+  },
 ];
+
+/** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */
+export const STRATEGY_SINCE_KEY = '_strategySince';
+const UPGRADES_KEY = '_upgrades';
+
+/** Run a one-time step once per database (recorded in the `_upgrades` row). Never throws. */
+export async function oneTimeUpgrade(id: string, step: () => Promise<void>): Promise<boolean> {
+  try {
+    const row = await prisma.botConfig.findUnique({ where: { key: UPGRADES_KEY } });
+    const done = ((row?.value as { done?: string[] } | null)?.done ?? []).slice();
+    if (done.includes(id)) return false;
+    await step();
+    done.push(id);
+    await prisma.botConfig.upsert({ where: { key: UPGRADES_KEY }, update: { value: { done } }, create: { key: UPGRADES_KEY, value: { done } } });
+    log.info({ id }, 'one-time upgrade applied');
+    return true;
+  } catch (err) {
+    log.warn({ id, err: (err as Error).message }, 'one-time upgrade failed — will retry next start');
+    return false;
+  }
+}
+
+/** Mark "the current strategy starts now" (used by the strategy cool-off breaker). */
+export async function markStrategySince(at = new Date()): Promise<void> {
+  await prisma.botConfig.upsert({ where: { key: STRATEGY_SINCE_KEY }, update: { value: { at: at.toISOString() } }, create: { key: STRATEGY_SINCE_KEY, value: { at: at.toISOString() } } });
+}
+
+let sinceCache: { at: number; value: Date | null } | null = null;
+/** When the current strategy went live (cached 5 min). null = unknown (count everything). */
+export async function strategySince(): Promise<Date | null> {
+  if (sinceCache && Date.now() - sinceCache.at < 300_000) return sinceCache.value;
+  try {
+    const row = await prisma.botConfig.findUnique({ where: { key: STRATEGY_SINCE_KEY } });
+    const iso = (row?.value as { at?: string } | null)?.at;
+    sinceCache = { at: Date.now(), value: iso ? new Date(iso) : null };
+  } catch {
+    sinceCache = { at: Date.now(), value: null };
+  }
+  return sinceCache.value;
+}
 
 /** Pure: apply `set` to saved rows. Returns only the rows that changed (sections never saved are skipped). */
 export function applyMigration(rows: Record<string, unknown>, m: ConfigMigration): Record<string, unknown> {

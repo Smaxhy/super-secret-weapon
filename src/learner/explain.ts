@@ -30,7 +30,7 @@ const LABEL: Record<string, string> = {
 };
 
 const STRATEGY: Record<string, string> = {
-  CURVE_SNIPE: 'early bonding-curve entry',
+  CURVE_SNIPE: 'new pair (launch snipers already out, real buyers arriving)',
   MIGRATION_MOMENTUM: 'post-migration momentum play',
   SMART_MONEY_COPY: 'copy trade',
   SOON: '"Soon" play (about to graduate)',

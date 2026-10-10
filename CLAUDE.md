@@ -25,6 +25,54 @@ smart money → learning engine → ML → social). See README.md.
   regime detector every 15 min), plus parts of 6 (PumpSwap/migration strategy, copy-trading tracked
   wallets) and 9 (free metadata socials/keywords). Positions stream live over WebSocket ('positions').
 - Mode: **PAPER only** (10 SOL fake balance). No wallet key on the server. Phase 4 (live) not built.
+- **STRATEGY v5 (Oct 10, after the owner's CSV: 26 trades, −0.92 SOL, +3% wins vs −16% losses; based on
+  3 research reports — see "v5 research" below).** Diagnosis: (1) USD rules bought late — with SOL ≈ $80,
+  $12k MC = 75%+ curve, SOON $20k = ~90% (where holders dump into graduation); (2) entries ~27 s after launch
+  = inside the snipers' dump window (exit liquidity); (3) exits needed 84% winners (1.15x 6% trail, BE 1.2x);
+  (4) fake peaks (sandwich prints + PumpSwap raw-vault pricing) armed trails → "insta sells"; (5) PumpSwap fee
+  0.3% assumed vs real ~1.25%; (6) swing re-buys of the same losers. v5 fixes all six:
+  - **NEW PAIRS = CURVE_SNIPE** (`focus.newPair`, `src/evaluator/new-pair.ts`, 55% allocation, max 3 open):
+    45 s–12 min old, ≥8 SOL in the curve, MC $3.5k–$15k (owner: no dip wait under $15k), curve ≤85%;
+    **absorption**: launch wallets (first 4 s of trading) hold ≤10% or sold ≥50%, dev sold ≤5% & holds ≤10%,
+    top-10 ≤30% (and not mostly first-25 buyers once ≥50 buyers), price ≥80% of its held post-launch high;
+    **organic demand (60 s, dev/snipers/repeat-size bots excluded)**: ≥12 buyers, ≥8 first-timers, last 30 s ≥
+    previous 30 s, net ≥+1.5 SOL, buy/sell ≥1.3 SOL & ≥1.5 count, size CV ≥0.5, ≤25% same size, median ≥0.05,
+    no gap >15 s, bot volume ≤40%; **trigger**: ≤7% under the 2-min high, ≤+35% in 30 s, no ≥1%-of-supply
+    sell in 5 s, standard 1B supply (Mayhem excluded). No 12 s confirmation, no risky half-size entries,
+    score bar −8. `src/scanner/new-pair-watcher.ts` re-checks a coin the moment its flow gets hot (≤1/15 s);
+    checkpoints 45…720 s; dead coins / past 12 min → done. Paper buys refuse fills >6% worse than the
+    decision price (`maxSlippageBps`, `expectedPriceSol`). E2E: bought after snipers dumped at $4.3k MC →
+    40% at 1.4x, initials 2.06x, runner trailed out at 1.76x (+62%); dud → stopped at −12.9%.
+  - **SOON**: curve 70–90% only (≥1.65× left), 20% allocation, bar/size normal. **MIGRATION**: 25%, no
+    entries in the first 330 s after migration (BOOST: ~17.6 SOL of mechanical buys for 5 min, then
+    liquidity drains ~57% to minute 30); checkpoints 330 s…1 h. **COPY: off** (copying 2 s late lost under
+    every exit rule in public tests; KOL buys stay a bonus/trigger-to-check only).
+  - **Exits v5**: 40% at 1.4x (TP1), initials at 2x, 15% at 5x; trail + break-even floor only from TP1
+    (ladder 20% → 25% at 2–3x → 22% at 5x → 20% at 10x, ×0.8–1.2 vol); break must hold 0.5 s (gap = instant);
+    stop 12–20% (owner's band, confirmed 2 s; hard limit instant); **time stops** (`exit.timeStop`) new pair
+    1.5 min without 1.1x & ≤1.02x → out, **stall** no new high 3 min below TP1 → out (SOON 3/5, MIGRATION
+    10/10 min); **BOOST sell** (`exit.boostSell`): curve buys that graduate sell 40% at 60–240 s after
+    migration; resistance / risk-in-profit exits only ≥1.5x; smart sell ≥1.6x; max hold 30/45/240 min.
+  - **Peaks** = settledHigh (`src/lib/settled-price.ts`): a level counts only after the price HELD it 2.5 s
+    (pool price after each trade, `CrowdTrade.pp`); trade-driven exit checks wait 120 ms for the slot to settle.
+  - **PumpSwap pricing**: event vault balances aren't the program price (BOOST virtual quote reserves,
+    unswept fees) → live-state stores the effective quote reserve implied by each trade (`ammEffectiveQuoteAfter`
+    = Δq·B_before/Δb), dust trades apply to it; crowd `pp` = exec × B_before/B_after. **Tiered fees**
+    (`pumpSwapFeeBps`, `paper.ammTieredFees`): 1.25% <420 SOL MC, 1.20% <1,470, 1.15% <2,460 … 0.30% ≥98k.
+  - **Re-entries**: swing only after a profitable exit (`focus.swing.onlyAfterProfit`), max 1.
+  - **Strategy cool-off** (`trading.strategyBreaker`): ≥12 of the last 20 trades (since `_strategySince`)
+    averaging < −4% → no entries for 2 h after the last close. One-time upgrade `v5-strategy` reset the trade
+    coach and set `_strategySince` (BotConfig `_upgrades`). Config migration v4 pushes all of this into saved rows.
+  - **Strategy lab** (`lab` config, `src/learner/strategy-lab.ts`, `/api/lab`, Performance page card): every
+    BUY signal (even when the trader is full) + near-misses (rules pass, score ≤6 short) are traded VIRTUALLY by
+    6 exit variants through decideExit (same prices/costs): L live, S scalp (50% at 1.25x), B bigger (40% at
+    1.5x, 25% at 2x, 30% trail), R runner (nothing before 2x), N no time stops, W wider −25…−30% stop
+    (ownerOnly — outside the owner's band, never auto-applied). Auto-apply: ≥40 results, mean−1SE > 0, beats
+    live by ≥2 pts → written into the live exit config (≤ once per 6 h). Redis `lab:res:<id>`, `lab:applied`.
+  - v5 research (Oct 2026): graduation ~1–2% (0.26–6.7%); median graduate peaks AT graduation (~$31k at
+    SOL $80); 81% of survivors fall 90%+; snipers profitable 87%, exit within 5 min; wash ≥17% of trades;
+    copy-trading 2 s late lost; tight stops lose to costs (Lo & Remorov); round trip 5–10% at 0.2–0.5 SOL.
+    Validate on ≥300 paper trades (positive median AND mean without the top 1%).
 - Data source default `DATA_SOURCE=hybrid`: PumpPortal (launches/migrations) + Solana public RPC
   `logsSubscribe` (trades). Helius is only for RPC checks (1M credits/month plan — be frugal).
   Helius logsSubscribe burned ~5%/hour → never default to it.
@@ -37,7 +85,7 @@ smart money → learning engine → ML → social). See README.md.
   real win rate per strategy per 5-pt band (7d) → −10…+4 pts and ×0.7–1.3 size (stored `preCalibrationScore`).
   **Conviction sizing**: maxPositionSol = average size; ×0.4–1.6 by score margin, band record, crowd; capped at
   ×1.6 and 6% of capital. Insider same-size bursts: same slot only, first 3 min only, terminal presets ignored.
-- Copy trades heavily restricted: bar +5 (stricter), size ×0.5, max 1 open, 5% allocation, 120s minimum hold
+- Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).
@@ -46,31 +94,32 @@ smart money → learning engine → ML → social). See README.md.
   only concentration limits (within 30/65/15%) are bought at half size; near-misses go on a watchlist;
   volume spikes trigger immediate checks; X hot keywords (needs TWITTER_BEARER_TOKEN) boost narrative.
   All editable on the dashboard Controls page (BotConfig). Config sections deep-merge with defaults.
-- **Focus = Soon + migrated coins** (`focus` config): SOON strategy fires when the curve crosses 70%
-  (CrowdTracker.onSoon → evaluator.scheduleSoon); rules ≥3 SOL fees, ≥$20k MC/volume, ≥25 active wallets (5m).
-  MIGRATION_MOMENTUM: ≥9 SOL fees, ≥$25k MC, ≥$2k liquidity (both sides, USD), ≥20 active wallets. Both get
-  bar −5 and size ×1.25; allocation MIGRATION 40% / SOON 35% / COPY 15% / CURVE 10%.
+- Focus (`focus` config, v5 numbers above): SOON fires when the curve crosses 70% (CrowdTracker.onSoon →
+  evaluator.scheduleSoon), rules ≥3 SOL fees, ≥$10k volume, ≥25 active wallets (5m), curve 70–90%.
+  MIGRATION_MOMENTUM: ≥9 SOL fees, ≥$25k MC, ≥$2k liquidity (both sides, USD), ≥20 active wallets, not in the
+  BOOST window. Allocation v5: NEW PAIRS 55% / MIGRATION 25% / SOON 20% / COPY 0%.
 - Crowd behaviour (`src/scanner/crowd-tracker.ts`, in-memory trade log for curve ≥40% / migrated coins):
   active wallets 5m ("eyes" — pump.fun's own viewer count isn't public), dip buying, paper hands, bot churn,
   retail share, buy acceleration, smart-wallet share → features `crowd` + `attention`. Wallet reputation
   (`src/learner/wallet-reputation.ts`): buyers at scoring time get the coin's 1h label → finds smart wallets.
 - Swing trading (`focus.swing`, `src/executor/swing-watcher.ts`): after a SOON/migration exit (not rug) the coin
-  is watched 2h; 15–45% pullback + bounce with buy/sell ≥1.2 → re-evaluation as a swing (≤3 re-entries).
+  is watched 2h; 15–45% pullback + bounce with buy/sell ≥1.2 → re-evaluation as a swing (v5: only after a
+  profitable exit, ≤1 re-entry).
 - Trade coach (`src/learner/trade-coach.ts`): 30 min after every close it reviews the trade (late entry,
   gave back profit, stopped then ran, sold too early…), stores the lesson on the position and adjusts per
   strategy: buy bar −5…+12, size ×0.35–1 on losing streaks, stop bias ±5%, trail ×0.75–1.3.
-- Stop loss (`exit.stopLoss`): owner's band = 10–20% loss AFTER fees: 2×volatility (+coach bias) clamped to
-  10–20% (15% until volatility is known), must hold 1.5s under the stop, immediate past the hard limit.
-  MIGRATION_MOMENTUM max 15% (`maxPctByStrategy`).
-- Trailing (`exit.trail.ladder`, owner: strict + aggressive): 6% at 1.15x → 7% 1.3x → 9% 1.5x → 11% 2x →
-  14% 3x → 17% 5x → 20% 10x (linear), ×0.8–1.15 by volatility, × coach trailFactor; sells the moment it
-  breaks (confirmTicks 1, confirmSec 0). Break-even (+fees) floor once the peak hit 1.2x. Stop loss below
-  the hard limit needs 1.5s under the stop. Empty ladder = legacy logic (tested in exits-trailing.test.ts).
-- **Speed (Oct 9 v4):** exits are trade-driven — TokenRegistry.onTradeApplied → SellManager.onTrade checks a
-  held coin ≤200 ms after each trade (coalesced; per-position lock), 1s tick as fallback. Peak = highest REAL
-  trade since the last check (crowd log, ≥0.02 SOL, ≤2.5× pool price) → spikes register (`instantPeak`).
-  Paper landing delay 150–500 ms. Chart: history point every 1s (+ spike highs), 6000 pts, API downsamples
-  to 1500 keeping highs/lows; WS updates per trade. Migration v2 pushes these into saved settings.
+- Stop loss (`exit.stopLoss`): owner's band = loss AFTER fees, v5 12–20%: 2×volatility (+coach bias) clamped
+  (15% until volatility is known), must hold 2 s under the stop, immediate past the hard limit.
+  MIGRATION_MOMENTUM max 15% (`maxPctByStrategy`). (Research suggests −30% with smaller size → lab variant W.)
+- Trailing (`exit.trail.ladder`, v5): arms at the first take-profit (1.4x): 20% → 25% at 2–3x → 22% at 5x →
+  20% at 10x (linear), ×0.8–1.2 by volatility, × coach trailFactor; a break must hold 0.5 s (gap = instant).
+  Break-even (+fees) floor from 1.4x. Empty ladder = legacy logic (tested in exits-trailing.test.ts; older
+  tests run against `tests/legacy-exit.ts` = the pre-v5 exit settings).
+- **Speed (Oct 9 v4, peaks fixed in v5):** exits are trade-driven — TokenRegistry.onTradeApplied →
+  SellManager.onTrade checks a held coin ≥120 ms (slot settle) / ≤200 ms after each trade (coalesced;
+  per-position lock), 1s tick as fallback. Peak = settledHigh (level held 2.5 s) — the raw highest print is
+  only drawn on the chart (`highSol`). Paper landing delay 150–500 ms. Chart: history point every 1s (+ spike
+  highs), 6000 pts, API downsamples to 1500 keeping highs/lows; WS updates per trade.
 - DexScreener (`src/scanner/dexscreener.ts`, `dex` config): every 60s ranks Solana boosted/profiled coins by
   1h volume/trades/move (DexScreener's own trending isn't in the public API); `/orders/v1/solana/<mint>` →
   DEX paid (approved tokenProfile) / CTO, cached, ≤45 req/min. +4 paid, +2 CTO, up to +5 trending; tracked
@@ -100,11 +149,12 @@ smart money → learning engine → ML → social). See README.md.
 - "What's working now" (`leaders` config, `src/scanner/market-leaders.ts`): top coins = our biggest 1h-volume
   tracked coins + DexScreener trending; words shared by ≥2 of them = hot narratives, added to the narrative
   hot-keyword list. Scanner page card (`/api/market-leaders`).
-- Exits: tiers (25% at 1.3x, 15% at 5x), then **initials** at 2x (sell enough to get the stake + fees back →
-  "house money"), the rest rides as a **runner** with a volatility-adaptive trail (ignores resistance/risk exits,
-  max hold 2× normal). Protect profit (1.3x → floor 1.05x), resistance exit, momentum-risk exits, rug/copy exits.
-  Fees: curve 1.25%, PumpSwap 0.3%, 0.0015 SOL gas+tip per tx, 1.5% slippage, 0.15–0.5s random landing delay
-  before each paper fill. Every trade stores an explanation (+ the coach's lesson after review).
+- Exits (v5): tiers (40% at 1.4x, 15% at 5x), then **initials** at 2x (sell enough to get the stake + fees back
+  → "house money"), the rest rides as a **runner** (ignores resistance/risk exits, max hold 2× normal). Protect
+  profit (1.4x → floor 1.03x), resistance/momentum-risk exits ≥1.5x, time stops, BOOST sell, rug/copy exits.
+  Fees: curve 1.25%, PumpSwap tiered 1.25%→0.3% by MC, 0.0015 SOL gas+tip per tx, 1.5% slippage, 0.15–0.5s
+  random landing delay before each paper fill (fills >maxSlippageBps worse than the decision price refused).
+  Every trade stores an explanation (+ the coach's lesson after review).
 - Dashboard: positions show entry MC vs current MC (SOL + USD), a live price chart per position
   (Redis `pos:hist:<id>`, 1s points + spike highs, 3-day TTL) with TP/stop/trail lines; redesigned layout + footer.
 - Pricing safety: fake/duplicate PumpSwap pools rejected (curve must be ~complete, price within 3x of final curve

@@ -47,6 +47,12 @@ export interface MarketRaw {
   marketCapUsd: number | null;
   /** Pool liquidity in USD (PumpSwap: both sides, like terminals show it; curve: SOL in the curve). */
   liquidityUsd: number | null;
+  /** Real SOL in the bonding curve (market cap ≈ (30 + this)² ÷ 32.2 SOL). */
+  curveSol?: number;
+  /** Seconds since it migrated to PumpSwap (null = still on the curve). */
+  migratedAgoSec?: number | null;
+  /** Total supply is pump.fun's standard 1B (false = Mayhem mode / non-standard coin). */
+  supplyStandard?: boolean;
   /**
    * Insider view (only after withInsider). The plain fields above stay as the
    * ledger sees them — the sell manager compares them with live values for rug exits.
@@ -127,6 +133,9 @@ export function analyzeMarket(
     volumeUsd: solUsd ? m.volumeSol * solUsd : null,
     marketCapUsd: solUsd ? m.marketCapSol * solUsd : null,
     liquidityUsd: solUsd ? (view.ammQuoteReserve !== null && view.ammBaseReserve !== null && view.ammBaseReserve > 0n ? 2 : 1) * m.liquiditySol * solUsd : null,
+    curveSol: view.complete ? undefined : Math.max(0, (Number(view.virtualSolReserves) - Number(view.curve.initialVirtualSolReserves || 30_000_000_000n)) / 1e9),
+    migratedAgoSec: view.complete && view.migratedAtMs ? Math.max(0, (now - view.migratedAtMs) / 1000) : null,
+    supplyStandard: view.curve.totalSupply === 0n || view.curve.totalSupply === 1_000_000_000_000_000n,
   };
 
   return { raw, features: marketFeatures(raw) };

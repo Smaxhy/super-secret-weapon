@@ -23,7 +23,7 @@ import { getConfig } from '../config/runtime-config';
 import { recordEvent } from '../lib/bot-events';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
-import { curvePriceSol, PUMP_TOKEN_DECIMALS, quoteBuy, quoteSell } from '../lib/pumpfun';
+import { curvePriceSol, poolFeeBps, PUMP_TOKEN_DECIMALS, quoteBuy, quoteSell } from '../lib/pumpfun';
 import { lamportsToSol, solToLamports } from '../lib/solana';
 import type { LiveState, LiveTokenView } from '../scanner/live-state';
 import type { BuyRequest, Executor, Fill, SellRequest } from './types';
@@ -52,6 +52,12 @@ export class PaperExecutor implements Executor {
     const pool = poolOf(view, p);
     if (!pool) return failed('migrating — PumpSwap pool not seen yet');
 
+    // Slippage limit, like a real transaction's max cost: the price ran away while we were
+    // sending (we'd be buying someone's pump) → the buy doesn't happen.
+    const pxNow = curvePriceSol(pool.sol, pool.tokens); // SOL per whole token, same units as the evaluator's price
+    if (req.expectedPriceSol && req.expectedPriceSol > 0 && req.maxSlippageBps > 0 && pxNow > req.expectedPriceSol * (1 + req.maxSlippageBps / 10_000)) {
+      return failed(`price moved +${((pxNow / req.expectedPriceSol - 1) * 100).toFixed(1)}% while sending (limit ${(req.maxSlippageBps / 100).toFixed(0)}%)`);
+    }
     const lamports = solToLamports(req.solAmount);
     const { tokensOut } = quoteBuy(lamports, pool.sol, pool.tokens, pool.feeBps);
     // Latency slippage: assume we get slightly fewer tokens than the quote.
@@ -151,8 +157,12 @@ function landingDelay(): Promise<void> {
  * after migration. Both are constant-product (x*y=k), so the same quote maths
  * applies — only the reserves and the fee differ. null = migrating.
  */
-function poolOf(view: LiveTokenView, p: { curveFeeBps: number; ammFeeBps: number }): { sol: bigint; tokens: bigint; feeBps: number } | null {
-  if (view.ammBaseReserve && view.ammQuoteReserve) return { sol: view.ammQuoteReserve, tokens: view.ammBaseReserve, feeBps: p.ammFeeBps };
+function poolOf(view: LiveTokenView, p: { curveFeeBps: number; ammFeeBps: number; ammTieredFees?: boolean }): { sol: bigint; tokens: bigint; feeBps: number } | null {
+  if (view.ammBaseReserve && view.ammQuoteReserve) {
+    // Market cap in SOL = price × supply (graduated coins pay tiered PumpSwap fees by market cap).
+    const mcSol = (Number(view.ammQuoteReserve) / 1e9 / (Number(view.ammBaseReserve) / 10 ** PUMP_TOKEN_DECIMALS)) * (Number(view.curve.totalSupply || 1_000_000_000_000_000n) / 10 ** PUMP_TOKEN_DECIMALS);
+    return { sol: view.ammQuoteReserve, tokens: view.ammBaseReserve, feeBps: poolFeeBps(p, true, mcSol) };
+  }
   if (view.complete) return null;
   return { sol: view.virtualSolReserves, tokens: view.virtualTokenReserves, feeBps: p.curveFeeBps };
 }

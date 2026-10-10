@@ -22,7 +22,7 @@
  */
 import { getConfig } from '../config/runtime-config';
 import type { AmmTradeEvent, PumpTradeEvent } from '../config/types';
-import { bondingCurvePct, PUMP_TOKEN_DECIMALS } from '../lib/pumpfun';
+import { ammPostTradePrice, bondingCurvePct, PUMP_TOKEN_DECIMALS } from '../lib/pumpfun';
 import { addToCandles, type Candle } from '../evaluator/chart-reader';
 
 export interface CrowdTrade {
@@ -35,6 +35,8 @@ export interface CrowdTrade {
   tok: number;
   /** SOL per whole token (from the trade's own amounts) */
   px: number;
+  /** Pool price right after the trade (SOL per whole token) — what the next seller gets. Unknown = undefined. */
+  pp?: number;
   /** Solana slot (0 = unknown) — same-slot buys reveal bundles. */
   s?: number;
 }
@@ -301,13 +303,16 @@ export class CrowdTracker {
     if (pct < f.crowdLogFromCurvePct && !this.logs.has(ev.mint)) return;
     const tok = Number(ev.tokenAmount) / 10 ** PUMP_TOKEN_DECIMALS;
     const sol = Number(ev.solAmount) / 1e9;
-    this.push(ev.mint, { t: now, w: ev.user, buy: ev.isBuy, sol, tok, px: tok > 0 ? sol / tok : 0, s: slot || undefined });
+    const pp = ev.virtualTokenReserves > 0n ? Number(ev.virtualSolReserves) / 1e9 / (Number(ev.virtualTokenReserves) / 10 ** PUMP_TOKEN_DECIMALS) : undefined;
+    this.push(ev.mint, { t: now, w: ev.user, buy: ev.isBuy, sol, tok, px: tok > 0 ? sol / tok : 0, ...(pp ? { pp } : {}), s: slot || undefined });
   }
 
   onAmmTrade(mint: string, ev: AmmTradeEvent, slot = 0, now = Date.now()): void {
     const tok = Number(ev.baseAmount) / 10 ** PUMP_TOKEN_DECIMALS;
     const sol = Number(ev.quoteAmount) / 1e9;
-    this.push(mint, { t: now, w: ev.user, buy: ev.isBuy, sol, tok, px: tok > 0 ? sol / tok : 0, s: slot || undefined });
+    // Price after the trade from its own amounts (BOOST pools' virtual reserves make the raw vault ratio wrong).
+    const pp = ammPostTradePrice(ev) ?? undefined;
+    this.push(mint, { t: now, w: ev.user, buy: ev.isBuy, sol, tok, px: tok > 0 ? sol / tok : 0, ...(pp ? { pp } : {}), s: slot || undefined });
   }
 
   trades(mint: string): readonly CrowdTrade[] {

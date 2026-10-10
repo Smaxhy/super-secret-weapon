@@ -1,4 +1,5 @@
 import { PnlChart, SignedBars } from '../components/Charts';
+import { StrategyLab } from '../components/StrategyLab';
 import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl, StatTile } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { EXIT_LABEL, pct, STRATEGY_LABEL } from '../lib/format';
@@ -12,6 +13,7 @@ export function Performance() {
       <PageHeader title="Performance" subtitle={d ? `${d.mode === 'PAPER' ? 'Paper trading' : 'Live trading'} results from ${d.trades.toLocaleString()} closed trades` : undefined} />
       {error && <ErrorBox message={error} />}
       {d && !d.trades && <Empty>No closed trades yet — charts appear after the first trade closes.</Empty>}
+      {d && !d.trades && <StrategyLab />}
       {d && d.trades > 0 && (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -49,6 +51,8 @@ export function Performance() {
               <p className="mt-1 text-sm text-ink-2">Average daily profit ÷ how much it swings. Above 0.5 is steady; below 0 means losing on average. Needs 2+ days.</p>
             </Card>
           </div>
+
+          <StrategyLab />
 
           <Card title="How trades ended" className="mt-4">
             <div className="overflow-x-auto">

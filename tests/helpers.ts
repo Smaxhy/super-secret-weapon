@@ -25,10 +25,10 @@ export function encodeCreate(o: { name: string; symbol: string; uri: string; min
   return Buffer.concat([DISCRIMINATORS.create, w.done()]);
 }
 
-export function encodeTrade(o: { mint: string; sol: bigint; tokens: bigint; isBuy: boolean; user: string; ts: number; vSol: bigint; vTok: bigint }): Buffer {
+export function encodeTrade(o: { mint: string; sol: bigint; tokens: bigint; isBuy: boolean; user: string; ts: number; vSol: bigint; vTok: bigint; fee?: bigint; creatorFee?: bigint }): Buffer {
   const w = new W().key(o.mint).u64(o.sol).u64(o.tokens).bool(o.isBuy).key(o.user).i64(BigInt(o.ts)).u64(o.vSol).u64(o.vTok)
     // newer fields: real reserves, fee recipient, fee bps, fee, creator, creator fee bps, creator fee
-    .u64(0n).u64(0n).key(randomKey()).u64(95n).u64(1n).key(randomKey()).u64(5n).u64(1n);
+    .u64(0n).u64(0n).key(randomKey()).u64(95n).u64(o.fee ?? 1n).key(randomKey()).u64(5n).u64(o.creatorFee ?? 1n);
   return Buffer.concat([DISCRIMINATORS.trade, w.done()]);
 }
 

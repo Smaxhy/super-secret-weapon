@@ -3,6 +3,7 @@ import { DEFAULT_CONFIG } from '../src/config/default';
 import { addToCandles, analyzeChart, resample, rsi, type Candle } from '../src/evaluator/chart-reader';
 import { dipDecision, type DipWatch } from '../src/executor/dip-watcher';
 import { BLOWOFF_MARKER, decideExit, type ExitInput } from '../src/executor/sell-manager';
+import { V4_EXIT } from './legacy-exit';
 
 const cfg = DEFAULT_CONFIG.chart;
 const NOW = 1_000_000_000_000;
@@ -89,12 +90,13 @@ describe('sell-side reading', () => {
       risk: 0, riskWhy: '', openedAtMs: now, maxHoldMinutes: 45, resistance: { hit: false, level: 0, touches: 0 }, sizeSol: 1, costSol: 1, proceedsSol: 0.32, volatilityPct: null, txFeeSol: 0,
       smartSell: { blowOff: true, divergence: false, summary: 'test', minMultiple: 1.4, blowOffSellPct: 50, divergenceSellPct: 30 },
     };
-    const d = decideExit(base, DEFAULT_CONFIG.exit);
+    // (pre-v5 exit tiers: the 1.3x tier is already in, so the blow-off sale is the first sell)
+    const d = decideExit(base, V4_EXIT);
     expect(d.sells[0]).toMatchObject({ pct: 37.5, reason: 'TAKE_PROFIT' });
     expect(d.sells[0]!.detail).toContain('blow-off');
     expect(d.state.tpTiersHit).toContain(BLOWOFF_MARKER);
-    expect(decideExit({ ...base, tpTiersHit: d.state.tpTiersHit }, DEFAULT_CONFIG.exit).sells.filter((s) => s.detail.includes('blow-off'))).toEqual([]);
-    expect(decideExit({ ...base, priceSol: 1.3, peakPriceSol: 1.3 }, DEFAULT_CONFIG.exit).sells.filter((s) => s.detail.includes('blow-off'))).toEqual([]); // below 1.4x
+    expect(decideExit({ ...base, tpTiersHit: d.state.tpTiersHit }, V4_EXIT).sells.filter((s) => s.detail.includes('blow-off'))).toEqual([]);
+    expect(decideExit({ ...base, priceSol: 1.3, peakPriceSol: 1.3 }, V4_EXIT).sells.filter((s) => s.detail.includes('blow-off'))).toEqual([]); // below 1.4x
   });
 });
 

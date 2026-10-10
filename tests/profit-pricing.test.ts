@@ -171,6 +171,26 @@ describe('PumpSwap price must be backed by the trades themselves', () => {
     expect((await priceOf('E1')) / start).toBeLessThan(1.5);
   });
 
+  it('BOOST pools: the price follows the trades (virtual quote reserves), not the raw vault balance', async () => {
+    await launch('V1');
+    await completeCurve('V1');
+    // The program trades on vault + 20 SOL of virtual quote reserves; events only show the vault.
+    const VIRTUAL = 20n * SOL;
+    const eff = { id: 'VPOOL', base: PUMP_MIGRATION_POOL_TOKENS, quote: 85n * SOL + VIRTUAL };
+    await ls.onAmmPool({ kind: 'ammPool', pool: 'VPOOL', baseMint: 'V1', quoteMint: WSOL_MINT, baseReserve: eff.base, quoteReserve: eff.quote - VIRTUAL, timestamp: nowSec() });
+    for (let i = 0; i < 6; i++) {
+      const t = poolTrade(eff, i % 3 !== 2, i % 3 !== 2 ? SOL : 10_000_000_000_000n);
+      await ls.onAmmTrade({ ...t, quoteReserve: t.quoteReserve - VIRTUAL }); // raw vault in the event
+    }
+    const real = Number(eff.quote) / 1e9 / (Number(eff.base) / 1e6);
+    expect((await priceOf('V1')) / real).toBeGreaterThan(0.99);
+    expect((await priceOf('V1')) / real).toBeLessThan(1.01);
+    // A dust trade (no price of its own) must not drop the price back to the raw vault ratio.
+    const dust = poolTrade(eff, true, 500_000n);
+    await ls.onAmmTrade({ ...dust, quoteReserve: dust.quoteReserve - VIRTUAL });
+    expect((await priceOf('V1')) / real).toBeGreaterThan(0.98);
+  });
+
   it('a real 10x run on the pool still pays out (big single moves are not frozen out)', async () => {
     await launch('R1');
     await completeCurve('R1');

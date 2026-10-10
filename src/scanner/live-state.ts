@@ -29,6 +29,7 @@ import {
   curveLiquiditySol,
   curvePriceSol,
   marketCapSol,
+  ammEffectiveQuoteAfter,
   type CurveParams,
   WSOL_MINT,
   PUMP_MIGRATION_POOL_TOKENS,
@@ -50,6 +51,14 @@ const key = {
 const POOL_OPEN_MAX_DEVIATION = 3;
 /** Event reserves must agree with the trade's own execution price within this factor. */
 const EVENT_EXEC_TOLERANCE = 2;
+/**
+ * PumpSwap: the effective quote reserve implied by a trade may differ from the raw vault balance
+ * (virtual reserves, unswept fees) — but not by more than this (else the event is mis-decoded).
+ */
+const EFFECTIVE_VS_VAULT_MIN = 0.1;
+const EFFECTIVE_VS_VAULT_MAX = 20;
+/** …and one trade can't move the effective price more than this factor. */
+const EFFECTIVE_MAX_JUMP = 5;
 /** Derived reserves are re-anchored when they drift this far from the traded price. */
 const DERIVED_REANCHOR_FACTOR = 1.5;
 /** Trades smaller than this (0.001 SOL) are too small to read a reliable price from. */
@@ -395,6 +404,8 @@ export class LiveState {
   rejectedAmmPools = 0;
   /** Times derived (PumpPortal) pool reserves were re-anchored to the trades' own price. */
   reanchoredAmm = 0;
+  /** PumpSwap trades whose effective (virtual-reserve) price differed from the raw vault ratio by >2%. */
+  effectiveAmm = 0;
 
   /**
    * A buy or sell on PumpSwap. Same bookkeeping as curve trades, price from the pool.
@@ -443,17 +454,27 @@ export class LiveState {
       if (baseReserve <= 0n || quoteReserve <= 0n) return mint;
     } else {
       if (baseReserve <= 0n || quoteReserve <= 0n || Number(quoteReserve) > 1e17) return this.rejectAmm(mint, 'bad reserves');
-      const newPrice = Number(quoteReserve) / Number(baseReserve);
+      const prev = b0 > 0n && q0 > 0n ? Number(q0) / Number(b0) : 0;
       if (priced) {
-        // Pool state before this trade, from the event itself.
-        const preB = ev.isBuy ? baseReserve + ev.baseAmount : baseReserve - ev.baseAmount;
-        const preQ = ev.isBuy ? quoteReserve - ev.quoteAmount : quoteReserve + ev.quoteAmount;
-        const mid = preB > 0n && preQ > 0n ? Math.sqrt((Number(preQ) / Number(preB)) * newPrice) : Infinity;
-        if (ratio(mid, exec) > EVENT_EXEC_TOLERANCE) return this.rejectAmm(mint, 'reserves disagree with the trade', { mid, exec });
+        // The vault balances in the event are NOT the price the program trades at: BOOST pools
+        // carry (signed) virtual quote reserves and unswept fees sit in the vault (pump.fun docs:
+        // "do not read the raw vault balance"). Pricing from them put migrated coins ~20% under
+        // their real trades, so every real trade looked like a +20% spike. The swap amounts give
+        // the program's effective quote reserve exactly (ammEffectiveQuoteAfter) — store that.
+        const eff = ammEffectiveQuoteAfter({ isBuy: ev.isBuy, baseAmount: ev.baseAmount, quoteAmount: ev.quoteAmount, baseReserve });
+        const vaultRatio = eff ? Number(eff) / Number(quoteReserve) : 0;
+        if (!eff || vaultRatio < EFFECTIVE_VS_VAULT_MIN || vaultRatio > EFFECTIVE_VS_VAULT_MAX) return this.rejectAmm(mint, 'reserves disagree with the trade', { vaultRatio, exec });
+        const effPx = Number(eff) / Number(baseReserve);
+        if (prev > 0 && ratio(effPx, prev) > EFFECTIVE_MAX_JUMP) return this.rejectAmm(mint, 'implausible price jump', { prev, next: effPx });
+        if (Math.abs(vaultRatio - 1) > 0.02) this.effectiveAmm++;
+        quoteReserve = eff;
       } else {
-        // Dust trade: no usable price of its own → only allow small moves.
-        const prev = b0 > 0n && q0 > 0n ? Number(q0) / Number(b0) : 0;
-        if (prev > 0 && ratio(newPrice, prev) > 2.5) return this.rejectAmm(mint, 'dust trade with a big price jump', { prev, next: newPrice });
+        // Dust trade: no price of its own → apply it to OUR (effective) reserves; the event's raw
+        // vault number would undo the virtual-reserve correction. Only small moves allowed.
+        if (q0 > 0n) quoteReserve = ev.isBuy ? q0 + ev.quoteAmount : q0 - ev.quoteAmount;
+        if (quoteReserve <= 0n) return mint;
+        const next = Number(quoteReserve) / Number(baseReserve);
+        if (prev > 0 && ratio(next, prev) > 2.5) return this.rejectAmm(mint, 'dust trade with a big price jump', { prev, next });
       }
     }
     await this.r.hincrby(key.live(mint), 'ammTrades', 1);

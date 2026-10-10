@@ -8,8 +8,9 @@ import { rugScreen, type RugScreenInput } from '../src/executor/rug-screen';
 import { decideExit, ladderTrailPct, stopLossLevel, trailingStopLevel, type ExitInput } from '../src/executor/sell-manager';
 import { buildCalibration, calibrationAdjust } from '../src/learner/score-calibration';
 import { computeCrowdMetrics, type CrowdTrade } from '../src/scanner/crowd-tracker';
+import { V4_EXIT } from './legacy-exit';
 
-const rules = DEFAULT_CONFIG.exit;
+const rules = V4_EXIT;
 const now = 50_000_000;
 const base: ExitInput = {
   entryPriceSol: 1, peakPriceSol: 1, remainingPct: 100, tpTiersHit: [], trailingActive: false, refPriceSol: 1, lastMoveAtMs: now,

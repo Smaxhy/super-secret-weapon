@@ -23,6 +23,15 @@ async function closedTrades(mode: 'PAPER' | 'LIVE'): Promise<ClosedTrade[]> {
 }
 
 export async function performanceRoutes(app: FastifyInstance, deps: ApiDeps): Promise<void> {
+  /**
+   * Strategy lab: how each exit setup did on the same live signals (virtual trades, real
+   * costs). BUY signals and near-misses are reported separately; `live` = the setup in use.
+   */
+  app.get('/api/lab', async () => {
+    if (!deps.lab) return { enabled: false, variants: [], applied: null, open: 0, autoApply: false, minTrades: 0 };
+    return { enabled: true, ...(await deps.lab.report()) };
+  });
+
   app.get('/api/performance', async () => {
     const mode = deps.executor.mode;
     const start = getConfig().paper.startingBalanceSol;

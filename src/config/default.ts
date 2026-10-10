@@ -25,19 +25,32 @@ export const DEFAULT_CONFIG = {
     minConvictionMultiple: 0.4,
     maxConvictionMultiple: 1.6,
     maxPositionPctOfCapital: 6,
-    /** Fraction of capital per strategy. Must add up to 1. */
+    /**
+     * Fraction of capital per strategy. Must add up to 1. v5 (research, Oct 2026): the edge for a
+     * bot with ~0.3 s latency is fresh pairs AFTER the snipers' supply is absorbed (CURVE_SNIPE =
+     * "New pairs"); late-curve / migration plays get less; copying wallets lost under every exit
+     * rule in public tests (2 s late = their exit liquidity) → off.
+     */
     allocation: {
-      MIGRATION_MOMENTUM: 0.45,
-      SOON: 0.4,
-      SMART_MONEY_COPY: 0.05,
-      CURVE_SNIPE: 0.1,
+      CURVE_SNIPE: 0.55,
+      MIGRATION_MOMENTUM: 0.25,
+      SOON: 0.2,
+      SMART_MONEY_COPY: 0,
     } satisfies Record<StrategyName, number>,
     enabledStrategies: {
       MIGRATION_MOMENTUM: true,
       SOON: true,
-      SMART_MONEY_COPY: true,
+      SMART_MONEY_COPY: false,
       CURVE_SNIPE: true,
     } satisfies Record<StrategyName, boolean>,
+    /** At most this many open positions per strategy (fresh pairs: 3 — research). */
+    maxOpenByStrategy: { CURVE_SNIPE: 3, SOON: 2, MIGRATION_MOMENTUM: 2, SMART_MONEY_COPY: 1 } as Partial<Record<StrategyName, number>>,
+    /**
+     * Strategy cool-off: once a strategy has `minTrades` closed trades among its last `lastN` and they
+     * average worse than `maxAvgPnlPct` per trade, it takes no new entries for `pauseMinutes`
+     * (the strategy lab keeps paper-testing its signals meanwhile).
+     */
+    strategyBreaker: { enabled: true as boolean, lastN: 20, minTrades: 12, maxAvgPnlPct: -4, pauseMinutes: 120 },
   },
 
   entry: {
@@ -162,17 +175,79 @@ export const DEFAULT_CONFIG = {
    * (the closest public measure of how many people are watching a coin).
    */
   focus: {
+    /**
+     * NEW PAIRS (strategy CURVE_SNIPE) — v5, from research (Oct 2026). Fresh coins, bought straight
+     * away (no dip wait, no confirmation delay) but only once:
+     *  1. the zone is right: 45 s – 12 min old, ≥ `minCurveSol` SOL in the curve (≈1.6× launch MC),
+     *     market cap under `maxMarketCapUsd` (owner: under ~$15k) and the curve under `maxCurvePct`;
+     *  2. the launch snipers' supply is ABSORBED (they're the ones who dump on late buyers):
+     *     early wallets hold ≤ maxSniperHoldPct or sold ≥ minSniperSoldPct of their buys, dev hasn't
+     *     sold and holds ≤ 10%, top 10 ≤ maxTop10Pct, top 10 not mostly first-25 buyers, the price
+     *     still ≥ minOfHighPct of its post-launch high;
+     *  3. REAL new buyers are arriving right now (last 60 s, dev/snipers/repeat-size bots excluded):
+     *     many different wallets, most first-timers, accelerating, net SOL in, buy/sell ratios,
+     *     varied (human) sizes, no dead gaps;
+     *  4. trigger: at / near its recent high (breaking out), not a vertical candle (> maxRun30sPct in
+     *     30 s), no holder dumping ≥ 1% of supply in the last 5 s.
+     * These replace the general $12k MC / $12k volume / 1 SOL fee minimums (with SOL near $80 those
+     * only allowed coins 75%+ up the curve — right where holders dump into graduation).
+     */
+    newPair: {
+      minAgeSec: 45,
+      maxAgeSec: 720,
+      minCurveSol: 8,
+      maxCurvePct: 85,
+      minMarketCapUsd: 3_500,
+      maxMarketCapUsd: 15_000,
+      minTotalFeesSol: 0.25,
+      minVolumeUsd: 1_500,
+      // absorption
+      sniperWindowSec: 4,
+      maxSniperHoldPct: 10,
+      minSniperSoldPct: 50,
+      maxDevSoldFraction: 0.05,
+      maxDevHoldingPct: 10,
+      maxTop10Pct: 30,
+      maxTop10EarlyShare: 0.8,
+      minOfHighPct: 80,
+      // organic demand (last 60 s)
+      minBuyers60s: 12,
+      minNewBuyers60s: 8,
+      minNetFlowSol60s: 1.5,
+      minBuyRatioSol: 1.3,
+      minBuyRatioCount: 1.5,
+      requireAcceleration: true as boolean,
+      minSizeCv: 0.5,
+      maxSameSizePct: 25,
+      minMedianBuySol: 0.05,
+      maxGapSec: 15,
+      maxBotVolumePct: 40,
+      // trigger
+      nearHighPct: 7,
+      maxRun30sPct: 35,
+      maxHolderDumpPct: 1,
+      /** Fresh pairs are bought on the spot: the absorption + demand checks replace the 12 s confirmation. */
+      confirmDelaySec: 0,
+      scoreThresholdDelta: -8,
+      sizeMultiplier: 1,
+      /** Re-check a fresh pair this often while its flow looks hot (trade-driven, see new-pair watcher). */
+      flowCheckCooldownSec: 15,
+    },
+    /**
+     * SOON: coins about to graduate. Research: most graduates PEAK at graduation and holders sell into
+     * it, so only the 70–90% part of the curve (≥ ~1.65× left to graduation), strict rules, normal bar.
+     */
     soon: {
       minCurvePct: 70,
-      maxCurvePct: 99.5,
+      maxCurvePct: 90,
       /** Seconds after the coin first reaches `minCurvePct` at which it's checked. */
       checkpointsSec: [0, 20, 45, 90, 150, 240, 360, 600, 900],
       minTotalFeesSol: 3,
-      minMarketCapUsd: 20_000,
-      minVolumeUsd: 20_000,
+      minMarketCapUsd: 0,
+      minVolumeUsd: 10_000,
       minActiveWallets5m: 25,
-      scoreThresholdDelta: -5,
-      sizeMultiplier: 1.25,
+      scoreThresholdDelta: 0,
+      sizeMultiplier: 1,
     },
     migrated: {
       minTotalFeesSol: 9,
@@ -180,8 +255,13 @@ export const DEFAULT_CONFIG = {
       /** Pool liquidity in USD (both sides, like trading terminals show it). */
       minLiquidityUsd: 2_000,
       minActiveWallets5m: 20,
-      scoreThresholdDelta: -5,
-      sizeMultiplier: 1.25,
+      /**
+       * No entries in the first minutes after migration: pump.fun's BOOST buys ~17.6 SOL over the
+       * first 5 min (mechanical, front-run by bots) and liquidity drains ~57% from minute 5 to 30.
+       */
+      noEntryFirstSec: 330,
+      scoreThresholdDelta: 0,
+      sizeMultiplier: 1,
     },
     /** Active wallets in 5 min at which the attention score is full (the "50+ eyes" rule of thumb). */
     fullAttentionWallets: 50,
@@ -194,7 +274,9 @@ export const DEFAULT_CONFIG = {
      */
     swing: {
       enabled: true,
-      maxReentries: 3,
+      /** Only re-enter a coin every earlier trade of which made money (never after a stop loss). */
+      onlyAfterProfit: true as boolean,
+      maxReentries: 1,
       cooldownSec: 120,
       watchMinutes: 120,
       minPullbackPct: 15,
@@ -261,8 +343,8 @@ export const DEFAULT_CONFIG = {
     maxRun2mPct: 35,
     buyDip: { minPullbackPct: 8, minBouncePct: 2 },
     buyDipPoints: 4,
-    dip: { enabled: true as boolean, minPullbackPct: 10, zoneTopMaxPct: 15, maxPullbackPct: 40, bounceConfirmPct: 3, minBuyRatio: 1.1, waitMinutes: 10, runAwayPct: 100, breakdownPct: 7, maxAboveZonePct: 8 },
-    smartSell: { enabled: true as boolean, minMultiple: 1.4, blowOffSellPct: 50, divergenceSellPct: 30 },
+    dip: { enabled: true as boolean, noWaitBelowMcUsd: 15_000, minPullbackPct: 10, zoneTopMaxPct: 15, maxPullbackPct: 40, bounceConfirmPct: 3, minBuyRatio: 1.1, waitMinutes: 10, runAwayPct: 100, breakdownPct: 7, maxAboveZonePct: 8 },
+    smartSell: { enabled: true as boolean, minMultiple: 1.6, blowOffSellPct: 50, divergenceSellPct: 30 },
   },
 
   /**
@@ -291,6 +373,71 @@ export const DEFAULT_CONFIG = {
    * narratives (like X hot keywords) for `narrative` scoring.
    */
   leaders: { enabled: true as boolean, everyMin: 5, topOwn: 15, minLeaders: 2, maxKeywords: 12 },
+
+  /**
+   * Strategy lab (src/learner/strategy-lab.ts): every BUY signal and near-miss is also traded
+   * VIRTUALLY by each variant below (same live prices, same costs, the bot's own exit logic with
+   * the variant's settings layered on top). The dashboard shows which setup makes money; with
+   * `autoApply` the best one (≥ minTrades results, cautious average > 0, beats the setup in use by
+   * minEdgePct) becomes the live exit setup, at most once per applyEveryHours. Variants never
+   * change the stop-loss band.
+   */
+  lab: {
+    enabled: true as boolean,
+    autoApply: true as boolean,
+    minTrades: 40,
+    minEdgePct: 2,
+    applyEveryHours: 6,
+    keepResults: 400,
+    maxOpen: 400,
+    /** Near-misses (rules pass, score up to this many points short) are lab-traded too (reported separately). */
+    nearMissMargin: 6,
+    /** The variant that mirrors the live settings (no overrides). */
+    liveVariant: 'L',
+    variants: [
+      { id: 'L', name: 'Live settings', exit: {} },
+      {
+        id: 'S',
+        name: 'Scalp: half at +25%, 10–15% trail',
+        exit: {
+          takeProfitTiers: [{ multiple: 1.25, sellPct: 50 }],
+          trailingStopActivateMultiple: 1.25,
+          trail: { breakEvenAfterMultiple: 1.25, ladder: [{ fromMultiple: 1.25, pct: 10 }, { fromMultiple: 2, pct: 15 }, { fromMultiple: 5, pct: 18 }] },
+          protectProfit: { afterMultiple: 1.25, floorMultiple: 1.03 },
+          timeStop: { minutes: { CURVE_SNIPE: 1, SOON: 2, MIGRATION_MOMENTUM: 6, SMART_MONEY_COPY: 2 }, stallMinutes: { CURVE_SNIPE: 2, SOON: 3, MIGRATION_MOMENTUM: 6, SMART_MONEY_COPY: 3 } },
+        },
+      },
+      {
+        id: 'B',
+        name: 'Bigger target: 40% at 1.5x, 25% at 2x, 30% trail',
+        exit: {
+          takeProfitTiers: [{ multiple: 1.5, sellPct: 40 }, { multiple: 2, sellPct: 25 }],
+          trailingStopActivateMultiple: 1.5,
+          trail: { breakEvenAfterMultiple: 1.5, ladder: [{ fromMultiple: 1.5, pct: 30 }, { fromMultiple: 3, pct: 25 }] },
+          protectProfit: { afterMultiple: 1.5, floorMultiple: 1.03 },
+          timeStop: { minutes: { CURVE_SNIPE: 3, SOON: 4, MIGRATION_MOMENTUM: 10, SMART_MONEY_COPY: 3 }, minPeakMultiple: 1.1, maxMultiple: 1.1 },
+        },
+      },
+      {
+        id: 'R',
+        name: 'Runner: nothing sold before 2x, then a 30% trail',
+        exit: {
+          takeProfitTiers: [{ multiple: 5, sellPct: 15 }],
+          trailingStopActivateMultiple: 2,
+          trail: { breakEvenAfterMultiple: 1.6, ladder: [{ fromMultiple: 2, pct: 30 }, { fromMultiple: 5, pct: 25 }] },
+          protectProfit: { afterMultiple: 1.6, floorMultiple: 1.03 },
+          timeStop: { minutes: { CURVE_SNIPE: 3, SOON: 4, MIGRATION_MOMENTUM: 10, SMART_MONEY_COPY: 3 }, stallMinutes: { CURVE_SNIPE: 5, SOON: 6, MIGRATION_MOMENTUM: 12, SMART_MONEY_COPY: 5 } },
+        },
+      },
+      { id: 'N', name: 'Live settings without time stops', exit: { timeStop: { enabled: false } } },
+      {
+        id: 'W',
+        name: 'Wider stop (−25 to −30%) — research suggests it; outside your 10–20% rule, so never applied automatically',
+        ownerOnly: true,
+        exit: { stopLoss: { minPct: 25, maxPct: 30, fallbackPct: 30, maxPctByStrategy: { MIGRATION_MOMENTUM: 25 } }, hardStopLossPct: 30 },
+      },
+    ] as Array<{ id: string; name: string; ownerOnly?: boolean; exit: Record<string, unknown> }>,
+  },
 
   /** Copy trading: react when a wallet on your watch list buys. */
   copy: {
@@ -329,12 +476,13 @@ export const DEFAULT_CONFIG = {
   exit: {
     /**
      * Tiered take-profit: sell `sellPct` of the ORIGINAL position at `multiple`x.
-     *  - 25% at 1.3x: a small "de-risk" sale so every winner banks something early.
-     *  - 15% at 5x:   a bonus slice off the runner on a big move (the rest keeps riding).
-     * The big sale in between is "take initials" below.
+     * v5 (research): the old exits banked +3% wins against −16% losses (needs 84% winners).
+     * Now winners must pay for losers:
+     *  - 40% at 1.4x: the first real profit (pays for ~3 small losses),
+     *  - initials at 2x (stake + fees back, below), 15% at 5x, the rest rides a wide trail.
      */
     takeProfitTiers: [
-      { multiple: 1.3, sellPct: 25 },
+      { multiple: 1.4, sellPct: 40 },
       { multiple: 5, sellPct: 15 },
     ],
     /**
@@ -367,8 +515,8 @@ export const DEFAULT_CONFIG = {
       /** The runner may stay this many times the strategy's normal max hold. */
       maxHoldMultiplier: 2,
     },
-    /** Before initials are out, the trailing stop arms here and trails this far below the peak. */
-    trailingStopActivateMultiple: 1.15,
+    /** The trailing stop arms here (v5: only once the first take-profit is in — no 1.15x trail). */
+    trailingStopActivateMultiple: 1.4,
     trailingStopPct: 20,
     /** The higher the peak, the tighter the trail (only before initials are out). */
     trailingTightening: [
@@ -397,37 +545,60 @@ export const DEFAULT_CONFIG = {
         { fromMultiple: 5, maxTrailPct: 25 },
         { fromMultiple: 10, maxTrailPct: 20 },
       ],
-      /** Trailing stop: sell the moment it breaks (owner: strict + aggressive). */
+      /** A break must hold 0.5 s (one sandwich / bad print can't sell us); a gap far below sells at once. */
       confirmTicks: 1,
-      confirmSec: 0,
+      confirmSec: 0.5,
       gapMultiple: 1.5,
-      /** Once the peak reached this, the stop never sits below break-even (+fees): no round-tripping winners. */
-      breakEvenAfterMultiple: 1.2,
+      /** Once the peak reached this (= the first take-profit), the rest never sells below break-even (+fees). */
+      breakEvenAfterMultiple: 1.4,
       /**
        * Dynamic trail: tight on small moves, wider on big ones (room to run).
        * Trail % for the peak multiple, linear between the points. Volatility then
        * nudges it ×volAdjust.min–max (2.5 × volatility vs the ladder value).
        */
       ladder: [
-        { fromMultiple: 1.15, pct: 6 },
-        { fromMultiple: 1.3, pct: 7 },
-        { fromMultiple: 1.5, pct: 9 },
-        { fromMultiple: 2, pct: 11 },
-        { fromMultiple: 3, pct: 14 },
-        { fromMultiple: 5, pct: 17 },
+        { fromMultiple: 1.4, pct: 20 },
+        { fromMultiple: 2, pct: 25 },
+        { fromMultiple: 3, pct: 25 },
+        { fromMultiple: 5, pct: 22 },
         { fromMultiple: 10, pct: 20 },
       ],
-      volAdjust: { min: 0.8, max: 1.15 },
+      volAdjust: { min: 0.8, max: 1.2 },
       peakRefTolerancePct: 25,
+      /**
+       * A new peak only counts once the price HELD that level this long (ms). Sandwiched /
+       * high-slippage buys print 20%+ above the market for a few ms — nobody can sell there,
+       * and counting them armed the trailing stop and sold positions at a loss.
+       */
+      peakHoldMs: 2500,
     },
+    /**
+     * Time stops (only before any profit was taken) — a fresh-coin trade that works, works fast:
+     *  - no follow-through: held `minutes[strategy]`, the peak never reached `minPeakMultiple` and the
+     *    price is at or below `maxMultiple` → out at a small loss instead of riding to the stop;
+     *  - stall: no new high for `stallMinutes[strategy]` while below the first take-profit → out.
+     */
+    timeStop: {
+      enabled: true as boolean,
+      minutes: { CURVE_SNIPE: 1.5, SOON: 3, MIGRATION_MOMENTUM: 10, SMART_MONEY_COPY: 3 } as Partial<Record<StrategyName, number>>,
+      defaultMinutes: 5,
+      minPeakMultiple: 1.1,
+      maxMultiple: 1.02,
+      stallMinutes: { CURVE_SNIPE: 3, SOON: 5, MIGRATION_MOMENTUM: 10, SMART_MONEY_COPY: 5 } as Partial<Record<StrategyName, number>>,
+    },
+    /**
+     * Coins bought on the curve that graduate: sell `sellPct` while pump.fun's BOOST is buying
+     * (between `fromSec` and `toSec` after migration) — that demand stops at minute 5.
+     */
+    boostSell: { enabled: true as boolean, fromSec: 60, toSec: 240, sellPct: 40 },
     /** After reaching `afterMultiple`, sell everything if it falls back to `floorMultiple` (before initials are out). */
-    protectProfit: { afterMultiple: 1.3, floorMultiple: 1.05 },
+    protectProfit: { afterMultiple: 1.4, floorMultiple: 1.03 },
     /**
      * Resistance: the price keeps hitting the same ceiling and getting knocked
      * back. Once in profit, sell there instead of hoping it breaks through.
      */
     resistance: {
-      minProfitMultiple: 1.2,
+      minProfitMultiple: 1.5,
       /** Rejections at the ceiling needed (separate touches). */
       minTouches: 2,
       /** A "touch" = within this % of the recent high. */
@@ -441,15 +612,15 @@ export const DEFAULT_CONFIG = {
     riskExit: {
       threshold: 0.5,
       /** Take profit early on high risk once at least this multiple. */
-      minProfitMultiple: 1.15,
+      minProfitMultiple: 1.5,
       /** Cut a loser early on high risk once below this multiple (0.85 = −15%). */
       cutLossBelowMultiple: 0.85,
     },
     maxHoldMinutes: {
-      CURVE_SNIPE: 45,
-      SOON: 60,
-      MIGRATION_MOMENTUM: 120,
-      SMART_MONEY_COPY: 90,
+      CURVE_SNIPE: 30,
+      SOON: 45,
+      MIGRATION_MOMENTUM: 240,
+      SMART_MONEY_COPY: 60,
     } satisfies Record<StrategyName, number>,
     /** Old hard stop (kept for saved configs) — the real limit is stopLoss.maxPct. */
     hardStopLossPct: 20,
@@ -461,15 +632,15 @@ export const DEFAULT_CONFIG = {
      * confirmed break (exit.trail.confirmTicks / confirmSec).
      */
     stopLoss: {
-      minPct: 10,
+      minPct: 12,
       maxPct: 20,
       volMultiplier: 2,
       fallbackPct: 15,
       /** Tighter max per strategy (migration plays: 15%). */
       maxPctByStrategy: { MIGRATION_MOMENTUM: 15 } as Partial<Record<StrategyName, number>>,
-      /** A dip under the stop (not the hard limit) must hold this long before selling. */
+      /** A dip under the stop (not the hard limit) must hold this long before selling (no wick sells). */
       confirmTicks: 1,
-      confirmSec: 1.5,
+      confirmSec: 2,
     },
     rugExit: {
       /** Bundle wallets sold this many % of supply since we bought → exit. */
@@ -479,10 +650,10 @@ export const DEFAULT_CONFIG = {
       holderConcentrationSpikePct: 15,
     },
     staleMinutes: {
-      CURVE_SNIPE: 30,
+      CURVE_SNIPE: 20,
       SOON: 20,
-      MIGRATION_MOMENTUM: 120,
-      SMART_MONEY_COPY: 120,
+      MIGRATION_MOMENTUM: 60,
+      SMART_MONEY_COPY: 60,
     } satisfies Record<StrategyName, number>,
     dailyLossCircuitBreakerPct: 20,
   },
@@ -503,8 +674,14 @@ export const DEFAULT_CONFIG = {
     latencyMaxMs: 500,
     /** Network + priority fee + Jito tip per transaction (realistic for fast Pump.fun fills). */
     txFeeSol: 0.0015,
-    /** PumpSwap pool fee (LP + protocol + creator), basis points per side. Approximate. */
+    /** PumpSwap pool fee (LP + protocol + creator), basis points per side, when tiered fees are off. */
     ammFeeBps: 30,
+    /**
+     * Graduated pump.fun coins pay tiered PumpSwap fees by market cap (1.25% under 420 SOL,
+     * 1.20% to 1,470 SOL, … 0.30% from 98,240 SOL) — see pumpSwapFeeBps. On by default: the
+     * flat 0.3% made migration trades look ~1.8 points better per round trip than reality.
+     */
+    ammTieredFees: true as boolean,
     /**
      * Sanity guard: a paper fill is checked against the price the most recent REAL
      * trade of that token happened at. A sell quoted more than this many times
@@ -524,9 +701,9 @@ export const DEFAULT_CONFIG = {
 
   scoring: {
     /** Checkpoints (seconds after launch) at which a token is (re)evaluated. */
-    checkpointsSec: [20, 45, 90, 180, 300, 480, 720, 900, 1080, 1200],
+    checkpointsSec: [45, 60, 75, 90, 120, 150, 180, 240, 300, 360, 480, 600, 720],
     /** Checkpoints (seconds after migration to PumpSwap) for the migration strategy. */
-    migrationCheckpointsSec: [60, 180, 300, 600, 1200, 2400, 3600],
+    migrationCheckpointsSec: [330, 480, 660, 900, 1200, 1800, 2400, 3600],
     /** Only run the RPC-heavy wallet analysis if the pre-score is within this many points of the threshold. */
     walletAnalysisMargin: 10,
     /** Evaluations scoring at least this are stored even when skipped ("interesting"). */

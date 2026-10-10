@@ -13,7 +13,7 @@ import { startApi } from './api/server';
 import { env, rpcEndpoints } from './config/env';
 import { bus } from './lib/bus';
 import { startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
-import { runConfigMigrations } from './config/migrations';
+import { markStrategySince, oneTimeUpgrade, runConfigMigrations } from './config/migrations';
 import { startCalibration, stopCalibration } from './learner/score-calibration';
 import { screenEntry } from './executor/rug-screen';
 import { Evaluator } from './evaluator/evaluator';
@@ -30,6 +30,8 @@ import { DexScreener } from './scanner/dexscreener';
 import { MarketLeaders } from './scanner/market-leaders';
 import { WalletPnl } from './learner/wallet-pnl';
 import { DipWatcher } from './executor/dip-watcher';
+import { StrategyLab } from './learner/strategy-lab';
+import { NewPairWatcher } from './scanner/new-pair-watcher';
 import { TradeCoach } from './learner/trade-coach';
 import { SwingWatcher } from './executor/swing-watcher';
 import { ObservationLogger } from './learner/observation-logger';
@@ -66,6 +68,12 @@ async function main(): Promise<void> {
   await ensureTimescale();
   // Push deliberate setting changes into saved settings (owner edits elsewhere are kept).
   await runConfigMigrations();
+  // v5 strategy: the trade coach's lessons came from the old setup (late-curve buys, 1.15x trails) —
+  // they'd shrink sizes and raise the bar for the new one. Start its lessons fresh, once.
+  await oneTimeUpgrade('v5-strategy', async () => {
+    await TradeCoach.reset(redis);
+    await markStrategySince();
+  });
   await startConfigRefresh();
 
   // 2. Redis
@@ -145,6 +153,14 @@ async function main(): Promise<void> {
   evaluator.dips = dips;
   registry.onTradeApplied.push((mint) => dips.onTrade(mint));
   dips.start();
+  // New pairs: a fresh coin whose buying heats up is checked at once (not just at checkpoints).
+  const newPairs = new NewPairWatcher(crowd, liveState, evaluator);
+  registry.onTradeApplied.push((mint) => newPairs.onTrade(mint));
+  // Strategy lab: forward-tests exit setups on every BUY signal / near-miss (virtual, no money).
+  const lab = new StrategyLab(redis, crowd);
+  evaluator.lab = lab;
+  registry.onTradeApplied.push((mint) => lab.onTrade(mint));
+  lab.start();
   // Exits react to every trade on a coin we hold (not just the 1s tick); real trade highs count as peaks.
   sellManager.crowd = crowd;
   registry.onTradeApplied.push((mint) => sellManager.onTrade(mint));
@@ -256,7 +272,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -327,6 +343,7 @@ async function main(): Promise<void> {
       leaders.stop();
       walletPnl.stop();
       dips.stop();
+      lab.stop();
       stopCalibration();
       swings.stop();
       crowd.stop();

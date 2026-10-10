@@ -53,6 +53,8 @@ export class SwingWatcher {
     if (!sw.enabled) return;
     const p = await closedPosition(mint);
     if (!p || (p.strategy !== 'SOON' && p.strategy !== 'MIGRATION_MOMENTUM') || p.exitReason === 'RUG_DETECTED' || p.exitReason === 'KILL_SWITCH') return;
+    // A coin that beat us isn't worth watching for a re-entry (the trader refuses those anyway).
+    if ((sw.onlyAfterProfit ?? true) && p.realizedPnlSol <= 0) return;
     await this.redis.zadd(K_WATCH, String(now + sw.watchMinutes * 60_000), mint);
     await this.redis.set(coolKey(mint), '1', 'EX', Math.max(30, sw.cooldownSec));
     log.info({ mint }, `🔁 watching for a swing re-entry (${sw.watchMinutes} min)`);

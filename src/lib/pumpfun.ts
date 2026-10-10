@@ -514,3 +514,53 @@ export function quoteSell(
   const feeLamports = (gross * BigInt(feeBps)) / 10_000n;
   return { solOutLamports: gross - feeLamports, feeLamports };
 }
+
+/**
+ * PumpSwap fee (basis points, per side) for a graduated pump.fun coin — tiered by market cap
+ * in SOL since Project Ascend (pump.fun/docs/fees): 1.25% under 420 SOL, 1.20% up to 1,470 SOL,
+ * 1.15% up to 2,460 SOL, then 0.05 points less per band down to 0.30% from 98,240 SOL. The
+ * band edges between 2,460 and 98,240 SOL are spread evenly on a log scale (exact edges
+ * aren't public in one place — close enough for paper costs). A freshly migrated coin
+ * (~410 SOL) pays ~1.25%, not the 0.3% a plain AMM charges. Pure.
+ */
+export function pumpSwapFeeBps(marketCapSol: number): number {
+  if (!(marketCapSol > 0) || marketCapSol < 420) return 125;
+  if (marketCapSol < 1_470) return 120;
+  if (marketCapSol < 2_460) return 115;
+  if (marketCapSol >= 98_240) return 30;
+  const steps = Math.floor((17 * Math.log(marketCapSol / 2_460)) / Math.log(98_240 / 2_460));
+  return Math.max(30, 115 - 5 * Math.min(17, steps + 1));
+}
+
+/** Pool fee (bps per side) for a paper fill: curve fee, or the PumpSwap fee (tiered when enabled). Pure. */
+export function poolFeeBps(paper: { curveFeeBps: number; ammFeeBps: number; ammTieredFees?: boolean }, onAmm: boolean, marketCapSolNow: number | null): number {
+  if (!onAmm) return paper.curveFeeBps;
+  return paper.ammTieredFees === false || marketCapSolNow === null ? paper.ammFeeBps : pumpSwapFeeBps(marketCapSolNow);
+}
+
+/**
+ * PumpSwap price right after a trade (SOL per whole token), from the trade's OWN amounts —
+ * not from the raw vault balances in the event. BOOST pools carry virtual quote reserves and
+ * swept-later fees sit in the vaults, so the raw balances are not the price the program
+ * trades at (pump.fun docs: "do not read the raw vault balance"). On x·y=k the swap amount
+ * gives the effective quote reserve exactly: Q·Δb = Δq·B_after (buy and sell alike), so the
+ * price after the trade = execution price × B_before ÷ B_after. null if the trade can't price
+ * it (dust, missing reserves). Pure.
+ */
+export function ammPostTradePrice(ev: { isBuy: boolean; baseAmount: bigint; quoteAmount: bigint; baseReserve?: bigint }): number | null {
+  if (ev.baseReserve === undefined || ev.baseReserve <= 0n || ev.baseAmount <= 0n || ev.quoteAmount <= 0n) return null;
+  const after = Number(ev.baseReserve);
+  const before = ev.isBuy ? after + Number(ev.baseAmount) : after - Number(ev.baseAmount);
+  if (!(before > 0)) return null;
+  const exec = Number(ev.quoteAmount) / 1e9 / (Number(ev.baseAmount) / 10 ** PUMP_TOKEN_DECIMALS);
+  const px = (exec * before) / after;
+  return Number.isFinite(px) && px > 0 ? px : null;
+}
+
+/** Effective (program-side) quote reserve after a PumpSwap trade, lamports: Δq × B_before ÷ Δb. See ammPostTradePrice. */
+export function ammEffectiveQuoteAfter(ev: { isBuy: boolean; baseAmount: bigint; quoteAmount: bigint; baseReserve?: bigint }): bigint | null {
+  if (ev.baseReserve === undefined || ev.baseReserve <= 0n || ev.baseAmount <= 0n || ev.quoteAmount <= 0n) return null;
+  const before = ev.isBuy ? ev.baseReserve + ev.baseAmount : ev.baseReserve - ev.baseAmount;
+  if (before <= 0n) return null;
+  return (ev.quoteAmount * before) / ev.baseAmount;
+}

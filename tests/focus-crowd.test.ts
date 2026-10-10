@@ -8,6 +8,7 @@ import { decideExit, stopLossLevel, type ExitInput } from '../src/executor/sell-
 import { classifyTrade, computeCoachState, type TradeReview } from '../src/learner/trade-coach';
 import { shrunk } from '../src/learner/wallet-reputation';
 import { computeCrowdMetrics, swingSignal, type CrowdTrade } from '../src/scanner/crowd-tracker';
+import { V4_EXIT } from './legacy-exit';
 
 const NOW = 10_000_000;
 const t = (secAgo: number, w: string, buy: boolean, sol: number, px = 1e-6): CrowdTrade => ({ t: NOW - secAgo * 1000, w, buy, sol, tok: sol / px, px });
@@ -93,18 +94,26 @@ describe('focus entry rules', () => {
   it('Soon coins: curve 70%+, not complete', () => {
     const soon = { ...market, complete: false, onAmm: false, bondingCurvePct: 82, totalFeesSol: 4, marketCapUsd: 30_000, volumeUsd: 40_000 };
     expect(rulesFor(soon, 'SOON')).toEqual([]);
-    expect(rulesFor({ ...soon, bondingCurvePct: 60 }, 'SOON').join()).toContain('curve 60.0% outside 70-99.5%');
+    expect(rulesFor({ ...soon, bondingCurvePct: 60 }, 'SOON').join()).toContain('curve 60.0% outside 70-90%');
+    // v5: the last stretch before graduation (where holders dump into it) is skipped.
+    expect(rulesFor({ ...soon, bondingCurvePct: 94 }, 'SOON').join()).toContain('curve 94.0% outside 70-90%');
     expect(rulesFor({ ...soon, complete: true }, 'SOON').join()).toContain('curve already complete');
   });
-  it('curve snipes keep the general minimums', () => {
+  it('new pairs (curve snipes) use their own zone instead of the $12k minimums', () => {
     const m = strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'CURVE_SNIPE');
-    expect(m.minTotalFeesSol).toBe(DEFAULT_CONFIG.entry.minTotalFeesSol);
+    const np = DEFAULT_CONFIG.focus.newPair;
+    expect(m.minTotalFeesSol).toBe(np.minTotalFeesSol);
+    expect(m.minMarketCapUsd).toBe(np.minMarketCapUsd);
+    expect(m.maxMarketCapUsd).toBe(15_000);
+    expect(m.ageSec).toEqual({ min: 45, max: 720 });
     expect(m.minActiveWallets5m).toBe(0);
+    // Other strategies keep their minimums (no max market cap).
+    expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'SOON').maxMarketCapUsd).toBeNull();
   });
 });
 
 describe('stop loss 10–20%', () => {
-  const rules = DEFAULT_CONFIG.exit;
+  const rules = V4_EXIT;
   it('stays inside the band whatever the volatility', () => {
     expect(stopLossLevel(1, 1, rules).stopPct).toBe(10);
     expect(stopLossLevel(1, 7, rules).stopPct).toBe(14);

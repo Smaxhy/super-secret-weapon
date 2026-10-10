@@ -16,6 +16,7 @@
  */
 import type { Strategy } from '@prisma/client';
 import { getConfig } from '../config/runtime-config';
+import { strategySince } from '../config/migrations';
 import { recordEvent } from '../lib/bot-events';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
@@ -93,14 +94,22 @@ export class Trader {
     }
 
     if (open.length >= cfg.trading.maxConcurrentPositions) return refuse(`max ${cfg.trading.maxConcurrentPositions} positions open`);
+    const perStrategy = (cfg.trading.maxOpenByStrategy as Partial<Record<string, number>> | undefined)?.[req.strategy];
+    if (perStrategy !== undefined && open.filter((p) => p.strategy === req.strategy).length >= perStrategy) return refuse(`max ${perStrategy} ${req.strategy} positions open`);
+    // Strategy cool-off: its recent trades are clearly losing → no new entries for a while.
+    const cool = await strategyCoolOff(req.strategy, mode, cfg.trading.strategyBreaker);
+    if (cool) return refuse(cool);
     // Copy trades are heavily restricted.
     if (req.strategy === 'SMART_MONEY_COPY' && open.filter((p) => p.strategy === 'SMART_MONEY_COPY').length >= (cfg.copy.maxOpen ?? 1)) return refuse('copy trade limit reached');
-    const before = await prisma.position.findMany({ where: { mint: req.mint, mode }, select: { status: true, closedAt: true, exitReason: true } });
+    const before = await prisma.position.findMany({ where: { mint: req.mint, mode }, select: { status: true, closedAt: true, exitReason: true, realizedPnlSol: true } });
     if (before.length) {
       const sw = cfg.focus.swing;
       if (!req.swing || !sw.enabled) return refuse('already traded this token');
       if (before.some((p) => p.status !== 'CLOSED')) return refuse('still holding this token');
       if (before.some((p) => p.exitReason === 'RUG_DETECTED')) return refuse('rugged before — no swing re-entry');
+      // Re-buying a coin that already beat us was the bot's worst habit (same coin, 4 stop losses in a row).
+      // Only a coin we made money on gets another go.
+      if ((sw.onlyAfterProfit ?? true) && before.some((p) => p.realizedPnlSol <= 0)) return refuse('lost on this coin before — no re-entry');
       if (before.length > sw.maxReentries) return refuse(`swing re-entries used up (${sw.maxReentries})`);
       const last = Math.max(...before.map((p) => p.closedAt?.getTime() ?? 0));
       if (Date.now() - last < sw.cooldownSec * 1000) return refuse('swing cooldown');
@@ -128,7 +137,7 @@ export class Trader {
       return refuse(`rug screen: ${rug}`);
     }
 
-    const fill = await this.executor.buy({ mint: req.mint, solAmount: round4(size), maxSlippageBps: req.maxSlippageBps });
+    const fill = await this.executor.buy({ mint: req.mint, solAmount: round4(size), maxSlippageBps: req.maxSlippageBps, expectedPriceSol: req.market.priceSol });
     const explanation = req.explain?.(size) ?? null;
     const context = { score: req.score, market: req.market, features: req.features, balanceBefore: balance, explanation };
     if (!fill.ok) {
@@ -174,6 +183,33 @@ export class Trader {
     });
     return { entered: true, reason: 'entered', positionId: position.id };
   }
+}
+
+/**
+ * Strategy cool-off (pure part): the last trades of a strategy, newest first, as % P&L on their
+ * size + when each closed. Tripped → the reason string, else null. Pure.
+ */
+export function coolOffReason(
+  closed: ReadonlyArray<{ pnlPct: number; closedAtMs: number }>,
+  now: number,
+  b: { enabled: boolean; lastN: number; minTrades: number; maxAvgPnlPct: number; pauseMinutes: number },
+): string | null {
+  if (!b.enabled) return null;
+  const last = closed.slice(0, b.lastN);
+  if (last.length < b.minTrades) return null;
+  const avg = last.reduce((s, x) => s + x.pnlPct, 0) / last.length;
+  const latest = last[0]!.closedAtMs;
+  const left = latest + b.pauseMinutes * 60_000 - now;
+  if (avg >= b.maxAvgPnlPct || left <= 0) return null;
+  return `cooling off: last ${last.length} trades average ${avg.toFixed(1)}% — paused ${Math.ceil(left / 60_000)} more min (the strategy lab keeps testing)`;
+}
+
+async function strategyCoolOff(strategy: Strategy, mode: 'PAPER' | 'LIVE', b: { enabled: boolean; lastN: number; minTrades: number; maxAvgPnlPct: number; pauseMinutes: number } | undefined): Promise<string | null> {
+  if (!b?.enabled) return null;
+  // Only trades of the current strategy version count (the old setup's losses aren't this one's).
+  const since = await strategySince();
+  const rows = await prisma.position.findMany({ where: { strategy, mode, status: 'CLOSED', ...(since ? { openedAt: { gte: since } } : {}) }, orderBy: { closedAt: 'desc' }, take: b.lastN, select: { realizedPnlSol: true, sizeSol: true, closedAt: true } });
+  return coolOffReason(rows.map((r) => ({ pnlPct: r.sizeSol > 0 ? (r.realizedPnlSol / r.sizeSol) * 100 : 0, closedAtMs: r.closedAt?.getTime() ?? 0 })), Date.now(), b);
 }
 
 /** Sum of realised P&L from sells since 00:00 UTC. */

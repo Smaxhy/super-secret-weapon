@@ -42,7 +42,8 @@ import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import { explainSell } from '../learner/explain';
 import { logTrade } from '../learner/trade-logger';
-import { quoteSell } from '../lib/pumpfun';
+import { poolFeeBps, quoteSell } from '../lib/pumpfun';
+import { settledHigh } from '../lib/settled-price';
 import { deriveMetrics, type LiveState } from '../scanner/live-state';
 import type { Redis } from 'ioredis';
 import { PublicKey } from '@solana/web3.js';
@@ -61,6 +62,11 @@ const log = moduleLogger('sell-manager');
 const TICK_MS = 1_000;
 /** Trade-driven checks: at most one per coin every this many ms (a burst of trades coalesces). */
 const FAST_MIN_GAP_MS = 200;
+/**
+ * Wait this long after a trade before checking, so the rest of that slot's trades
+ * (a sandwich's back-run, a bundle) are applied first — never act on a half-applied slot.
+ */
+const FAST_SETTLE_MS = 120;
 /** Risk / resistance / volatility samples are kept at roughly this spacing. */
 const SAMPLE_GAP_MS = 1_500;
 
@@ -142,9 +148,10 @@ export interface ExitInput {
   /** Minimum hold (copy trades): until then only stop-loss, rug and profit-taking exits fire. */
   minHoldUntilMs?: number | null;
   /**
-   * Live mode (sell manager): the peak follows real trades at once — the highest
-   * real trade since the last check (`recentHighSol`) or the current price — so a
-   * fast spike registers. Without it (legacy), a new high must hold for two checks.
+   * Live mode (sell manager): the peak follows real trades — `recentHighSol` is the
+   * highest level the price HELD since the last check (settledHigh: sandwich spikes and
+   * bad prints don't count). Without it (legacy / no trade log), a new high must hold
+   * for two checks.
    */
   instantPeak?: boolean;
   recentHighSol?: number | null;
@@ -152,6 +159,10 @@ export interface ExitInput {
   kolDump?: { hit: boolean; detail: string } | null;
   /** Chart-timed selling: sell into a blow-off top / bearish divergence (from the chart reader). */
   smartSell?: { blowOff: boolean; divergence: boolean; summary: string; minMultiple: number; blowOffSellPct: number; divergenceSellPct: number } | null;
+  /** When the (settled) peak last rose — for the stall exit. Unknown → openedAtMs. */
+  peakAtMs?: number | null;
+  /** Seconds since the coin migrated to PumpSwap (null = still on the curve / unknown). */
+  migratedAgoSec?: number | null;
 }
 
 /** Marker stored in `tpTiersHit` once initials are out (real tiers are all > 1). */
@@ -159,6 +170,8 @@ export const INITIALS_MARKER = -1;
 /** Markers: the blow-off / divergence partial sells already happened (once each per position). */
 export const BLOWOFF_MARKER = -2;
 export const DIVERGENCE_MARKER = -3;
+/** Marker: sold into pump.fun's BOOST buying right after migration (once). */
+export const BOOST_MARKER = -4;
 
 export interface ActivitySample {
   t: number;
@@ -416,10 +429,12 @@ export function stopLossLevel(
 }
 
 /** Cost of selling now in % of the position: pool fee + assumed slippage + buy & sell tx fees. Pure. */
-export function exitCostPctFor(paper: BotConfigShape['paper'], onAmm: boolean, sizeLeftSol: number): number {
-  const fee = (onAmm ? paper.ammFeeBps : paper.curveFeeBps) / 100;
+export function exitCostPctFor(paper: BotConfigShape['paper'], onAmm: boolean, sizeLeftSol: number, marketCapSol: number | null = null): number {
+  const fee = poolFeeBps(paper, onAmm, marketCapSol) / 100;
   return fee + paper.slippagePct + (sizeLeftSol > 0 ? ((paper.txFeeSol * 2) / sizeLeftSol) * 100 : 0);
 }
+
+export { settledHigh } from '../lib/settled-price';
 
 /**
  * Should this price count toward the peak? Only if it agrees with the last real
@@ -459,27 +474,27 @@ export interface ExitDecision {
     /** Unconfirmed trailing-stop break in progress (kept in memory by the sell manager). */
     breachSinceMs: number | null;
     breachTicks: number;
+    /** When the peak last rose. */
+    peakAtMs: number;
   };
 }
 
 export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDecision {
-  // Peak from real trades only: a suspicious price can't raise it, and a new high
-  // must hold for two checks in a row (min of this and the previous price) — a single wick doesn't count.
-  const peakCandidate = i.instantPeak
-    ? Math.max(i.priceTrusted === false ? 0 : i.priceSol, i.recentHighSol && i.recentHighSol > 0 ? i.recentHighSol : 0)
-    : i.priceTrusted === false
-      ? 0
-      : i.prevPriceSol && i.prevPriceSol > 0
-        ? Math.min(i.priceSol, i.prevPriceSol)
-        : i.priceSol;
+  // Peak from real trades only: a suspicious price can't raise it. Live mode: the highest
+  // level the price actually HELD since the last check (settledHigh — spike prints don't
+  // count). Otherwise a new high must hold for two checks in a row (min of this and the previous price).
+  const legacyPeak = i.priceTrusted === false ? 0 : i.prevPriceSol && i.prevPriceSol > 0 ? Math.min(i.priceSol, i.prevPriceSol) : i.priceSol;
+  const peakCandidate = i.instantPeak && i.recentHighSol && i.recentHighSol > 0 ? i.recentHighSol : legacyPeak;
+  const newPeak = Math.max(i.peakPriceSol, peakCandidate);
   const state: ExitDecision['state'] = {
-    peakPriceSol: Math.max(i.peakPriceSol, peakCandidate),
+    peakPriceSol: newPeak,
     trailingActive: i.trailingActive,
     refPriceSol: i.refPriceSol,
     lastMoveAtMs: i.lastMoveAtMs,
     tpTiersHit: [...i.tpTiersHit],
     breachSinceMs: null,
     breachTicks: 0,
+    peakAtMs: newPeak > i.peakPriceSol * 1.0001 ? i.nowMs : (i.peakAtMs ?? i.openedAtMs),
   };
   const all = (reason: ExitReason, detail: string): ExitDecision => ({ sells: [{ pct: i.remainingPct, reason, detail }], state });
   const multiple = i.priceSol / i.entryPriceSol;
@@ -525,9 +540,36 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   if (!holding && multiple <= rules.riskExit.cutLossBelowMultiple && i.risk >= rules.riskExit.threshold) {
     return all('STOP_LOSS', `early exit at ${((multiple - 1) * 100).toFixed(0)}%: ${i.riskWhy}`);
   }
+  // Time stops — a fresh-coin trade that works, works fast (only before any profit was taken):
+  //  no follow-through: held N minutes, never got going and not above entry → out at a small loss;
+  //  stall: no new high for N minutes while still below the first take-profit → out.
+  const ts = (rules as Partial<ExitRules>).timeStop;
+  if (ts?.enabled && !holding && !i.tpTiersHit.length) {
+    const mins = (i.strategy ? (ts.minutes as Record<string, number | undefined>)[i.strategy] : undefined) ?? ts.defaultMinutes;
+    const heldMin = (i.nowMs - i.openedAtMs) / 60_000;
+    const bestX = state.peakPriceSol / i.entryPriceSol;
+    if (mins > 0 && heldMin >= mins && bestX < ts.minPeakMultiple && multiple <= ts.maxMultiple) {
+      return all('STALE', `no follow-through: ${heldMin.toFixed(1)} min in, best ${bestX.toFixed(2)}x, now ${multiple.toFixed(2)}x`);
+    }
+    const stall = i.strategy ? (ts.stallMinutes as Record<string, number | undefined> | undefined)?.[i.strategy] : undefined;
+    const tp1 = rules.takeProfitTiers[0]?.multiple ?? Infinity;
+    const quietMin = (i.nowMs - state.peakAtMs) / 60_000;
+    if (stall && stall > 0 && heldMin >= stall && quietMin >= stall && multiple < tp1) {
+      return all(multiple >= 1 ? 'TAKE_PROFIT' : 'STALE', `stalled: no new high for ${quietMin.toFixed(1)} min (best ${bestX.toFixed(2)}x, now ${multiple.toFixed(2)}x)`);
+    }
+  }
 
   const sells: ExitDecision['sells'] = [];
   let remaining = i.remainingPct;
+  // Bought on the curve and it graduated: pump.fun's BOOST buys for the first ~5 minutes after
+  // migration — sell a slice into that demand before it stops (once).
+  const bs = (rules as Partial<ExitRules>).boostSell;
+  if (bs?.enabled && remaining > 0 && i.migratedAgoSec !== null && i.migratedAgoSec !== undefined && i.migratedAgoSec >= bs.fromSec && i.migratedAgoSec <= bs.toSec && (i.strategy === 'CURVE_SNIPE' || i.strategy === 'SOON') && !state.tpTiersHit.includes(BOOST_MARKER)) {
+    const pct = Math.round(Math.min(remaining, (i.remainingPct * bs.sellPct) / 100) * 100) / 100;
+    sells.push({ pct, reason: 'TAKE_PROFIT', detail: `graduated — sold ${bs.sellPct}% into the BOOST buying at ${multiple.toFixed(2)}x` });
+    state.tpTiersHit.push(BOOST_MARKER);
+    remaining -= pct;
+  }
   // Rough SOL we'd get for selling `pct`% of the original position right now, after the
   // % fees (curve fee, slippage, price impact). The fixed per-sell tx fee is taken off separately.
   const valueOf = (pct: number) => ((i.sizeSol * pct) / 100) * multiple * (1 - rules.initials.feeBufferPct / 100);
@@ -683,7 +725,7 @@ export class SellManager {
   private readonly samples = new Map<string, ActivitySample[]>();
   private readonly lastPoll = new Map<string, number>();
   /** Per position: unconfirmed trailing-stop break + last measured volatility (memory only). */
-  private readonly trail = new Map<string, { breachSinceMs: number | null; breachTicks: number; volatilityPct: number | null }>();
+  private readonly trail = new Map<string, { breachSinceMs: number | null; breachTicks: number; volatilityPct: number | null; peakAtMs?: number }>();
   /** Live per-trade log (set in index.ts): real trade prices between checks, so spikes register. */
   crowd: CrowdTracker | null = null;
   /** Coins we hold (refreshed every tick) — trades on these trigger an immediate check. */
@@ -733,7 +775,7 @@ export class SellManager {
     try {
       do {
         s.again = false;
-        const wait = FAST_MIN_GAP_MS - (Date.now() - s.last);
+        const wait = Math.max(FAST_SETTLE_MS, FAST_MIN_GAP_MS - (Date.now() - s.last));
         if (wait > 0) await new Promise((r) => setTimeout(r, wait));
         s.last = Date.now();
         const open = await prisma.position.findMany({ where: { mint, mode: this.executor.mode, status: 'OPEN' }, select: { id: true } });
@@ -863,12 +905,16 @@ export class SellManager {
     const hist = this.samples.get(p.id) ?? [];
     const trusted = priceTrusted(m.priceSol, view.refPriceSol, trailRules(cfg.exit).peakRefTolerancePct);
     const prevPriceSol = [...hist].reverse().find((x) => x.trusted !== false)?.priceSol ?? null;
-    // Highest REAL trade since the last check (a spike between checks). Dust prints and
-    // prices wildly off the pool/reference are ignored.
+    // The peak = the highest level the price really HELD since the last check (≥ peakHoldMs),
+    // so a sandwiched buy printing +20% for a few ms can't arm the trailing stop. The raw
+    // highest print is still sent to the dashboard chart (spikes stay visible there).
     const since = Math.max(this.lastCheck.get(p.id) ?? 0, p.openedAt.getTime());
     this.lastCheck.set(p.id, now);
     const sane = Math.max(m.priceSol, view.refPriceSol ?? 0) * 2.5;
-    const recentHighSol = (this.crowd?.trades(p.mint) ?? []).reduce((mx, x) => (x.t > since && x.sol >= 0.02 && x.px > 0 && x.px <= sane ? Math.max(mx, x.px) : mx), 0) || null;
+    const crowdTrades = this.crowd?.trades(p.mint) ?? [];
+    const holdMs = trailRules(cfg.exit).peakHoldMs ?? 1_200;
+    const recentHighSol = crowdTrades.length ? settledHigh(crowdTrades, Math.max(p.openedAt.getTime(), since - holdMs - 2_000), now, holdMs, sane) : null;
+    const spikeHighSol = crowdTrades.reduce((mx, x) => (x.t > since && x.sol >= 0.02 && x.px > 0 && x.px <= sane ? Math.max(mx, x.px) : mx), 0) || null;
     // Samples for risk / resistance / volatility stay ~1.5s apart (checks can be 5×/s).
     const lastSample = hist[hist.length - 1];
     if (!lastSample || now - lastSample.t >= SAMPLE_GAP_MS) hist.push({ t: now, buys: view.buys, sells: view.sells, holders: m.holderCount, priceSol: m.priceSol, trusted });
@@ -878,7 +924,7 @@ export class SellManager {
     {
       const costLeft = (p.sizeSol * p.remainingPct) / 100;
       const multiple = m.priceSol / p.entryPriceSol;
-      const feeBps = view.ammBaseReserve ? cfg.paper.ammFeeBps : cfg.paper.curveFeeBps;
+      const feeBps = poolFeeBps(cfg.paper, !!view.ammBaseReserve, m.marketCapSol);
       // How much of the supply we hold, and how much our own sell would push the price down.
       const tokensLeft = (p.tokenAmountRaw * BigInt(Math.round(p.remainingPct * 100))) / 10_000n;
       const [rs, rt] = view.ammBaseReserve && view.ammQuoteReserve ? [view.ammQuoteReserve, view.ammBaseReserve] : [view.virtualSolReserves, view.virtualTokenReserves];
@@ -886,12 +932,12 @@ export class SellManager {
       const real = Number(quoteSell(tokensLeft, rs, rt, 0).solOutLamports) / 1e9;
       out.push({
         id: p.id,
-        ...(recentHighSol && recentHighSol > m.priceSol ? { highSol: recentHighSol } : {}),
+        ...(spikeHighSol && spikeHighSol > m.priceSol ? { highSol: spikeHighSol } : {}),
         ownSupplyPct: (Number(tokensLeft) / Number(view.curve.totalSupply || 1n)) * 100,
         exitImpactPct: ideal > 0 ? (1 - real / ideal) * 100 : 0,
         priceSol: m.priceSol,
         multiple,
-        peakMultiple: Math.max(p.peakPriceSol, m.priceSol, recentHighSol ?? 0) / p.entryPriceSol,
+        peakMultiple: Math.max(p.peakPriceSol, recentHighSol ?? 0) / p.entryPriceSol,
         unrealizedPnlSol: costLeft * multiple * (1 - feeBps / 10_000) - costLeft,
         risk,
         holders: m.holderCount,
@@ -918,7 +964,7 @@ export class SellManager {
     // What the trade coach learned from recent exits of this strategy.
     const coach = coachFor(p.strategy);
     // Selling costs (so the 10–20% stop band is the real loss after fees).
-    const exitCostPct = exitCostPctFor(cfg.paper, !!view.ammBaseReserve, (p.sizeSol * p.remainingPct) / 100);
+    const exitCostPct = exitCostPctFor(cfg.paper, !!view.ammBaseReserve, (p.sizeSol * p.remainingPct) / 100, m.marketCapSol);
     const decision = decideExit(
       {
         entryPriceSol: p.entryPriceSol,
@@ -963,12 +1009,14 @@ export class SellManager {
         recentHighSol,
         kolDump,
         smartSell: chartSell,
+        peakAtMs: tr.peakAtMs ?? null,
+        migratedAgoSec: view.complete && view.migratedAtMs ? Math.max(0, (now - view.migratedAtMs) / 1000) : null,
       },
       cfg.exit,
     );
 
     const s = decision.state;
-    this.trail.set(p.id, { breachSinceMs: s.breachSinceMs, breachTicks: s.breachTicks, volatilityPct });
+    this.trail.set(p.id, { breachSinceMs: s.breachSinceMs, breachTicks: s.breachTicks, volatilityPct, peakAtMs: s.peakAtMs });
     await prisma.position.update({
       where: { id: p.id },
       data: { peakPriceSol: s.peakPriceSol, trailingActive: s.trailingActive, refPriceSol: s.refPriceSol, lastMoveAt: new Date(s.lastMoveAtMs), tpTiersHit: s.tpTiersHit },

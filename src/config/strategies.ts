@@ -25,24 +25,23 @@ export interface StrategyParams {
 export const STRATEGIES: Record<StrategyName, StrategyParams> = {
   CURVE_SNIPE: {
     name: 'CURVE_SNIPE',
-    description: 'Early entries on the Pump.fun bonding curve for tokens that pass safety + early-traction checks.',
+    description: 'New pairs: fresh coins (45 s – 12 min old) bought once the launch snipers are absorbed and real new buyers keep arriving (focus.newPair).',
     minHolders: 15,
-    entryWindowMinutes: { min: 0, max: 30 },
-    // Upper bound is high because the $12k market-cap rule is only met once
-    // the curve is ~55-70% full (depends on SOL price). Completed curves are
-    // still excluded by their own rule.
-    curveProgressRange: { min: 5, max: 95 },
-    staleExitMinutes: 30,
-    maxSlippageBps: 1500,
+    entryWindowMinutes: { min: 0.75, max: 12 },
+    // The new-pair rules (focus.newPair) set the real zone: ≥ 8 SOL in the curve, market cap under $15k.
+    curveProgressRange: { min: 0, max: 85 },
+    staleExitMinutes: 20,
+    // A fill more than 6% worse than the price we decided on = we were late → no trade (paper too).
+    maxSlippageBps: 600,
   },
   SOON: {
     name: 'SOON',
     description: 'Coins about to graduate (curve 70%+, the "Soon" tab): real crowd, strong behaviour, swing traded.',
     minHolders: 50,
     entryWindowMinutes: { min: 0, max: 24 * 60 },
-    curveProgressRange: { min: 70, max: 99.5 },
+    curveProgressRange: { min: 70, max: 90 },
     staleExitMinutes: 20,
-    maxSlippageBps: 1500,
+    maxSlippageBps: 800,
   },
   MIGRATION_MOMENTUM: {
     name: 'MIGRATION_MOMENTUM',
@@ -50,8 +49,8 @@ export const STRATEGIES: Record<StrategyName, StrategyParams> = {
     minHolders: 40,
     entryWindowMinutes: { min: 0, max: 24 * 60 },
     curveProgressRange: { min: 100, max: 100 },
-    staleExitMinutes: 120,
-    maxSlippageBps: 1000,
+    staleExitMinutes: 60,
+    maxSlippageBps: 600,
   },
   SMART_MONEY_COPY: {
     name: 'SMART_MONEY_COPY',

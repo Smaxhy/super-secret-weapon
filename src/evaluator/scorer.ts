@@ -113,14 +113,21 @@ export function manipulationCheck(c: ManipulationInput | null | undefined, lim: 
 
 /** The entry minimums that apply to this strategy (focus rules override the general ones). */
 export function strategyMinimums(e: BotConfigShape['entry'], focus: BotConfigShape['focus'] | undefined, strategy: string) {
+  const np = strategy === 'CURVE_SNIPE' ? focus?.newPair : undefined;
   const fr = strategy === 'SOON' ? focus?.soon : strategy === 'MIGRATION_MOMENTUM' ? focus?.migrated : undefined;
   return {
-    minTotalFeesSol: fr?.minTotalFeesSol ?? e.minTotalFeesSol,
-    minMarketCapUsd: fr?.minMarketCapUsd ?? e.minMarketCapUsd,
-    minVolumeUsd: fr && 'minVolumeUsd' in fr ? fr.minVolumeUsd : e.minVolumeUsd,
+    minTotalFeesSol: np?.minTotalFeesSol ?? fr?.minTotalFeesSol ?? e.minTotalFeesSol,
+    minMarketCapUsd: np?.minMarketCapUsd ?? fr?.minMarketCapUsd ?? e.minMarketCapUsd,
+    maxMarketCapUsd: np?.maxMarketCapUsd ?? null,
+    minVolumeUsd: np?.minVolumeUsd ?? (fr && 'minVolumeUsd' in fr ? fr.minVolumeUsd : e.minVolumeUsd),
     minLiquidityUsd: fr && 'minLiquidityUsd' in fr ? fr.minLiquidityUsd : 0,
     minActiveWallets5m: fr?.minActiveWallets5m ?? 0,
-    curveRange: strategy === 'SOON' && focus ? { min: focus.soon.minCurvePct, max: focus.soon.maxCurvePct } : null,
+    curveRange: strategy === 'SOON' && focus ? { min: focus.soon.minCurvePct, max: focus.soon.maxCurvePct } : np ? { min: 0, max: np.maxCurvePct } : null,
+    /** New pairs: age window (s) and the minimum SOL in the curve (≈ 1.6× the launch market cap). */
+    ageSec: np ? { min: np.minAgeSec, max: np.maxAgeSec } : null,
+    minCurveSol: np?.minCurveSol ?? 0,
+    /** Migration plays: no entries while pump.fun's BOOST is buying (first minutes after migration). */
+    noEntryFirstSec: strategy === 'MIGRATION_MOMENTUM' ? (focus?.migrated?.noEntryFirstSec ?? 0) : 0,
   };
 }
 
@@ -141,7 +148,15 @@ export function checkEntryRules(i: EntryCheckInput): string[] {
   if (m.liquiditySol < e.minLiquiditySol) fails.push(`liquidity ${m.liquiditySol.toFixed(2)} SOL < ${e.minLiquiditySol}`);
   if (e.minAgeSec && m.ageSec < e.minAgeSec) fails.push(`too young (${m.ageSec}s < ${e.minAgeSec}s)`);
   const ageMin = m.ageSec / 60;
-  if (ageMin < s.entryWindowMinutes.min || ageMin > s.entryWindowMinutes.max) fails.push(`age ${ageMin.toFixed(1)}m outside entry window`);
+  if (mins.ageSec) {
+    // New pairs: after the launch snipers' window, while it's still fresh.
+    if (m.ageSec < mins.ageSec.min) fails.push(`too fresh (${m.ageSec}s < ${mins.ageSec.min}s — snipers' window)`);
+    else if (m.ageSec > mins.ageSec.max) fails.push(`no longer a new pair (${ageMin.toFixed(1)}m old)`);
+  } else if (ageMin < s.entryWindowMinutes.min || ageMin > s.entryWindowMinutes.max) fails.push(`age ${ageMin.toFixed(1)}m outside entry window`);
+  if (mins.minCurveSol > 0 && m.curveSol !== undefined && m.curveSol < mins.minCurveSol) fails.push(`only ${m.curveSol.toFixed(1)} SOL in the curve (< ${mins.minCurveSol})`);
+  if (mins.noEntryFirstSec > 0 && m.migratedAgoSec !== undefined && m.migratedAgoSec !== null && m.migratedAgoSec < mins.noEntryFirstSec) {
+    fails.push(`migrated ${Math.round(m.migratedAgoSec)}s ago — BOOST window (no entries the first ${Math.round(mins.noEntryFirstSec / 60)} min)`);
+  }
   const range = mins.curveRange ?? s.curveProgressRange;
   if (m.bondingCurvePct < range.min || m.bondingCurvePct > range.max) {
     fails.push(`curve ${m.bondingCurvePct.toFixed(1)}% outside ${range.min}-${range.max}%`);
@@ -166,6 +181,7 @@ export function checkEntryRules(i: EntryCheckInput): string[] {
     const organic = m.volumeUsd * (1 - fake / 100);
     if (organic < mins.minVolumeUsd) fails.push(`${fake >= 10 ? 'organic ' : ''}volume $${Math.round(organic)} < $${mins.minVolumeUsd}`);
     if (m.marketCapUsd < mins.minMarketCapUsd) fails.push(`MC $${Math.round(m.marketCapUsd)} < $${mins.minMarketCapUsd}`);
+    if (mins.maxMarketCapUsd !== null && m.marketCapUsd > mins.maxMarketCapUsd) fails.push(`MC $${Math.round(m.marketCapUsd)} > $${mins.maxMarketCapUsd} (no longer a new pair)`);
   }
   return fails;
 }

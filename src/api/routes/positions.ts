@@ -10,7 +10,7 @@ import { exitCostPctFor, INITIALS_MARKER, stopLossLevel, trailingStopLevel, type
 import { coachFor } from '../../learner/trade-coach';
 import type { StrategyName } from '../../config/types';
 import { prisma } from '../../lib/prisma';
-import { PUMP_TOKEN_DECIMALS, quoteSell } from '../../lib/pumpfun';
+import { poolFeeBps, PUMP_TOKEN_DECIMALS, quoteSell } from '../../lib/pumpfun';
 import { getSolUsd } from '../../lib/sol-price';
 import { deriveMetrics, type LiveTokenView } from '../../scanner/live-state';
 import type { ApiDeps } from '../deps';
@@ -102,7 +102,7 @@ export async function positionsRoutes(app: FastifyInstance, deps: ApiDeps): Prom
         const exitValue = view
           ? Number(
               (onAmm
-                ? quoteSell(remainingTokens, view.ammQuoteReserve!, view.ammBaseReserve!, cfg.paper.ammFeeBps)
+                ? quoteSell(remainingTokens, view.ammQuoteReserve!, view.ammBaseReserve!, poolFeeBps(cfg.paper, true, deriveMetrics(view).marketCapSol))
                 : quoteSell(remainingTokens, view.virtualSolReserves, view.virtualTokenReserves, cfg.paper.curveFeeBps)
               ).solOutLamports,
             ) / 1e9

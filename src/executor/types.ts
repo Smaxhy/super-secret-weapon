@@ -12,6 +12,8 @@ export interface BuyRequest {
   mint: string;
   solAmount: number; // SOL to spend (including curve fee)
   maxSlippageBps: number;
+  /** Price (SOL per token) the decision was made at: a fill more than maxSlippageBps worse is refused. */
+  expectedPriceSol?: number;
 }
 
 export interface SellRequest {

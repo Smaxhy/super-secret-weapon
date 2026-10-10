@@ -6,6 +6,7 @@ import { checkEntryRules, decide, scoreFeatures } from '../src/evaluator/scorer'
 import { walletFeatures, type CreatorProfile } from '../src/evaluator/wallet-analyzer';
 import { computeRisk, computeVolatilityPct, decideExit, detectResistance, INITIALS_MARKER, runnerTrailPct, type ExitInput } from '../src/executor/sell-manager';
 import { curvePriceSol, quoteBuy, quoteSell } from '../src/lib/pumpfun';
+import { V4_EXIT } from './legacy-exit';
 
 const V_SOL = 30_000_000_000n;
 const V_TOK = 1_073_000_000_000_000n;
@@ -91,7 +92,7 @@ describe('exit rules', () => {
     resistance: { hit: false, level: 0, touches: 0 },
     sizeSol: 1, costSol: 1.0015, proceedsSol: 0, volatilityPct: null, txFeeSol: 0.0015,
   };
-  const rules = { ...DEFAULT_CONFIG.exit, trailingStopActivateMultiple: 1.25, trail: { ...DEFAULT_CONFIG.exit.trail, ladder: [], breakEvenAfterMultiple: 1.5, confirmTicks: 2, confirmSec: 3 } }; // legacy trail
+  const rules = { ...V4_EXIT, trailingStopActivateMultiple: 1.25, trail: { ...V4_EXIT.trail, ladder: [], breakEvenAfterMultiple: 1.5, confirmTicks: 2, confirmSec: 3 } }; // legacy trail
   const reasons = (i: Partial<ExitInput>) => decideExit({ ...base, ...i }, rules).sells.map((s) => `${s.reason}:${s.pct}`);
 
   it('holds when nothing happens', () => expect(reasons({})).toEqual([]));
@@ -140,7 +141,7 @@ describe('take initials + runner', () => {
     resistance: { hit: false, level: 0, touches: 0 },
     sizeSol: 1, costSol: 1.0015, proceedsSol: 0, volatilityPct: null, txFeeSol: 0.0015,
   };
-  const rules = { ...DEFAULT_CONFIG.exit, trailingStopActivateMultiple: 1.25, trail: { ...DEFAULT_CONFIG.exit.trail, ladder: [], breakEvenAfterMultiple: 1.5, confirmTicks: 2, confirmSec: 3 } }; // legacy trail (ladder tested in entries-exits-v3)
+  const rules = { ...V4_EXIT, trailingStopActivateMultiple: 1.25, trail: { ...V4_EXIT.trail, ladder: [], breakEvenAfterMultiple: 1.5, confirmTicks: 2, confirmSec: 3 } }; // legacy trail (ladder tested in entries-exits-v3)
   // After the 1.3x tier: 25% sold at ~1.3x minus fees.
   const afterTier = { ...base, tpTiersHit: [1.3], remainingPct: 75, trailingActive: true, proceedsSol: 0.25 * 1.3 * 0.985 - 0.0015 };
   const runner = { ...afterTier, tpTiersHit: [1.3, INITIALS_MARKER], remainingPct: 40, peakPriceSol: 2.5, priceSol: 2.4, proceedsSol: 1.01 };
