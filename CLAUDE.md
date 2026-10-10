@@ -236,6 +236,14 @@ smart money → learning engine → ML → social). See README.md.
   (`solscan:noActivity`) and the report falls back to our RPC: getSignaturesForAddress + getTransactions (batches of
   50; one by one if the plan refuses batches) → `swapFromTx` (SOL/WSOL + single-token balance deltas of the wallet,
   any DEX; fee excluded). ~1 Helius credit per transaction.
+- **v8.8 (Oct 10): loss autopsy** (owner: "still losing nonstop — scan what keeps going wrong and learn properly";
+  `src/learner/loss-autopsy.ts`, `autopsy` config). Every 30 min: closed PAPER trades since the reset (`learningSince`,
+  ISO date) ≤14 days → scoreboard (win rate vs the break-even win rate |L|/(W+|L|), PF), by strategy / exit reason,
+  losers that never went ≥1.05x (bad entries) vs were ≥1.15x (gave back), and bands per strategy × MC / coin age / curve
+  (or migrated) / score / UTC hour. A band with ≥15 trades, avg + 1SE < −3% and ≤ −0.1 SOL is BLOCKED in the trader
+  (`trader.bandCheck` → refusal "this kind of trade keeps losing…"); 1 in 5 goes through as a min-size learning
+  "probe" (entryContext.probe) so it can unblock. Redis `autopsy:last`; GET `/api/autopsy`, POST `/api/autopsy/run`;
+  Performance page card "What keeps going wrong".
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

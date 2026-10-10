@@ -61,6 +61,8 @@ export class Trader {
   private breakerTrippedDay: string | null = null;
   /** Pre-entry rug screen, run right before every buy (set in index.ts). Returns a reason to refuse, or null. */
   screen: ((req: EntryRequest) => Promise<string | null>) | null = null;
+  /** Loss autopsy (set in index.ts): kinds of trades that keep losing are refused; 1 in N goes through as a probe. */
+  bandCheck: ((req: EntryRequest) => { block: string | null; probe: boolean }) | null = null;
   /** Vamp (copycat coin) check before every buy (set in index.ts). Returns a reason to refuse, or null. */
   vampCheck: ((req: EntryRequest) => Promise<string | null>) | null = null;
   /** Called after every entry (index.ts: the coin becomes the "original" for its ticker). */
@@ -143,6 +145,11 @@ export class Trader {
       if (Date.now() - last < sw.cooldownSec * 1000) return refuse('swing cooldown');
     }
 
+    // Kinds of trades the loss autopsy found losing again and again → no (probe = small learning trade).
+    const band = this.bandCheck?.(req) ?? null;
+    if (band?.block) return refuse(band.block);
+    const probe = band?.probe === true;
+
     const strategyOpen = open.filter((p) => p.strategy === req.strategy).reduce((s, p) => s + (p.sizeSol * p.remainingPct) / 100, 0);
     const budget = capital * cfg.trading.allocation[req.strategy] - strategyOpen;
     const reserve = cfg.paper.txFeeSol * 4 + 0.01; // keep enough to pay for the exits
@@ -159,6 +166,7 @@ export class Trader {
     // Stacked multipliers (coach × conviction × regime × hour…) can shrink a buy under the minimum
     // and silently stop every entry → the minimum size, if the budget allows it.
     if (size < cfg.trading.minPositionSol && Math.min(cap, budget, balance - reserve) >= cfg.trading.minPositionSol) size = cfg.trading.minPositionSol;
+    if (probe) size = Math.min(size, cfg.trading.minPositionSol);
     if (size < cfg.trading.minPositionSol) {
       return refuse(`size ${size.toFixed(3)} SOL below minimum (balance ${balance.toFixed(3)}, ${req.strategy} budget ${budget.toFixed(3)})`);
     }
@@ -202,7 +210,9 @@ export class Trader {
             earlyBuyerPct: req.market.earlyBuyerPct,
             copiedWallet: req.copiedWallet ?? null,
             swing: req.swing === true,
-            explore: req.explore === true,
+            explore: req.explore === true || probe,
+            // A probe into a band the loss autopsy blocked (does it still lose?).
+            probe,
             // Counted into each sell's cost basis so P&L includes the buy's gas/tip.
             buyFeeSol: fill.feeSol,
             explanation,

@@ -13,10 +13,12 @@ import { startApi } from './api/server';
 import { env, rpcEndpoints } from './config/env';
 import { bus } from './lib/bus';
 import { getConfig, startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
+import { DEFAULT_CONFIG } from './config/default';
 import { markStrategySince, oneTimeUpgrade, runConfigMigrations } from './config/migrations';
 import { startCalibration, stopCalibration } from './learner/score-calibration';
 import { screenEntry } from './executor/rug-screen';
 import { RuggerMemory } from './executor/rug-watch';
+import { LossAutopsy } from './learner/loss-autopsy';
 import { Evaluator } from './evaluator/evaluator';
 import { WalletAnalyzer } from './evaluator/wallet-analyzer';
 import { PaperExecutor } from './executor/paper-trader';
@@ -126,6 +128,18 @@ async function main(): Promise<void> {
   const ruggers = new RuggerMemory(redis);
   sellManager.ruggers = ruggers;
   trader.screen = (req) => screenEntry(req, { liveState, redis, crowd, ruggers });
+  // Loss autopsy: what keeps going wrong → the kinds of trades that keep losing are blocked.
+  const autopsy = new LossAutopsy(redis, () => getConfig().autopsy ?? DEFAULT_CONFIG.autopsy);
+  autopsy.start();
+  trader.bandCheck = (req) =>
+    autopsy.check({
+      strategy: req.strategy,
+      mcUsd: req.market.marketCapUsd ?? null,
+      ageMin: Number.isFinite(req.market.ageSec) ? req.market.ageSec / 60 : null,
+      curvePct: req.market.complete || req.market.onAmm ? 'migrated' : req.market.bondingCurvePct,
+      score: req.score,
+      hourUtc: new Date().getUTCHours(),
+    });
   evaluator.crowd = crowd;
   crowd.onSoon = (mint, pct) => {
     log.info({ mint, curvePct: +pct.toFixed(1) }, '⏳ coin entered the Soon zone — checking');
@@ -367,7 +381,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader } }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });

@@ -13,6 +13,7 @@ import type { TaLab } from '../learner/ta-lab';
 import type { TrendingHub } from '../scanner/trending-hub';
 import type { SwingUniverse } from '../scanner/swing-universe';
 import type { SwingTrader } from '../executor/swing-trader';
+import type { LossAutopsy } from '../learner/loss-autopsy';
 
 export interface ApiDeps {
   liveState: LiveState;
@@ -29,6 +30,7 @@ export interface ApiDeps {
   taLab?: TaLab | null;
   trending?: TrendingHub | null;
   swing?: { universe: SwingUniverse; trader: SwingTrader } | null;
+  autopsy?: LossAutopsy | null;
 }
 
 /** Classify a token for the live feed colour code. */

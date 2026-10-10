@@ -70,6 +70,12 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       reply.header('Cache-Control', 'no-store');
       return healthSnapshot();
     });
+    // Loss autopsy: what keeps going wrong + which kinds of trades are blocked. POST = run it now.
+    secured.get('/api/autopsy', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return deps.autopsy?.snapshot() ?? null;
+    });
+    secured.post('/api/autopsy/run', async () => (await deps.autopsy?.run()) ?? null);
     // Update button: ask the VPS updater to pull + rebuild now (force = rebuild even without new code).
     secured.get('/api/update', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');

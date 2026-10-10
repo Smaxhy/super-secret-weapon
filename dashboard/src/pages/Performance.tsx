@@ -1,5 +1,6 @@
 import { PnlChart, SignedBars } from '../components/Charts';
 import { StrategyLab } from '../components/StrategyLab';
+import { LossAutopsy } from '../components/LossAutopsy';
 import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl, StatTile } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { EXIT_LABEL, pct, STRATEGY_LABEL } from '../lib/format';
@@ -12,6 +13,7 @@ export function Performance() {
     <>
       <PageHeader title="Performance" subtitle={d ? `${d.mode === 'PAPER' ? 'Paper trading' : 'Live trading'} results from ${d.trades.toLocaleString()} closed trades` : undefined} />
       {error && <ErrorBox message={error} />}
+      <LossAutopsy />
       {d && !d.trades && <Empty>No closed trades yet — charts appear after the first trade closes.</Empty>}
       {d && !d.trades && <StrategyLab />}
       {d && d.trades > 0 && (

@@ -553,6 +553,15 @@ export const DEFAULT_CONFIG = {
   },
 
   /**
+   * Loss autopsy (src/learner/loss-autopsy.ts; owner: "it keeps losing — scan what goes wrong and learn"):
+   * every 30 min the closed paper trades (since the reset, ≤14 days) are split into bands per strategy
+   * (market cap, coin age, curve, score, time of day). A band with ≥15 trades that averages under −3%
+   * even after one standard error, and lost ≥0.1 SOL, is blocked; 1 in 5 of its trades still goes
+   * through at the minimum size so it can prove itself again.
+   */
+  autopsy: { enabled: true as boolean, everyMin: 30, lookbackDays: 14, minTrades: 15, maxAvgPct: -3, minLossSol: 0.1, probeEvery: 5 },
+
+  /**
    * Chart strategies (src/evaluator/ta/strategies.ts) + their live lab (src/learner/ta-lab.ts).
    * Every `everySec` the most active coins (≤ maxCoinsPerTick, ≥ minTradesLast2m trades in 2 min,
    * passing the cheap gates) are run through every strategy; each signal opens a VIRTUAL trade
