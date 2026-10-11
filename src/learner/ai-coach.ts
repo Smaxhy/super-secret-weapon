@@ -371,11 +371,12 @@ export class AiCoach {
       a.length === b.length && a.every((x) => b.some((y) => y.feature === x.feature && y.op === x.op && Math.abs(y.value - x.value) <= Math.abs(x.value) * 0.15 + 1e-9));
     const at = new Date().toISOString();
     let added = 0;
+    const known: AiRule[] = [...rules];
     const p = this.redis.pipeline();
     for (const c of cands) {
       if (searchOpen + added >= maxSearchRules) break;
       // Also skip rules that were tried and retired recently (don't re-test the same idea forever).
-      if (rules.some((r) => (r.strategy ?? null) === (c.strategy ?? null) && r.action === c.action && same(r.conditions, c.conditions))) continue;
+      if (known.some((r) => (r.strategy ?? null) === (c.strategy ?? null) && r.action === c.action && same(r.conditions, c.conditions))) continue;
       const rule: AiRule = {
         id: `s${Date.now().toString(36)}${added}`,
         title: c.title.slice(0, 120),
@@ -390,6 +391,7 @@ export class AiCoach {
         forward: null,
         source: 'search',
       };
+      known.push(rule);
       p.hset(K.rules, rule.id, JSON.stringify(rule));
       added++;
     }

@@ -23,6 +23,12 @@ export interface LearnRow {
 
 const WEIGHT = { real: 1, learning: 0.8, wouldTake: 0.5, skipped: 0.3 };
 
+/** Pure: how long after entry a trade of this strategy is (almost) surely closed. */
+export function embargoMs(strategy: string): number {
+  const h = strategy === 'SWING' ? 9 : strategy === 'MIGRATION_MOMENTUM' ? 4.5 : strategy === 'SMART_MONEY_COPY' ? 2 : 1.5;
+  return h * 3_600_000;
+}
+
 /** Pure: a shadow trade as a learning row. */
 export function shadowRow(r: ShadowResult): LearnRow {
   return { flat: r.flat ?? {}, strategy: r.strategy, atMs: r.openedAtMs, pnlPct: r.pnlPct, peakX: r.peakX, weight: wouldHaveTaken(r) ? WEIGHT.wouldTake : WEIGHT.skipped, source: 'shadow' };
@@ -53,7 +59,8 @@ export class LearnRows {
     const since = Math.max((await learningSince(this.redis))?.getTime() ?? 0, Date.now() - 30 * 86_400_000);
     const ps = await prisma.position.findMany({
       where: { mode: 'PAPER', status: 'CLOSED', closedAt: { gte: new Date(since) } },
-      orderBy: { openedAt: 'asc' },
+      // Newest first so the cap drops the OLDEST trades, never the newest (the learners' exams use the newest).
+      orderBy: { openedAt: 'desc' },
       take: 5_000,
       select: { strategy: true, sizeSol: true, realizedPnlSol: true, entryPriceSol: true, peakPriceSol: true, openedAt: true, entryContext: true, token: { select: { createdAt: true } }, evaluation: { select: { combinedScore: true, features: true } } },
     });
@@ -79,7 +86,12 @@ export class LearnRows {
         };
       });
     const shadow = this.shadowSource ? (await this.shadowSource(since).catch(() => [])).map(shadowRow) : [];
-    const rows = [...real, ...shadow].filter((r) => Number.isFinite(r.pnlPct) && Number.isFinite(r.atMs)).sort((a, b) => a.atMs - b.atMs);
+    // Closed trades only exist once they closed: recently opened LONG holds are still open, so the newest slice would
+    // over-represent quick losers (stops / time stops). Drop rows younger than the strategy's longest normal hold.
+    const now = Date.now();
+    const rows = [...real, ...shadow]
+      .filter((r) => Number.isFinite(r.pnlPct) && Number.isFinite(r.atMs) && r.atMs <= now - embargoMs(r.strategy))
+      .sort((a, b) => a.atMs - b.atMs);
     this.cache = { at: Date.now(), rows };
     return rows;
   }
