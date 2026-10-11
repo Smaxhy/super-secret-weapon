@@ -82,6 +82,8 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     // Best hours / days to trade (market motion + our results) and what that means right now.
     // What the bot changed about how it trades (learners' adjustments, newest first) + how each strategy enters now.
     secured.get('/api/changes', async () => ({ changes: await recentChanges(60), entryStyles: deps.autopsy?.snapshot()?.entryStyles ?? [], tuning: deps.autopsy?.snapshot()?.tuning ?? [] }));
+    // The brain: win model, discovered rules, budget allocation, entry styles, change log.
+    secured.get('/api/brain', async () => (deps.brain ? deps.brain.snapshot(false) : null));
     secured.get('/api/timing', async () => deps.timing?.snapshot() ?? null);
     // Shadow trades: what the coins it didn't buy would have done (since the last paper reset).
     secured.get('/api/shadow', async () => (deps.shadow ? deps.shadow.report((await learningSince(redis))?.getTime() ?? 0) : null));

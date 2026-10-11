@@ -26,6 +26,7 @@ import { Wallets } from './pages/Wallets';
 import { Controls } from './pages/Controls';
 import { Strategies } from './pages/Strategies';
 import { Shadow } from './pages/Shadow';
+import { Brain } from './pages/Brain';
 
 const NAV = [
   { to: '/', label: 'Overview', icon: '◎' },
@@ -35,6 +36,7 @@ const NAV = [
   { to: '/performance', label: 'Performance', icon: '↗' },
   { to: '/strategies', label: 'Strategies', icon: '⌁' },
   { to: '/wallets', label: 'Wallets', icon: '◈' },
+  { to: '/brain', label: 'Brain', icon: '❖' },
   { to: '/learning', label: 'Learning', icon: '✦' },
   { to: '/shadow', label: 'Shadow trades', icon: '◌' },
   { to: '/scanner', label: 'Scanner', icon: '◉' },
@@ -151,6 +153,7 @@ function Shell() {
             <Route path="/performance" element={<Performance />} />
             <Route path="/strategies" element={<Strategies />} />
             <Route path="/shadow" element={<Shadow />} />
+            <Route path="/brain" element={<Brain />} />
             <Route path="/wallets" element={<Wallets />} />
             <Route path="/learning" element={<Learning />} />
             <Route path="/controls" element={<Controls />} />

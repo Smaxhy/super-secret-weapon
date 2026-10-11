@@ -68,6 +68,8 @@ export class Trader {
   screen: ((req: EntryRequest) => Promise<string | null>) | null = null;
   /** Loss autopsy (set in index.ts): kinds of trades that keep losing are refused; 1 in N goes through as a probe. */
   bandCheck: ((req: EntryRequest) => { block: string | null; probe: boolean }) | null = null;
+  /** Budget multiplier per strategy from the allocator (brain.ts); null = ×1. */
+  allocFactor: ((strategy: string) => number) | null = null;
   /** Vamp (copycat coin) check before every buy (set in index.ts). Returns a reason to refuse, or null. */
   vampCheck: ((req: EntryRequest) => Promise<string | null>) | null = null;
   /** Called after every entry (index.ts: the coin becomes the "original" for its ticker). */
@@ -157,7 +159,8 @@ export class Trader {
     const probe = band?.probe === true;
 
     const strategyOpen = open.filter((p) => p.strategy === req.strategy).reduce((s, p) => s + (p.sizeSol * p.remainingPct) / 100, 0);
-    const budget = capital * cfg.trading.allocation[req.strategy] - strategyOpen;
+    // The allocator shifts budget toward strategies that are proven to make money (×0.5–1.6, 1 until it knows).
+    const budget = capital * cfg.trading.allocation[req.strategy] * (this.allocFactor?.(req.strategy) ?? 1) - strategyOpen;
     const reserve = cfg.paper.txFeeSol * 4 + 0.01; // keep enough to pay for the exits
     // Market mood scales position size (e.g. ×1.2 when hot, ×0.5 when rug-heavy).
     // …and by time of day: hours that historically produce more winners get bigger size.

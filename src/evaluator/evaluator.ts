@@ -22,6 +22,7 @@ import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { timingNow } from '../learner/timing';
 import { entryStyleBlock, entryStyleFor, pullbackZone } from '../learner/entry-style';
 import type { ShadowKind, ShadowTrades } from '../learner/shadow-trades';
+import type { Brain } from '../learner/brain';
 import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
 import { Worker, type Job } from 'bullmq';
 import type { Redis } from 'ioredis';
@@ -93,6 +94,8 @@ export class Evaluator {
   vamp: VampGuard | null = null;
   /** Pretend trades on coins it didn't buy — faster learning (set in index.ts). */
   shadow: ShadowTrades | null = null;
+  /** Win model + rule search + allocator (set in index.ts). */
+  brain: Brain | null = null;
 
   constructor(
     private readonly redis: Redis,
@@ -459,6 +462,11 @@ export class Evaluator {
     const aiVerdict = aiRuleVerdict(STRATEGY.name, aiFlat, cfg.aiCoach ?? DEFAULT_CONFIG.aiCoach);
     if (aiVerdict.fail) ruleFails = [...ruleFails, aiVerdict.fail];
     threshold += aiVerdict.barDelta;
+    // Win-probability model (brain.ts): once it beats the score on newer trades, likely winners get an easier bar,
+    // likely losers a harder one (±10). 0 points while it hasn't proven itself.
+    const wm = this.brain?.model.predict(aiFlat, STRATEGY.name) ?? null;
+    if (wm?.points) threshold -= wm.points;
+    const modelNote = wm?.points ? `win model: ${Math.round(wm.p * 100)}% chance to win vs ${Math.round(wm.baseRate * 100)}% usual → bar ${wm.points > 0 ? '−' : '+'}${Math.abs(wm.points)}` : null;
 
     let { decision, reasons } = decide(result.score, threshold, ruleFails, token.safetyHardFail);
 
@@ -498,7 +506,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, market: market.raw, shape, x: xv ? { ...xv.features, points: xv.points } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, market: market.raw, shape, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },
@@ -644,7 +652,7 @@ export class Evaluator {
         swing,
         explore,
         explain: (sizeSol) =>
-          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, chartNote: chart ? `${chart.summary}${dipEntry ? ` — bought the dip: ${job.data.dipWhy ?? ''}` : ''}` : null, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: explore ? `learning trade ×${ex.sizeMultiplier} (score just under the bar)` : conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...(explore ? [`LEARNING TRADE: score ${result.score.toFixed(1)} is just under the bar ${threshold.toFixed(0)} — bought small so the bot learns whether these near-misses pay`] : []), ...(newPair?.notes ?? []), ...taBonus.notes.map((n) => `chart setup: ${n}`), ...(trend?.notes ?? []), ...aiVerdict.notes, ...(xv?.notes ?? []).map((n) => `X: ${n}`), ...kolBonus.notes, ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
+          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, chartNote: chart ? `${chart.summary}${dipEntry ? ` — bought the dip: ${job.data.dipWhy ?? ''}` : ''}` : null, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: explore ? `learning trade ×${ex.sizeMultiplier} (score just under the bar)` : conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...(explore ? [`LEARNING TRADE: score ${result.score.toFixed(1)} is just under the bar ${threshold.toFixed(0)} — bought small so the bot learns whether these near-misses pay`] : []), ...(newPair?.notes ?? []), ...taBonus.notes.map((n) => `chart setup: ${n}`), ...(trend?.notes ?? []), ...aiVerdict.notes, ...(modelNote ? [modelNote] : []), ...(xv?.notes ?? []).map((n) => `X: ${n}`), ...kolBonus.notes, ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
       });
       if (!res.entered && !/^(already traded|still holding)/.test(res.reason)) shadowOf('refused', res.reason);
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.

@@ -20,6 +20,7 @@ import { screenEntry } from './executor/rug-screen';
 import { RuggerMemory } from './executor/rug-watch';
 import { TimingLearner } from './learner/timing';
 import { shadowAsClosed, ShadowTrades, wouldHaveTaken } from './learner/shadow-trades';
+import { Brain } from './learner/brain';
 import { LossAutopsy } from './learner/loss-autopsy';
 import { MigratedScanner } from './scanner/migrated-scanner';
 import { RunningCoins } from './scanner/running-coins';
@@ -228,6 +229,12 @@ async function main(): Promise<void> {
   timing.shadowSource = async (since) => (await shadow.results(since)).filter(wouldHaveTaken).map((r) => ({ openedAtMs: r.openedAtMs, pnlPct: r.pnlPct, w: shadowCfg().weight }));
   aiCoach.shadowSource = async (since) => shadow.results(since);
   aiCoach.shadowReport = async (since) => shadow.report(since);
+  // The brain: win-probability model, statistical rule search and budget allocator on real + shadow trades.
+  const brain = new Brain(redis, (since) => shadow.results(since), aiCoach);
+  if ((getConfig().brain ?? DEFAULT_CONFIG.brain).enabled) brain.start();
+  evaluator.brain = brain;
+  trader.allocFactor = (strategy) => brain.allocFactor(strategy);
+  aiCoach.brainSource = () => brain.snapshot(true);
   // Chart strategies (Fibonacci, EMA, breakouts, divergences…) forward-tested live vs random entries;
   // the proven ones get a say in real buys.
   const taLab = new TaLab(redis, crowd, liveState);
@@ -466,7 +473,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -547,6 +554,7 @@ async function main(): Promise<void> {
       dips.stop();
       lab.stop();
       shadow.stop();
+      brain.stop();
       taLab.stop();
       trendFeeds.stop();
       trending.stop();

@@ -364,6 +364,25 @@ smart money → learning engine → ML → social). See README.md.
   no-dip-wait rule); dip re-checks + learning trades are exempt. `src/lib/change-log.ts` (Redis `changes:log`, 200):
   autopsy tuning + entry-style diffs per run, AI rules going live / off, exit-lab switches. GET `/api/changes`;
   Performance card "What the bot changed" (current rules per strategy + change log).
+- **v10 (Oct 11): the brain — self-improving learners** (owner: "upgrade the learning as much as possible so it actually
+  thinks"; built by a multi-agent workflow, each module adversarially reviewed + fixed + re-verified). `src/learner/brain.ts`
+  (`brain.enabled`, default on) runs three learners on ONE training set `learn-rows.ts` (closed PAPER trades since the reset
+  ≤30 days, newest 5,000, + shadow trades; weights real 1 / learning 0.8 / shadow would-take 0.5 / skipped 0.3; rows younger
+  than the strategy's max hold are embargoed so the newest slice isn't biased toward quick losers):
+  - **Win model** (`win-model.ts`, Redis `model:win`, hourly): weighted L2 logistic regression on the flat entry features
+    (≤60 by point-biserial, median/IQR scaling, missing flags, strategy intercepts), λ picked on an inner time split, ONE exam on
+    the newest 25%; ACTIVE only if effective n ≥150, ≥15 effective winners, STRATIFIED (per-strategy) AUC ≥0.58 and ≥ the score's
+    stratified AUC + 0.02. Evaluator: `threshold -= predict().points` (±10), note in the buy explanation, `features.winModel`.
+    Async with yields (max stall ~30 ms), validated JSON restore.
+  - **Rule search** (`policy-search.ts`, hourly from brain): single + paired feature thresholds per strategy and globally,
+    Welch t with a fat-tail-safe p, BH-FDR q 0.1 over ALL tested candidates, holdout (newest 30%) must repeat the full action test,
+    drop-best-trade robustness, dedup incl. complements → `aiCoach.addDiscoveredRules` (source 'search', status testing → the
+    normal forward test before live; ≤6 open, known/retired ideas not re-added).
+  - **Allocator** (`allocator.ts`, Redis `alloc:last`, 30 min): Normal-Inverse-Gamma posterior per strategy (prior −2%, 10
+    trades, winsorised, 7-day half-life) → multiplier 0.5–1.6 from P(mean>0) + P(best); total shrinks when everything loses;
+    effN <10 → ×1. Trader budget × `trader.allocFactor`.
+  - AI coach memory: `ai:reviews` (its past reviews + results before/AFTER each) + `otherLearners` (brain.snapshot(true)) in
+    the prompt. Change log gets model on/off, rules found, budget moves ≥0.1. GET `/api/brain`; dashboard page **Brain**.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

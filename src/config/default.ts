@@ -620,6 +620,9 @@ export const DEFAULT_CONFIG = {
    * even after one standard error, and lost ≥0.1 SOL, is blocked; 1 in 5 of its trades still goes
    * through at the minimum size so it can prove itself again.
    */
+  /** The brain (src/learner/brain.ts): win model, rule search, budget allocator. */
+  brain: { enabled: true as boolean },
+
   /**
    * Shadow trades (src/learner/shadow-trades.ts; owner: "speed up the learning"): coins the bot didn't buy
    * (refused by the trader, just under the bar, or skipped by a rule with a score within skipWithinPoints)
