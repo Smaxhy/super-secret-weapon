@@ -71,7 +71,8 @@ export const DEFAULT_CONFIG = {
      * timing rules (stretched → the dip watcher waits for a pullback instead of buying the top).
      */
     priceAction: {
-      enabled: true as boolean,
+      // Owner (Oct 11): "trade more like before" → buy rules off; the chart read is still stored for the learners.
+      enabled: false as boolean,
       /** Chart says no: lost support with sellers in control / sellers taking over. */
       blockSetups: ['BREAKDOWN', 'DISTRIBUTION'] as string[],
       /** 0–1 bot / wash-trading likelihood (top buyer share, churn, uniform sizes) above which → no buy. */

@@ -244,6 +244,11 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['antiRug', ['rugGuard', 'ruggerWalletMin'], 3],
     ],
   },
+  {
+    version: 15,
+    note: 'v10.5.1 (owner: "trade more like before"): the new price-action buy rules off (chart read still stored for the learners; chart exits stay on)',
+    set: [['entry', ['priceAction', 'enabled'], false]],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

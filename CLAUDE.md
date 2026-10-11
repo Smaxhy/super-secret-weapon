@@ -436,7 +436,7 @@ smart money → learning engine → ML → social). See README.md.
   last 6 h, −15 min…+45 min after the sell, ≤6,000 trades, 14 days) + **backtester** (`learner/backtester.ts`: replays
   each archived trade through VirtualBook with the live exits + every exit-lab variant on its real tape; GET
   `/api/backtest?days=1–14` cached 10 min; `npm run backtest`; Performance card "Backtest: other exits on the same
-  trades"). All new rules editable (Controls → Buy rules → "Chart rules — buying / selling"; `.enabled` keys = on/off).
+  trades"). v10.5.1: owner "trade more like before" → `entry.priceAction.enabled` false by default + migration v15 (exits stay on). All new rules editable (Controls → Buy rules → "Chart rules — buying / selling"; `.enabled` keys = on/off).
   Tests ported: tests/price-action.test.ts (+ tests/tape-helpers.ts trimmed), new price-action-exits / backtester tests.
   NOT ported (already in the bot in a newer form, or against the owner's rules): regime detector, Bayesian pattern
   beliefs, daily weight adjuster, outcome tracker, conviction sizing, 15/30/45 s re-checks (dip watcher does it), the
