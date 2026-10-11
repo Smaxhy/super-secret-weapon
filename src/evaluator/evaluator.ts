@@ -17,6 +17,7 @@
 import { parseXLink, xLinkReuse, xLive, xVerdict, type XVerdict } from './x-check';
 import { organicFlow, scanVerdict } from '../scanner/migrated-scanner';
 import { priceShape, staircase } from './price-shape';
+import { timeframeFail, timeframes } from './timeframes';
 import { aiRuleVerdict, flattenFeatures } from '../learner/ai-coach';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { timingNow } from '../learner/timing';
@@ -57,7 +58,7 @@ import { computeEarlyFlow, newPairCheck, type EarlyFlow } from './new-pair';
 import type { DipWatcher } from '../executor/dip-watcher';
 import type { StrategyLab } from '../learner/strategy-lab';
 import { taPoints, type TaLab } from '../learner/ta-lab';
-import { runStrategies, taContext } from './ta/strategies';
+import { runStrategiesTf } from './ta/strategies';
 import { trendScore, type TrendingHub } from '../scanner/trending-hub';
 import type { VampGuard } from './vamp-guard';
 import { rememberBuyers, smartShare } from '../learner/wallet-reputation';
@@ -273,6 +274,8 @@ export class Evaluator {
     const shapeBase = this.crowd ? priceShape(this.crowd.candles(mint), Date.now()) : null;
     const stair = this.crowd ? staircase(this.crowd.candles(mint), this.crowd.trades(mint), Date.now()) : null;
     const shape = shapeBase ? { ...shapeBase, staircase: stair?.hit ? 1 : 0, stairCandles: stair?.candles ?? 0, stairStepCv: stair?.stepCv ?? null } : null;
+    // 5 s / 15 s / 30 s / 1 min / 5 min / 1 h candles straight from the trades (owner's per-timeframe limits below).
+    const tf = this.crowd ? timeframes(this.crowd.trades(mint), Date.now()) : {};
 
     const chartPoints = chart?.verdict === 'buy_now' ? chartCfg.buyDipPoints : 0;
     // Chart strategies (Fibonacci, EMA pullback, breakouts …) that PROVED themselves in the live lab.
@@ -282,7 +285,7 @@ export class Evaluator {
       const tr = this.crowd.trades(mint);
       const lt = tr[tr.length - 1];
       if (lt) {
-        const fired = runStrategies(taContext(this.crowd.candles(mint), lt.pp && lt.pp > 0 ? lt.pp : lt.px, Date.now(), market.raw.ageSec, 15_000, { trades: tr, creator: token.creator }), [...this.ta.provenNow().keys()]);
+        const fired = runStrategiesTf(this.crowd.candles(mint), tr, lt.pp && lt.pp > 0 ? lt.pp : lt.px, Date.now(), market.raw.ageSec, [...this.ta.provenNow().keys()], { creator: token.creator });
         taBonus = taPoints(fired, this.ta.provenNow(), taCfg);
       }
     }
@@ -325,6 +328,8 @@ export class Evaluator {
     }
     // Staircase chart (owner: "avoid odd-looking staircase charts") → no buy, whatever the score.
     if (stair?.hit) dexFails.push(stair.why);
+    const tfWhy = timeframeFail(tf, cfg.entry.timeframes ?? DEFAULT_CONFIG.entry.timeframes);
+    if (tfWhy) dexFails.push(tfWhy);
     // KOL follow (owner: "trade more alongside coins a lot of KOLs buy"): the KOLs must still be in;
     // the more of them, the easier the bar and the bigger the size.
     const kolsIn = kolAct?.buyers.length ?? 0;
@@ -455,6 +460,7 @@ export class Evaluator {
         chart: chart ? { vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, pullbackPct: chart.pullbackPct } : null,
         swing,
         shape,
+        tf,
         x: xv?.features ?? null,
       },
       { score: result.score, kols: kolsIn, mcUsd: market.raw.marketCapUsd ?? null, ageMin: market.raw.ageSec / 60, hourUtc: new Date().getUTCHours(), dowUtc: new Date().getUTCDay() },
@@ -506,7 +512,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, market: market.raw, shape, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, market: market.raw, shape, tf, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },

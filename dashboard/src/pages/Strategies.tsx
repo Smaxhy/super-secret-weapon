@@ -61,6 +61,8 @@ function Status({ r, minTrades }: { r: Row; minTrades: number }) {
 export function Strategies() {
   const { data, error, loading } = useApi<TaLabData>('/api/ta-lab', 30_000);
   const [open, setOpen] = useState<string | null>(null);
+  const [tf, setTf] = useState<'all' | '15s' | '5s' | '1m'>('all');
+  const tfOf = (id: string) => (id.endsWith('@5s') ? '5s' : id.endsWith('@1m') ? '1m' : '15s');
   if (loading && !data) return <Loading />;
   return (
     <>
@@ -70,7 +72,7 @@ export function Strategies() {
       {data?.enabled && (
         <Card title="Chart strategies — live test results">
           <p className="mb-3 text-sm text-ink-2">
-            Every 15 seconds the bot checks the most active coins with all {data.strategies.length} strategies. Each signal is traded on paper with the bot's real exits and fees.
+            Every 15 seconds the bot checks the most active coins with every strategy on 15 s, 5 s and 1 min candles ({data.strategies.length} tests in all). Each signal is traded on paper with the bot's real exits and fees.
             The <b>random entry</b> row is the yardstick: a strategy is <b>proven</b> after {data.minTrades}+ tests if it makes money and beats random entries by {data.minEdgePct}+ points per trade.
             {` ${data.open} test trades open · ${data.stats.signals.toLocaleString()} signals so far.`}
           </p>
@@ -86,6 +88,13 @@ export function Strategies() {
               )}
             </div>
           )}
+          <div className="mb-3 flex flex-wrap gap-2 text-sm" role="group" aria-label="Candle timeframe">
+            {(['all', '15s', '5s', '1m'] as const).map((k) => (
+              <button key={k} type="button" onClick={() => setTf(k)} className={`rounded-full px-3 py-1 ${tf === k ? 'bg-accent text-white' : 'bg-surface-2 text-ink-2'}`}>
+                {k === 'all' ? 'All timeframes' : k === '15s' ? '15 s candles' : k === '5s' ? '5 s candles' : '1 min candles'}
+              </button>
+            ))}
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-sm tabular-nums">
               <thead>
@@ -99,7 +108,7 @@ export function Strategies() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {data.strategies.map((r) => (
+                {data.strategies.filter((r) => tf === 'all' || tfOf(r.id) === tf).map((r) => (
                   <>
                     <tr key={r.id} className="cursor-pointer hover:bg-line/30" onClick={() => setOpen(open === r.id ? null : r.id)}>
                       <td className="py-2 pr-2">

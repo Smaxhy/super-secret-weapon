@@ -400,6 +400,15 @@ smart money → learning engine → ML → social). See README.md.
   returns `tipResponses` + `settingChanges` (applied via applyEdit) + rules with `tipId` (source 'owner' → LIVE at once,
   stay live until the tip is removed; DELETE retires them). Pending tips also force the hourly review. API GET/POST
   `/api/brain/tips`, DELETE `/api/brain/tips/:id`; Brain page card "Talk to the brain" (`components/BrainTips.tsx`).
+- **v10.3 (Oct 11): timeframes** (owner: "add timeframes it can trade on or check — 5 s, 30 s, 1 min, 5 min, 1 h").
+  `src/evaluator/timeframes.ts`: `candlesFromTrades` (exact candles from the crowd trade log, pool price `pp`, gaps
+  filled) + `tfStats` (lastPct, prevPct, run3Pct, offHighPct, green, rsi, volAccel, buyShare) for s5/s15/s30/m1/m5/h1 →
+  `features.tf.*` on every evaluation + swing buy (AI coach / rule search / win model / shadow trades see them; flatten
+  section 'tf'). Owner limits `entry.timeframes.{maxLastCandlePct,maxRun3Pct,maxLastDropPct}.<tf>` (0 = off, default
+  off) → rule fail in the evaluator and SKIP in the swing trader; editable on Controls → Buy rules → "Timeframes" and by
+  brain tips. TA lab now tests every strategy on 15 s + 5 s + 1 min candles (`ta.timeframes`, ids `<id>@5s` / `<id>@1m`,
+  `runStrategiesTf`, `labIds`, `taName`; proven ones work in the evaluator per timeframe; maxOpen 1500; ~0.26 s CPU per
+  tick for 150 coins). Strategies page: timeframe filter chips.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

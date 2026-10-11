@@ -89,6 +89,26 @@ export const EDITABLE: EditableSetting[] = [
   S('Every coin (safety & holders)', 'antiRug.rugGuard.maxTopDumpImpactPct', 'Rug guard: one holder could crash it', 10, 100, '%', 5),
   S('Every coin (safety & holders)', 'antiRug.rugGuard.maxTop3DumpImpactPct', 'Rug guard: top-3 could crash it', 10, 100, '%', 5),
 
+  // ---- Timeframes (every coin; 0 = off) ----
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxLastCandlePct.s5', "5 s: don't buy if the candle is up more than", 0, 1000, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxLastCandlePct.s15', "15 s: don't buy if the candle is up more than", 0, 1000, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxLastCandlePct.s30', "30 s: don't buy if the candle is up more than", 0, 1000, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxLastCandlePct.m1', "1 min: don't buy if the candle is up more than", 0, 1000, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxLastCandlePct.m5', "5 min: don't buy if the candle is up more than", 0, 1000, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxLastCandlePct.h1', "1 hour: don't buy if the candle is up more than", 0, 1000, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxRun3Pct.s5', "5 s: don't buy if the last 3 candles are up more than", 0, 2000, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxRun3Pct.s15', "15 s: don't buy if the last 3 candles are up more than", 0, 2000, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxRun3Pct.s30', "30 s: don't buy if the last 3 candles are up more than", 0, 2000, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxRun3Pct.m1', "1 min: don't buy if the last 3 candles are up more than", 0, 2000, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxRun3Pct.m5', "5 min: don't buy if the last 3 candles are up more than", 0, 2000, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxRun3Pct.h1', "1 hour: don't buy if the last 3 candles are up more than", 0, 2000, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxLastDropPct.s5', "5 s: don't buy if the candle is down more than", 0, 100, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxLastDropPct.s15', "15 s: don't buy if the candle is down more than", 0, 100, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxLastDropPct.s30', "30 s: don't buy if the candle is down more than", 0, 100, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxLastDropPct.m1', "1 min: don't buy if the candle is down more than", 0, 100, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxLastDropPct.m5', "5 min: don't buy if the candle is down more than", 0, 100, '%', 1),
+  S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxLastDropPct.h1', "1 hour: don't buy if the candle is down more than", 0, 100, '%', 1),
+
   // ---- Size & risk ----
   S('Trade size & risk', 'trading.maxPositionSol', 'Normal trade size', 0.01, 50, 'SOL', 0.05),
   S('Trade size & risk', 'trading.minPositionSol', 'Smallest trade', 0.01, 10, 'SOL', 0.01),

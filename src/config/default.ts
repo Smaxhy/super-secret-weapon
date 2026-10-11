@@ -65,6 +65,12 @@ export const DEFAULT_CONFIG = {
   },
 
   entry: {
+    /** Owner's limits per candle timeframe (evaluator/timeframes.ts; 0 = off; Controls → Buy rules → Timeframes). */
+    timeframes: {
+      maxLastCandlePct: { s5: 0, s15: 0, s30: 0, m1: 0, m5: 0, h1: 0 },
+      maxRun3Pct: { s5: 0, s15: 0, s30: 0, m1: 0, m5: 0, h1: 0 },
+      maxLastDropPct: { s5: 0, s15: 0, s30: 0, m1: 0, m5: 0, h1: 0 },
+    },
     // v9.6 (owner: "it isn't trading enough"): 55 — soft insider flags (bursts, transfers, dev-slot sells) used to
     // stack under 70 on normal busy coins; hard fails (mint / freeze authority, bad extensions…) still block,
     // and the rug guard (dump risk, launch whale, staircase, holder dumps) covers the rest at entry.
@@ -662,7 +668,7 @@ export const DEFAULT_CONFIG = {
     maxBundlePct: 25,
     baselineOneIn: 40,
     cooldownMin: 30,
-    maxOpen: 800,
+    maxOpen: 1500,
     keepResults: 400,
     /** Promotion (see provenStrategies): results needed, edge over random, profit factor, false-discovery rate. */
     minTrades: 60,
@@ -673,6 +679,8 @@ export const DEFAULT_CONFIG = {
     maxPoints: 8,
     triggerChecks: true as boolean,
     disabled: [] as string[],
+    /** Candle timeframes every strategy is tested on (owner: "add timeframes"): '15s' | '5s' | '1m'. */
+    timeframes: ['15s', '5s', '1m'] as string[],
   },
 
   /**

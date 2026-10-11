@@ -11,6 +11,7 @@
  */
 import type { Candle } from '../chart-reader';
 import type { CrowdTrade } from '../../scanner/crowd-tracker';
+import { candlesFromTrades } from '../timeframes';
 import { atr, bollinger, cvd, emaSeries, fibLevels, heikinAshi, lastImpulse, macd, obv, rsiSeries, sma, stochRsi, supertrend, swings, vwapBands } from './indicators';
 
 export type TaFamily = 'fibonacci' | 'trend' | 'momentum' | 'mean-reversion' | 'breakout' | 'structure' | 'volume' | 'pattern';
@@ -635,6 +636,61 @@ export function taContext(raw: readonly Candle[], price: number, now: number, ag
     } else c1m.push({ ...c, t: b });
   }
   return { c15: done, c1m, price, now, ageSec, ...extra };
+}
+
+/**
+ * Timeframes the lab tests every strategy on (owner: "add timeframes it can trade on"). The plain id is the 15 s
+ * version; `<id>@5s` / `<id>@1m` are the same rules on 5 s / 1 min candles built straight from the trades.
+ */
+export const TA_TIMEFRAMES = [
+  { key: '15s', suffix: '', label: '15 s', stepMs: 15_000 },
+  { key: '5s', suffix: '@5s', label: '5 s', stepMs: 5_000 },
+  { key: '1m', suffix: '@1m', label: '1 min', stepMs: 60_000 },
+] as const;
+
+/** Pure: `fib_golden@1m` → { base: 'fib_golden', suffix: '@1m' }. */
+export function splitTaId(id: string): { base: string; suffix: string } {
+  const i = id.indexOf('@');
+  return i < 0 ? { base: id, suffix: '' } : { base: id.slice(0, i), suffix: id.slice(i) };
+}
+
+/** Display name incl. the timeframe ("Fibonacci golden pocket (1 min)"). */
+export function taName(id: string): string | null {
+  const { base, suffix } = splitTaId(id);
+  const def = TA_BY_ID.get(base);
+  if (!def) return null;
+  const tf = TA_TIMEFRAMES.find((t) => t.suffix === suffix);
+  return suffix && tf ? `${def.name} (${tf.label})` : def.name;
+}
+
+/**
+ * Run strategies (ids may carry a timeframe suffix) on the right candles: 15 s from the crowd candles, 5 s / 1 min
+ * built from the trade log. Returns the signals with their full ids.
+ */
+export function runStrategiesTf(
+  raw15: readonly Candle[],
+  trades: readonly CrowdTrade[],
+  price: number,
+  now: number,
+  ageSec: number | null,
+  ids: readonly string[],
+  extra: { creator?: string | null } = {},
+): TaSignal[] {
+  const bySuffix = new Map<string, string[]>();
+  for (const id of ids) {
+    const { base, suffix } = splitTaId(id);
+    bySuffix.set(suffix, [...(bySuffix.get(suffix) ?? []), base]);
+  }
+  const out: TaSignal[] = [];
+  for (const [suffix, bases] of bySuffix) {
+    const tf = TA_TIMEFRAMES.find((t) => t.suffix === suffix);
+    if (!tf) continue;
+    const candles = suffix === '' ? raw15 : candlesFromTrades(trades, tf.stepMs, now, suffix === '@5s' ? 180 : 60);
+    if (candles.length < 12) continue;
+    const ctx = taContext(candles, price, now, ageSec, tf.stepMs, { trades, creator: extra.creator ?? null });
+    for (const sig of runStrategies(ctx, bases)) out.push({ ...sig, id: sig.id + suffix });
+  }
+  return out;
 }
 
 // Exported for tests.

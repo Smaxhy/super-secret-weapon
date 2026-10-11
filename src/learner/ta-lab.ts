@@ -20,7 +20,7 @@ import { DEFAULT_CONFIG, type BotConfigShape } from '../config/default';
 import { getConfig } from '../config/runtime-config';
 import type { StrategyName } from '../config/types';
 import type { Evaluator } from '../evaluator/evaluator';
-import { runStrategies, TA_BY_ID, TA_STRATEGIES, taContext, type TaSignal } from '../evaluator/ta/strategies';
+import { runStrategiesTf, splitTaId, TA_BY_ID, TA_STRATEGIES, TA_TIMEFRAMES, taName, type TaSignal } from '../evaluator/ta/strategies';
 import { moduleLogger } from '../lib/logger';
 import { getSolUsd } from '../lib/sol-price';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
@@ -128,6 +128,12 @@ export function labGate(
   return null;
 }
 
+/** Every strategy × timeframe the lab tests (`ta.timeframes`, default 15 s + 5 s + 1 min). Pure. */
+export function labIds(c: { disabled: readonly string[]; timeframes?: readonly string[] }): string[] {
+  const tfs = TA_TIMEFRAMES.filter((t) => (c.timeframes ?? ['15s']).includes(t.key));
+  return tfs.flatMap((t) => TA_STRATEGIES.filter((s) => !c.disabled.includes(s.id) && !c.disabled.includes(s.id + t.suffix)).map((s) => s.id + t.suffix));
+}
+
 /** Score points for proven strategies that fired (capped). Pure. */
 export function taPoints(fired: readonly TaSignal[], proven: ReadonlyMap<string, ProvenStrategy>, c: { pointsPerSignal: number; maxPoints: number }): { points: number; notes: string[] } {
   let points = 0;
@@ -137,7 +143,7 @@ export function taPoints(fired: readonly TaSignal[], proven: ReadonlyMap<string,
     if (!p) continue;
     // Full points at a +10%/trade edge over random, less for a smaller edge.
     points += c.pointsPerSignal * Math.min(1, p.edgePct / 10) * (0.5 + 0.5 * s.strength);
-    notes.push(`${TA_BY_ID.get(s.id)?.name ?? s.id} (lab: +${p.edgePct}%/trade vs random over ${p.n} tests)`);
+    notes.push(`${taName(s.id) ?? s.id} (lab: +${p.edgePct}%/trade vs random over ${p.n} tests)`);
   }
   return { points: Math.round(Math.min(c.maxPoints, points) * 10) / 10, notes };
 }
@@ -203,7 +209,7 @@ export class TaLab {
     const t0 = Date.now();
     try {
       const tick = Math.floor(now / (Math.max(5, c.everySec) * 1000));
-      const ids = TA_STRATEGIES.map((s) => s.id).filter((id) => !c.disabled.includes(id));
+      const ids = labIds(c);
       const solUsd = await getSolUsd().catch(() => null);
       let looked = 0;
       for (const mint of this.crowd.activeMints(120_000, c.maxCoinsPerTick, now)) {
@@ -219,8 +225,7 @@ export class TaLab {
         const last = trades[trades.length - 1]!;
         const price = last.pp && last.pp > 0 ? last.pp : last.px;
         const meta = this.liveState.meta(mint);
-        const ctx = taContext(raw, price, now, meta ? Math.max(0, now / 1000 - meta.createdSec) : null, 15_000, { trades, creator: meta?.creator ?? null });
-        const sigs = runStrategies(ctx, ids);
+        const sigs = runStrategiesTf(raw, trades, price, now, meta ? Math.max(0, now / 1000 - meta.createdSec) : null, ids, { creator: meta?.creator ?? null });
         const pool: TaSignal[] = [...sigs];
         if (baselinePick(mint, tick, c.baselineOneIn)) pool.push({ id: BASELINE_ID, strength: 0, why: 'random entry (baseline)' });
         const strategy = await this.open(mint, pool, price, solUsd, now);
@@ -301,9 +306,9 @@ export class TaLab {
     const stats: LabStats[] = [];
     const byPhase = new Map<string, { curve: LabStats; amm: LabStats; big: LabStats }>();
     let baseline: LabStats | null = null;
-    for (const id of [BASELINE_ID, ...TA_STRATEGIES.map((s) => s.id), ...EXTERNAL_SIGNALS.map((x) => x.id)]) {
+    for (const id of [BASELINE_ID, ...labIds(this.cfg()), ...EXTERNAL_SIGNALS.map((x) => x.id)]) {
       const rows = await this.results(id);
-      const name = id === BASELINE_ID ? 'Random entry (baseline)' : (TA_BY_ID.get(id)?.name ?? EXTERNAL_BY_ID.get(id)?.name ?? id);
+      const name = id === BASELINE_ID ? 'Random entry (baseline)' : (taName(id) ?? EXTERNAL_BY_ID.get(id)?.name ?? id);
       const st = labStats(id, name, rows);
       if (id === BASELINE_ID) baseline = st;
       else stats.push(st);
@@ -336,7 +341,7 @@ export class TaLab {
   }> {
     const { stats, baseline, byPhase } = await this.allStats();
     const strategies = stats.map((s) => {
-      const def = TA_BY_ID.get(s.id) ?? EXTERNAL_BY_ID.get(s.id);
+      const def = TA_BY_ID.get(splitTaId(s.id).base) ?? EXTERNAL_BY_ID.get(s.id);
       const ph = byPhase.get(s.id)!;
       return { ...s, family: def?.family ?? '', summary: def?.summary ?? '', proven: this.proven.has(s.id), edgePct: baseline && baseline.n >= 20 && s.n ? Math.round((s.avgPnlPct - baseline.avgPnlPct) * 10) / 10 : null, curve: ph.curve, amm: ph.amm, big: ph.big };
     });

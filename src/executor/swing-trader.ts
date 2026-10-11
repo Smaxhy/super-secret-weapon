@@ -12,6 +12,7 @@
  * BUYs and interesting skips are stored as evaluations, so the outcome labeler and calibration
  * learn from them like every other strategy.
  */
+import { timeframeFail, timeframes } from '../evaluator/timeframes';
 import { priceShape } from '../evaluator/price-shape';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { timingNow } from '../learner/timing';
@@ -188,6 +189,12 @@ export class SwingTrader {
       coin.last = { at: now, score: 0, decision: 'SKIP', why: vampWhy };
       return null;
     }
+    // The owner's per-timeframe limits (5 s … 1 h candles) apply to swings too.
+    const tfWhy = timeframeFail(timeframes(trades, now), cfg.entry.timeframes ?? DEFAULT_CONFIG.entry.timeframes);
+    if (tfWhy) {
+      coin.last = { at: now, score: 0, decision: 'SKIP', why: tfWhy };
+      return null;
+    }
     const m = deriveMetrics(view);
     const liveMc = sol && view.ammTrades > 0 && m.priceSol > 0 ? m.marketCapSol * sol : null;
     const liveLiq = sol && view.ammTrades > 0 ? 2 * m.liquiditySol * sol : null;
@@ -262,7 +269,7 @@ export class SwingTrader {
           combinedScore: score,
           decision,
           reasons: decision === 'BUY' ? [explore ? `learning trade: score ${score} (bar ${verdict.threshold})` : `swing: ${setup.why}`, ...verdict.notes.slice(0, 4)] : verdict.fails.length ? verdict.fails : [`score ${score} < ${verdict.threshold}`],
-          features: json({ preCalibrationScore: verdict.score, calibration: cal, explore, shape: priceShape(candles, now), swing: { parts: verdict.parts, resilience: verdict.resilience, setup, bounce: coin.bounce, liveBounce, ta, top10Pct: coin.holders?.top10Pct ?? null, sources: coin.sources, watchlist: coin.watchlist, marketCapUsd: liveMc ?? coin.marketCapUsd, liquidityUsd: liveLiq ?? coin.liquidityUsd }, market, crowd }),
+          features: json({ preCalibrationScore: verdict.score, calibration: cal, explore, shape: priceShape(candles, now), tf: timeframes(this.crowd.trades(mint), now), swing: { parts: verdict.parts, resilience: verdict.resilience, setup, bounce: coin.bounce, liveBounce, ta, top10Pct: coin.holders?.top10Pct ?? null, sources: coin.sources, watchlist: coin.watchlist, marketCapUsd: liveMc ?? coin.marketCapUsd, liquidityUsd: liveLiq ?? coin.liquidityUsd }, market, crowd }),
           regime,
         },
       });
