@@ -56,6 +56,8 @@ export interface AiRule {
   statusWhy: string;
   backtest: RuleStats | null;
   forward: RuleStats | null;
+  /** Who proposed it: the AI coach (default) or the statistical rule search (policy-search.ts). */
+  source?: 'ai' | 'search';
 }
 
 export interface AiCoachConfig {
@@ -181,7 +183,7 @@ export function priceFor(model: string, promptTokens = 0): { in: number; out: nu
   return { in: 5, out: 25 };
 }
 
-const K = { rules: 'ai:rules', insights: 'ai:insights', last: 'ai:lastRun', lastDeep: 'ai:lastDeep', spend: (d: string) => `ai:spend:${d}` };
+const K = { rules: 'ai:rules', insights: 'ai:insights', last: 'ai:lastRun', lastDeep: 'ai:lastDeep', reviews: 'ai:reviews', spend: (d: string) => `ai:spend:${d}` };
 const STRATS = ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'SMART_MONEY_COPY', 'SWING', 'RUNNER'];
 
 const OUTPUT_SCHEMA = {
@@ -217,6 +219,8 @@ You get its recent closed trades: the measurable picture at entry (flattened fea
 
 "shape.*" features describe the price action in the 10 minutes BEFORE the buy (run1m/run3m/run10m = % change, offHigh10m = % under the 10-min high, spikes10m/dumps10m = 15-second candles that moved 15%+, greenStreak, wickTopPct = upper wicks = selling into the push, volAccel, buyShare2m). "afterBuy" is what the price did after the buy as multiples of the entry price: min1m (lowest in the first minute), max5m/min5m, peak and secToPeak — e.g. min1m 0.85 with peak 1.0 means it bought the exact top. "whatKeepsGoingWrong" is the bot's own statistical report on its losses. "shadowTrades" are pretend trades on coins it did NOT buy (refused = it wanted to but had no room / a gate said no; near = just under the score bar; skipped = a rule said no) — skippedByRule shows what each filter costs or saves; AI rules are also forward-tested on these. "bestTimesUtc" is market activity (1 = an average hour) and our results per UTC hour / weekday; "entry.hourUtc" / "entry.dowUtc" (0 = Sunday) let a rule target times.
 
+"yourPastReviews" is your own memory: what you said and which rules you added in earlier reviews, with the average result of the trades before and AFTER each review. Learn from it — if results did not improve after an idea, say so and try a different angle instead of repeating it; if they improved, build on it. "otherLearners" is what the bot's statistical learners know right now: the win-probability model (whether it beats the score, and which features it weighs), rules the statistical search discovered, how the budget is shifted between strategies, the learned entry styles, and the recent change log. Do not re-propose rules that already exist there; use your judgement for patterns statistics can't see (behaviour, sequences, combinations).
+
 Focus hardest on ENTRIES: when in a move does it buy — after a vertical spike, at the top of a green streak, on a pullback, into fading volume — and which entries worked. Also look for trends across trades (time of day, kinds of coins, crowd behaviour) and repeated spike patterns.
 
 Read the trades like an experienced trader: look for BEHAVIOUR patterns that separate the losers from the winners — who was buying and selling, how the launch went, holder structure, crowd quality, timing, chart state — not just one number.
@@ -233,6 +237,8 @@ export class AiCoach {
   lastError: string | null = null;
   /** The loss autopsy's latest report (set in index.ts) — "what keeps going wrong" goes to the AI too. */
   autopsySource: (() => Autopsy | null) | null = null;
+  /** What the other learners know right now (win model, discovered rules, budget shifts, entry styles, change log) — set in index.ts. */
+  brainSource: (() => Promise<unknown>) | null = null;
   /** Shadow trades (src/learner/shadow-trades.ts) — set in index.ts. */
   shadowSource: ((sinceMs: number) => Promise<ShadowResult[]>) | null = null;
   shadowReport: ((sinceMs: number) => Promise<ShadowReport>) | null = null;
@@ -350,6 +356,47 @@ export class AiCoach {
     });
   }
 
+  /**
+   * Rules found by the statistical rule search (policy-search.ts) join the same pipeline as the AI's: they start as
+   * 'testing' and only go live after they hold up on NEW trades. Near-duplicates of existing rules are skipped.
+   */
+  async addDiscoveredRules(
+    cands: ReadonlyArray<{ title: string; why: string; strategy: string | null; action: 'avoid' | 'prefer'; conditions: AiRuleCondition[]; evidence: { n: number; avgPct: number; restAvgPct: number } }>,
+    maxSearchRules = 6,
+  ): Promise<number> {
+    const rules = await this.rules();
+    const open = rules.filter((r) => r.status !== 'retired');
+    const searchOpen = open.filter((r) => r.source === 'search').length;
+    const same = (a: AiRuleCondition[], b: AiRuleCondition[]) =>
+      a.length === b.length && a.every((x) => b.some((y) => y.feature === x.feature && y.op === x.op && Math.abs(y.value - x.value) <= Math.abs(x.value) * 0.15 + 1e-9));
+    const at = new Date().toISOString();
+    let added = 0;
+    const p = this.redis.pipeline();
+    for (const c of cands) {
+      if (searchOpen + added >= maxSearchRules) break;
+      // Also skip rules that were tried and retired recently (don't re-test the same idea forever).
+      if (rules.some((r) => (r.strategy ?? null) === (c.strategy ?? null) && r.action === c.action && same(r.conditions, c.conditions))) continue;
+      const rule: AiRule = {
+        id: `s${Date.now().toString(36)}${added}`,
+        title: c.title.slice(0, 120),
+        why: c.why.slice(0, 400),
+        strategy: c.strategy,
+        action: c.action,
+        conditions: c.conditions.slice(0, 4),
+        createdAt: at,
+        status: 'testing',
+        statusWhy: 'found in past trades — now testing on new trades',
+        backtest: { n: c.evidence.n, avgPct: c.evidence.avgPct, sePct: 0, restAvgPct: c.evidence.restAvgPct },
+        forward: null,
+        source: 'search',
+      };
+      p.hset(K.rules, rule.id, JSON.stringify(rule));
+      added++;
+    }
+    if (added) await p.exec();
+    return added;
+  }
+
   /** Re-score every rule on the latest trades (no AI call). */
   async refreshRules(): Promise<void> {
     try {
@@ -423,7 +470,24 @@ export class AiCoach {
       const au = this.autopsySource?.() ?? null;
       const tm = this.timingSource?.() ?? null;
       const shr = this.shadowReport ? await this.shadowReport((await learningSince(this.redis))?.getTime() ?? 0).catch(() => null) : null;
+      // Memory: its own past reviews and what happened to the results AFTER each one (did its advice help?).
+      const past = (await this.redis.lrange(K.reviews, 0, 5)).flatMap((x) => {
+        try {
+          return [JSON.parse(x) as { at: string; insights: string[]; rulesAdded: string[]; before: { n: number; avgPct: number } }];
+        } catch {
+          return [];
+        }
+      });
+      const realAfter = (atIso: string) => {
+        const t0 = Date.parse(atIso);
+        const xs = trades.filter((t) => t.openedAtMs > t0).map((t) => t.pnlPct);
+        return { n: xs.length, avgPct: xs.length ? r1(xs.reduce((a, b) => a + b, 0) / xs.length) : null };
+      };
+      const brain = this.brainSource ? await this.brainSource().catch(() => null) : null;
+      const recent30 = trades.slice(0, 30).map((t) => t.pnlPct);
       const input = {
+        yourPastReviews: past.map((r) => ({ at: r.at, insights: r.insights, rulesYouAdded: r.rulesAdded, resultsBefore: r.before, resultsAfter: realAfter(r.at) })),
+        otherLearners: brain,
         shadowTrades: shr && shr.total
           ? {
               note: 'pretend trades on coins the bot did NOT buy, followed with its own exits',
@@ -519,6 +583,8 @@ export class AiCoach {
         p.hset(K.rules, rule.id, JSON.stringify(rule));
         added++;
       }
+      p.lpush(K.reviews, JSON.stringify({ at, model, insights: out.insights.slice(0, 3).map((x) => x.slice(0, 200)), rulesAdded: out.rules.slice(0, 4).map((r) => r.title.slice(0, 120)), before: { n: recent30.length, avgPct: recent30.length ? r1(recent30.reduce((a, b) => a + b, 0) / recent30.length) : 0 } }));
+      p.ltrim(K.reviews, 0, 19);
       await p.exec();
       // Keep the store small: drop the oldest retired rules beyond 40.
       const all = await this.rules();
