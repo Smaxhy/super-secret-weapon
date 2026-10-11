@@ -20,6 +20,7 @@ import { priceShape, staircase } from './price-shape';
 import { aiRuleVerdict, flattenFeatures } from '../learner/ai-coach';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { timingNow } from '../learner/timing';
+import { entryStyleBlock, entryStyleFor, pullbackZone } from '../learner/entry-style';
 import type { ShadowKind, ShadowTrades } from '../learner/shadow-trades';
 import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
 import { Worker, type Job } from 'bullmq';
@@ -526,6 +527,19 @@ export class Evaluator {
     // Fresh low-cap pairs (owner's rule: under ~$15k MC) are bought straight away — waiting for a
     // dip there mostly means missing the move.
     const noDipWait = market.raw.marketCapUsd !== null && market.raw.marketCapUsd < (chartCfg.dip.noWaitBelowMcUsd ?? 15_000);
+    // Entry style the loss autopsy learned for this strategy (e.g. "its losers never went up → only buy after a
+    // pullback", "chasing +50% in 3 min keeps losing"): don't buy now, wait for the dip — that changes HOW it enters.
+    const style = entryStyleFor(STRATEGY.name);
+    const styleWhy = decision === 'BUY' && !dipEntry && !explore ? entryStyleBlock(style, shape) : null;
+    if (styleWhy) {
+      const high = chart?.recentHigh && chart.recentHigh > 0 ? chart.recentHigh : market.raw.priceSol / Math.max(0.01, 1 - (shape?.offHigh10m ?? 0) / 100);
+      const zone = chart?.zone ?? pullbackZone(high, style?.minOffHighPct ?? 0);
+      if (chartCfg.dip.enabled && this.dips && !(STRATEGY.name === 'CURVE_SNIPE' && noDipWait)) {
+        this.dips.add({ mint, symbol: token.symbol, strategy: STRATEGY.name, zone, signalPrice: market.raw.priceSol, high, why: `learned entry rule: ${styleWhy}`, swing, wallet: job.data.wallet });
+        reasons = [`waiting for a dip (learned entry rule): ${styleWhy}`];
+      } else reasons = [`learned entry rule: ${styleWhy}`];
+      decision = 'SKIP';
+    }
     if (decision === 'BUY' && !dipEntry && !noDipWait && chart?.verdict === 'wait_dip' && chart.zone && chartCfg.dip.enabled && this.dips) {
       this.dips.add({ mint, symbol: token.symbol, strategy: STRATEGY.name, zone: chart.zone, signalPrice: market.raw.priceSol, high: chart.recentHigh, why: chart.summary, swing, wallet: job.data.wallet });
       decision = 'SKIP';

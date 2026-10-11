@@ -34,6 +34,7 @@ import { swingRoutes } from './routes/swing';
 import { registerWebSocket } from './websocket';
 import { healthSnapshot, requestUpdate, updateStatus } from '../lib/bot-health';
 import { learningSince } from '../learner/labels';
+import { recentChanges } from '../lib/change-log';
 import { redis } from '../lib/redis';
 
 const log = moduleLogger('api');
@@ -79,6 +80,8 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     });
     secured.post('/api/autopsy/run', async () => (await deps.autopsy?.run()) ?? null);
     // Best hours / days to trade (market motion + our results) and what that means right now.
+    // What the bot changed about how it trades (learners' adjustments, newest first) + how each strategy enters now.
+    secured.get('/api/changes', async () => ({ changes: await recentChanges(60), entryStyles: deps.autopsy?.snapshot()?.entryStyles ?? [], tuning: deps.autopsy?.snapshot()?.tuning ?? [] }));
     secured.get('/api/timing', async () => deps.timing?.snapshot() ?? null);
     // Shadow trades: what the coins it didn't buy would have done (since the last paper reset).
     secured.get('/api/shadow', async () => (deps.shadow ? deps.shadow.report((await learningSince(redis))?.getTime() ?? 0) : null));

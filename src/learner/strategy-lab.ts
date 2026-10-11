@@ -18,6 +18,7 @@ import { DEFAULT_CONFIG, type BotConfigShape } from '../config/default';
 import { deepMerge, getConfig, updateConfigSection } from '../config/runtime-config';
 import type { StrategyName } from '../config/types';
 import { recordEvent } from '../lib/bot-events';
+import { recordChange } from '../lib/change-log';
 import { moduleLogger } from '../lib/logger';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
 import { VirtualBook, type VirtualResult } from './virtual-book';
@@ -258,6 +259,7 @@ export class StrategyLab {
       await this.redis.set(APPLIED_KEY, JSON.stringify({ id: v.id, at: now }));
       const msg = `Strategy lab: switched the exits to "${v.name}" (${best.n} test trades, avg ${best.avgPnlPct}% per trade, ${best.winRate}% wins)`;
       log.info({ variant: v.id, stats: best }, msg);
+      void recordChange({ source: 'strategy-lab', strategy: null, what: `Exits switched to "${v.name}"`, why: `${best.n} test trades averaged ${best.avgPnlPct}% (${best.winRate}% wins), better than the exits in use` });
       void recordEvent({ module: 'strategy-lab', type: 'lab_applied', message: msg, data: { variant: v.id, n: best.n, avgPnlPct: best.avgPnlPct, winRate: best.winRate, lowerPct: best.lowerPct } });
       return v.id;
     } catch (err) {

@@ -2,6 +2,7 @@ import { PnlChart, SignedBars } from '../components/Charts';
 import { StrategyLab } from '../components/StrategyLab';
 import { LossAutopsy } from '../components/LossAutopsy';
 import { BestTimes } from '../components/BestTimes';
+import { BotChanges } from '../components/BotChanges';
 import { AiCoach } from '../components/AiCoach';
 import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl, StatTile } from '../components/ui';
 import { useApi } from '../hooks/useApi';
@@ -15,6 +16,7 @@ export function Performance() {
     <>
       <PageHeader title="Performance" subtitle={d ? `${d.mode === 'PAPER' ? 'Paper trading' : 'Live trading'} results from ${d.trades.toLocaleString()} closed trades` : undefined} />
       {error && <ErrorBox message={error} />}
+      <BotChanges />
       <LossAutopsy />
       <BestTimes />
       <AiCoach />

@@ -21,6 +21,7 @@ import type { Redis } from 'ioredis';
 import { prisma } from '../lib/prisma';
 import { moduleLogger } from '../lib/logger';
 import { learningSince } from './labels';
+import { recordChange } from '../lib/change-log';
 import { DAY_NAMES, type TimingProfile } from './timing';
 import { wouldHaveTaken, type ShadowReport, type ShadowResult } from './shadow-trades';
 import type { Autopsy } from './loss-autopsy';
@@ -367,7 +368,11 @@ export class AiCoach {
         const created = Date.parse(r.createdAt);
         r.forward = ruleStats(r, trades.filter((t) => t.openedAtMs > created));
         const next = nextStatus(r, c);
-        if (next.status !== r.status) log.info({ rule: r.title, from: r.status, to: next.status, why: next.why }, '🤖 AI rule status changed');
+        if (next.status !== r.status) {
+          log.info({ rule: r.title, from: r.status, to: next.status, why: next.why }, '🤖 AI rule status changed');
+          if (next.status === 'live' || r.status === 'live')
+            void recordChange({ source: 'ai-coach', strategy: r.strategy, what: next.status === 'live' ? `AI rule switched ON: ${r.action === 'avoid' ? 'avoid' : 'prefer'} "${r.title}"` : `AI rule switched off: "${r.title}"`, why: next.why });
+        }
         r.status = next.status;
         r.statusWhy = next.why;
         p.hset(K.rules, r.id, JSON.stringify(r));

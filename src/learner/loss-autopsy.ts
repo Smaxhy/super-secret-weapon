@@ -17,6 +17,8 @@
 import type { Redis } from 'ioredis';
 import { prisma } from '../lib/prisma';
 import { learningSince } from './labels';
+import { entryStyles, setEntryStyles, type EntryStyle } from './entry-style';
+import { diffByStrategy, recordChange } from '../lib/change-log';
 import { moduleLogger } from '../lib/logger';
 
 const log = moduleLogger('loss-autopsy');
@@ -210,6 +212,8 @@ export function setAutopsyTunes(t: readonly StrategyTune[]): void {
 
 export interface Autopsy {
   at: string;
+  /** How each strategy now ENTERS (entry-style.ts) — wait for pullbacks, no chasing. */
+  entryStyles?: EntryStyle[];
   mode?: 'small' | 'block';
   tuning: StrategyTune[];
   trades: number;
@@ -302,6 +306,8 @@ export function runAutopsy(realTrades: readonly ClosedTrade[], c: AutopsyConfig,
   for (const b of blocked.slice(0, 5)) findings.push(`${(c.blockMode ?? 'small') === 'small' ? 'SMALLEST SIZE ONLY' : 'BLOCKED'}: ${b.strategy} with ${b.band} — ${b.n} trades, ${b.winRatePct}% wins, avg ${b.avgPct}%, ${b.pnlSol} SOL.`);
 
   const tuning = tuneStrategies(pool, c.minTrades);
+  const styles = entryStyles(pool, c.minTrades);
+  for (const st of styles) findings.push(`ENTRIES CHANGED for ${st.strategy}: ${st.why.join('; ')}`);
   if (shadow.length) findings.push(`${shadow.length} shadow trades (coins it wanted but didn't buy) are counted in the kinds of trades and the tuning, at half weight in SOL.`);
   for (const t of tuning) if (t.why) findings.push(`ADJUSTED ${t.strategy}: ${t.why}`);
 
@@ -309,6 +315,7 @@ export function runAutopsy(realTrades: readonly ClosedTrade[], c: AutopsyConfig,
     at: new Date(now).toISOString(),
     mode: c.blockMode ?? 'small',
     tuning,
+    entryStyles: styles,
     trades: trades.length,
     overall: { ...all, avgWinPct: r1(avgWin), avgLossPct: r1(avgLoss), neededWinRatePct: needed, profitFactor: grossL > 0 ? Math.round((grossW / grossL) * 100) / 100 : null },
     byStrategy,
@@ -382,6 +389,7 @@ export class LossAutopsy {
       if (raw) {
         this.last = JSON.parse(raw) as Autopsy;
         setAutopsyTunes(this.last.tuning ?? []);
+        setEntryStyles(this.last.entryStyles ?? []);
       }
     } catch {
       /* fresh start */
@@ -429,8 +437,21 @@ export class LossAutopsy {
       });
       const sh = this.shadowSource ? await this.shadowSource(since.getTime()).catch(() => []) : [];
       const a = runAutopsy(trades, c, now, sh);
+      // Tell the owner what changed since the last run (bar / size / trail, and how it enters).
+      const prev = this.last;
+      const tuneText = (t: StrategyTune | undefined) => (t && (t.barDelta || t.sizeFactor !== 1 || t.trailFactor !== 1) ? `buy bar ${t.barDelta >= 0 ? '+' : ''}${t.barDelta}, size ×${t.sizeFactor}${t.trailFactor !== 1 ? `, trail ×${t.trailFactor}` : ''}` : 'normal');
+      for (const d of diffByStrategy(prev?.tuning ?? [], a.tuning, tuneText)) {
+        const t = a.tuning.find((x) => x.strategy === d.strategy);
+        void recordChange({ source: 'autopsy', strategy: d.strategy, what: `${d.strategy}: ${d.from} → ${d.to}`, why: t?.why || 'it is no longer clearly losing — back to normal' });
+      }
+      const styleText = (x: EntryStyle | undefined) => (x ? [x.minOffHighPct ? `waits for ${x.minOffHighPct}%+ under the high` : '', x.maxRun3mPct !== null ? `no chasing above +${x.maxRun3mPct}% in 3 min` : ''].filter(Boolean).join(', ') : 'buys normally');
+      for (const d of diffByStrategy(prev?.entryStyles ?? [], a.entryStyles ?? [], styleText)) {
+        const st = a.entryStyles?.find((x) => x.strategy === d.strategy);
+        void recordChange({ source: 'entry-style', strategy: d.strategy, what: `${d.strategy} entries: ${d.from} → ${d.to}`, why: st ? st.why.join('; ') : 'its trades stopped losing that way — back to normal entries' });
+      }
       this.last = a;
       setAutopsyTunes(a.tuning);
+      setEntryStyles(a.entryStyles ?? []);
       await this.redis.set(LAST, JSON.stringify(a), 'EX', 7 * 86_400);
       if (a.blocked.length) log.info({ blocked: a.blocked.map((b) => `${b.strategy} ${b.band}`) }, `🔬 autopsy: ${a.trades} trades, ${a.blocked.length} losing bands blocked`);
       return a;

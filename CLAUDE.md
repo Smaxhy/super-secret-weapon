@@ -355,6 +355,15 @@ smart money → learning engine → ML → social). See README.md.
   API) → SIGTERM → Docker restarts → `effectiveFeed` (dashboard over .env) at start. GET shows masked values only
   (`maskUrl`); `redactUrl` now also hides path keys (Chainstack wss://host/<key>) and user:pass@. Without the Yellowstone
   add-on the paid Chainstack WebSocket is used by the normal logsSubscribe stream (check its request-unit usage).
+- **v9.16: the bot changes HOW it enters + shows what it changed** (owner: "it sees the error but nothing changes").
+  `src/learner/entry-style.ts`: from the autopsy pool (real + shadow trades it would have taken), per losing strategy
+  (≥ autopsy.minTrades; cleared when avg−SE > +2%): `minOffHighPct` 6 when ≥50% of losers never went up; 3 / 10 when
+  entries <3% / <10% under the 10-min high lose (avg+SE < −3, ≥ half minTrades) and the rest do ≥5 pts better;
+  `maxRun3mPct` 100 / 50 / 20 (loosest that works) when chasing loses vs calmer entries. Evaluator: a BUY that breaks
+  the style → DipWatcher (chart zone or `pullbackZone`) instead of buying now (CURVE_SNIPE under $15k: skip, owner's
+  no-dip-wait rule); dip re-checks + learning trades are exempt. `src/lib/change-log.ts` (Redis `changes:log`, 200):
+  autopsy tuning + entry-style diffs per run, AI rules going live / off, exit-lab switches. GET `/api/changes`;
+  Performance card "What the bot changed" (current rules per strategy + change log).
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
