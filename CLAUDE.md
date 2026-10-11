@@ -383,6 +383,12 @@ smart money → learning engine → ML → social). See README.md.
     effN <10 → ×1. Trader budget × `trader.allocFactor`.
   - AI coach memory: `ai:reviews` (its past reviews + results before/AFTER each) + `otherLearners` (brain.snapshot(true)) in
     the prompt. Change log gets model on/off, rules found, budget moves ≥0.1. GET `/api/brain`; dashboard page **Brain**.
+- **v10.1: phone notifications** (owner: "notify me when a trade is in profit with the amount"). `src/lib/push.ts` (web-push
+  3.6.7): VAPID keys made once and stored in BotConfig `_push` (DB only); subscriptions Redis `push:subs`, settings `push:settings`
+  (default: profit closes ON, min 0 SOL; losses / take-profit tiers OFF); listens to bus 'trade' events → `messageFor` →
+  `sendAll` (404/410 subs dropped). API GET `/api/push`, POST `/api/push/subscribe|unsubscribe|test`, PUT `/api/push/settings`.
+  `dashboard/public/sw.js` handles push + notificationclick (opens `#/history`). Controls page card "Notifications" (iPhone:
+  only in the home-screen app, iOS 16.4+).
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

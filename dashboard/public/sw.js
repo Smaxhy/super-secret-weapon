@@ -63,3 +63,32 @@ self.addEventListener('fetch', (e) => {
     ),
   );
 });
+
+// Phone notifications from the bot (e.g. "💰 $COIN closed +0.120 SOL").
+self.addEventListener('push', (e) => {
+  let m = { title: 'Solbot', body: '', url: '/', tag: undefined };
+  try {
+    m = { ...m, ...e.data.json() };
+  } catch {
+    if (e.data) m.body = e.data.text();
+  }
+  e.waitUntil(
+    self.registration.showNotification(m.title, { body: m.body, tag: m.tag, renotify: !!m.tag, icon: './icon-192.png', badge: './icon-192.png', data: { url: m.url } }),
+  );
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const target = new URL(`./#${(e.notification.data && e.notification.data.url) || '/'}`, self.registration.scope).href;
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const c of list) {
+        if ('focus' in c) {
+          c.navigate(target).catch(() => undefined);
+          return c.focus();
+        }
+      }
+      return self.clients.openWindow(target);
+    }),
+  );
+});

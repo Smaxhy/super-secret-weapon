@@ -16,6 +16,7 @@ import type { FastifyInstance } from 'fastify';
 import { getConfig, updateConfigSection } from '../../config/runtime-config';
 import { recordEvent } from '../../lib/bot-events';
 import { prisma } from '../../lib/prisma';
+import { getSettings, isSubscription, publicKey, saveSettings, sendAll, subscribe, subscriberCount, unsubscribe } from '../../lib/push';
 import { activeFeed, loadFeedSettings, maskUrl, saveFeedSettings, validateFeed } from '../../lib/feed-settings';
 import type { ApiDeps } from '../deps';
 import { addPaperFunds, isResetting, MAX_ADD_SOL, MAX_START_SOL, MIN_START_SOL, parseStartingBalance, resetPaperAccount } from '../paper-reset';
@@ -110,6 +111,20 @@ export async function controlsRoutes(app: FastifyInstance, deps: ApiDeps): Promi
     // Open positions are frozen and removed too (entries are paused while it runs).
     return resetPaperAccount({ startingBalanceSol: start });
   });
+
+  // Phone notifications (Web Push to the installed app).
+  app.get('/api/push', async () => ({ publicKey: await publicKey(), subscribers: await subscriberCount(), settings: await getSettings() }));
+  app.post<{ Body: { subscription?: unknown } }>('/api/push/subscribe', async (req, reply) => {
+    if (!isSubscription(req.body?.subscription)) return reply.code(400).send({ error: 'Not a valid push subscription' });
+    await subscribe(req.body.subscription);
+    return { ok: true, subscribers: await subscriberCount() };
+  });
+  app.post<{ Body: { endpoint?: unknown } }>('/api/push/unsubscribe', async (req) => {
+    if (typeof req.body?.endpoint === 'string') await unsubscribe(req.body.endpoint);
+    return { ok: true, subscribers: await subscriberCount() };
+  });
+  app.put<{ Body: Record<string, unknown> }>('/api/push/settings', async (req) => ({ ok: true, settings: await saveSettings(req.body ?? {}) }));
+  app.post('/api/push/test', async () => sendAll({ title: '💰 $TEST closed +0.123 SOL (paper)', body: 'This is how a profit notification looks', url: '/history', tag: 'test' }));
 
   // Paid data feed pasted from the phone: stored in this server's database only, used after a restart.
   app.get('/api/controls/feed', async () => {

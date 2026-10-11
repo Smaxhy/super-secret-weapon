@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { ResetPaperForm } from '../components/ResetPaper';
 import { DataFeed } from '../components/DataFeed';
+import { Notifications } from '../components/Notifications';
 import { Card, ErrorBox, Loading, PageHeader } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
@@ -166,6 +167,7 @@ export function Controls() {
         </button>
       </div>
 
+      <Notifications />
       <DataFeed />
       <Card title="Reset paper account" className="mt-6 border-critical/40">
         <ResetPaperForm defaultBalance={10} />

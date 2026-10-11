@@ -21,6 +21,7 @@ import { RuggerMemory } from './executor/rug-watch';
 import { TimingLearner } from './learner/timing';
 import { shadowAsClosed, ShadowTrades, wouldHaveTaken } from './learner/shadow-trades';
 import { Brain } from './learner/brain';
+import { startPushNotifier } from './lib/push';
 import { LossAutopsy } from './learner/loss-autopsy';
 import { MigratedScanner } from './scanner/migrated-scanner';
 import { RunningCoins } from './scanner/running-coins';
@@ -230,6 +231,8 @@ async function main(): Promise<void> {
   aiCoach.shadowSource = async (since) => shadow.results(since);
   aiCoach.shadowReport = async (since) => shadow.report(since);
   // The brain: win-probability model, statistical rule search and budget allocator on real + shadow trades.
+  // Phone notifications: a trade closed in profit → push to the installed app.
+  const stopPush = startPushNotifier();
   const brain = new Brain(redis, (since) => shadow.results(since), aiCoach);
   if ((getConfig().brain ?? DEFAULT_CONFIG.brain).enabled) brain.start();
   evaluator.brain = brain;
@@ -555,6 +558,7 @@ async function main(): Promise<void> {
       lab.stop();
       shadow.stop();
       brain.stop();
+      stopPush();
       taLab.stop();
       trendFeeds.stop();
       trending.stop();
