@@ -10,7 +10,7 @@
  * Shutdown (Ctrl+C or `docker stop`) runs in reverse so nothing is lost.
  */
 import { startApi } from './api/server';
-import { env, rpcEndpoints } from './config/env';
+import { env, redactUrl, rpcEndpoints } from './config/env';
 import { bus } from './lib/bus';
 import { getConfig, startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
 import { DEFAULT_CONFIG } from './config/default';
@@ -65,6 +65,7 @@ import { closeRedis, redis } from './lib/redis';
 import { rpcLimiter } from './lib/solana';
 import { LiveState } from './scanner/live-state';
 import { GrpcListener } from './scanner/grpc-listener';
+import { effectiveFeed, loadFeedSettings, setActiveFeed } from './lib/feed-settings';
 import { PumpFunListener, type ListenerStats } from './scanner/pumpfun-listener';
 import { PumpPortalListener } from './scanner/pumpportal-listener';
 import { WhaleTracker } from './scanner/whale-tracker';
@@ -380,19 +381,22 @@ async function main(): Promise<void> {
     logsRef = l;
   };
 
+  // Paid feed pasted on the dashboard (stored in this server's DB only) wins over .env.
+  const feed = effectiveFeed(await loadFeedSettings(), env);
+  setActiveFeed(feed);
   if (!env.ENABLE_SCANNER) {
     log.warn('scanner disabled (ENABLE_SCANNER=false)');
-  } else if (env.DATA_SOURCE === 'hybrid') {
+  } else if (feed.dataSource === 'hybrid') {
     // Launches + migrations from PumpPortal, every trade from Solana's public node. Both free.
     startPortal(false);
-    startLogs(env.TRADES_WS_URL, false);
-    log.info({ trades: env.TRADES_WS_URL.replace(/api-key=[^&]+/, 'api-key=***') }, 'data source: hybrid (PumpPortal launches + free trade stream)');
-  } else if (env.DATA_SOURCE === 'grpc' && env.GRPC_ENDPOINT) {
+    startLogs(feed.tradesWsUrl, false);
+    log.info({ trades: redactUrl(feed.tradesWsUrl) }, 'data source: hybrid (PumpPortal launches + trade stream)');
+  } else if (feed.dataSource === 'grpc' && feed.grpcEndpoint) {
     // Paid Yellowstone gRPC stream (Chainstack / Shyft / Helius LaserStream …) for trades; PumpPortal for launches.
     // The free public stream runs as a backup only while the gRPC stream is down.
     startPortal(false);
-    startLogs(env.TRADES_WS_URL, false);
-    const g = new GrpcListener(env.GRPC_ENDPOINT, env.GRPC_TOKEN);
+    startLogs(feed.tradesWsUrl, false);
+    const g = new GrpcListener(feed.grpcEndpoint, feed.grpcToken);
     g.on('event', registry.handle);
     g.on('event', whales.onEvent);
     let backupTimer: NodeJS.Timeout | null = null;
@@ -414,12 +418,12 @@ async function main(): Promise<void> {
     g.start();
     sources.push(g);
     grpcRef = g;
-    log.info({ endpoint: env.GRPC_ENDPOINT.replace(/\/\/[^@/]*@/, '//***@') }, 'data source: gRPC (PumpPortal launches + paid Yellowstone trade stream, free stream as backup)');
-  } else if (env.DATA_SOURCE === 'grpc') {
+    log.info({ endpoint: redactUrl(feed.grpcEndpoint) }, 'data source: gRPC (PumpPortal launches + paid Yellowstone trade stream, free stream as backup)');
+  } else if (feed.dataSource === 'grpc') {
     log.error('DATA_SOURCE=grpc but GRPC_ENDPOINT is empty — using the free trade stream instead');
     startPortal(false);
-    startLogs(env.TRADES_WS_URL, false);
-  } else if (env.DATA_SOURCE === 'pumpportal') {
+    startLogs(feed.tradesWsUrl, false);
+  } else if (feed.dataSource === 'pumpportal') {
     startPortal(true);
     log.info('data source: PumpPortal only');
   } else if (!ws) {

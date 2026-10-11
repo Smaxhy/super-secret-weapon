@@ -7,6 +7,8 @@
  *   POST /api/controls/resume        clear pause + kill switch
  *   POST /api/controls/reset-paper   { confirm: "RESET", startingBalanceSol?: 0.1–1000 } wipe paper trades/positions
  *                                    (open ones too) and optionally set a new starting balance
+ *   GET  /api/controls/feed          the trade feed in use + what is saved (masked, never the key itself)
+ *   PUT  /api/controls/feed          { tradesWsUrl?, grpcEndpoint?, grpcToken?, useGrpc? } save a paid feed, then restart
  *   POST /api/controls/add-funds     { sol: 0.01–1000 } add paper SOL without resetting anything
  *   POST /api/positions/:id/sell     manual sell of one position
  */
@@ -14,6 +16,7 @@ import type { FastifyInstance } from 'fastify';
 import { getConfig, updateConfigSection } from '../../config/runtime-config';
 import { recordEvent } from '../../lib/bot-events';
 import { prisma } from '../../lib/prisma';
+import { activeFeed, loadFeedSettings, maskUrl, saveFeedSettings, validateFeed } from '../../lib/feed-settings';
 import type { ApiDeps } from '../deps';
 import { addPaperFunds, isResetting, MAX_ADD_SOL, MAX_START_SOL, MIN_START_SOL, parseStartingBalance, resetPaperAccount } from '../paper-reset';
 
@@ -106,6 +109,27 @@ export async function controlsRoutes(app: FastifyInstance, deps: ApiDeps): Promi
     if (isResetting()) return reply.code(409).send({ error: 'A reset is already running' });
     // Open positions are frozen and removed too (entries are paused while it runs).
     return resetPaperAccount({ startingBalanceSol: start });
+  });
+
+  // Paid data feed pasted from the phone: stored in this server's database only, used after a restart.
+  app.get('/api/controls/feed', async () => {
+    const saved = await loadFeedSettings();
+    const ls = deps.listenerStats();
+    return {
+      active: activeFeed(),
+      connected: ls?.connected ?? false,
+      tradesPerMinHint: ls?.trades ?? 0,
+      saved: { tradesWsUrl: maskUrl(saved.tradesWsUrl), grpcEndpoint: maskUrl(saved.grpcEndpoint), hasGrpcToken: !!saved.grpcToken, useGrpc: !!saved.useGrpc, updatedAt: saved.updatedAt ?? null },
+    };
+  });
+  app.put<{ Body: { tradesWsUrl?: unknown; grpcEndpoint?: unknown; grpcToken?: unknown; useGrpc?: unknown } }>('/api/controls/feed', async (req, reply) => {
+    const v = validateFeed(req.body ?? {}, await loadFeedSettings());
+    if (!v.ok) return reply.code(400).send({ error: v.error });
+    await saveFeedSettings(v.value);
+    void recordEvent({ level: 'WARN', module: 'controls', type: 'feed_changed', message: `Data feed changed from the dashboard (trades: ${maskUrl(v.value.tradesWsUrl) ?? 'free default'}, gRPC: ${v.value.useGrpc ? maskUrl(v.value.grpcEndpoint) : 'off'}) — restarting to use it` });
+    // Docker restarts the bot right away (restart: unless-stopped); the new feed is read at start.
+    setTimeout(() => process.kill(process.pid, 'SIGTERM'), 1_500).unref();
+    return { ok: true, restarting: true };
   });
 
   app.post<{ Body: { sol?: unknown } }>('/api/controls/add-funds', async (req, reply) => {

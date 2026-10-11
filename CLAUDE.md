@@ -349,6 +349,12 @@ smart money → learning engine → ML → social). See README.md.
   (@triton-one/yellowstone-grpc 7.0.1, native, loaded on demand) — switch on with DATA_SOURCE=grpc + GRPC_ENDPOINT
   (https://…:443) + GRPC_TOKEN in the VPS .env; PumpPortal still gives launches; the free public stream is paused while
   gRPC is up and comes back after 10 s down. Owner plans Chainstack (Growth plan + $49 Yellowstone add-on).
+- **v9.15: data feed from the dashboard** (owner bought Chainstack Growth, "add it for me, I'm in bed"). Controls page card
+  "Data feed" (`components/DataFeed.tsx`) → PUT `/api/controls/feed` {tradesWsUrl (wss://), grpcEndpoint (https://…:443),
+  grpcToken, useGrpc} → BotConfig row `_feed` (this server's DB only, never git; "_" rows are never served by the config
+  API) → SIGTERM → Docker restarts → `effectiveFeed` (dashboard over .env) at start. GET shows masked values only
+  (`maskUrl`); `redactUrl` now also hides path keys (Chainstack wss://host/<key>) and user:pass@. Without the Yellowstone
+  add-on the paid Chainstack WebSocket is used by the normal logsSubscribe stream (check its request-unit usage).
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

@@ -1,6 +1,7 @@
 /** Bot controls: pause / kill switch, trade size, entry rules, keywords, paper account reset. */
 import { useEffect, useState } from 'react';
 import { ResetPaperForm } from '../components/ResetPaper';
+import { DataFeed } from '../components/DataFeed';
 import { Card, ErrorBox, Loading, PageHeader } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
@@ -165,6 +166,7 @@ export function Controls() {
         </button>
       </div>
 
+      <DataFeed />
       <Card title="Reset paper account" className="mt-6 border-critical/40">
         <ResetPaperForm defaultBalance={10} />
         <p className="mt-3 text-xs text-muted">Current paper starting balance: {form.paper.startingBalanceSol} SOL.</p>

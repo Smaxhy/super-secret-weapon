@@ -99,5 +99,9 @@ export function rpcEndpoints(): { http?: string; ws?: string } {
 
 /** Strip API keys out of a URL before it goes anywhere near a log line. */
 export function redactUrl(url: string): string {
-  return url.replace(/(api[-_]?key=)[^&]+/gi, '$1***');
+  // ?api-key=… query keys, user:pass@ and key-in-the-path addresses (Chainstack: wss://host/<key>).
+  return url
+    .replace(/(api[-_]?key=)[^&]+/gi, '$1***')
+    .replace(/\/\/[^@/]+@/, '//***@')
+    .replace(/^(wss?:\/\/[^/?#]+)\/[^?#]{12,}/i, '$1/***');
 }
