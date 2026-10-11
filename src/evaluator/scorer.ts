@@ -67,8 +67,43 @@ export function checkEntryRules(i: EntryCheckInput): string[] {
     if (m.volumeUsd < e.minVolumeUsd) fails.push(`volume $${Math.round(m.volumeUsd)} < $${e.minVolumeUsd}`);
     if (m.marketCapUsd < e.minMarketCapUsd) fails.push(`MC $${Math.round(m.marketCapUsd)} < $${e.minMarketCapUsd}`);
   }
+  fails.push(...checkChartRules(m, e));
   return fails;
 }
+
+/**
+ * Chart rules that say "not this token": the structure is broken, sellers own
+ * the tape, or the buying is fake. These are genuine passes, not timing.
+ */
+export function checkChartRules(m: MarketRaw, e: BotConfigShape['entry']): string[] {
+  const fails: string[] = [];
+  if (m.setup === 'BREAKDOWN') fails.push('chart: breakdown (lost support, sellers in control)');
+  if (m.setup === 'DISTRIBUTION') fails.push(`chart: distribution (buy share ${(m.buyVolShare60 * 100).toFixed(0)}% of last-minute volume)`);
+  if (m.drawdownFromAthPct > e.maxDrawdownFromAthPct) fails.push(`chart: ${m.drawdownFromAthPct.toFixed(0)}% below ATH > ${e.maxDrawdownFromAthPct}%`);
+  if (m.manipulation > e.maxManipulation) {
+    fails.push(`chart: manipulation ${m.manipulation.toFixed(2)} > ${e.maxManipulation} (top buyer ${(m.topBuyerShare60 * 100).toFixed(0)}%, churn ${(m.churnRatio * 100).toFixed(0)}%)`);
+  }
+  return fails;
+}
+
+/**
+ * Timing rules — "not right now". The token may still be a buy a few seconds
+ * later (after a pullback, or once more buyers show up), so the evaluator
+ * re-checks soon rather than waiting for the next fixed checkpoint.
+ */
+export function checkTimingRules(m: MarketRaw, e: BotConfigShape['entry'], roundTripCostPct: number): string[] {
+  const fails: string[] = [];
+  if (m.setup === 'EXTENDED' || m.change60Pct > e.maxChange60Pct) fails.push(`timing: +${m.change60Pct.toFixed(0)}% in 60s — extended, wait for a pullback`);
+  else if (m.extensionPct > e.maxExtensionPct) fails.push(`timing: ${m.extensionPct.toFixed(0)}% above trend line > ${e.maxExtensionPct}%`);
+  if (m.trades60 < e.minTrades60) fails.push(`timing: only ${m.trades60} trades in the last minute`);
+  if (m.uniqueBuyers60 < e.minUniqueBuyers60) fails.push(`timing: only ${m.uniqueBuyers60} distinct buyers in the last minute`);
+  // Edge vs. fees: the room to the next level must dwarf what the round trip costs.
+  const room = m.resistanceDistPct ?? e.openSkyRoomPct;
+  if (room < e.minEdgeMultiple * roundTripCostPct) fails.push(`timing: ${room.toFixed(0)}% to resistance < ${e.minEdgeMultiple}× round-trip cost (${roundTripCostPct.toFixed(1)}%)`);
+  return fails;
+}
+
+export const isTimingReason = (r: string) => r.startsWith('timing:');
 
 export function decide(score: number, threshold: number, ruleFails: string[], hardFail: boolean): { decision: Decision; reasons: string[] } {
   if (hardFail) return { decision: 'REJECT', reasons: ruleFails };

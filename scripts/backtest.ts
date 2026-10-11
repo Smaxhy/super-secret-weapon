@@ -1,6 +1,7 @@
 /**
- * Replays strategies against historical snapshot data.
+ * Replays archived trade tapes through the legacy and current rules.
+ * Thin wrapper — the real code lives in src/cli/backtest.ts (compiled into the Docker image).
  *
- * Built in Phase 7 — placeholder so the project layout is complete.
+ *   npm run backtest -- --days 7
  */
-export {};
+import '../src/cli/backtest';

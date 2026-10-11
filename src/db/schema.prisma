@@ -86,6 +86,9 @@ enum ExitReason {
   KILL_SWITCH
   CIRCUIT_BREAKER
   MIGRATED // curve completed while held (post-migration tracking arrives in Phase 6)
+  TIME_STOP // still underwater after the strategy's time budget with no uptrend
+  STRUCTURE_BREAK // closed below the last swing low after being in profit
+  MOMENTUM_FADE // partial: sellers took over while in profit
 }
 
 enum WalletSource {
@@ -271,8 +274,10 @@ model Position {
   /// Price at the last real move (>5%) and when it happened (drives the stale exit)
   refPriceSol    Float?
   lastMoveAt     DateTime? @db.Timestamptz(3)
-  /// Market state at entry (dev %, top-10 %, holders...) used by rug detection
+  /// Market state at entry (dev %, top-10 %, holders, support, ATH...) used by rug detection and the structure stop
   entryContext   Json?
+  /// Sell-manager state that isn't a column: { fadeSold, breakEvenArmed, ... }
+  flags          Json      @default("{}")
 
   realizedPnlSol Float       @default(0)
   exitReason     ExitReason?
@@ -437,7 +442,27 @@ model RegimeSnapshot {
   @@index([createdAt])
 }
 
-/// Counterfactuals: tokens we skipped that pumped, or bought that rugged.
+/// The first hour of trades for every token we evaluated seriously (scored ≥ storeAboveScore
+/// or traded), stored compactly so the backtester can replay entries and exits on real
+/// price paths. Rows are [tsMs, isBuy(0/1), solAmount, priceSol, walletIndex] tuples.
+model TokenTape {
+  mint       String   @id
+  /// Unix ms of the first trade on the tape
+  startMs    BigInt
+  trades     Int
+  /// Array of [tsMs, side, solAmount, priceSol, walletIdx]
+  tape       Json
+  /// walletIdx → wallet address, so buyer-quality metrics can be replayed
+  wallets    Json
+  athPriceSol Float
+  complete   Boolean
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([createdAt])
+}
+
+/// Outcome log for every stored evaluation (resolved 1h after launch): skips that pumped,
+/// buys that died, and everything in between. The learner trains on these rows.
 model MissedOpportunity {
   id              String   @id @default(uuid())
   mint            String

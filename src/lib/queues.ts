@@ -22,6 +22,8 @@ export interface EvaluateJob {
   checkpointSec: number;
   /** True for the last checkpoint — always store the evaluation (training data). */
   final: boolean;
+  /** Set on adaptive re-checks (token was a buy except for timing): index into recheckDelaysSec. */
+  recheck?: number;
 }
 
 export interface SafetyJob {

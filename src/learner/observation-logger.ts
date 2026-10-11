@@ -51,11 +51,19 @@ function round(n: number, dp: number): number {
   return Math.round(n * f) / f;
 }
 
+export type SnapshotListener = (view: LiveTokenView, snap: ObservationSnapshot) => Promise<void>;
+
 export class ObservationLogger {
   private worker: Worker<ObservationJob> | null = null;
+  private readonly listeners: SnapshotListener[] = [];
   snapshotsWritten = 0;
 
   constructor(private readonly liveState: LiveState) {}
+
+  /** Called after each snapshot is written (outcome tracking, tape archiving…). Errors are logged, never thrown. */
+  addListener(fn: SnapshotListener): void {
+    this.listeners.push(fn);
+  }
 
   /** Queue all 7 snapshots for a new token. Job ids make this safe to call twice. */
   async scheduleFor(mint: string, createdAtMs: number): Promise<void> {
@@ -118,6 +126,10 @@ export class ObservationLogger {
     });
 
     log.debug({ mint, interval, holders: snap.holderCount, mcSol: snap.marketCapSol, curvePct: snap.bondingCurvePct }, 'snapshot');
+
+    for (const fn of this.listeners) {
+      await fn(view, snap).catch((err: Error) => log.warn({ mint, interval, err: err.message }, 'snapshot listener failed'));
+    }
 
     // Last snapshot done → free the Redis memory for this token.
     if (interval === 'H24') await this.liveState.forget(mint);

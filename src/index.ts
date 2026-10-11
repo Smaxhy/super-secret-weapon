@@ -20,7 +20,12 @@ import { SellManager } from './executor/sell-manager';
 import { Trader } from './executor/trader';
 import { ensureTimescale } from './db/timescale';
 import { SafetyChecker } from './evaluator/safety-checker';
+import { BeliefStore } from './learner/bayesian-updater';
+import { DailyAdjuster } from './learner/daily-adjuster';
+import { OutcomeTracker } from './learner/missed-opportunity';
 import { ObservationLogger } from './learner/observation-logger';
+import { getRegime, RegimeDetector } from './learner/regime-detector';
+import { TapeArchiver } from './learner/tape-archiver';
 import { logger } from './lib/logger';
 import { prisma } from './lib/prisma';
 import { closeQueues } from './lib/queues';
@@ -66,10 +71,23 @@ async function main(): Promise<void> {
   // Phase 2: scoring + execution. LIVE execution arrives in Phase 4.
   if (env.TRADING_MODE === 'LIVE') log.warn('TRADING_MODE=LIVE but live execution is not built yet (Phase 4) — running PAPER');
   const executor = new PaperExecutor(liveState);
+
+  // Learning engine: market regime, pattern beliefs, outcome tracking, nightly weight tuning.
+  const regime = new RegimeDetector(executor.mode);
+  regime.start();
+  const beliefs = new BeliefStore();
+  await beliefs.start();
+  const outcomes = new OutcomeTracker(beliefs);
+  const tapes = new TapeArchiver();
+  observations?.addListener(outcomes.onSnapshot);
+  observations?.addListener(tapes.onSnapshot);
+  const adjuster = new DailyAdjuster(executor.mode);
+  adjuster.start();
+
   const trader = new Trader(executor);
   const sellManager = new SellManager(executor, liveState);
   sellManager.start();
-  const evaluator = new Evaluator(redis, liveState, new WalletAnalyzer(redis), trader);
+  const evaluator = new Evaluator(redis, liveState, new WalletAnalyzer(redis), trader, beliefs);
   evaluator.start();
 
   const registry = new TokenRegistry(liveState, observations, safety, evaluator);
@@ -123,7 +141,11 @@ async function main(): Promise<void> {
         avgLatencyMs: Math.round(registry.stats.latencyMsAvg),
         evaluated: evaluator.stats.evaluated,
         buySignals: evaluator.stats.buys,
+        timingWaits: evaluator.stats.timingWaits,
         walletLookups: evaluator.stats.walletLookups,
+        outcomesResolved: outcomes.stats.resolved,
+        missed: outcomes.stats.missed,
+        regime: getRegime(),
         openPositions,
         [`${executor.mode.toLowerCase()}BalanceSol`]: +balance.toFixed(4),
       },
@@ -147,6 +169,9 @@ async function main(): Promise<void> {
       await listener?.stop();
       await evaluator.stop();
       await sellManager.stop();
+      adjuster.stop();
+      regime.stop();
+      beliefs.stop();
       stopConfigRefresh();
       await registry.stop();
       await observations?.stop();

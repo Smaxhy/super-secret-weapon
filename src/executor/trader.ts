@@ -9,17 +9,22 @@
  *   5. Never enter the same token twice
  *   6. Strategy capital allocation (e.g. curve snipes may use 15% of capital)
  *   7. Wallet balance check
- * Then: size the position, execute through the Executor, and record it.
+ * Then: size the position by conviction (score above threshold × chart
+ * strength) and regime, execute through the Executor, and record it together
+ * with the chart levels (support, ATH, swing structure) the sell manager
+ * needs to manage the trade like a trader would.
  *
  * Entries run one at a time (a small mutex) so two tokens can't both grab the
  * last free slot.
  */
 import type { Strategy } from '@prisma/client';
+import type { BotConfigShape } from '../config/default';
 import { getConfig } from '../config/runtime-config';
 import { recordEvent } from '../lib/bot-events';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import { logTrade } from '../learner/trade-logger';
+import { regimeAdjustment } from '../learner/regime-detector';
 import type { MarketRaw } from '../evaluator/market-analyzer';
 import type { Executor } from './types';
 
@@ -31,9 +36,42 @@ export interface EntryRequest {
   strategy: Strategy;
   evaluationId: string | null;
   score: number;
+  /** The threshold the score had to beat (already regime-adjusted). */
+  threshold: number;
   market: MarketRaw;
   maxSlippageBps: number;
   features: Record<string, number>;
+}
+
+/** What the sell manager knows about the market at the moment we bought. */
+export interface EntryContext {
+  devHoldingPct: number;
+  top10HolderPct: number;
+  holders: number;
+  marketCapSol: number;
+  liquiditySol: number;
+  supportSol: number | null;
+  athPriceSol: number;
+  setup: string;
+  strength: number;
+  score: number;
+  sizeMultiplier: number;
+  regime: string;
+}
+
+/**
+ * Conviction sizing (pure). A bare pass gets the minimum; a score at
+ * `convictionFullScore`+ with a strong chart gets the maximum. The regime
+ * multiplier then scales the result (and may push it below the minimum, in
+ * which case the trader refuses — small trades just feed fees).
+ */
+export function convictionSize(i: { score: number; threshold: number; strength: number; regimeMultiplier: number }, t: BotConfigShape['trading']): { sizeSol: number; conviction: number } {
+  if (!t.convictionSizing) return { sizeSol: t.maxPositionSol * i.regimeMultiplier, conviction: 1 };
+  const span = Math.max(1, t.convictionFullScore - i.threshold);
+  const scorePart = Math.max(0, Math.min(1, (i.score - i.threshold) / span));
+  const conviction = Math.max(0, Math.min(1, 0.7 * scorePart + 0.3 * i.strength));
+  const base = t.minPositionSol + (t.maxPositionSol - t.minPositionSol) * conviction;
+  return { sizeSol: base * i.regimeMultiplier, conviction };
 }
 
 export interface EntryResult {
@@ -87,13 +125,15 @@ export class Trader {
     const strategyOpen = open.filter((p) => p.strategy === req.strategy).reduce((s, p) => s + (p.sizeSol * p.remainingPct) / 100, 0);
     const budget = capital * cfg.trading.allocation[req.strategy] - strategyOpen;
     const reserve = cfg.paper.txFeeSol * 4 + 0.01; // keep enough to pay for the exits
-    const size = Math.min(cfg.trading.maxPositionSol, budget, balance - reserve);
+    const regime = regimeAdjustment();
+    const wanted = convictionSize({ score: req.score, threshold: req.threshold, strength: req.market.strength, regimeMultiplier: regime.sizeMultiplier }, cfg.trading);
+    const size = Math.min(wanted.sizeSol, cfg.trading.maxPositionSolCeiling, budget, balance - reserve);
     if (size < cfg.trading.minPositionSol) {
-      return refuse(`size ${size.toFixed(3)} SOL below minimum (balance ${balance.toFixed(3)}, ${req.strategy} budget ${budget.toFixed(3)})`);
+      return refuse(`size ${size.toFixed(3)} SOL below minimum (balance ${balance.toFixed(3)}, ${req.strategy} budget ${budget.toFixed(3)}, regime ${regime.regime} ×${regime.sizeMultiplier})`);
     }
 
     const fill = await this.executor.buy({ mint: req.mint, solAmount: round4(size), maxSlippageBps: req.maxSlippageBps });
-    const context = { score: req.score, market: req.market, features: req.features, balanceBefore: balance };
+    const context = { score: req.score, threshold: req.threshold, conviction: wanted.conviction, regime: regime.regime, market: req.market, features: req.features, balanceBefore: balance };
     if (!fill.ok) {
       await logTrade({ positionId: null, mint: req.mint, symbol: req.symbol, side: 'BUY', mode, strategy: req.strategy, fill, reason: 'entry failed', context });
       return refuse(`execution failed: ${fill.error}`);
@@ -117,10 +157,18 @@ export class Trader {
             top10HolderPct: req.market.top10HolderPct,
             holders: req.market.holders,
             marketCapSol: req.market.marketCapSol,
-          },
+            liquiditySol: req.market.liquiditySol,
+            supportSol: req.market.supportSol,
+            athPriceSol: req.market.athPriceSol,
+            setup: req.market.setup,
+            strength: req.market.strength,
+            score: req.score,
+            sizeMultiplier: regime.sizeMultiplier,
+            regime: regime.regime,
+          } satisfies EntryContext,
         },
       });
-      await logTrade({ positionId: p.id, mint: req.mint, symbol: req.symbol, side: 'BUY', mode, strategy: req.strategy, fill, reason: `entry: score ${req.score.toFixed(1)}`, context }, tx);
+      await logTrade({ positionId: p.id, mint: req.mint, symbol: req.symbol, side: 'BUY', mode, strategy: req.strategy, fill, reason: `entry: score ${req.score.toFixed(1)} ${req.market.setup} (conviction ${(wanted.conviction * 100).toFixed(0)}%)`, context }, tx);
       return p;
     });
     return { entered: true, reason: 'entered', positionId: position.id };

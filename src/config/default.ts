@@ -27,6 +27,12 @@ export const DEFAULT_CONFIG = {
       SMART_MONEY_COPY: true,
       CURVE_SNIPE: true,
     } satisfies Record<StrategyName, boolean>,
+    /**
+     * Conviction sizing: a bare-minimum pass gets `minPositionSol`, a setup
+     * scoring `convictionFullScore`+ with strong price action gets `maxPositionSol`.
+     */
+    convictionSizing: true,
+    convictionFullScore: 90,
   },
 
   entry: {
@@ -43,6 +49,28 @@ export const DEFAULT_CONFIG = {
     minMarketCapUsd: 12_000,
     /** Total fees traders have paid on the token, in SOL (a proxy for real activity). */
     minTotalFeesSol: 1,
+
+    // ---- Price-action gates (read from the trade tape) ----
+    /** Don't chase: skip if price already rose more than this in the last 60s… */
+    maxChange60Pct: 40,
+    /** …or sits this far above its own trend line (a vertical candle, not a trend). */
+    maxExtensionPct: 30,
+    /** Below the all-time high by more than this = a failed launch, not a dip. */
+    maxDrawdownFromAthPct: 45,
+    /** 0-1 bot/wash-trading likelihood above which we walk away. */
+    maxManipulation: 0.6,
+    /** Real demand needs several different wallets buying in the last minute… */
+    minUniqueBuyers60: 4,
+    /** …and a tape that is actually printing. */
+    minTrades60: 5,
+    /**
+     * Expected edge: the distance to the nearest resistance (or, with none above,
+     * a generous default) must be at least this many times the round-trip cost
+     * (two curve fees + two slippages), otherwise the trade just feeds fees.
+     */
+    minEdgeMultiple: 2,
+    /** With no resistance above (price discovery) assume this much room, in %. */
+    openSkyRoomPct: 60,
   },
 
   exit: {
@@ -54,17 +82,48 @@ export const DEFAULT_CONFIG = {
     /** The remaining 40% rides with the trailing stop. */
     trailingStopActivateMultiple: 2,
     trailingStopPct: 30,
+    /**
+     * Adaptive trailing: a strong chart (higher lows, buyers in control) gets the
+     * wide stop so a winner isn't cut on noise; a weak chart gets the tight one.
+     */
+    trailingStopPctStrong: 40,
+    trailingStopPctWeak: 18,
     hardStopLossPct: 40,
+    /** Once up this much, the stop moves to entry + costs so a winner can't turn into a loser. */
+    breakEvenActivateMultiple: 1.5,
+    breakEvenStopMultiple: 1.06,
+    /**
+     * Failing-trade time stop: still at/below `timeStopMaxMultiple` after this many
+     * minutes with no uptrend → cut it and recycle the capital.
+     */
+    timeStopMinutes: {
+      CURVE_SNIPE: 8,
+      MIGRATION_MOMENTUM: 30,
+      SMART_MONEY_COPY: 30,
+    } satisfies Record<StrategyName, number>,
+    timeStopMaxMultiple: 0.97,
+    /** In profit, sellers took over and price is off the peak → bank half. */
+    momentumFade: { minMultiple: 1.25, dropFromPeakPct: 12, sellPct: 50 },
+    /** After being up ≥ minPeakMultiple, a close below the last swing low (by breakPct) = structure broken → exit. */
+    structureStop: { minPeakMultiple: 1.3, breakPct: 3 },
     rugExit: {
       devDumpPct: 10,
+      /** Any dev sell at all counts as a rug signal when they held more than this % of supply. */
+      devAnySellMinHoldingPct: 2,
       onLiquidityRemoved: true,
       holderConcentrationSpikePct: 15,
+      /** Sells ≥ sellSharePct of last-minute volume AND price down ≥ dropPct in that minute. */
+      sellSpike: { sellSharePct: 70, dropPct: 25 },
+      /** A single sell this big relative to curve liquidity is a whale exit. */
+      singleSellLiquidityPct: 15,
     },
     staleMinutes: {
       CURVE_SNIPE: 30,
       MIGRATION_MOMENTUM: 120,
       SMART_MONEY_COPY: 120,
     } satisfies Record<StrategyName, number>,
+    /** Partial sells smaller than this % of the original position aren't worth the fee. */
+    minSellChunkPct: 10,
     dailyLossCircuitBreakerPct: 20,
   },
 
@@ -92,6 +151,34 @@ export const DEFAULT_CONFIG = {
     walletAnalysisMargin: 10,
     /** Evaluations scoring at least this are stored even when skipped ("interesting"). */
     storeAboveScore: 60,
+    /**
+     * When a token passes everything except timing (extended / thin tape), look
+     * again after these delays instead of waiting for the next fixed checkpoint.
+     */
+    recheckDelaysSec: [15, 30, 45],
+    /** Hold off on a BUY while the market regime says so (see regimeAdjustments). */
+    useRegime: true,
+  },
+
+  /**
+   * Learning engine knobs (Phase 7 modules: regime detector, Bayesian pattern
+   * beliefs, daily weight adjuster, missed-opportunity tracker).
+   */
+  learning: {
+    /** Minimum outcomes a pattern needs before its belief moves the score. */
+    beliefMinObservations: 15,
+    /** How far the daily adjuster may move any single weight per day (relative). */
+    maxWeightStepPct: 10,
+    /** Weights never leave this band so one bad day can't zero a feature. */
+    weightFloor: 0.01,
+    weightCeiling: 0.25,
+    /** Minimum resolved outcomes in the lookback window before weights change. */
+    adjusterMinSamples: 40,
+    adjusterLookbackDays: 7,
+    /** An evaluated token that later reached this multiple of its MC at evaluation counts as a "pump". */
+    pumpMultiple: 2,
+    /** …and one that fell to this fraction counts as "died". */
+    deadFraction: 0.4,
   },
 
   /** How the regime detector nudges size and thresholds (Phase 7). */
@@ -103,7 +190,10 @@ export const DEFAULT_CONFIG = {
   } satisfies Record<MarketRegime, { sizeMultiplier: number; scoreThresholdDelta: number }>,
 } as const;
 
-export type BotConfigShape = typeof DEFAULT_CONFIG;
+/** `as const` gives literal types (e.g. `45`); the runtime config and backtest variants need plain numbers. */
+type Widen<T> = T extends number ? number : T extends boolean ? boolean : T extends readonly (infer U)[] ? readonly Widen<U>[] : T extends object ? { -readonly [K in keyof T]: Widen<T[K]> } : T;
+
+export type BotConfigShape = Widen<typeof DEFAULT_CONFIG>;
 
 /** Observation schedule: delay after creation (ms) for each snapshot. */
 export const SNAPSHOT_SCHEDULE: ReadonlyArray<{ interval: SnapshotInterval; delayMs: number }> = [
@@ -141,20 +231,29 @@ export const SAFETY_PENALTIES = {
  * Phase 7's daily adjuster nudges these and stores new versions in WeightSnapshot.
  */
 export const DEFAULT_WEIGHTS = {
-  safety: 0.15,
-  holders: 0.12,
-  buyPressure: 0.1,
-  volume: 0.05,
-  curveVelocity: 0.1,
-  distribution: 0.1,
-  devHolding: 0.06,
-  devBehavior: 0.06,
-  snipers: 0.08,
-  retention: 0.05,
-  creatorLaunches: 0.05,
-  creatorSuccess: 0.03,
-  funderReuse: 0.03,
-  walletAge: 0.02,
+  // Safety + holder base (what the token IS)
+  safety: 0.12,
+  holders: 0.08,
+  buyPressure: 0.06,
+  volume: 0.04,
+  curveVelocity: 0.06,
+  distribution: 0.08,
+  devHolding: 0.05,
+  devBehavior: 0.05,
+  snipers: 0.07,
+  retention: 0.04,
+  // Price action (what the chart is DOING)
+  trend: 0.07,
+  structure: 0.05,
+  momentumQuality: 0.06,
+  buyerQuality: 0.06,
+  // Learned prior from the Bayesian pattern beliefs (0.5 until there's data)
+  patternPrior: 0.03,
+  // Creator history (who is behind it)
+  creatorLaunches: 0.03,
+  creatorSuccess: 0.02,
+  funderReuse: 0.02,
+  walletAge: 0.01,
 } as const;
 
 export type FeatureName = keyof typeof DEFAULT_WEIGHTS;

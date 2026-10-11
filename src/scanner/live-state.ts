@@ -18,6 +18,10 @@
  *   tok:<mint>:hll   HLL    every wallet that ever traded (approximate count)
  *   tok:<mint>:early SET    wallets (not the dev) that bought within ~1s of launch
  *                           — snipers / bundled wallets controlled by the dev
+ *   tok:<mint>:tape  LIST   the last TAPE_MAX_TRADES trades (time, side, size,
+ *                           reserves, wallet) — the "chart" the price-action
+ *                           analyzer reads trend, support/resistance and buyer
+ *                           quality from
  *   tracked          ZSET   mint → creation time (ms), used to rebuild on restart
  */
 import type { Redis } from 'ioredis';
@@ -40,10 +44,49 @@ const key = {
   bal: (mint: string) => `tok:${mint}:bal`,
   hll: (mint: string) => `tok:${mint}:hll`,
   early: (mint: string) => `tok:${mint}:early`,
+  tape: (mint: string) => `tok:${mint}:tape`,
 };
 
 /** Buys within this many seconds of the create are counted as snipes / bundles. */
 const EARLY_WINDOW_SECONDS = 1;
+/** Trades kept per token. Enough for ~10-15 minutes of a busy curve, which is the whole entry window. */
+export const TAPE_MAX_TRADES = 600;
+
+/** One trade on the tape. Price is derived from the reserves AFTER the trade. */
+export interface TapeTrade {
+  tsMs: number;
+  isBuy: boolean;
+  solAmount: number;
+  priceSol: number;
+  user: string;
+}
+
+/** Compact tape line: ts|side|lamports|vSol|vTok|user. */
+function encodeTapeLine(ev: PumpTradeEvent): string {
+  return `${ev.timestamp * 1000}|${ev.isBuy ? 'b' : 's'}|${ev.solAmount}|${ev.virtualSolReserves}|${ev.virtualTokenReserves}|${ev.user}`;
+}
+
+export function decodeTapeLine(line: string): TapeTrade | null {
+  const p = line.split('|');
+  if (p.length < 6) return null;
+  const vSol = BigInt(p[3]!);
+  const vTok = BigInt(p[4]!);
+  return {
+    tsMs: Number(p[0]),
+    isBuy: p[1] === 'b',
+    solAmount: Number(p[2]) / 1e9,
+    priceSol: curvePriceSol(vSol, vTok),
+    user: p[5]!,
+  };
+}
+
+/** Lua: keep the highest price (as a float string) ever seen for a token. */
+const ATH_LUA = `
+local cur = tonumber(redis.call('HGET', KEYS[1], 'ath') or '0')
+local new = tonumber(ARGV[1])
+if new > cur then redis.call('HSET', KEYS[1], 'ath', ARGV[1]) return 1 end
+return 0
+`;
 
 /**
  * Lua script: add `delta` to a wallet's balance, and delete the entry if it
@@ -58,6 +101,7 @@ return v
 
 type RedisWithBalance = Redis & {
   balanceDelta(key: string, wallet: string, delta: string): Promise<number>;
+  athUpdate(key: string, price: string): Promise<number>;
 };
 
 /** Everything the observation logger needs to build a snapshot. */
@@ -82,6 +126,10 @@ export interface LiveTokenView {
   /** Raw tokens the dev bought / sold in total. */
   devBought: bigint;
   devSold: bigint;
+  /** Most recent trades, oldest first (up to TAPE_MAX_TRADES). */
+  tape: TapeTrade[];
+  /** Highest price ever seen (SOL per token). 0 if no trade yet. */
+  athPriceSol: number;
 }
 
 export interface DerivedMetrics {
@@ -107,6 +155,7 @@ export class LiveState {
 
   constructor(redis: Redis) {
     redis.defineCommand('balanceDelta', { numberOfKeys: 1, lua: BALANCE_DELTA_LUA });
+    redis.defineCommand('athUpdate', { numberOfKeys: 1, lua: ATH_LUA });
     this.r = redis as RedisWithBalance;
   }
 
@@ -188,8 +237,14 @@ export class LiveState {
       lastTradeAt: String(ev.timestamp * 1000),
     });
     // ioredis pipelines support custom commands; typed loosely here.
-    (p as unknown as { balanceDelta(k: string, w: string, d: string): void }).balanceDelta(bal, ev.user, delta.toString());
+    const custom = p as unknown as { balanceDelta(k: string, w: string, d: string): void; athUpdate(k: string, price: string): void };
+    custom.balanceDelta(bal, ev.user, delta.toString());
+    custom.athUpdate(live, String(curvePriceSol(ev.virtualSolReserves, ev.virtualTokenReserves)));
     p.pfadd(hll, ev.user);
+    const tape = key.tape(ev.mint);
+    p.rpush(tape, encodeTapeLine(ev));
+    p.ltrim(tape, -TAPE_MAX_TRADES, -1);
+    p.expire(tape, LIVE_STATE_TTL_SECONDS);
     if (t.creator && ev.user === t.creator) {
       p.hincrby(live, ev.isBuy ? 'devBought' : 'devSold', ev.tokenAmount.toString());
     } else if (ev.isBuy && ev.timestamp - t.createdSec <= EARLY_WINDOW_SECONDS) {
@@ -211,16 +266,18 @@ export class LiveState {
 
   /** Read everything about one token. Returns null if its state has expired. */
   async read(mint: string): Promise<LiveTokenView | null> {
-    const [liveRes, balRes, hllRes, earlyRes] = (await this.r
+    const [liveRes, balRes, hllRes, earlyRes, tapeRes] = (await this.r
       .pipeline()
       .hgetall(key.live(mint))
       .hgetall(key.bal(mint))
       .pfcount(key.hll(mint))
       .smembers(key.early(mint))
+      .lrange(key.tape(mint), 0, -1)
       .exec()) as [
       [Error | null, Record<string, string>],
       [Error | null, Record<string, string>],
       [Error | null, number],
+      [Error | null, string[]],
       [Error | null, string[]],
     ];
 
@@ -229,6 +286,11 @@ export class LiveState {
 
     const balances = new Map<string, bigint>();
     for (const [wallet, amount] of Object.entries(balRes[1] ?? {})) balances.set(wallet, BigInt(amount));
+    const tape: TapeTrade[] = [];
+    for (const line of tapeRes[1] ?? []) {
+      const t = decodeTapeLine(line);
+      if (t) tape.push(t);
+    }
 
     const big = (v: string | undefined, d = 0n) => (v ? BigInt(v) : d);
     return {
@@ -255,13 +317,15 @@ export class LiveState {
       earlyBuyers: earlyRes[1] ?? [],
       devBought: big(h.devBought),
       devSold: big(h.devSold),
+      tape,
+      athPriceSol: Number(h.ath ?? 0) || 0,
     };
   }
 
   /** Stop tracking a token and free its Redis memory. */
   async forget(mint: string): Promise<void> {
     this.tracked.delete(mint);
-    await this.r.multi().del(key.live(mint), key.bal(mint), key.hll(mint), key.early(mint)).zrem(TRACKED_KEY, mint).exec();
+    await this.r.multi().del(key.live(mint), key.bal(mint), key.hll(mint), key.early(mint), key.tape(mint)).zrem(TRACKED_KEY, mint).exec();
   }
 }
 
