@@ -33,6 +33,8 @@ import { controlsRoutes } from './routes/controls';
 import { swingRoutes } from './routes/swing';
 import { registerWebSocket } from './websocket';
 import { healthSnapshot, requestUpdate, updateStatus } from '../lib/bot-health';
+import { learningSince } from '../learner/labels';
+import { redis } from '../lib/redis';
 
 const log = moduleLogger('api');
 
@@ -78,6 +80,8 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     secured.post('/api/autopsy/run', async () => (await deps.autopsy?.run()) ?? null);
     // Best hours / days to trade (market motion + our results) and what that means right now.
     secured.get('/api/timing', async () => deps.timing?.snapshot() ?? null);
+    // Shadow trades: what the coins it didn't buy would have done (since the last paper reset).
+    secured.get('/api/shadow', async () => (deps.shadow ? deps.shadow.report((await learningSince(redis))?.getTime() ?? 0) : null));
     // AI coach: insights + rules under test / live, spend; POST = review now.
     secured.get('/api/ai-coach', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');

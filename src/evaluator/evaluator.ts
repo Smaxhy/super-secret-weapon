@@ -20,6 +20,7 @@ import { priceShape, staircase } from './price-shape';
 import { aiRuleVerdict, flattenFeatures } from '../learner/ai-coach';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { timingNow } from '../learner/timing';
+import type { ShadowKind, ShadowTrades } from '../learner/shadow-trades';
 import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
 import { Worker, type Job } from 'bullmq';
 import type { Redis } from 'ioredis';
@@ -89,6 +90,8 @@ export class Evaluator {
   trending: TrendingHub | null = null;
   /** Copycat ("vamp") coins of coins we traded or bigger coins → no buy (set in index.ts). */
   vamp: VampGuard | null = null;
+  /** Pretend trades on coins it didn't buy — faster learning (set in index.ts). */
+  shadow: ShadowTrades | null = null;
 
   constructor(
     private readonly redis: Redis,
@@ -570,6 +573,31 @@ export class Evaluator {
       if ((decision === 'BUY' && !explore) || near) this.lab.onSignal({ mint, symbol: token.symbol, strategy: STRATEGY.name, kind: decision === 'BUY' && !explore ? 'buy' : 'near', priceSol: market.raw.priceSol, onAmm: market.raw.onAmm });
     }
 
+    // Shadow trade: a pretend trade on a coin it doesn't buy, so the learners see what skipping cost.
+    const shadowOf = (kind: ShadowKind, why: string) =>
+      this.shadow?.onSignal({
+        mint,
+        symbol: token.symbol,
+        strategy: STRATEGY.name,
+        kind,
+        why,
+        score: result.score,
+        bar: threshold,
+        priceSol: market.raw.priceSol,
+        onAmm: market.raw.onAmm,
+        mcUsd: market.raw.marketCapUsd ?? null,
+        ageMin: market.raw.ageSec / 60,
+        curvePct: market.raw.complete || market.raw.onAmm ? 'migrated' : market.raw.bondingCurvePct,
+        kols: kolsIn,
+        run3m: shape?.run3m ?? null,
+        offHigh10m: shape?.offHigh10m ?? null,
+        flat: aiFlat,
+      });
+    if (decision === 'SKIP' && !reasons.some((r) => r.startsWith('waiting for a dip'))) {
+      if (ruleFails.length === 0) shadowOf('near', reasons[0] ?? 'score under the bar');
+      else shadowOf('skipped', ruleFails[0]!);
+    }
+
     if (decision === 'BUY') noteSignal();
     else noteSkip(STRATEGY.name, ruleFails[0] ?? (result.score < threshold ? 'score under the bar' : reasons[0] ?? 'skipped'));
     if (decision === 'BUY') {
@@ -604,6 +632,7 @@ export class Evaluator {
         explain: (sizeSol) =>
           explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, chartNote: chart ? `${chart.summary}${dipEntry ? ` — bought the dip: ${job.data.dipWhy ?? ''}` : ''}` : null, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: explore ? `learning trade ×${ex.sizeMultiplier} (score just under the bar)` : conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...(explore ? [`LEARNING TRADE: score ${result.score.toFixed(1)} is just under the bar ${threshold.toFixed(0)} — bought small so the bot learns whether these near-misses pay`] : []), ...(newPair?.notes ?? []), ...taBonus.notes.map((n) => `chart setup: ${n}`), ...(trend?.notes ?? []), ...aiVerdict.notes, ...(xv?.notes ?? []).map((n) => `X: ${n}`), ...kolBonus.notes, ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
       });
+      if (!res.entered && !/^(already traded|still holding)/.test(res.reason)) shadowOf('refused', res.reason);
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.
       if (!swing && (res.entered || res.reason === 'already traded this token')) await markDone();
     } else if (result.score >= cfg.scoring.storeAboveScore) {

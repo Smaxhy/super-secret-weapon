@@ -15,6 +15,7 @@ import type { SwingUniverse } from '../scanner/swing-universe';
 import type { SwingTrader } from '../executor/swing-trader';
 import type { LossAutopsy } from '../learner/loss-autopsy';
 import type { TimingLearner } from '../learner/timing';
+import type { ShadowTrades } from '../learner/shadow-trades';
 import type { AiCoach } from '../learner/ai-coach';
 
 export interface ApiDeps {
@@ -35,6 +36,7 @@ export interface ApiDeps {
   autopsy?: LossAutopsy | null;
   aiCoach?: AiCoach | null;
   timing?: TimingLearner | null;
+  shadow?: ShadowTrades | null;
 }
 
 /** Classify a token for the live feed colour code. */

@@ -25,6 +25,7 @@ import { TokenDetail } from './pages/TokenDetail';
 import { Wallets } from './pages/Wallets';
 import { Controls } from './pages/Controls';
 import { Strategies } from './pages/Strategies';
+import { Shadow } from './pages/Shadow';
 
 const NAV = [
   { to: '/', label: 'Overview', icon: '◎' },
@@ -35,6 +36,7 @@ const NAV = [
   { to: '/strategies', label: 'Strategies', icon: '⌁' },
   { to: '/wallets', label: 'Wallets', icon: '◈' },
   { to: '/learning', label: 'Learning', icon: '✦' },
+  { to: '/shadow', label: 'Shadow trades', icon: '◌' },
   { to: '/scanner', label: 'Scanner', icon: '◉' },
   { to: '/controls', label: 'Controls', icon: '⚙' },
 ];
@@ -148,6 +150,7 @@ function Shell() {
             <Route path="/history" element={<History />} />
             <Route path="/performance" element={<Performance />} />
             <Route path="/strategies" element={<Strategies />} />
+            <Route path="/shadow" element={<Shadow />} />
             <Route path="/wallets" element={<Wallets />} />
             <Route path="/learning" element={<Learning />} />
             <Route path="/controls" element={<Controls />} />

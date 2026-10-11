@@ -338,6 +338,17 @@ smart money → learning engine → ML → social). See README.md.
   (top-ups since the last reset; reset sets 0): balance = start + addedSol − buys + sells; POST `/api/controls/add-funds`
   {sol 0.01–1000} (`addPaperFunds`, event `paper_topup`); % / drawdown use start + added (a top-up is capital, not profit).
   Overview profit card ⋯ menu → "+ Add paper SOL…" (`components/AddFunds.tsx`).
+- **v9.14: shadow trades + gRPC stream (off)** (owner: "speed up the learning"). `src/learner/shadow-trades.ts`
+  (`shadow` config): pretend trades (VirtualBook, live exits + costs, no money) on coins it didn't buy — `refused`
+  (trader said no), `near` (rules pass, score under the bar), `skipped` (a rule failed, score within 20 of the bar;
+  only while the book is <80% full); once per coin + strategy per 30 min, ≤250 open, Redis `shadow:res` (3000).
+  Refused + near (`wouldHaveTaken`) count at weight 0.5 in the loss autopsy bands + tuning (`shadowSource`,
+  `shadowAsClosed`; headline numbers stay real), best-times results, and AI rule forward tests (+ skipped by an AI
+  rule); AI input gets `shadowTrades` (skippedByRule = what each filter costs). GET `/api/shadow`; dashboard page
+  **Shadow trades** (`pages/Shadow.tsx`, sidebar / phone More menu). **gRPC**: `src/scanner/grpc-listener.ts`
+  (@triton-one/yellowstone-grpc 7.0.1, native, loaded on demand) — switch on with DATA_SOURCE=grpc + GRPC_ENDPOINT
+  (https://…:443) + GRPC_TOKEN in the VPS .env; PumpPortal still gives launches; the free public stream is paused while
+  gRPC is up and comes back after 10 s down. Owner plans Chainstack (Growth plan + $49 Yellowstone add-on).
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

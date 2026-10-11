@@ -22,6 +22,7 @@ import { prisma } from '../lib/prisma';
 import { moduleLogger } from '../lib/logger';
 import { learningSince } from './labels';
 import { DAY_NAMES, type TimingProfile } from './timing';
+import { wouldHaveTaken, type ShadowReport, type ShadowResult } from './shadow-trades';
 import type { Autopsy } from './loss-autopsy';
 import { readHistory } from '../executor/position-history';
 import { afterEntry } from '../evaluator/price-shape';
@@ -213,7 +214,7 @@ const SYSTEM = `You are the trading coach of an autonomous Solana pump.fun paper
 
 You get its recent closed trades: the measurable picture at entry (flattened feature names such as market.top10HolderPct or crowd.paperHandsPct), why it bought, how the trade ended, the peak it reached, and the trade coach's lesson. You also get the rules already being tested and how they are doing.
 
-"shape.*" features describe the price action in the 10 minutes BEFORE the buy (run1m/run3m/run10m = % change, offHigh10m = % under the 10-min high, spikes10m/dumps10m = 15-second candles that moved 15%+, greenStreak, wickTopPct = upper wicks = selling into the push, volAccel, buyShare2m). "afterBuy" is what the price did after the buy as multiples of the entry price: min1m (lowest in the first minute), max5m/min5m, peak and secToPeak — e.g. min1m 0.85 with peak 1.0 means it bought the exact top. "whatKeepsGoingWrong" is the bot's own statistical report on its losses. "bestTimesUtc" is market activity (1 = an average hour) and our results per UTC hour / weekday; "entry.hourUtc" / "entry.dowUtc" (0 = Sunday) let a rule target times.
+"shape.*" features describe the price action in the 10 minutes BEFORE the buy (run1m/run3m/run10m = % change, offHigh10m = % under the 10-min high, spikes10m/dumps10m = 15-second candles that moved 15%+, greenStreak, wickTopPct = upper wicks = selling into the push, volAccel, buyShare2m). "afterBuy" is what the price did after the buy as multiples of the entry price: min1m (lowest in the first minute), max5m/min5m, peak and secToPeak — e.g. min1m 0.85 with peak 1.0 means it bought the exact top. "whatKeepsGoingWrong" is the bot's own statistical report on its losses. "shadowTrades" are pretend trades on coins it did NOT buy (refused = it wanted to but had no room / a gate said no; near = just under the score bar; skipped = a rule said no) — skippedByRule shows what each filter costs or saves; AI rules are also forward-tested on these. "bestTimesUtc" is market activity (1 = an average hour) and our results per UTC hour / weekday; "entry.hourUtc" / "entry.dowUtc" (0 = Sunday) let a rule target times.
 
 Focus hardest on ENTRIES: when in a move does it buy — after a vertical spike, at the top of a green streak, on a pullback, into fading volume — and which entries worked. Also look for trends across trades (time of day, kinds of coins, crowd behaviour) and repeated spike patterns.
 
@@ -231,6 +232,9 @@ export class AiCoach {
   lastError: string | null = null;
   /** The loss autopsy's latest report (set in index.ts) — "what keeps going wrong" goes to the AI too. */
   autopsySource: (() => Autopsy | null) | null = null;
+  /** Shadow trades (src/learner/shadow-trades.ts) — set in index.ts. */
+  shadowSource: ((sinceMs: number) => Promise<ShadowResult[]>) | null = null;
+  shadowReport: ((sinceMs: number) => Promise<ShadowReport>) | null = null;
   /** Best hours / days to trade (src/learner/timing.ts) — set in index.ts. */
   timingSource: (() => TimingProfile | null) | null = null;
 
@@ -350,7 +354,12 @@ export class AiCoach {
     try {
       const rules = await this.rules();
       if (!rules.length) return setAiRules([]);
-      const trades = await this.loadTrades();
+      const trades: CoachTrade[] = await this.loadTrades();
+      // Shadow trades: coins it would have bought (refused / just under the bar) + coins an AI rule kept it out
+      // of — what those did is exactly the forward evidence a rule needs (faster than waiting for real trades).
+      const since = (await learningSince(this.redis))?.getTime() ?? 0;
+      const sh = this.shadowSource ? await this.shadowSource(Math.max(since, Date.now() - 14 * 86_400_000)).catch(() => []) : [];
+      for (const x of sh) if (wouldHaveTaken(x) || x.why.startsWith('AI rule')) trades.push({ strategy: x.strategy, pnlPct: x.pnlPct, openedAtMs: x.openedAtMs, flat: x.flat });
       const c = this.cfg();
       const p = this.redis.pipeline();
       for (const r of rules) {
@@ -408,7 +417,17 @@ export class AiCoach {
       const after = await Promise.all(sample.map(async (t) => afterEntry(await readHistory(t.id).catch(() => []), t.entryPriceSol, t.openedAtMs)));
       const au = this.autopsySource?.() ?? null;
       const tm = this.timingSource?.() ?? null;
+      const shr = this.shadowReport ? await this.shadowReport((await learningSince(this.redis))?.getTime() ?? 0).catch(() => null) : null;
       const input = {
+        shadowTrades: shr && shr.total
+          ? {
+              note: 'pretend trades on coins the bot did NOT buy, followed with its own exits',
+              byKind: shr.byKind,
+              skippedByRule: shr.byRule.slice(0, 10).map((g) => ({ rule: g.key, n: g.n, avgPct: g.avgPct, went2xPct: g.went2xPct })),
+              refusedBecause: shr.byRefusal.slice(0, 6).map((g) => ({ why: g.key, n: g.n, avgPct: g.avgPct })),
+              findings: shr.findings,
+            }
+          : null,
         bestTimesUtc: tm
           ? {
               busiestHours: tm.busiestHours,

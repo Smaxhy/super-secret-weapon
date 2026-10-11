@@ -37,6 +37,7 @@
     "@prisma/client": "6.19.3",
     "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.99.0",
+    "@triton-one/yellowstone-grpc": "7.0.1",
     "bs58": "^6.0.0",
     "bullmq": "^6.3.12",
     "dotenv": "^16.6.1",

@@ -621,6 +621,14 @@ export const DEFAULT_CONFIG = {
    * through at the minimum size so it can prove itself again.
    */
   /**
+   * Shadow trades (src/learner/shadow-trades.ts; owner: "speed up the learning"): coins the bot didn't buy
+   * (refused by the trader, just under the bar, or skipped by a rule with a score within skipWithinPoints)
+   * are followed with the live exits — no money. Refused + near ones count for the autopsy / best times /
+   * AI coach at `weight` of a real trade; skipped ones show what each filter costs.
+   */
+  shadow: { enabled: true as boolean, maxOpen: 250, cooldownMin: 30, keep: 3000, skipWithinPoints: 20, weight: 0.5 },
+
+  /**
    * Best times to trade (src/learner/timing.ts; owner: "check which hours / days are best, most motion"):
    * market activity per UTC hour + weekday (recorded every minute) and our own results per hour / day
    * → size ×0.75–1.25 and buy bar −3…+4 for the current hour. Never blocks trading by itself.

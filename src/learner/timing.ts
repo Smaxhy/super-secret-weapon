@@ -82,7 +82,8 @@ const r2 = (x: number) => Math.round(x * 100) / 100;
 /** Pure: build the profile from daily counters + closed trades. */
 export function buildProfile(
   days: ReadonlyArray<{ date: string; counts: DayCounts }>,
-  trades: ReadonlyArray<{ openedAtMs: number; pnlPct: number }>,
+  /** Closed trades; `w` = weight (shadow trades count less than real ones, default 1). */
+  trades: ReadonlyArray<{ openedAtMs: number; pnlPct: number; w?: number }>,
   c: Pick<TimingConfig, 'minDays' | 'minTrades' | 'shrinkTrades'>,
   now = Date.now(),
 ): TimingProfile {
@@ -112,21 +113,25 @@ export function buildProfile(
   const avgTpm = allM > 0 ? allT / allM : null;
 
   // Results per slot.
-  const all = trades.filter((t) => Number.isFinite(t.pnlPct));
-  const overallAvg = all.length ? all.reduce((s, t) => s + t.pnlPct, 0) / all.length : null;
+  const all = trades.filter((t) => Number.isFinite(t.pnlPct)).map((t) => ({ ...t, w: t.w ?? 1 }));
+  const wsum = (xs: ReadonlyArray<{ w: number }>) => xs.reduce((s, x) => s + x.w, 0);
+  const wavg = (xs: ReadonlyArray<{ p: number; w: number }>) => (wsum(xs) > 0 ? xs.reduce((s, x) => s + x.p * x.w, 0) / wsum(xs) : null);
+  const overallAvg = wavg(all.map((t) => ({ p: t.pnlPct, w: t.w })));
   const results = (pick: (d: Date) => number, n: number) => {
-    const out = Array.from({ length: n }, () => [] as number[]);
-    for (const t of all) out[pick(new Date(t.openedAtMs))]!.push(t.pnlPct);
+    const out = Array.from({ length: n }, () => [] as Array<{ p: number; w: number }>);
+    for (const t of all) out[pick(new Date(t.openedAtMs))]!.push({ p: t.pnlPct, w: t.w });
     return out;
   };
   const byHour = results((d) => d.getUTCHours(), 24);
   const byDay = results((d) => d.getUTCDay(), 7);
 
-  const slot = (a: (typeof hourAgg)[number], res: number[], minDays: number): SlotStats => {
+  const slot = (a: (typeof hourAgg)[number], res: Array<{ p: number; w: number }>, minDays: number): SlotStats => {
     const enough = a.days.size >= minDays && a.m > 0;
     const tpm = enough ? a.t / a.m : null;
-    const avg = res.length ? res.reduce((s, x) => s + x, 0) / res.length : null;
-    const edge = avg !== null && overallAvg !== null && res.length >= c.minTrades ? ((avg - overallAvg) * res.length) / (res.length + c.shrinkTrades) : 0;
+    const avg = wavg(res);
+    // Effective number of trades (a half-weight shadow trade counts half).
+    const nEff = wsum(res);
+    const edge = avg !== null && overallAvg !== null && nEff >= c.minTrades ? ((avg - overallAvg) * nEff) / (nEff + c.shrinkTrades) : 0;
     return {
       tradesPerMin: tpm === null ? null : r1(tpm),
       launchesPerMin: enough ? r2(a.l / a.m) : null,
@@ -135,7 +140,7 @@ export function buildProfile(
       days: a.days.size,
       trades: res.length,
       avgPct: avg === null ? null : r1(avg),
-      winRatePct: res.length ? Math.round((res.filter((x) => x > 0).length / res.length) * 100) : null,
+      winRatePct: nEff > 0 ? Math.round((wsum(res.filter((x) => x.p > 0)) / nEff) * 100) : null,
       edgePct: r1(edge),
     };
   };
@@ -157,7 +162,7 @@ export function buildProfile(
       tradesPerMin: avgTpm === null ? null : r1(avgTpm),
       trades: all.length,
       avgPct: overallAvg === null ? null : r1(overallAvg),
-      winRatePct: all.length ? Math.round((all.filter((t) => t.pnlPct > 0).length / all.length) * 100) : null,
+      winRatePct: wsum(all) > 0 ? Math.round((wsum(all.filter((t) => t.pnlPct > 0)) / wsum(all)) * 100) : null,
       daysRecorded: days.filter((d) => Object.values(d.counts).some((v) => v.m > 0)).length,
     },
     busiestHours: rank(hours, (s) => s.activity, 4),
@@ -209,6 +214,8 @@ const dayKey = (ms: number) => `timing:d:${new Date(ms).toISOString().slice(0, 1
 
 export class TimingLearner {
   private timer: NodeJS.Timeout | null = null;
+  /** Shadow trades the bot would have taken, with their weight (set in index.ts). */
+  shadowSource: ((sinceMs: number) => Promise<Array<{ openedAtMs: number; pnlPct: number; w: number }>>) | null = null;
 
   constructor(
     private readonly redis: Redis,
@@ -255,7 +262,8 @@ export class TimingLearner {
       where: { mode: 'PAPER', status: 'CLOSED', closedAt: { gte: new Date(now - 30 * 86_400_000) } },
       select: { openedAt: true, sizeSol: true, realizedPnlSol: true },
     });
-    const trades = rows.filter((r) => r.sizeSol > 0).map((r) => ({ openedAtMs: r.openedAt.getTime(), pnlPct: (r.realizedPnlSol / r.sizeSol) * 100 }));
+    const trades: Array<{ openedAtMs: number; pnlPct: number; w?: number }> = rows.filter((r) => r.sizeSol > 0).map((r) => ({ openedAtMs: r.openedAt.getTime(), pnlPct: (r.realizedPnlSol / r.sizeSol) * 100 }));
+    if (this.shadowSource) trades.push(...(await this.shadowSource(now - 30 * 86_400_000).catch(() => [])));
     profile = buildProfile(days, trades, c, now);
     await this.redis.set('timing:last', JSON.stringify(profile), 'EX', 7 * 86_400);
     return profile;

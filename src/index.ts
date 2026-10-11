@@ -19,6 +19,7 @@ import { startCalibration, stopCalibration } from './learner/score-calibration';
 import { screenEntry } from './executor/rug-screen';
 import { RuggerMemory } from './executor/rug-watch';
 import { TimingLearner } from './learner/timing';
+import { shadowAsClosed, ShadowTrades, wouldHaveTaken } from './learner/shadow-trades';
 import { LossAutopsy } from './learner/loss-autopsy';
 import { MigratedScanner } from './scanner/migrated-scanner';
 import { RunningCoins } from './scanner/running-coins';
@@ -63,6 +64,7 @@ import { closeQueues } from './lib/queues';
 import { closeRedis, redis } from './lib/redis';
 import { rpcLimiter } from './lib/solana';
 import { LiveState } from './scanner/live-state';
+import { GrpcListener } from './scanner/grpc-listener';
 import { PumpFunListener, type ListenerStats } from './scanner/pumpfun-listener';
 import { PumpPortalListener } from './scanner/pumpportal-listener';
 import { WhaleTracker } from './scanner/whale-tracker';
@@ -214,6 +216,17 @@ async function main(): Promise<void> {
   evaluator.lab = lab;
   registry.onTradeApplied.push((mint) => lab.onTrade(mint));
   lab.start();
+  // Shadow trades: pretend trades on coins it didn't buy (refused / just under the bar / skipped by a rule).
+  const shadow = new ShadowTrades(redis, crowd);
+  evaluator.shadow = shadow;
+  registry.onTradeApplied.push((mint) => shadow.onTrade(mint));
+  shadow.start();
+  // Shadow trades the bot would have taken count for the autopsy, the best times and the AI coach too.
+  const shadowCfg = () => getConfig().shadow ?? DEFAULT_CONFIG.shadow;
+  autopsy.shadowSource = async (since) => (await shadow.results(since)).filter(wouldHaveTaken).map((r) => shadowAsClosed(r, shadowCfg().weight, getConfig().trading.minPositionSol));
+  timing.shadowSource = async (since) => (await shadow.results(since)).filter(wouldHaveTaken).map((r) => ({ openedAtMs: r.openedAtMs, pnlPct: r.pnlPct, w: shadowCfg().weight }));
+  aiCoach.shadowSource = async (since) => shadow.results(since);
+  aiCoach.shadowReport = async (since) => shadow.report(since);
   // Chart strategies (Fibonacci, EMA, breakouts, divergences…) forward-tested live vs random entries;
   // the proven ones get a say in real buys.
   const taLab = new TaLab(redis, crowd, liveState);
@@ -324,6 +337,7 @@ async function main(): Promise<void> {
   const sources: Array<{ stop(): Promise<void> }> = [];
   let portalRef: PumpPortalListener | null = null;
   let logsRef: PumpFunListener | null = null;
+  let grpcRef: GrpcListener | null = null;
 
   const startPortal = (followTrades: boolean) => {
     const portal = new PumpPortalListener(env.PUMPPORTAL_API_KEY ? `wss://pumpportal.fun/api/data?api-key=${env.PUMPPORTAL_API_KEY}` : undefined);
@@ -373,6 +387,38 @@ async function main(): Promise<void> {
     startPortal(false);
     startLogs(env.TRADES_WS_URL, false);
     log.info({ trades: env.TRADES_WS_URL.replace(/api-key=[^&]+/, 'api-key=***') }, 'data source: hybrid (PumpPortal launches + free trade stream)');
+  } else if (env.DATA_SOURCE === 'grpc' && env.GRPC_ENDPOINT) {
+    // Paid Yellowstone gRPC stream (Chainstack / Shyft / Helius LaserStream …) for trades; PumpPortal for launches.
+    // The free public stream runs as a backup only while the gRPC stream is down.
+    startPortal(false);
+    startLogs(env.TRADES_WS_URL, false);
+    const g = new GrpcListener(env.GRPC_ENDPOINT, env.GRPC_TOKEN);
+    g.on('event', registry.handle);
+    g.on('event', whales.onEvent);
+    let backupTimer: NodeJS.Timeout | null = null;
+    g.on('connected', () => {
+      if (backupTimer) clearTimeout(backupTimer);
+      backupTimer = null;
+      void logsRef?.stop();
+      log.info('gRPC trade stream up — free backup stream paused');
+    });
+    g.on('disconnected', () => {
+      backupTimer ??= setTimeout(() => {
+        backupTimer = null;
+        if (!g.connected) {
+          logsRef?.start();
+          log.warn('gRPC trade stream down for 10s — free backup stream on');
+        }
+      }, 10_000);
+    });
+    g.start();
+    sources.push(g);
+    grpcRef = g;
+    log.info({ endpoint: env.GRPC_ENDPOINT.replace(/\/\/[^@/]*@/, '//***@') }, 'data source: gRPC (PumpPortal launches + paid Yellowstone trade stream, free stream as backup)');
+  } else if (env.DATA_SOURCE === 'grpc') {
+    log.error('DATA_SOURCE=grpc but GRPC_ENDPOINT is empty — using the free trade stream instead');
+    startPortal(false);
+    startLogs(env.TRADES_WS_URL, false);
   } else if (env.DATA_SOURCE === 'pumpportal') {
     startPortal(true);
     log.info('data source: PumpPortal only');
@@ -385,7 +431,13 @@ async function main(): Promise<void> {
 
   /** Combined view of all sources for stats + dashboard. */
   const statsOf = (): ListenerStats | null => {
-    const a = (logsRef as PumpFunListener | null)?.stats;
+    const l = (logsRef as PumpFunListener | null)?.stats;
+    const g = (grpcRef as GrpcListener | null)?.stats;
+    // gRPC + its backup: counters add up (each only counts what it delivered), connected if either is.
+    const a: ListenerStats | undefined =
+      l && g
+        ? { ...g, connected: g.connected || l.connected, reconnects: g.reconnects + l.reconnects, notifications: g.notifications + l.notifications, creates: g.creates + l.creates, trades: g.trades + l.trades, completes: g.completes + l.completes, ammPools: g.ammPools + l.ammPools, ammTrades: g.ammTrades + l.ammTrades, decodeErrors: g.decodeErrors + l.decodeErrors, truncatedLogs: g.truncatedLogs + l.truncatedLogs, lastEventAt: Math.max(g.lastEventAt ?? 0, l.lastEventAt ?? 0) || null }
+        : (g ?? l);
     const b = (portalRef as PumpPortalListener | null)?.stats;
     if (!a && !b) return null;
     if (!a || !b) return (a ?? b)!;
@@ -410,7 +462,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -490,6 +542,7 @@ async function main(): Promise<void> {
       walletPnl.stop();
       dips.stop();
       lab.stop();
+      shadow.stop();
       taLab.stop();
       trendFeeds.stop();
       trending.stop();

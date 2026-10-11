@@ -47,8 +47,14 @@ const EnvSchema = z.object({
    *                          trades. Free, no Helius credits.
    *   pumpportal           — PumpPortal only (its per-token trade feed)
    *   helius               — logsSubscribe on your Helius key (uses LOTS of credits)
+   *   grpc                 — PumpPortal for launches + a PAID Yellowstone gRPC stream for trades
+   *                          (GRPC_ENDPOINT + GRPC_TOKEN; the free stream stays on as a backup)
    */
-  DATA_SOURCE: z.enum(['hybrid', 'pumpportal', 'helius']).default('hybrid'),
+  DATA_SOURCE: z.enum(['hybrid', 'pumpportal', 'helius', 'grpc']).default('hybrid'),
+  /** Yellowstone gRPC endpoint incl. https:// and port, e.g. https://yellowstone-solana-mainnet.core.chainstack.com:443 */
+  GRPC_ENDPOINT: optionalString,
+  /** Its x-token (Chainstack: the node's auth token). */
+  GRPC_TOKEN: optionalString,
   /** Free WebSocket for the trade stream in hybrid mode (Solana's public node by default). */
   TRADES_WS_URL: z.string().default('wss://api.mainnet-beta.solana.com'),
   PUMPPORTAL_API_KEY: optionalString,

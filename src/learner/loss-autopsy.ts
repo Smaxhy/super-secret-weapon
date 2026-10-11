@@ -65,6 +65,8 @@ export interface ClosedTrade extends EntryShape {
   peakMultiple: number;
   heldMin: number;
   explore: boolean;
+  /** A shadow trade (a coin it wanted but didn't buy, src/learner/shadow-trades.ts) — counts for bands + tuning only. */
+  shadow?: boolean;
 }
 
 type Dim = 'mc' | 'age' | 'curve' | 'score' | 'hour' | 'day' | 'kols' | 'chase' | 'entry';
@@ -224,8 +226,13 @@ export interface Autopsy {
 
 export const segmentKey = (strategy: string, dim: string, b: string) => `${strategy}|${dim}|${b}`;
 
-/** Pure: the full autopsy. */
-export function runAutopsy(trades: readonly ClosedTrade[], c: AutopsyConfig, now = Date.now()): Autopsy {
+/**
+ * Pure: the full autopsy. `shadow` = pretend trades on coins it wanted but didn't buy: they join the bands
+ * and the strategy tuning (so a losing kind of trade is found sooner), never the headline numbers.
+ */
+export function runAutopsy(realTrades: readonly ClosedTrade[], c: AutopsyConfig, now = Date.now(), shadow: readonly ClosedTrade[] = []): Autopsy {
+  const trades = realTrades;
+  const pool = shadow.length ? [...realTrades, ...shadow] : realTrades;
   const all = record(trades);
   const wins = trades.filter((t) => t.pnlSol > 0);
   const losses = trades.filter((t) => t.pnlSol <= 0);
@@ -249,10 +256,11 @@ export function runAutopsy(trades: readonly ClosedTrade[], c: AutopsyConfig, now
   const neverUp = losses.filter((t) => t.peakMultiple < 1.05).length;
   const gaveBack = losses.filter((t) => t.peakMultiple >= 1.15).length;
 
-  // Bands per strategy × dimension.
+  // Bands per strategy × dimension (real + shadow trades).
   const segs: Segment[] = [];
-  for (const s of strategies) {
-    const ts = trades.filter((t) => t.strategy === s);
+  const poolStrategies = [...new Set(pool.map((t) => t.strategy))];
+  for (const s of poolStrategies) {
+    const ts = pool.filter((t) => t.strategy === s);
     for (const d of DIMS) {
       const groups = new Map<string, ClosedTrade[]>();
       for (const t of ts) {
@@ -265,7 +273,7 @@ export function runAutopsy(trades: readonly ClosedTrade[], c: AutopsyConfig, now
   const enough = segs.filter((x) => x.n >= c.minTrades);
   // A band that is (almost) the whole strategy — e.g. "migrated" for migration trades — is not a KIND of
   // trade to avoid, it is the strategy itself: that is the strategy tuning's job, never a block.
-  const stratN = new Map(strategies.map((st) => [st, trades.filter((t) => t.strategy === st).length]));
+  const stratN = new Map(poolStrategies.map((st) => [st, pool.filter((t) => t.strategy === st).length]));
   const blocked = enough.filter((x) => x.n < 0.9 * (stratN.get(x.strategy) ?? 0) && x.avgPct + x.sePct < c.maxAvgPct && x.pnlSol <= -c.minLossSol).sort((a, b) => a.pnlSol - b.pnlSol);
   const worst = [...enough].sort((a, b) => a.pnlSol - b.pnlSol).slice(0, 8);
   const best = [...enough].filter((x) => x.pnlSol > 0).sort((a, b) => b.pnlSol - a.pnlSol).slice(0, 5);
@@ -293,7 +301,8 @@ export function runAutopsy(trades: readonly ClosedTrade[], c: AutopsyConfig, now
   if (learning.n >= 10 && learning.avgPct < all.avgPct - 3) findings.push(`Learning trades (just under the bar) average ${learning.avgPct}% vs ${all.avgPct}% overall — the score bar is doing its job.`);
   for (const b of blocked.slice(0, 5)) findings.push(`${(c.blockMode ?? 'small') === 'small' ? 'SMALLEST SIZE ONLY' : 'BLOCKED'}: ${b.strategy} with ${b.band} — ${b.n} trades, ${b.winRatePct}% wins, avg ${b.avgPct}%, ${b.pnlSol} SOL.`);
 
-  const tuning = tuneStrategies(trades, c.minTrades);
+  const tuning = tuneStrategies(pool, c.minTrades);
+  if (shadow.length) findings.push(`${shadow.length} shadow trades (coins it wanted but didn't buy) are counted in the kinds of trades and the tuning, at half weight in SOL.`);
   for (const t of tuning) if (t.why) findings.push(`ADJUSTED ${t.strategy}: ${t.why}`);
 
   return {
@@ -332,6 +341,8 @@ export class LossAutopsy {
   private timer: NodeJS.Timeout | null = null;
   private last: Autopsy | null = null;
   private probes = 0;
+  /** Shadow trades as closed trades (set in index.ts). */
+  shadowSource: ((sinceMs: number) => Promise<ClosedTrade[]>) | null = null;
 
   constructor(
     private readonly redis: Redis,
@@ -416,7 +427,8 @@ export class LossAutopsy {
           explore: ec.explore === true,
         };
       });
-      const a = runAutopsy(trades, c, now);
+      const sh = this.shadowSource ? await this.shadowSource(since.getTime()).catch(() => []) : [];
+      const a = runAutopsy(trades, c, now, sh);
       this.last = a;
       setAutopsyTunes(a.tuning);
       await this.redis.set(LAST, JSON.stringify(a), 'EX', 7 * 86_400);
