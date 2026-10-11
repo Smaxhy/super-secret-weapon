@@ -16,7 +16,7 @@ import type { FastifyInstance } from 'fastify';
 import { getConfig, updateConfigSection } from '../../config/runtime-config';
 import { recordEvent } from '../../lib/bot-events';
 import { prisma } from '../../lib/prisma';
-import { getSettings, isSubscription, publicKey, saveSettings, sendAll, subscribe, subscriberCount, unsubscribe } from '../../lib/push';
+import { getSettings, hasSubscription, isSubscription, publicKey, saveSettings, sendAll, subscribe, subscriberCount, unsubscribe } from '../../lib/push';
 import { activeFeed, loadFeedSettings, maskUrl, saveFeedSettings, validateFeed } from '../../lib/feed-settings';
 import type { ApiDeps } from '../deps';
 import { addPaperFunds, isResetting, MAX_ADD_SOL, MAX_START_SOL, MIN_START_SOL, parseStartingBalance, resetPaperAccount } from '../paper-reset';
@@ -113,7 +113,13 @@ export async function controlsRoutes(app: FastifyInstance, deps: ApiDeps): Promi
   });
 
   // Phone notifications (Web Push to the installed app).
-  app.get('/api/push', async () => ({ publicKey: await publicKey(), subscribers: await subscriberCount(), settings: await getSettings() }));
+  app.get<{ Querystring: { endpoint?: string } }>('/api/push', async (req) => ({
+    publicKey: await publicKey(),
+    subscribers: await subscriberCount(),
+    settings: await getSettings(),
+    // Lets the phone check that the server really has its subscription (else it re-subscribes).
+    known: typeof req.query.endpoint === 'string' ? await hasSubscription(req.query.endpoint) : null,
+  }));
   app.post<{ Body: { subscription?: unknown } }>('/api/push/subscribe', async (req, reply) => {
     if (!isSubscription(req.body?.subscription)) return reply.code(400).send({ error: 'Not a valid push subscription' });
     await subscribe(req.body.subscription);

@@ -25,10 +25,28 @@ export function Notifications() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
+  // Make sure the SERVER has this phone: re-send the subscription, and make a fresh one if it was made with an
+  // old key (otherwise the phone says "on" while nothing ever arrives).
   useEffect(() => {
-    if (!supported()) return setOn(false);
-    void navigator.serviceWorker.ready.then((r) => r.pushManager.getSubscription()).then((s) => setOn(!!s)).catch(() => setOn(false));
-  }, []);
+    if (!supported() || !data) return;
+    void (async () => {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        let sub = await reg.pushManager.getSubscription();
+        if (!sub) return setOn(false);
+        const key = sub.options?.applicationServerKey;
+        const sameKey = !key || new Uint8Array(key).join(',') === toKey(data.publicKey).join(',');
+        if (!sameKey) {
+          await sub.unsubscribe();
+          sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: toKey(data.publicKey) });
+        }
+        await api('/api/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON() }) });
+        setOn(true);
+      } catch {
+        setOn(false);
+      }
+    })();
+  }, [data?.publicKey]);
 
   async function enable() {
     if (!data) return;
@@ -70,8 +88,20 @@ export function Notifications() {
     void reload();
   }
   async function test() {
-    const r = await api<{ sent: number; failed: number }>('/api/push/test', { method: 'POST' });
-    setMsg(r.sent ? { ok: true, text: `✓ Test sent to ${r.sent} device${r.sent > 1 ? 's' : ''}.` } : { ok: false, text: '⚠ No device received it — turn notifications on first.' });
+    setMsg(null);
+    try {
+      // Re-send this phone's subscription first, so the test always reaches it.
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) await api('/api/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON() }) });
+      const r = await api<{ sent: number; failed: number; subscribers: number; errors?: string[] }>('/api/push/test', { method: 'POST' });
+      if (r.sent) setMsg({ ok: true, text: `✓ Sent to ${r.sent} device${r.sent > 1 ? 's' : ''}. If nothing shows, check the phone's notification settings for this app (and Focus / Do Not Disturb).` });
+      else if (!r.subscribers) setMsg({ ok: false, text: '⚠ The server has no device saved — tap "Turn off", then "Turn on notifications" again.' });
+      else setMsg({ ok: false, text: `⚠ The push service refused it: ${(r.errors ?? []).join(' · ') || 'unknown error'}. Tap "Turn off", then "Turn on" again.` });
+      void reload();
+    } catch (err) {
+      setMsg({ ok: false, text: `⚠ ${(err as Error).message}` });
+    }
   }
 
   const s = data?.settings;

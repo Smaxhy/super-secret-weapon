@@ -71,7 +71,8 @@ export function publicKey(): Promise<string> {
       keys = webpush.generateVAPIDKeys();
       await prisma.botConfig.upsert({ where: { key: KEYS_ROW }, update: { value: keys }, create: { key: KEYS_ROW, value: keys } });
     }
-    webpush.setVapidDetails('mailto:bot@localhost', keys.publicKey!, keys.privateKey!);
+    // Apple (and some others) reject a made-up sender like mailto:…@localhost — use the dashboard's real https address.
+    webpush.setVapidDetails(process.env.PUSH_SUBJECT?.trim() || 'https://smaxhy.github.io/super-secret-weapon/', keys.publicKey!, keys.privateKey!);
     return keys.publicKey!;
   })().catch((err) => {
     ready = null;
@@ -118,12 +119,13 @@ export async function saveSettings(patch: Partial<PushSettings>): Promise<PushSe
   return next;
 }
 
-/** Send to every subscribed phone; drops subscriptions the push service says are gone. */
-export async function sendAll(m: PushMessage): Promise<{ sent: number; failed: number }> {
+/** Send to every subscribed phone; drops subscriptions the push service says are gone or no longer valid. */
+export async function sendAll(m: PushMessage): Promise<{ sent: number; failed: number; subscribers: number; errors: string[] }> {
   await publicKey();
   const subs = Object.values(await redis.hgetall(SUBS));
   let sent = 0;
   let failed = 0;
+  const errors: string[] = [];
   await Promise.all(
     subs.map(async (raw) => {
       let sub: Sub;
@@ -137,13 +139,27 @@ export async function sendAll(m: PushMessage): Promise<{ sent: number; failed: n
         sent++;
       } catch (err) {
         failed++;
-        const code = (err as { statusCode?: number }).statusCode;
-        if (code === 404 || code === 410) await unsubscribe(sub.endpoint).catch(() => undefined);
-        else log.warn({ code, err: (err as Error).message }, 'push failed');
+        const e = err as { statusCode?: number; body?: string; message?: string };
+        const host = (() => {
+          try {
+            return new URL(sub.endpoint).host;
+          } catch {
+            return '?';
+          }
+        })();
+        errors.push(`${host}: ${e.statusCode ?? ''} ${(e.body || e.message || '').toString().slice(0, 140)}`.trim());
+        // 404/410 = gone; 401/403 = made with another key / bad token → the phone must subscribe again.
+        if (e.statusCode === 404 || e.statusCode === 410 || e.statusCode === 401 || e.statusCode === 403) await unsubscribe(sub.endpoint).catch(() => undefined);
+        log.warn({ code: e.statusCode, host, body: e.body, err: e.message }, 'push failed');
       }
     }),
   );
-  return { sent, failed };
+  return { sent, failed, subscribers: subs.length, errors };
+}
+
+/** Is this exact subscription saved on the server? */
+export async function hasSubscription(endpoint: string): Promise<boolean> {
+  return (await redis.hexists(SUBS, endpoint)) === 1;
 }
 
 /** Listen for trades and notify (call once at start). */
