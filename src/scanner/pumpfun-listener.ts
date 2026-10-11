@@ -77,10 +77,7 @@ export class PumpFunListener extends EventEmitter {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private lastMessageAt = 0;
   /** One subscription for the bonding curve program, one for PumpSwap (post-migration trading). */
-  private readonly subscriptions: Array<{ id: number; program: string }> = [
-    { id: 1, program: PUMP_PROGRAM_ID },
-    { id: 2, program: PUMP_AMM_PROGRAM_ID },
-  ];
+  private readonly subscriptions: Array<{ id: number; program: string }>;
   private readonly recentSigs = new Set<string>();
   private readonly recentSigOrder: string[] = [];
 
@@ -104,8 +101,14 @@ export class PumpFunListener extends EventEmitter {
     private readonly wsUrl: string,
     /** Fetch full transactions (Helius RPC credits) when a create's event is missing. Off when another source supplies launches. */
     private readonly fetchMissingCreates = true,
+    /** Which programs to follow: both (default), only the bonding curve, or only PumpSwap (migrated coins). */
+    programs: 'all' | 'curve' | 'amm' = 'all',
   ) {
     super();
+    this.subscriptions = [
+      ...(programs !== 'amm' ? [{ id: 1, program: PUMP_PROGRAM_ID }] : []),
+      ...(programs !== 'curve' ? [{ id: 2, program: PUMP_AMM_PROGRAM_ID }] : []),
+    ];
   }
 
   start(): void {

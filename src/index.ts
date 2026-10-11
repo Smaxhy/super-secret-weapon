@@ -349,6 +349,7 @@ async function main(): Promise<void> {
   let portalRef: PumpPortalListener | null = null;
   let logsRef: PumpFunListener | null = null;
   let grpcRef: GrpcListener | null = null;
+  let backupRef: PumpFunListener | null = null;
 
   const startPortal = (followTrades: boolean) => {
     const portal = new PumpPortalListener(env.PUMPPORTAL_API_KEY ? `wss://pumpportal.fun/api/data?api-key=${env.PUMPPORTAL_API_KEY}` : undefined);
@@ -382,13 +383,14 @@ async function main(): Promise<void> {
     portalRef = portal;
   };
 
-  const startLogs = (url: string, fetchMissingCreates: boolean) => {
-    const l = new PumpFunListener(url, fetchMissingCreates);
+  const startLogs = (url: string, fetchMissingCreates: boolean, programs: 'all' | 'curve' | 'amm' = 'all', start = true) => {
+    const l = new PumpFunListener(url, fetchMissingCreates, programs);
     l.on('event', registry.handle);
     l.on('event', whales.onEvent);
-    l.start();
+    if (start) l.start();
     sources.push(l);
     logsRef = l;
+    return l;
   };
 
   // Paid feed pasted on the dashboard (stored in this server's DB only) wins over .env.
@@ -402,33 +404,40 @@ async function main(): Promise<void> {
     startLogs(feed.tradesWsUrl, false);
     log.info({ trades: redactUrl(feed.tradesWsUrl) }, 'data source: hybrid (PumpPortal launches + trade stream)');
   } else if (feed.dataSource === 'grpc' && feed.grpcEndpoint) {
-    // Paid Yellowstone gRPC stream (Chainstack / Shyft / Helius LaserStream …) for trades; PumpPortal for launches.
-    // The free public stream runs as a backup only while the gRPC stream is down.
+    // Paid Yellowstone gRPC stream = MIGRATED coins only (PumpSwap) — the expensive, important part. Bonding-curve coins
+    // (new pairs, Soon, runners, curve coins we hold) come from Solana's FREE public node. The paid WebSocket is never
+    // used here (it bills every message). If gRPC drops, a free PumpSwap stream fills in until it's back.
     startPortal(false);
-    startLogs(feed.tradesWsUrl, false);
+    const curve = startLogs(env.TRADES_WS_URL, false, 'curve');
+    const ammBackup = startLogs(env.TRADES_WS_URL, false, 'amm', false);
+    logsRef = curve;
     const g = new GrpcListener(feed.grpcEndpoint, feed.grpcToken);
     g.on('event', registry.handle);
     g.on('event', whales.onEvent);
     let backupTimer: NodeJS.Timeout | null = null;
+    let backupOn = false;
     g.on('connected', () => {
       if (backupTimer) clearTimeout(backupTimer);
       backupTimer = null;
-      void logsRef?.stop();
-      log.info('gRPC trade stream up — free backup stream paused');
+      if (backupOn) void ammBackup.stop();
+      backupOn = false;
+      log.info('gRPC stream up (migrated coins) — free backup paused');
     });
     g.on('disconnected', () => {
       backupTimer ??= setTimeout(() => {
         backupTimer = null;
-        if (!g.connected) {
-          logsRef?.start();
-          log.warn('gRPC trade stream down for 10s — free backup stream on');
+        if (!g.connected && !backupOn) {
+          ammBackup.start();
+          backupOn = true;
+          log.warn('gRPC stream down for 10s — free PumpSwap backup on');
         }
       }, 10_000);
     });
     g.start();
     sources.push(g);
     grpcRef = g;
-    log.info({ endpoint: redactUrl(feed.grpcEndpoint) }, 'data source: gRPC (PumpPortal launches + paid Yellowstone trade stream, free stream as backup)');
+    backupRef = ammBackup;
+    log.info({ endpoint: redactUrl(feed.grpcEndpoint) }, 'data source: gRPC for migrated coins + free node for curve coins');
   } else if (feed.dataSource === 'grpc') {
     log.error('DATA_SOURCE=grpc but GRPC_ENDPOINT is empty — using the free trade stream instead');
     startPortal(false);
@@ -445,7 +454,10 @@ async function main(): Promise<void> {
 
   /** Combined view of all sources for stats + dashboard. */
   const statsOf = (): ListenerStats | null => {
-    const l = (logsRef as PumpFunListener | null)?.stats;
+    const l0 = (logsRef as PumpFunListener | null)?.stats;
+    const bk = (backupRef as PumpFunListener | null)?.stats;
+    // curve stream + its PumpSwap backup add up (each counts only what it delivered)
+    const l = l0 && bk ? { ...l0, connected: l0.connected, reconnects: l0.reconnects + bk.reconnects, notifications: l0.notifications + bk.notifications, creates: l0.creates + bk.creates, trades: l0.trades + bk.trades, completes: l0.completes + bk.completes, ammPools: l0.ammPools + bk.ammPools, ammTrades: l0.ammTrades + bk.ammTrades, decodeErrors: l0.decodeErrors + bk.decodeErrors, truncatedLogs: l0.truncatedLogs + bk.truncatedLogs } : l0;
     const g = (grpcRef as GrpcListener | null)?.stats;
     // gRPC + its backup: counters add up (each only counts what it delivered), connected if either is.
     const a: ListenerStats | undefined =

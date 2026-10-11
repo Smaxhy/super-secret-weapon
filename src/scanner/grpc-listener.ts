@@ -41,12 +41,12 @@ export function eventsFromTx(tx: GrpcTx): { signature: string; slot: number; eve
 }
 
 /** Pure: the subscription — every successful pump.fun + PumpSwap transaction, confirmed. */
-export function subscribeRequest(commitment: number): Record<string, unknown> {
+export function subscribeRequest(commitment: number, programs: readonly string[] = [PUMP_PROGRAM_ID, PUMP_AMM_PROGRAM_ID]): Record<string, unknown> {
   return {
     accounts: {},
     slots: {},
     transactions: {
-      pump: { vote: false, failed: false, accountInclude: [PUMP_PROGRAM_ID, PUMP_AMM_PROGRAM_ID], accountExclude: [], accountRequired: [] },
+      pump: { vote: false, failed: false, accountInclude: [...programs], accountExclude: [], accountRequired: [] },
     },
     transactionsStatus: {},
     blocks: {},
@@ -100,6 +100,8 @@ export class GrpcListener extends EventEmitter {
   constructor(
     private readonly endpoint: string,
     private readonly token: string | undefined,
+    /** Programs to stream. Default PumpSwap only (migrated coins) — keeps the paid stream small; the free feed covers the curve. */
+    private readonly programs: readonly string[] = [PUMP_AMM_PROGRAM_ID],
   ) {
     super();
   }
@@ -153,7 +155,7 @@ export class GrpcListener extends EventEmitter {
       stream.on('error', (e) => down('error', e));
       stream.on('end', () => down('ended'));
       stream.on('close', () => down('closed'));
-      await new Promise<void>((resolve, reject) => stream.write(subscribeRequest(mod.CommitmentLevel.CONFIRMED), (err) => (err ? reject(err) : resolve())));
+      await new Promise<void>((resolve, reject) => stream.write(subscribeRequest(mod.CommitmentLevel.CONFIRMED, this.programs), (err) => (err ? reject(err) : resolve())));
       this.backoffMs = 1_000;
       this.lastDataAt = Date.now();
       this.stats.connected = true;
@@ -189,7 +191,7 @@ export class GrpcListener extends EventEmitter {
         this.stream.destroy();
         return;
       }
-      this.stream.write({ ...subscribeRequest(1), ping: { id: this.pingId++ } });
+      this.stream.write({ ...subscribeRequest(1, this.programs), ping: { id: this.pingId++ } });
     }, PING_EVERY_MS);
   }
 

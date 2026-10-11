@@ -69,6 +69,7 @@ export function DataFeed() {
           <label htmlFor={`${id}-ws`} className="text-sm font-medium text-ink">
             Paid WebSocket (Chainstack node, no add-on needed)
           </label>
+          <p className="text-xs font-medium text-down">⚠ Burns credits fast (every trade message counts — about 2 million an hour). Not needed with gRPC: when gRPC is on, the bot never uses this.</p>
           <p className="text-xs text-muted">Chainstack → your Solana mainnet node → Access → copy the address that starts with wss://.{s?.tradesWsUrl ? ` Saved: ${s.tradesWsUrl}` : ''}</p>
           <input id={`${id}-ws`} className={input} value={ws} onChange={(e) => setWs(e.target.value)} placeholder="wss://solana-mainnet.core.chainstack.com/…" autoComplete="off" autoCapitalize="off" spellCheck={false} />
           <div className="flex flex-wrap gap-2">
