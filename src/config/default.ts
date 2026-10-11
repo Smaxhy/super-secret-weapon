@@ -656,6 +656,9 @@ export const DEFAULT_CONFIG = {
    * up to maxPoints to a coin's score (pointsPerSignal each, scaled by their edge) and, with
    * triggerChecks, make the bot check a coin the moment one fires. `disabled` = ids to skip.
    */
+  /** Exit tuner (learner/exit-tuner.ts): follows time-based exits for 30 min after the sell and tunes those timers. */
+  exitTuner: { enabled: true as boolean, watchMin: 30, minExits: 12, ranAfterPct: 40, deadAfterPct: 15, minHoursBetween: 6, maxFactor: 3, minFactor: 0.5 },
+
   ta: {
     enabled: true as boolean,
     labEnabled: true as boolean,

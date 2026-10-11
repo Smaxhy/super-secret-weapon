@@ -20,6 +20,7 @@ import { screenEntry } from './executor/rug-screen';
 import { RuggerMemory } from './executor/rug-watch';
 import { TimingLearner } from './learner/timing';
 import { shadowAsClosed, ShadowTrades, wouldHaveTaken } from './learner/shadow-trades';
+import { ExitTuner } from './learner/exit-tuner';
 import { Brain } from './learner/brain';
 import { startPushNotifier } from './lib/push';
 import { LossAutopsy } from './learner/loss-autopsy';
@@ -154,6 +155,10 @@ async function main(): Promise<void> {
   const timing = new TimingLearner(redis, () => getConfig().timing ?? DEFAULT_CONFIG.timing);
   timing.start();
   aiCoach.timingSource = () => timing.snapshot();
+  // Exit tuner: what coins did after a time-based exit → tunes those timers (no AI, free).
+  const exitTuner = new ExitTuner(redis, (m) => crowd.trades(m));
+  exitTuner.start();
+  aiCoach.exitSource = () => exitTuner.snapshot();
   aiCoach.autopsySource = () => autopsy.snapshot();
   trader.bandCheck = (req) =>
     autopsy.check({
@@ -234,6 +239,7 @@ async function main(): Promise<void> {
   // Phone notifications: a trade closed in profit → push to the installed app.
   const stopPush = startPushNotifier();
   const brain = new Brain(redis, (since) => shadow.results(since), aiCoach);
+  brain.exitSource = () => exitTuner.snapshot();
   if ((getConfig().brain ?? DEFAULT_CONFIG.brain).enabled) brain.start();
   evaluator.brain = brain;
   trader.allocFactor = (strategy) => brain.allocFactor(strategy);

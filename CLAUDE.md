@@ -409,6 +409,16 @@ smart money → learning engine → ML → social). See README.md.
   brain tips. TA lab now tests every strategy on 15 s + 5 s + 1 min candles (`ta.timeframes`, ids `<id>@5s` / `<id>@1m`,
   `runStrategiesTf`, `labIds`, `taName`; proven ones work in the evaluator per timeframe; maxOpen 1500; ~0.26 s CPU per
   tick for 150 coins). Strategies page: timeframe filter chips.
+- **v10.4 (Oct 11): exit timers editable + self-tuning** (owner: "the brain can't change stale exits; more concrete data;
+  new rules on its own with minimal Claude credits"). Editable (Controls → Buy rules → "Exit timers — <strategy>", and via
+  brain tips): `exit.timeStop.minutes/stallMinutes`, `exit.staleMinutes`, `exit.maxHoldMinutes` per strategy +
+  `exit.timeStop.minPeakMultiple/maxMultiple`. **Exit tuner** (`src/learner/exit-tuner.ts`, `exitTuner` config, no AI):
+  every 5 min, PAPER positions closed 30–55 min ago by a time-based exit (sell reason text → `timerOf`: no follow-through
+  / stalled / no movement / max hold) → `afterExit` from the crowd trade log (max / min / end × exit price, 30 min) →
+  Redis `exitafter:res` (2000). `judgeTimers` per strategy × timer (7 days): ≥12 exits, ≥40% ran +25% after → that timer
+  ×1.25 (≤3× default); ≤15% ran and median end ≤0.95x → ×0.85 (≥0.5× default); ≤ once per 6 h, only exits since the last
+  change count (`exitafter:chg:*`), via `applyEdit` source 'exit-tuner' → change log. AI input `exitsAfterSelling`;
+  Brain snapshot `exitTimers` → Brain page card "Exit timers — what coins did after it sold".
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

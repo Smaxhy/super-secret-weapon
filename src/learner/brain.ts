@@ -23,6 +23,7 @@ import { LearnRows } from './learn-rows';
 import { PolicySearch } from './policy-search';
 import type { ShadowResult } from './shadow-trades';
 import { WinModel } from './win-model';
+import type { TimerVerdict } from './exit-tuner';
 
 const log = moduleLogger('brain');
 const STRATS = ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'SMART_MONEY_COPY', 'SWING', 'RUNNER'];
@@ -35,6 +36,8 @@ export class Brain {
   private timers: NodeJS.Timeout[] = [];
   private lastActive: boolean | null = null;
   private lastMult = new Map<string, number>();
+  /** What coins did after time-based exits (exit-tuner.ts) — set in index.ts. */
+  exitSource: (() => { at: string; verdicts: TimerVerdict[] } | null) | null = null;
 
   constructor(
     redis: Redis,
@@ -138,6 +141,7 @@ export class Brain {
         const e = entryStyleFor(st);
         return e ? [e] : [];
       }),
+      exitTimers: this.exitSource?.()?.verdicts.slice(0, compact ? 8 : 30) ?? [],
       changes: (await recentChanges(compact ? 12 : 40).catch(() => [])).map((c) => (compact ? `${c.at.slice(0, 16)} ${c.what}` : c)),
     };
   }

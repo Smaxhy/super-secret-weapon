@@ -22,7 +22,9 @@ interface BrainData {
   allocation: Alloc[] | null;
   entryStyles: Style[];
   changes: Change[];
+  exitTimers?: Array<{ strategy: string; timer: string; n: number; ranPct: number; medianEndX: number; avgMaxAfterX: number; action: 'longer' | 'shorter' | 'keep'; why: string }>;
 }
+const TIMER: Record<string, string> = { timeStop: 'No follow-through', stall: 'Stalled', stale: 'Stale (no movement)', maxHold: 'Max hold' };
 
 const strat = (s: string) => STRATEGY_LABEL[s] ?? s;
 const STATUS: Record<Discovered['status'], string> = { testing: 'testing on new trades', live: 'LIVE', retired: 'retired' };
@@ -142,6 +144,27 @@ export function Brain() {
             </Card>
           )}
 
+          <Card title="Exit timers — what coins did after it sold">
+            {!data.exitTimers?.length ? (
+              <p className="text-sm text-ink-2">Collecting: every time-based exit is followed for 30 minutes after the sell.</p>
+            ) : (
+              <ul className="space-y-2 text-sm">
+                {data.exitTimers.map((v) => (
+                  <li key={`${v.strategy}:${v.timer}`} className="rounded-xl border border-line px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-medium text-ink">{strat(v.strategy)} · {TIMER[v.timer] ?? v.timer}</span>
+                      <span className={`text-xs font-semibold ${v.action === 'longer' ? 'text-up' : v.action === 'shorter' ? 'text-down' : 'text-muted'}`}>
+                        {v.action === 'longer' ? 'waiting longer' : v.action === 'shorter' ? 'selling sooner' : 'keep'}
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted">
+                      {v.n} exits · {v.ranPct}% ran +25% after · typical coin ended {v.medianEndX}x of the exit · best after avg {v.avgMaxAfterX}x
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
           <Card title="Everything it changed">
             {!data.changes.length ? (
               <p className="text-sm text-ink-2">No changes yet.</p>
