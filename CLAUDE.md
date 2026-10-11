@@ -389,6 +389,17 @@ smart money → learning engine → ML → social). See README.md.
   `sendAll` (404/410 subs dropped). API GET `/api/push`, POST `/api/push/subscribe|unsubscribe|test`, PUT `/api/push/settings`.
   `dashboard/public/sw.js` handles push + notificationclick (opens `#/history`). Controls page card "Notifications" (iPhone:
   only in the home-screen app, iOS 16.4+).
+- **v10.2 (Oct 11): credits, buy rules, tips to the brain** (owner: "Chainstack burns 1.8M requests/hour; let me change
+  each strategy's buy limits; let me give the brain tips it acts on"). Credits: gRPC mode = paid gRPC for PumpSwap
+  (migrated) only + free node for the curve, the paid WebSocket is never used; hybrid with a paid `tradesWsUrl` = paid
+  node subscribes to PumpSwap only, curve on the free `TRADES_WS_URL`. **Buy rules** (`src/config/editable.ts` list of
+  owner-editable paths with limits, `src/config/apply-edit.ts`): GET/PUT `/api/controls/rules` {key, value} → Controls
+  card "Buy rules per strategy" (`components/BuyRules.tsx`, grouped: migrated / soon / new pairs / runners / swing+KOL /
+  every coin / size & risk); every change → change log (source owner). **Tips** (`aiCoach.addTip`, Redis `ai:tips` ≤30):
+  a tip forces a Haiku review (never deep); prompt section `ownerTips` + `editableSettings` + `allFeatureNames`; the AI
+  returns `tipResponses` + `settingChanges` (applied via applyEdit) + rules with `tipId` (source 'owner' → LIVE at once,
+  stay live until the tip is removed; DELETE retires them). Pending tips also force the hourly review. API GET/POST
+  `/api/brain/tips`, DELETE `/api/brain/tips/:id`; Brain page card "Talk to the brain" (`components/BrainTips.tsx`).
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

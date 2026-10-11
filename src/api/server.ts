@@ -93,6 +93,24 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       return deps.aiCoach ? deps.aiCoach.snapshot() : null;
     });
     secured.post<{ Body: { deep?: boolean } | null }>('/api/ai-coach/run', async (req) => (deps.aiCoach ? deps.aiCoach.review(true, req.body?.deep === true) : { ran: false, why: 'AI coach not running' }));
+    // Tips to the brain: the owner talks to it; the AI coach turns each tip into live rules / setting changes and answers.
+    secured.get('/api/brain/tips', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return { tips: deps.aiCoach ? await deps.aiCoach.tips() : [], hasKey: !!process.env.ANTHROPIC_API_KEY, lastError: deps.aiCoach?.lastError ?? null };
+    });
+    secured.post<{ Body: { text?: unknown } | null }>('/api/brain/tips', async (req, reply) => {
+      const text = String(req.body?.text ?? '').trim();
+      if (text.length < 3) return reply.code(400).send({ error: 'Write a tip first' });
+      if (!deps.aiCoach) return reply.code(503).send({ error: 'AI coach not running' });
+      const { tip, review } = await deps.aiCoach.addTip(text);
+      // Wait a little for the answer (a Haiku review usually takes 10–40 s); the page keeps polling after that.
+      const r = await Promise.race([review, new Promise<null>((res) => setTimeout(() => res(null), 45_000))]);
+      return { ok: true, tip, review: r ?? { ran: false, why: 'still thinking — the answer shows up here in a minute' } };
+    });
+    secured.delete<{ Params: { id: string } }>('/api/brain/tips/:id', async (req, reply) => {
+      if (!deps.aiCoach || !(await deps.aiCoach.removeTip(req.params.id))) return reply.code(404).send({ error: 'tip not found' });
+      return { ok: true };
+    });
     // Update button: ask the VPS updater to pull + rebuild now (force = rebuild even without new code).
     secured.get('/api/update', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');

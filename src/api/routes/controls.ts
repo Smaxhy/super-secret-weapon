@@ -10,6 +10,8 @@
  *   GET  /api/controls/feed          the trade feed in use + what is saved (masked, never the key itself)
  *   PUT  /api/controls/feed          { tradesWsUrl?, grpcEndpoint?, grpcToken?, useGrpc? } save a paid feed, then restart
  *   POST /api/controls/add-funds     { sol: 0.01–1000 } add paper SOL without resetting anything
+ *   GET  /api/controls/rules         buy rules per strategy (config/editable.ts) with current values
+ *   PUT  /api/controls/rules         { key, value } change one of them (validated against its limits)
  *   POST /api/positions/:id/sell     manual sell of one position
  */
 import type { FastifyInstance } from 'fastify';
@@ -18,6 +20,9 @@ import { recordEvent } from '../../lib/bot-events';
 import { prisma } from '../../lib/prisma';
 import { getSettings, hasSubscription, isSubscription, publicKey, saveSettings, sendAll, subscribe, subscriberCount, unsubscribe } from '../../lib/push';
 import { activeFeed, loadFeedSettings, maskUrl, saveFeedSettings, validateFeed } from '../../lib/feed-settings';
+import { applyEdit } from '../../config/apply-edit';
+import { EDITABLE, getPath } from '../../config/editable';
+import { DEFAULT_CONFIG } from '../../config/default';
 import type { ApiDeps } from '../deps';
 import { addPaperFunds, isResetting, MAX_ADD_SOL, MAX_START_SOL, MIN_START_SOL, parseStartingBalance, resetPaperAccount } from '../paper-reset';
 
@@ -158,6 +163,19 @@ export async function controlsRoutes(app: FastifyInstance, deps: ApiDeps): Promi
     const sol = Number(req.body?.sol);
     if (!Number.isFinite(sol) || sol < 0.01 || sol > MAX_ADD_SOL) return reply.code(400).send({ error: `Amount must be 0.01–${MAX_ADD_SOL} SOL` });
     return addPaperFunds(Math.round(sol * 1e4) / 1e4);
+  });
+
+  app.get('/api/controls/rules', async () => {
+    const c = getConfig();
+    return { settings: EDITABLE.map((e) => ({ ...e, value: getPath(c, e.key), default: getPath(DEFAULT_CONFIG, e.key) })) };
+  });
+
+  app.put<{ Body: { key?: unknown; value?: unknown } }>('/api/controls/rules', async (req, reply) => {
+    const key = String(req.body?.key ?? '');
+    const r = await applyEdit(key, req.body?.value, 'owner', 'changed by you on the Controls page');
+    if (!r.ok) return reply.code(400).send({ error: r.error });
+    void recordEvent({ module: 'controls', type: 'settings_changed', message: `Settings changed: ${r.text}` });
+    return { ok: true, key, value: r.value };
   });
 
   app.post<{ Params: { id: string } }>('/api/positions/:id/sell', async (req, reply) => {

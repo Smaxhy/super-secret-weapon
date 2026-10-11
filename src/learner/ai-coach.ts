@@ -18,6 +18,9 @@
  */
 import Anthropic from '@anthropic-ai/sdk';
 import type { Redis } from 'ioredis';
+import { applyEdit } from '../config/apply-edit';
+import { EDITABLE, getPath } from '../config/editable';
+import { getConfig } from '../config/runtime-config';
 import { prisma } from '../lib/prisma';
 import { moduleLogger } from '../lib/logger';
 import { learningSince } from './labels';
@@ -29,6 +32,7 @@ import { readHistory } from '../executor/position-history';
 import { afterEntry } from '../evaluator/price-shape';
 
 const log = moduleLogger('ai-coach');
+const TIP_MAX = 30;
 
 export interface AiRuleCondition {
   feature: string;
@@ -56,8 +60,22 @@ export interface AiRule {
   statusWhy: string;
   backtest: RuleStats | null;
   forward: RuleStats | null;
-  /** Who proposed it: the AI coach (default) or the statistical rule search (policy-search.ts). */
-  source?: 'ai' | 'search';
+  /** Who proposed it: the AI coach (default), the statistical rule search (policy-search.ts) or the owner's tip. */
+  source?: 'ai' | 'search' | 'owner';
+  /** The owner's tip this rule came from (owner rules go live at once and stay live until the tip is removed). */
+  tipId?: string;
+}
+
+/** A tip the owner gave the brain ("talk to it") — the AI turns it into rules / setting changes and answers. */
+export interface OwnerTip {
+  id: string;
+  at: string;
+  text: string;
+  status: 'new' | 'done';
+  response: string | null;
+  rules: string[];
+  settings: string[];
+  answeredAt: string | null;
 }
 
 export interface AiCoachConfig {
@@ -183,22 +201,36 @@ export function priceFor(model: string, promptTokens = 0): { in: number; out: nu
   return { in: 5, out: 25 };
 }
 
-const K = { rules: 'ai:rules', insights: 'ai:insights', last: 'ai:lastRun', lastDeep: 'ai:lastDeep', reviews: 'ai:reviews', spend: (d: string) => `ai:spend:${d}` };
+const K = { tips: 'ai:tips', rules: 'ai:rules', insights: 'ai:insights', last: 'ai:lastRun', lastDeep: 'ai:lastDeep', reviews: 'ai:reviews', spend: (d: string) => `ai:spend:${d}` };
 const STRATS = ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'SMART_MONEY_COPY', 'SWING', 'RUNNER'];
 
 const OUTPUT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['insights', 'rules'],
+  required: ['insights', 'rules', 'tipResponses', 'settingChanges'],
   properties: {
     insights: { type: 'array', items: { type: 'string' } },
+    tipResponses: {
+      type: 'array',
+      items: { type: 'object', additionalProperties: false, required: ['tipId', 'response'], properties: { tipId: { type: 'string' }, response: { type: 'string' } } },
+    },
+    settingChanges: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['tipId', 'key', 'value', 'why'],
+        properties: { tipId: { type: 'string' }, key: { type: 'string', enum: EDITABLE.map((e) => e.key) }, value: { type: 'number' }, why: { type: 'string' } },
+      },
+    },
     rules: {
       type: 'array',
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['title', 'why', 'strategy', 'action', 'conditions'],
+        required: ['title', 'why', 'strategy', 'action', 'conditions', 'tipId'],
         properties: {
+          tipId: { type: 'string' },
           title: { type: 'string' },
           why: { type: 'string' },
           strategy: { type: 'string', enum: [...STRATS, 'ANY'] },
@@ -227,7 +259,12 @@ Read the trades like an experienced trader: look for BEHAVIOUR patterns that sep
 
 Return:
 - insights: up to 6 short, concrete observations in plain English (what keeps going wrong or right, especially about entry timing and price patterns, with the evidence).
-- rules: up to 4 NEW candidate rules that would have avoided the losers or found more winners. Every condition must use a feature name that appears in the "features" list, with a threshold inside its observed range. Prefer 1-3 conditions per rule. Use strategy "ANY" only when the pattern holds across strategies. Do not repeat a rule that is already being tested. Every rule will be tested on new trades before it is used, so propose what the evidence supports, and return no rules when nothing is clear.`;
+- rules: up to 4 NEW candidate rules that would have avoided the losers or found more winners. Every condition must use a feature name that appears in the "features" list, with a threshold inside its observed range. Prefer 1-3 conditions per rule. Use strategy "ANY" only when the pattern holds across strategies. Do not repeat a rule that is already being tested. Every rule will be tested on new trades before it is used, so propose what the evidence supports, and return no rules when nothing is clear. Rules that are not from a tip get tipId "".
+
+"ownerTips" are messages from the bot's OWNER, written as if talking to you. They have priority over everything else: the owner knows this market. For every tip with status "new":
+- turn it into action: rules (set tipId to the tip's id — these go live at once, no testing; you may use any feature name from "allFeatureNames") and/or settingChanges (only keys listed in "editableSettings", value inside its min–max; set tipId). Do what the tip asks even when the data is thin — but if the data clearly shows it would lose money, still do it and say so plainly in the response.
+- answer it in tipResponses (tipId + 2–4 plain, friendly sentences: what you changed, and what the trades say about it). If a tip can't be turned into a rule or setting, say what you'll watch for instead.
+Tips with status "done" are standing instructions: keep following them in your insights and rules, don't redo their changes, and don't answer them again.`;
 
 export class AiCoach {
   private timer: NodeJS.Timeout | null = null;
@@ -356,6 +393,61 @@ export class AiCoach {
     });
   }
 
+  async tips(): Promise<OwnerTip[]> {
+    return (await this.redis.lrange(K.tips, 0, TIP_MAX - 1)).flatMap((x) => {
+      try {
+        return [JSON.parse(x) as OwnerTip];
+      } catch {
+        return [];
+      }
+    });
+  }
+
+  private async saveTips(tips: OwnerTip[]): Promise<void> {
+    const p = this.redis.multi().del(K.tips);
+    if (tips.length) p.rpush(K.tips, ...tips.slice(0, TIP_MAX).map((t) => JSON.stringify(t)));
+    await p.exec();
+  }
+
+  /** The owner talks to the brain: store the tip and run a (cheap) review at once so it gets acted on. */
+  async addTip(text: string): Promise<{ tip: OwnerTip; review: Promise<{ ran: boolean; why: string }> }> {
+    const tip: OwnerTip = { id: `t${Date.now().toString(36)}`, at: new Date().toISOString(), text: text.trim().slice(0, 1000), status: 'new', response: null, rules: [], settings: [], answeredAt: null };
+    await this.redis.multi().lpush(K.tips, JSON.stringify(tip)).ltrim(K.tips, 0, TIP_MAX - 1).exec();
+    void recordChange({ source: 'owner-tip', strategy: null, what: `You told the brain: "${tip.text.slice(0, 140)}"`, why: 'the AI coach works it in now' });
+    return { tip, review: this.reviewTips() };
+  }
+
+  /** Remove a tip; the rules made from it are switched off. */
+  async removeTip(id: string): Promise<boolean> {
+    const tips = await this.tips();
+    if (!tips.some((t) => t.id === id)) return false;
+    await this.saveTips(tips.filter((t) => t.id !== id));
+    const rules = await this.rules();
+    const p = this.redis.pipeline();
+    for (const r of rules.filter((x) => x.tipId === id && x.status !== 'retired')) {
+      r.status = 'retired';
+      r.statusWhy = 'you removed the tip';
+      p.hset(K.rules, r.id, JSON.stringify(r));
+    }
+    await p.exec();
+    await this.refreshRules();
+    return true;
+  }
+
+  private tipRetry: NodeJS.Timeout | null = null;
+  /** Review now for the owner's tips; if a review is already running, try again shortly. */
+  private async reviewTips(): Promise<{ ran: boolean; why: string }> {
+    const r = await this.review(true, false, true);
+    if (!r.ran && r.why === 'already running' && !this.tipRetry) {
+      this.tipRetry = setTimeout(() => {
+        this.tipRetry = null;
+        void this.reviewTips();
+      }, 60_000);
+      this.tipRetry.unref?.();
+    }
+    return r;
+  }
+
   /**
    * Rules found by the statistical rule search (policy-search.ts) join the same pipeline as the AI's: they start as
    * 'testing' and only go live after they hold up on NEW trades. Near-duplicates of existing rules are skipped.
@@ -416,7 +508,8 @@ export class AiCoach {
         if (r.status === 'retired') continue;
         const created = Date.parse(r.createdAt);
         r.forward = ruleStats(r, trades.filter((t) => t.openedAtMs > created));
-        const next = nextStatus(r, c);
+        // The owner's tip: live until the owner removes it (the results are still tracked and shown).
+        const next = r.source === 'owner' ? { status: 'live' as const, why: `your tip — live${r.forward?.n ? ` (${r.forward.n} trades since: ${r.forward.avgPct}% vs ${r.forward.restAvgPct}% for the rest)` : ''}` } : nextStatus(r, c);
         if (next.status !== r.status) {
           log.info({ rule: r.title, from: r.status, to: next.status, why: next.why }, '🤖 AI rule status changed');
           if (next.status === 'live' || r.status === 'live')
@@ -434,7 +527,7 @@ export class AiCoach {
   }
 
   /** Ask Claude to review the latest trades (when there are new ones and budget left). */
-  async review(force = false, deepAsked = false): Promise<{ ran: boolean; why: string }> {
+  async review(force = false, deepAsked = false, forTips = false): Promise<{ ran: boolean; why: string }> {
     const c = this.cfg();
     if (!c.enabled) return { ran: false, why: 'AI coach is off' };
     if (!this.client) return { ran: false, why: 'no ANTHROPIC_API_KEY on the server' };
@@ -444,14 +537,17 @@ export class AiCoach {
       const spent = await this.spentToday();
       if (spent >= this.budgetUsd) return { ran: false, why: `daily AI budget used ($${spent.toFixed(2)} of $${this.budgetUsd})` };
       const trades = await this.loadTrades();
+      const tips = await this.tips();
+      const newTips = tips.filter((t) => t.status === 'new');
+      if (forTips && !newTips.length) return { ran: false, why: 'no new tips' };
       const last = JSON.parse((await this.redis.get(K.last)) ?? 'null') as { at: string; newestClosedMs: number } | null;
       const newest = trades[0]?.closedAtMs ?? 0;
       const fresh = trades.filter((t) => t.closedAtMs > (last?.newestClosedMs ?? 0)).length;
-      if (!force && fresh < c.minNewTrades) return { ran: false, why: `only ${fresh} new closed trades (needs ${c.minNewTrades})` };
-      if (trades.length < 10) return { ran: false, why: `only ${trades.length} closed trades so far` };
+      if (!force && !newTips.length && fresh < c.minNewTrades) return { ran: false, why: `only ${fresh} new closed trades (needs ${c.minNewTrades})` };
+      if (trades.length < 10 && !newTips.length) return { ran: false, why: `only ${trades.length} closed trades so far` };
       // Deep review: once every 24 h (or when asked) — stronger model, twice the trades, more effort.
       const lastDeepAt = Date.parse((await this.redis.get(K.lastDeep)) ?? '') || 0;
-      const deep = !!this.deepModel && this.deepModel !== 'off' && (deepAsked || (Date.now() - lastDeepAt >= 24 * 3600_000 && spent < this.budgetUsd * 0.4));
+      const deep = !forTips && !!this.deepModel && this.deepModel !== 'off' && (deepAsked || (Date.now() - lastDeepAt >= 24 * 3600_000 && spent < this.budgetUsd * 0.4));
       const model = deep ? this.deepModel : this.model;
 
       const rules = await this.rules();
@@ -487,7 +583,12 @@ export class AiCoach {
       };
       const brain = this.brainSource ? await this.brainSource().catch(() => null) : null;
       const recent30 = trades.slice(0, 30).map((t) => t.pnlPct);
+      const allNames = new Set(trades.flatMap((t) => Object.keys(t.flat)));
+      const cfgNow = getConfig();
       const input = {
+        ownerTips: tips.slice(0, 15).map((t) => ({ id: t.id, at: t.at, text: t.text, status: t.status, whatYouDid: t.response })),
+        editableSettings: newTips.length ? EDITABLE.map((e) => ({ key: e.key, group: e.group, label: e.label, min: e.min, max: e.max, unit: e.unit ?? null, now: getPath(cfgNow, e.key) })) : undefined,
+        allFeatureNames: newTips.length ? [...allNames].slice(0, 400) : undefined,
         yourPastReviews: past.map((r) => ({ at: r.at, insights: r.insights, rulesYouAdded: r.rulesAdded, resultsBefore: r.before, resultsAfter: realAfter(r.at) })),
         otherLearners: brain,
         shadowTrades: shr && shr.total
@@ -554,17 +655,26 @@ export class AiCoach {
         return { ran: true, why: this.lastError };
       }
       const text = res.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('');
-      const out = JSON.parse(text) as { insights: string[]; rules: Array<{ title: string; why: string; strategy: string; action: 'avoid' | 'prefer'; conditions: AiRuleCondition[] }> };
+      const out = JSON.parse(text) as {
+        insights: string[];
+        rules: Array<{ tipId?: string; title: string; why: string; strategy: string; action: 'avoid' | 'prefer'; conditions: AiRuleCondition[] }>;
+        tipResponses?: Array<{ tipId: string; response: string }>;
+        settingChanges?: Array<{ tipId: string; key: string; value: number; why: string }>;
+      };
+      const tipIds = new Set(newTips.map((t) => t.id));
       const at = new Date().toISOString();
       const p = this.redis.pipeline();
       for (const i of out.insights.slice(0, 6).reverse()) p.lpush(K.insights, JSON.stringify({ at, text: i.slice(0, 400) }));
       p.ltrim(K.insights, 0, 59);
       let added = 0;
       const active = rules.filter((r) => r.status !== 'retired').length;
-      for (const r of out.rules.slice(0, 4)) {
-        const conditions = r.conditions.filter((x) => allowed.has(x.feature) && Number.isFinite(x.value)).slice(0, 4);
+      const tipRules = new Map<string, string[]>();
+      for (const r of out.rules.slice(0, 4 + newTips.length * 2)) {
+        const fromTip = !!r.tipId && tipIds.has(r.tipId);
+        const known = fromTip ? allNames : allowed;
+        const conditions = r.conditions.filter((x) => known.has(x.feature) && Number.isFinite(x.value)).slice(0, 4);
         if (!conditions.length || conditions.length !== r.conditions.length) continue; // invented a feature → drop
-        if (active + added >= c.maxRules) break;
+        if (!fromTip && active + added >= c.maxRules) continue;
         const rule: AiRule = {
           id: `r${Date.now().toString(36)}${added}`,
           title: r.title.slice(0, 120),
@@ -577,17 +687,40 @@ export class AiCoach {
           statusWhy: 'new — testing on new trades',
           backtest: null,
           forward: null,
+          ...(fromTip ? { source: 'owner' as const, tipId: r.tipId } : {}),
         };
         rule.backtest = ruleStats(rule, trades);
-        const s = nextStatus(rule, c);
+        const s = fromTip ? { status: 'live' as const, why: 'your tip — live now (results still tracked)' } : nextStatus(rule, c);
         rule.status = s.status;
         rule.statusWhy = s.why;
         p.hset(K.rules, rule.id, JSON.stringify(rule));
+        if (fromTip) tipRules.set(r.tipId!, [...(tipRules.get(r.tipId!) ?? []), `${rule.action} ${rule.strategy ?? 'any strategy'}: ${rule.title}`]);
         added++;
       }
       p.lpush(K.reviews, JSON.stringify({ at, model, insights: out.insights.slice(0, 3).map((x) => x.slice(0, 200)), rulesAdded: out.rules.slice(0, 4).map((r) => r.title.slice(0, 120)), before: { n: recent30.length, avgPct: recent30.length ? r1(recent30.reduce((a, b) => a + b, 0) / recent30.length) : 0 } }));
       p.ltrim(K.reviews, 0, 19);
       await p.exec();
+      // The owner's tips: apply the setting changes the AI made for them and store its answer.
+      if (newTips.length) {
+        const tipSettings = new Map<string, string[]>();
+        for (const ch of (out.settingChanges ?? []).filter((x) => tipIds.has(x.tipId)).slice(0, 12)) {
+          const tip = newTips.find((t) => t.id === ch.tipId)!;
+          const res = await applyEdit(ch.key, ch.value, 'owner-tip', `your tip "${tip.text.slice(0, 80)}" — ${ch.why.slice(0, 160)}`);
+          tipSettings.set(ch.tipId, [...(tipSettings.get(ch.tipId) ?? []), res.ok ? res.text : `not changed (${res.error})`]);
+        }
+        const answers = new Map((out.tipResponses ?? []).map((x) => [x.tipId, x.response.slice(0, 800)]));
+        const latest = await this.tips();
+        for (const t of latest) {
+          if (!tipIds.has(t.id)) continue;
+          t.status = 'done';
+          t.answeredAt = at;
+          t.response = answers.get(t.id) ?? 'Noted — I will keep this in mind in every review.';
+          t.rules = tipRules.get(t.id) ?? [];
+          t.settings = tipSettings.get(t.id) ?? [];
+        }
+        await this.saveTips(latest);
+        await this.refreshRules();
+      }
       // Keep the store small: drop the oldest retired rules beyond 40.
       const all = await this.rules();
       const retired = all.filter((r) => r.status === 'retired');

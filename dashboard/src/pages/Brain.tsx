@@ -3,6 +3,7 @@
  * rules the statistical search discovered (testing → live), how the budget is shifted between strategies,
  * the learned entry styles and every change the bot made.
  */
+import { BrainTips } from '../components/BrainTips';
 import { Card, Empty, ErrorBox, Loading, PageHeader } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { ago, STRATEGY_LABEL } from '../lib/format';
@@ -32,6 +33,9 @@ export function Brain() {
   return (
     <>
       <PageHeader title="Brain" subtitle="What the bot has learned on its own, what it's testing, and what it changed. Nothing goes live without proving itself on new trades first." />
+      <div className="mb-4">
+        <BrainTips />
+      </div>
       {error && <ErrorBox message={error} />}
       {!data && !error && <Loading />}
       {data === null && !error && <Empty>The brain starts a few minutes after the bot starts.</Empty>}

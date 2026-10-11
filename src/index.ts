@@ -401,8 +401,17 @@ async function main(): Promise<void> {
   } else if (feed.dataSource === 'hybrid') {
     // Launches + migrations from PumpPortal, every trade from Solana's public node. Both free.
     startPortal(false);
-    startLogs(feed.tradesWsUrl, false);
-    log.info({ trades: redactUrl(feed.tradesWsUrl) }, 'data source: hybrid (PumpPortal launches + trade stream)');
+    if (feed.tradesWsUrl !== env.TRADES_WS_URL) {
+      // A paid node bills every message: give it MIGRATED coins only (PumpSwap, far fewer messages than the curve);
+      // bonding-curve coins stay on the free node.
+      const curve = startLogs(env.TRADES_WS_URL, false, 'curve');
+      backupRef = startLogs(feed.tradesWsUrl, false, 'amm');
+      logsRef = curve;
+      log.info({ trades: redactUrl(feed.tradesWsUrl) }, 'data source: hybrid — paid node for migrated coins only, free node for curve coins');
+    } else {
+      startLogs(feed.tradesWsUrl, false);
+      log.info({ trades: redactUrl(feed.tradesWsUrl) }, 'data source: hybrid (PumpPortal launches + trade stream)');
+    }
   } else if (feed.dataSource === 'grpc' && feed.grpcEndpoint) {
     // Paid Yellowstone gRPC stream = MIGRATED coins only (PumpSwap) — the expensive, important part. Bonding-curve coins
     // (new pairs, Soon, runners, curve coins we hold) come from Solana's FREE public node. The paid WebSocket is never
