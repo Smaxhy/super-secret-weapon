@@ -419,6 +419,28 @@ smart money → learning engine → ML → social). See README.md.
   ×1.25 (≤3× default); ≤15% ran and median end ≤0.95x → ×0.85 (≥0.5× default); ≤ once per 6 h, only exits since the last
   change count (`exitafter:chg:*`), via `applyEdit` source 'exit-tuner' → change log. AI input `exitsAfterSelling`;
   Brain snapshot `exitTimers` → Brain page card "Exit timers — what coins did after it sold".
+- **v10.5 (Oct 11): owner's "big update" ported** (owner pushed `1474c87 big update` to `main`, built on the Oct 9 code
+  81 commits back — a plain merge would have reverted v5…v10.4, so the NEW parts were rebuilt on the current bot;
+  `main` itself is untouched and is NOT what the VPS runs). Ported: **price action** `src/evaluator/price-action.ts`
+  (log-trend slope + R², extension above the trend line, defended support / resistance, setup BREAKOUT / PULLBACK /
+  GRIND / EXTENDED / CHOP / DISTRIBUTION / BREAKDOWN, strength, manipulation; input = crowd log via `tapeFromCrowd`,
+  `priceActionFor` cached 1.5 s per coin) → `features.pa.*` (evaluator + swing; AI section 'pa') + `entry.priceAction`
+  rules in the evaluator (block BREAKDOWN / DISTRIBUTION, manipulation >0.6, <5 trades / <4 buyers in 60 s, >45% under
+  the recent high for CURVE_SNIPE / RUNNER / SOON, room to resistance < 2× round-trip cost) + stretched (+40% in 60 s /
+  30% over the trend line / EXTENDED) → DipWatcher (not under $15k new pairs, not learning trades). **Exits**
+  (`exit.priceAction`, decideExit `chart` + `liquiditySol` inputs, live sell manager + virtual book): structure stop
+  (peak ≥1.3x, close 3% under the last swing low > entry×0.9 → TRAILING_STOP "structure break"), momentum fade (≥1.25x,
+  12% off the peak, buyers <45% + net selling → sell 50% once, FADE_MARKER −6, counts as banked), trail × 0.85–1.15 by
+  chart strength, whale exit (one sell ≥15% of liquidity while 10% off the peak → RUG), dev with ≥2% of supply: any 2%+
+  sell → RUG. **Tape archive** (`learner/tape-archiver.ts`, Prisma `TokenTape`, every 10 min, paper-traded coins of the
+  last 6 h, −15 min…+45 min after the sell, ≤6,000 trades, 14 days) + **backtester** (`learner/backtester.ts`: replays
+  each archived trade through VirtualBook with the live exits + every exit-lab variant on its real tape; GET
+  `/api/backtest?days=1–14` cached 10 min; `npm run backtest`; Performance card "Backtest: other exits on the same
+  trades"). All new rules editable (Controls → Buy rules → "Chart rules — buying / selling"; `.enabled` keys = on/off).
+  Tests ported: tests/price-action.test.ts (+ tests/tape-helpers.ts trimmed), new price-action-exits / backtester tests.
+  NOT ported (already in the bot in a newer form, or against the owner's rules): regime detector, Bayesian pattern
+  beliefs, daily weight adjuster, outcome tracker, conviction sizing, 15/30/45 s re-checks (dip watcher does it), the
+  40% hard stop / 30% trail / old time stop (owner's 10–20% band + v5 time stops), old scorer weights.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

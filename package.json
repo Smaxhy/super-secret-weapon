@@ -25,6 +25,7 @@
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
     "check:rpc": "tsx scripts/check-rpc.ts",
+    "backtest": "tsx scripts/backtest.ts",
     "docker:up": "docker compose up -d postgres redis",
     "docker:down": "docker compose down"
   },

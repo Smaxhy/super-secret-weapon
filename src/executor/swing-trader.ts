@@ -12,6 +12,7 @@
  * BUYs and interesting skips are stored as evaluations, so the outcome labeler and calibration
  * learn from them like every other strategy.
  */
+import { paFeatures, priceActionFor } from '../evaluator/price-action';
 import { timeframeFail, timeframes } from '../evaluator/timeframes';
 import { priceShape } from '../evaluator/price-shape';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
@@ -269,7 +270,7 @@ export class SwingTrader {
           combinedScore: score,
           decision,
           reasons: decision === 'BUY' ? [explore ? `learning trade: score ${score} (bar ${verdict.threshold})` : `swing: ${setup.why}`, ...verdict.notes.slice(0, 4)] : verdict.fails.length ? verdict.fails : [`score ${score} < ${verdict.threshold}`],
-          features: json({ preCalibrationScore: verdict.score, calibration: cal, explore, shape: priceShape(candles, now), tf: timeframes(this.crowd.trades(mint), now), swing: { parts: verdict.parts, resilience: verdict.resilience, setup, bounce: coin.bounce, liveBounce, ta, top10Pct: coin.holders?.top10Pct ?? null, sources: coin.sources, watchlist: coin.watchlist, marketCapUsd: liveMc ?? coin.marketCapUsd, liquidityUsd: liveLiq ?? coin.liquidityUsd }, market, crowd }),
+          features: json({ preCalibrationScore: verdict.score, calibration: cal, explore, shape: priceShape(candles, now), tf: timeframes(this.crowd.trades(mint), now), pa: (() => { const r = priceActionFor(mint, this.crowd.trades(mint), now); return r ? paFeatures(r) : null; })(), swing: { parts: verdict.parts, resilience: verdict.resilience, setup, bounce: coin.bounce, liveBounce, ta, top10Pct: coin.holders?.top10Pct ?? null, sources: coin.sources, watchlist: coin.watchlist, marketCapUsd: liveMc ?? coin.marketCapUsd, liquidityUsd: liveLiq ?? coin.liquidityUsd }, market, crowd }),
           regime,
         },
       });

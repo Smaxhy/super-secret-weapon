@@ -21,6 +21,7 @@ import { RuggerMemory } from './executor/rug-watch';
 import { TimingLearner } from './learner/timing';
 import { shadowAsClosed, ShadowTrades, wouldHaveTaken } from './learner/shadow-trades';
 import { ExitTuner } from './learner/exit-tuner';
+import { TapeArchiver } from './learner/tape-archiver';
 import { Brain } from './learner/brain';
 import { startPushNotifier } from './lib/push';
 import { LossAutopsy } from './learner/loss-autopsy';
@@ -159,6 +160,9 @@ async function main(): Promise<void> {
   const exitTuner = new ExitTuner(redis, (m) => crowd.trades(m));
   exitTuner.start();
   aiCoach.exitSource = () => exitTuner.snapshot();
+  // Real trade tapes around every paper trade → backtests of exit settings (learner/backtester.ts).
+  const tapeArchiver = new TapeArchiver((m) => crowd.trades(m));
+  tapeArchiver.start();
   aiCoach.autopsySource = () => autopsy.snapshot();
   trader.bandCheck = (req) =>
     autopsy.check({

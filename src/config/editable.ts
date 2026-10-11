@@ -137,6 +137,28 @@ export const EDITABLE: EditableSetting[] = [
   S('Exit timers — every strategy', 'exit.timeStop.minPeakMultiple', 'No follow-through = never reached', 1, 2, '×', 0.01),
   S('Exit timers — every strategy', 'exit.timeStop.maxMultiple', '…and now at or below', 0.8, 1.5, '×', 0.01),
 
+  // ---- Price action (owner's big update) ----
+  S('Chart rules — buying (every coin)', 'entry.priceAction.enabled', 'On (1) / off (0)', 0, 1, undefined, 1),
+  S('Chart rules — buying (every coin)', 'entry.priceAction.maxManipulation', 'Max bot / wash score (0–1)', 0, 1, '', 0.05),
+  S('Chart rules — buying (every coin)', 'entry.priceAction.minTrades60', 'Min trades in the last minute', 0, 200, undefined, 1),
+  S('Chart rules — buying (every coin)', 'entry.priceAction.minUniqueBuyers60', 'Min buyers in the last minute', 0, 200, undefined, 1),
+  S('Chart rules — buying (every coin)', 'entry.priceAction.maxChange60Pct', 'Wait for a dip if up more than … in 60 s', 0, 1000, '%', 5),
+  S('Chart rules — buying (every coin)', 'entry.priceAction.maxExtensionPct', 'Wait for a dip if this far above its trend line', 0, 1000, '%', 5),
+  S('Chart rules — buying (every coin)', 'entry.priceAction.maxOffHighPctByStrategy.CURVE_SNIPE', 'New pairs: max % under the recent high (0 = off)', 0, 100, '%', 5),
+  S('Chart rules — buying (every coin)', 'entry.priceAction.maxOffHighPctByStrategy.RUNNER', 'Runners: max % under the recent high (0 = off)', 0, 100, '%', 5),
+  S('Chart rules — buying (every coin)', 'entry.priceAction.maxOffHighPctByStrategy.SOON', 'Soon: max % under the recent high (0 = off)', 0, 100, '%', 5),
+  S('Chart rules — buying (every coin)', 'entry.priceAction.minEdgeMultiple', 'Room to resistance ≥ … × the fees (0 = off)', 0, 10, '×', 0.5),
+  S('Chart rules — selling (every coin)', 'exit.priceAction.enabled', 'On (1) / off (0)', 0, 1, undefined, 1),
+  S('Chart rules — selling (every coin)', 'exit.priceAction.structureStop.enabled', 'Structure stop on (1) / off (0)', 0, 1, undefined, 1),
+  S('Chart rules — selling (every coin)', 'exit.priceAction.structureStop.minPeakMultiple', 'Structure stop after a peak of', 1.05, 5, '×', 0.05),
+  S('Chart rules — selling (every coin)', 'exit.priceAction.structureStop.breakPct', 'Structure stop: % under the swing low', 0, 30, '%', 1),
+  S('Chart rules — selling (every coin)', 'exit.priceAction.momentumFade.enabled', 'Momentum fade on (1) / off (0)', 0, 1, undefined, 1),
+  S('Chart rules — selling (every coin)', 'exit.priceAction.momentumFade.minMultiple', 'Momentum fade from', 1.05, 5, '×', 0.05),
+  S('Chart rules — selling (every coin)', 'exit.priceAction.momentumFade.dropFromPeakPct', 'Momentum fade: % off the peak', 1, 50, '%', 1),
+  S('Chart rules — selling (every coin)', 'exit.priceAction.momentumFade.sellPct', 'Momentum fade: sell % of what is left', 5, 100, '%', 5),
+  S('Chart rules — selling (every coin)', 'exit.rugExit.singleSellLiquidityPct', 'Whale exit: one sell ≥ … % of liquidity (0 = off)', 0, 100, '%', 1),
+  S('Chart rules — selling (every coin)', 'exit.rugExit.devAnySellMinHoldingPct', 'Dev holding ≥ … %: any dev sell = rug (0 = off)', 0, 50, '%', 0.5),
+
   // ---- Size & risk ----
   S('Trade size & risk', 'trading.maxPositionSol', 'Normal trade size', 0.01, 50, 'SOL', 0.05),
   S('Trade size & risk', 'trading.minPositionSol', 'Smallest trade', 0.01, 10, 'SOL', 0.01),
@@ -169,5 +191,5 @@ export function checkEdit(key: string, raw: unknown): { ok: true; setting: Edita
   const n = Number(raw);
   if (!Number.isFinite(n)) return { ok: false, error: 'Not a number' };
   if (n < setting.min || n > setting.max) return { ok: false, error: `${setting.label}: must be ${setting.min}–${setting.max}` };
-  return { ok: true, setting, value: key.startsWith('trading.enabledStrategies.') ? n >= 1 : n };
+  return { ok: true, setting, value: key.startsWith('trading.enabledStrategies.') || key.endsWith('.enabled') ? n >= 1 : n };
 }

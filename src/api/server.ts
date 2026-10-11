@@ -14,6 +14,7 @@
  *
  * Disabled (with a warning) unless DASHBOARD_PASSWORD and JWT_SECRET are set.
  */
+import { runBacktest } from '../learner/backtester';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import websocket from '@fastify/websocket';
@@ -110,6 +111,16 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     secured.delete<{ Params: { id: string } }>('/api/brain/tips/:id', async (req, reply) => {
       if (!deps.aiCoach || !(await deps.aiCoach.removeTip(req.params.id))) return reply.code(404).send({ error: 'tip not found' });
       return { ok: true };
+    });
+    // Backtest: replay the archived paper trades' real price paths with the live exits + every exit-lab variant.
+    let bt: { at: number; days: number; report: unknown } | null = null;
+    let btRunning: Promise<unknown> | null = null;
+    secured.get<{ Querystring: { days?: string; refresh?: string } }>('/api/backtest', async (req) => {
+      const days = Math.max(1, Math.min(14, Number(req.query.days ?? 7) || 7));
+      if (bt && bt.days === days && Date.now() - bt.at < 10 * 60_000 && req.query.refresh !== '1') return bt.report;
+      btRunning ??= runBacktest(days).then((report) => (bt = { at: Date.now(), days, report })).finally(() => (btRunning = null));
+      await btRunning;
+      return bt?.report ?? null;
     });
     // Update button: ask the VPS updater to pull + rebuild now (force = rebuild even without new code).
     secured.get('/api/update', async (_req, reply) => {

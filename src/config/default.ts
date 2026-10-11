@@ -65,6 +65,30 @@ export const DEFAULT_CONFIG = {
   },
 
   entry: {
+    /**
+     * Price action read from the trade tape (evaluator/price-action.ts; owner's "big update", Oct 11):
+     * trend line, defended support / resistance, setup, buyer quality. Hard "not this coin" rules +
+     * timing rules (stretched → the dip watcher waits for a pullback instead of buying the top).
+     */
+    priceAction: {
+      enabled: true as boolean,
+      /** Chart says no: lost support with sellers in control / sellers taking over. */
+      blockSetups: ['BREAKDOWN', 'DISTRIBUTION'] as string[],
+      /** 0–1 bot / wash-trading likelihood (top buyer share, churn, uniform sizes) above which → no buy. */
+      maxManipulation: 0.6,
+      /** Real demand in the last minute. */
+      minTrades60: 5,
+      minUniqueBuyers60: 4,
+      /** Don't chase: up more than this in 60 s, or this far above its own trend line → wait for a dip. */
+      maxChange60Pct: 40,
+      maxExtensionPct: 30,
+      /** More than this % under the recent high = a failed run, not a dip (0 = off; fresh curve coins only). */
+      maxOffHighPctByStrategy: { CURVE_SNIPE: 45, RUNNER: 45, SOON: 45 } as Partial<Record<StrategyName, number>>,
+      /** Room to the next defended resistance must be ≥ this × the round-trip cost (else it only feeds fees). */
+      minEdgeMultiple: 2,
+      /** No resistance above (price discovery) → assume this much room (%). */
+      openSkyRoomPct: 60,
+    },
     /** Owner's limits per candle timeframe (evaluator/timeframes.ts; 0 = off; Controls → Buy rules → Timeframes). */
     timeframes: {
       maxLastCandlePct: { s5: 0, s15: 0, s30: 0, m1: 0, m5: 0, h1: 0 },
@@ -1043,8 +1067,22 @@ export const DEFAULT_CONFIG = {
       /** Bundle wallets sold this many % of supply since we bought → exit. */
       bundleDumpPct: 5,
       devDumpPct: 10,
+      /** A dev who held more than this % of supply: ANY real sell (≥2% of their bag) counts as a rug signal. */
+      devAnySellMinHoldingPct: 2,
+      /** One sell this big vs the pool / curve liquidity while ≥10% off the peak = a whale exit → out. 0 = off. */
+      singleSellLiquidityPct: 15,
       onLiquidityRemoved: true,
       holderConcentrationSpikePct: 15,
+    },
+    /** Chart-based exits (price-action.ts, owner's big update): */
+    priceAction: {
+      enabled: true as boolean,
+      /** After a ≥ minPeakMultiple peak, a close breakPct% under the last swing low = the uptrend is over → sell the rest. */
+      structureStop: { enabled: true as boolean, minPeakMultiple: 1.3, breakPct: 3 },
+      /** In profit ≥ minMultiple, dropFromPeakPct% off the peak and sellers own the last minute → bank sellPct% of what's left, once. */
+      momentumFade: { enabled: true as boolean, minMultiple: 1.25, dropFromPeakPct: 12, sellPct: 50 },
+      /** Trailing distance × weak…strong by chart strength (a strong chart isn't shaken out on noise). */
+      trailByStrength: { enabled: true as boolean, weak: 0.85, strong: 1.15 },
     },
     staleMinutes: {
       CURVE_SNIPE: 20,

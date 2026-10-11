@@ -35,6 +35,7 @@
  * Positions are re-read from the database every tick, so a restart loses nothing.
  */
 import type { ExitReason, Position, Prisma } from '@prisma/client';
+import { priceActionFor, type PriceAction } from '../evaluator/price-action';
 import { DEFAULT_CONFIG, type BotConfigShape } from '../config/default';
 import { deepMerge, getConfig, refreshConfig } from '../config/runtime-config';
 import { getSolUsd } from '../lib/sol-price';
@@ -91,6 +92,10 @@ export interface PositionUpdate {
 const MOVE_THRESHOLD = 0.05;
 
 export interface ExitInput {
+  /** Chart read of the last minutes (price-action.ts) — structure stop, momentum fade, whale exit, trail width. */
+  chart?: ExitChart | null;
+  /** SOL liquidity on the curve / in the pool now (whale-exit rug signal). */
+  liquiditySol?: number | null;
   entryPriceSol: number;
   peakPriceSol: number;
   remainingPct: number;
@@ -195,6 +200,18 @@ export const DIVERGENCE_MARKER = -3;
 export const BOOST_MARKER = -4;
 /** Marker: the spike sell already happened (once per position). */
 export const SPIKE_MARKER = -5;
+/** tpTiersHit marker: the momentum-fade partial sale is done (once per position). */
+export const FADE_MARKER = -6;
+
+/** The slice of the chart read (price-action.ts) the exit rules use. */
+export type ExitChart = Pick<PriceAction, 'strength' | 'buyVolShare60' | 'netFlowSol60' | 'change60Pct' | 'lastSwingLow' | 'largestSellSol60' | 'trades60'>;
+
+/** Pure: trailing distance factor from chart strength (weak → tighter, strong → wider); 1 without a chart. */
+export function strengthTrailFactor(chart: ExitChart | null | undefined, rules: BotConfigShape['exit']): number {
+  const ts = rules.priceAction?.trailByStrength;
+  if (!rules.priceAction?.enabled || !ts?.enabled || !chart || chart.trades60 < 3) return 1;
+  return ts.weak + (ts.strong - ts.weak) * Math.max(0, Math.min(1, chart.strength));
+}
 
 export interface ActivitySample {
   t: number;
@@ -533,7 +550,7 @@ export function holdLongerNow(i: {
 }): boolean {
   const hl = (i.rules as Partial<ExitRules>).holdLonger;
   if (!hl?.enabled || i.marketCapUsd === null || i.marketCapUsd < hl.minMarketCapUsd || i.heldMs >= hl.maxHours * 3600_000) return false;
-  const banked = i.tpTiersHit.some((t) => t === INITIALS_MARKER || t === SPIKE_MARKER || t > 1);
+  const banked = i.tpTiersHit.some((t) => t === INITIALS_MARKER || t === SPIKE_MARKER || t === FADE_MARKER || t > 1);
   const up = !!i.chart && i.chart.verdict !== 'avoid' && (i.chart.trend === 'up' || (i.chart.trend === 'range' && i.chart.higherLows));
   return banked && up && i.risk < i.rules.riskExit.threshold;
 }
@@ -587,7 +604,15 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
 
   if (i.devHoldingPctEntry > 0.1) {
     const devSoldPct = ((i.devHoldingPctEntry - i.devHoldingPctNow) / i.devHoldingPctEntry) * 100;
-    if (devSoldPct >= rules.rugExit.devDumpPct) return all('RUG_DETECTED', `dev sold ${devSoldPct.toFixed(0)}% of their bag`);
+    // A dev who still held a real bag: any meaningful sell is a rug signal (owner's big update).
+    const anyMin = rules.rugExit.devAnySellMinHoldingPct ?? 0;
+    const limit = anyMin > 0 && i.devHoldingPctEntry >= anyMin ? Math.min(2, rules.rugExit.devDumpPct) : rules.rugExit.devDumpPct;
+    if (devSoldPct >= limit) return all('RUG_DETECTED', `dev sold ${devSoldPct.toFixed(0)}% of their bag`);
+  }
+  // Whale exit: one sell that's a big slice of the liquidity while we're well off the peak.
+  const wl = rules.rugExit.singleSellLiquidityPct ?? 0;
+  if (rules.priceAction?.enabled && wl > 0 && i.chart && i.chart.trades60 >= 3 && i.liquiditySol && i.liquiditySol > 0 && i.chart.largestSellSol60 >= (wl / 100) * i.liquiditySol && i.priceSol < i.peakPriceSol * 0.9) {
+    return all('RUG_DETECTED', `whale exit: one sell of ${i.chart.largestSellSol60.toFixed(2)} SOL (${((i.chart.largestSellSol60 / i.liquiditySol) * 100).toFixed(0)}% of liquidity)`);
   }
   if (multiple < 1 && i.top10PctNow - i.top10PctEntry >= rules.rugExit.holderConcentrationSpikePct) {
     return all('RUG_DETECTED', `top-10 concentration ${i.top10PctEntry.toFixed(1)}% → ${i.top10PctNow.toFixed(1)}%`);
@@ -717,11 +742,19 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
 
   if (state.peakPriceSol >= i.entryPriceSol * rules.trailingStopActivateMultiple) state.trailingActive = true;
   const peakX = state.peakPriceSol / i.entryPriceSol;
+  const pa = rules.priceAction?.enabled ? rules.priceAction : null;
+  // Structure stop: after a real run, a close clearly under the last swing low = the uptrend that paid us is over.
+  const st = pa?.structureStop;
+  if (st?.enabled && !holding && remaining > 0 && i.chart?.lastSwingLow && peakX >= st.minPeakMultiple && i.priceSol < state.peakPriceSol
+    && i.chart.lastSwingLow > i.entryPriceSol * 0.9 && i.priceSol <= i.chart.lastSwingLow * (1 - st.breakPct / 100)) {
+    sells.push({ pct: remaining, reason: 'TRAILING_STOP', detail: `structure break: ${((1 - i.priceSol / i.chart.lastSwingLow) * 100).toFixed(1)}% under the last swing low after a ${peakX.toFixed(2)}x peak, at ${multiple.toFixed(2)}x` });
+    return { sells, state };
+  }
   // Trailing stop (vol-adaptive, break-even floor after 1.5x). Only a CONFIRMED break sells:
   // under the stop for N checks and N seconds — or straight away if it gapped far below.
   const lvl = remaining > 0
     ? trailingStopLevel(
-        { entryPriceSol: i.entryPriceSol, peakPriceSol: state.peakPriceSol, trailingActive: state.trailingActive, initialsOut, volatilityPct: i.volatilityPct, sizeSol: i.sizeSol, costSol: i.costSol, remainingPct: remaining, txFeeSol: i.txFeeSol, trailFactor: i.trailFactor },
+        { entryPriceSol: i.entryPriceSol, peakPriceSol: state.peakPriceSol, trailingActive: state.trailingActive, initialsOut, volatilityPct: i.volatilityPct, sizeSol: i.sizeSol, costSol: i.costSol, remainingPct: remaining, txFeeSol: i.txFeeSol, trailFactor: (i.trailFactor ?? 1) * strengthTrailFactor(i.chart, rules) },
         rules,
       )
     : null;
@@ -744,6 +777,17 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
     }
     state.breachTicks = ticks;
     state.breachSinceMs = since;
+  }
+  // Momentum fade: a winner where sellers took over the last minute and the price is well off the peak → bank part, once.
+  const mf = pa?.momentumFade;
+  if (mf?.enabled && !holding && remaining > 0 && i.chart && !state.tpTiersHit.includes(FADE_MARKER) && multiple >= mf.minMultiple
+    && i.priceSol <= state.peakPriceSol * (1 - mf.dropFromPeakPct / 100) && i.chart.trades60 >= 3 && i.chart.buyVolShare60 < 0.45 && i.chart.netFlowSol60 < 0) {
+    let pct = (remaining * mf.sellPct) / 100;
+    if (remaining - pct < 10) pct = remaining; // don't leave a crumb that only pays fees
+    sells.push({ pct, reason: 'TAKE_PROFIT', detail: `momentum fade: buyers ${(i.chart.buyVolShare60 * 100).toFixed(0)}% of the last minute, ${((1 - i.priceSol / state.peakPriceSol) * 100).toFixed(0)}% off the peak — banked ${pct.toFixed(0)}% at ${multiple.toFixed(2)}x` });
+    state.tpTiersHit.push(FADE_MARKER);
+    remaining -= pct;
+    if (remaining <= 0.01) return { sells, state };
   }
   if (!initialsOut) {
     // Once it reached e.g. 1.3×, a winner must not turn into a loser.
@@ -1142,6 +1186,8 @@ export class SellManager {
         lastMoveAtMs: (p.lastMoveAt ?? p.openedAt).getTime(),
         staleMinutes: ex.staleMinutes[p.strategy],
         priceSol: m.priceSol,
+        chart: ex.priceAction?.enabled ? priceActionFor(p.mint, crowdTrades, now) : null,
+        liquiditySol: m.liquiditySol,
         migratedNoMarket: completedLongAgo,
         // An adopted (bigger, older) coin's ledger only covers trades since we started following it, so
         // its holder / dev / bundle numbers can't flag a rug — the stop loss and insider exits still can.

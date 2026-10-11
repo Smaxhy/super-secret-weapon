@@ -445,6 +445,21 @@ model ModelVersion {
   deployedAt        DateTime?   @db.Timestamptz(3)
 }
 
+/// The real trade-by-trade price path around every paper trade (from the crowd log), so exit settings can be
+/// backtested on what actually happened (learner/tape-archiver.ts + backtester.ts). Rows are
+/// [tsMs, isBuy(0/1), solAmount, priceSol, walletIdx]. Kept 14 days.
+model TokenTape {
+  mint      String   @id
+  startMs   BigInt
+  endMs     BigInt
+  trades    Int
+  tape      Json
+  wallets   Json
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([updatedAt])
+}
+
 model RegimeSnapshot {
   id        String       @id @default(uuid())
   regime    MarketRegime

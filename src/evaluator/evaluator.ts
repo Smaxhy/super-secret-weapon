@@ -18,6 +18,8 @@ import { parseXLink, xLinkReuse, xLive, xVerdict, type XVerdict } from './x-chec
 import { organicFlow, scanVerdict } from '../scanner/migrated-scanner';
 import { priceShape, staircase } from './price-shape';
 import { timeframeFail, timeframes } from './timeframes';
+import { paFeatures, priceActionFor } from './price-action';
+import { poolFeeBps } from '../lib/pumpfun';
 import { aiRuleVerdict, flattenFeatures } from '../learner/ai-coach';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { timingNow } from '../learner/timing';
@@ -276,6 +278,10 @@ export class Evaluator {
     const shape = shapeBase ? { ...shapeBase, staircase: stair?.hit ? 1 : 0, stairCandles: stair?.candles ?? 0, stairStepCv: stair?.stepCv ?? null } : null;
     // 5 s / 15 s / 30 s / 1 min / 5 min / 1 h candles straight from the trades (owner's per-timeframe limits below).
     const tf = this.crowd ? timeframes(this.crowd.trades(mint), Date.now()) : {};
+    // Price action (trend line, defended levels, setup, buyer quality) from the trade tape.
+    const paCfg = cfg.entry.priceAction ?? DEFAULT_CONFIG.entry.priceAction;
+    const paRead = this.crowd ? priceActionFor(mint, this.crowd.trades(mint), Date.now()) : null;
+    const pa = paRead ? paFeatures(paRead) : null;
 
     const chartPoints = chart?.verdict === 'buy_now' ? chartCfg.buyDipPoints : 0;
     // Chart strategies (Fibonacci, EMA pullback, breakouts …) that PROVED themselves in the live lab.
@@ -330,6 +336,18 @@ export class Evaluator {
     if (stair?.hit) dexFails.push(stair.why);
     const tfWhy = timeframeFail(tf, cfg.entry.timeframes ?? DEFAULT_CONFIG.entry.timeframes);
     if (tfWhy) dexFails.push(tfWhy);
+    // Price-action rules: "not this coin" (the chart / the buyers say no) and "no room for the fees".
+    if (paCfg.enabled && paRead && paRead.setup !== 'THIN') {
+      if (paCfg.blockSetups.includes(paRead.setup)) dexFails.push(`chart: ${paRead.setup === 'BREAKDOWN' ? 'breakdown (lost support, sellers in control)' : `distribution (buyers only ${Math.round(paRead.buyVolShare60 * 100)}% of the last minute)`}`);
+      if (paRead.manipulation > paCfg.maxManipulation) dexFails.push(`chart: manipulation ${paRead.manipulation.toFixed(2)} (top buyer ${Math.round(paRead.topBuyerShare60 * 100)}%, churn ${Math.round(paRead.churnRatio * 100)}%)`);
+      if (paRead.trades60 < paCfg.minTrades60) dexFails.push(`only ${paRead.trades60} trades in the last minute (need ${paCfg.minTrades60})`);
+      else if (paRead.uniqueBuyers60 < paCfg.minUniqueBuyers60) dexFails.push(`only ${paRead.uniqueBuyers60} buyers in the last minute (need ${paCfg.minUniqueBuyers60})`);
+      const maxOff = paCfg.maxOffHighPctByStrategy?.[STRATEGY.name] ?? 0;
+      if (maxOff > 0 && paRead.drawdownFromAthPct > maxOff) dexFails.push(`chart: ${paRead.drawdownFromAthPct.toFixed(0)}% under its recent high (max ${maxOff}%) — a failed run, not a dip`);
+      const rtCost = (2 * poolFeeBps(cfg.paper, market.raw.onAmm || market.raw.complete, market.raw.marketCapSol)) / 100 + 2 * cfg.paper.slippagePct;
+      const room = paRead.resistanceDistPct ?? paCfg.openSkyRoomPct;
+      if (paCfg.minEdgeMultiple > 0 && room < paCfg.minEdgeMultiple * rtCost) dexFails.push(`only ${room.toFixed(0)}% to resistance (< ${paCfg.minEdgeMultiple}× the ${rtCost.toFixed(1)}% round-trip cost)`);
+    }
     // KOL follow (owner: "trade more alongside coins a lot of KOLs buy"): the KOLs must still be in;
     // the more of them, the easier the bar and the bigger the size.
     const kolsIn = kolAct?.buyers.length ?? 0;
@@ -461,6 +479,7 @@ export class Evaluator {
         swing,
         shape,
         tf,
+        pa,
         x: xv?.features ?? null,
       },
       { score: result.score, kols: kolsIn, mcUsd: market.raw.marketCapUsd ?? null, ageMin: market.raw.ageSec / 60, hourUtc: new Date().getUTCHours(), dowUtc: new Date().getUTCDay() },
@@ -512,7 +531,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, market: market.raw, shape, tf, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, market: market.raw, shape, tf, pa, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },
@@ -558,6 +577,15 @@ export class Evaluator {
       this.dips.add({ mint, symbol: token.symbol, strategy: STRATEGY.name, zone: chart.zone, signalPrice: market.raw.priceSol, high: chart.recentHigh, why: chart.summary, swing, wallet: job.data.wallet });
       decision = 'SKIP';
       reasons = [`waiting for a dip: ${chart.summary}`];
+    }
+    // Price action says "right coin, wrong moment" (vertical last minute / far above its trend line) → wait for a dip.
+    const stretched = paCfg.enabled && paRead && paRead.setup !== 'THIN' && (paRead.setup === 'EXTENDED' || paRead.change60Pct > paCfg.maxChange60Pct || paRead.extensionPct > paCfg.maxExtensionPct);
+    if (decision === 'BUY' && !dipEntry && !noDipWait && !explore && stretched && chartCfg.dip.enabled && this.dips && paRead) {
+      const high = paRead.athPriceSol > 0 ? paRead.athPriceSol : market.raw.priceSol;
+      const why = `+${paRead.change60Pct.toFixed(0)}% in 60 s, ${paRead.extensionPct.toFixed(0)}% above its trend line`;
+      this.dips.add({ mint, symbol: token.symbol, strategy: STRATEGY.name, zone: chart?.zone ?? pullbackZone(high, 10), signalPrice: market.raw.priceSol, high, why, swing, wallet: job.data.wallet });
+      decision = 'SKIP';
+      reasons = [`waiting for a dip (stretched): ${why}`];
     }
     // Confirmation delay: re-check a BUY signal a few seconds later before any money moves.
     if (decision === 'BUY' && !dipEntry) {

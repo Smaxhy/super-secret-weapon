@@ -7,6 +7,7 @@
  * ways). Nothing is bought or sold — when a position closes, `onClose` gets the result.
  * Price = the pool price after the latest trade of the coin (crowd log).
  */
+import { priceActionFor } from '../evaluator/price-action';
 import type { BotConfigShape } from '../config/default';
 import { getConfig } from '../config/runtime-config';
 import type { StrategyName } from '../config/types';
@@ -168,6 +169,7 @@ export class VirtualBook {
       lastMoveAtMs: vp.lastMoveAtMs,
       staleMinutes: rules.staleMinutes[vp.strategy],
       priceSol: price,
+      chart: rules.priceAction?.enabled ? priceActionFor(vp.mint, trades, now) : null,
       migratedNoMarket: false,
       bundlePctEntry: 0,
       bundlePctNow: 0,
@@ -218,6 +220,14 @@ export class VirtualBook {
         this.finish(vp, price, `${s.reason}: ${s.detail}`, now);
         return;
       }
+    }
+  }
+
+  /** Close everything still open at its last price (backtests: the tape ended). */
+  closeAll(reason: string, now: number): void {
+    for (const vp of [...this.open.values()]) {
+      const price = priceOfLast(this.crowd, vp.mint);
+      this.finish(vp, price > 0 ? price : vp.refPriceSol, reason, now);
     }
   }
 

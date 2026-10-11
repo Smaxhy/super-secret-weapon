@@ -1,5 +1,6 @@
 import { PnlChart, SignedBars } from '../components/Charts';
 import { StrategyLab } from '../components/StrategyLab';
+import { Backtest } from '../components/Backtest';
 import { LossAutopsy } from '../components/LossAutopsy';
 import { BestTimes } from '../components/BestTimes';
 import { BotChanges } from '../components/BotChanges';
@@ -61,6 +62,7 @@ export function Performance() {
           </div>
 
           <StrategyLab />
+          <Backtest />
 
           <Card title="How trades ended" className="mt-4">
             <div className="overflow-x-auto">
