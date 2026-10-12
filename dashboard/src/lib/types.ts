@@ -20,6 +20,8 @@ export interface Overview {
   winRate: number | null;
   launchesToday: number;
   cumulative: Array<{ t: string; pnl: number; symbol: string }>;
+  range?: string;
+  window?: { pnlSol: number; trades: number; winRate: number; wins: number; avgPct: number | null; bestPct: number | null; worstPct: number | null; cumulative: Array<{ t: string; pnl: number; symbol: string }> };
 }
 
 export interface Detection {

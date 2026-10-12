@@ -441,6 +441,7 @@ smart money → learning engine → ML → social). See README.md.
   NOT ported (already in the bot in a newer form, or against the owner's rules): regime detector, Bayesian pattern
   beliefs, daily weight adjuster, outcome tracker, conviction sizing, 15/30/45 s re-checks (dip watcher does it), the
   40% hard stop / 30% trail / old time stop (owner's 10–20% band + v5 time stops), old scorer weights.
+- **v10.6 (Oct 12): Overview timeframe** — `/api/overview?range=1h|6h|24h|7d|all` adds `window` (profit, wins/trades, win rate, avg %, best/worst, curve for that window); Overview chips (remembered per device).
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

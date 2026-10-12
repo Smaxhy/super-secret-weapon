@@ -46,7 +46,7 @@ export async function performanceRoutes(app: FastifyInstance, deps: ApiDeps): Pr
     return { mode, startingBalanceSol: start, addedSol: p.addedSol ?? 0, ...summarise(await closedTrades(mode), start + (p.addedSol ?? 0)) };
   });
 
-  app.get('/api/overview', async () => {
+  app.get<{ Querystring: { range?: string } }>('/api/overview', async (req) => {
     const cfg = getConfig();
     const mode = deps.executor.mode;
     const dayStart = new Date();
@@ -59,6 +59,12 @@ export async function performanceRoutes(app: FastifyInstance, deps: ApiDeps): Pr
       prisma.token.count({ where: { createdAt: { gte: dayStart } } }),
     ]);
     const s = summarise(closed, cfg.paper.startingBalanceSol + (cfg.paper.addedSol ?? 0));
+    // Timeframe picker on the Overview (1 h / 6 h / 24 h / 7 d / all): numbers + curve for that window only.
+    const RANGES: Record<string, number> = { '1h': 3_600_000, '6h': 6 * 3_600_000, '24h': 86_400_000, '7d': 7 * 86_400_000 };
+    const range = req.query.range && RANGES[req.query.range] ? req.query.range : 'all';
+    const inWin = range === 'all' ? closed : closed.filter((t) => t.closedAt.getTime() >= Date.now() - RANGES[range]!);
+    const w = range === 'all' ? s : summarise(inWin, cfg.paper.startingBalanceSol + (cfg.paper.addedSol ?? 0));
+    const pcts = inWin.filter((t) => t.sizeSol > 0).map((t) => (t.pnlSol / t.sizeSol) * 100);
     const ls = deps.listenerStats();
     return {
       mode,
@@ -78,6 +84,17 @@ export async function performanceRoutes(app: FastifyInstance, deps: ApiDeps): Pr
       winRate: s.winRate,
       launchesToday,
       cumulative: s.cumulative,
+      range,
+      window: {
+        pnlSol: w.totalPnlSol,
+        trades: w.trades,
+        winRate: w.winRate,
+        wins: inWin.filter((t) => t.pnlSol > 0).length,
+        avgPct: pcts.length ? Math.round((pcts.reduce((a, b) => a + b, 0) / pcts.length) * 10) / 10 : null,
+        bestPct: pcts.length ? Math.round(Math.max(...pcts) * 10) / 10 : null,
+        worstPct: pcts.length ? Math.round(Math.min(...pcts) * 10) / 10 : null,
+        cumulative: w.cumulative,
+      },
     };
   });
 }

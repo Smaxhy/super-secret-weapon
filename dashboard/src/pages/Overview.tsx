@@ -14,7 +14,14 @@ import { ago, duration, EXIT_LABEL, mcSol, multiple, pct, pnl, sol, usd } from '
 import type { Detection, Overview as OverviewData, TradeRowData } from '../lib/types';
 
 export function Overview() {
-  const o = useApi<OverviewData>('/api/overview', 15_000, ['trade', 'token']);
+  const [range, setRange] = useState<string>(() => {
+    try {
+      return localStorage.getItem('overview.range') ?? 'all';
+    } catch {
+      return 'all';
+    }
+  });
+  const o = useApi<OverviewData>(`/api/overview?range=${range}`, 15_000, ['trade', 'token']);
   const trades = useApi<TradeRowData[]>('/api/trades?limit=5', 30_000, ['trade']);
   const feed = useApi<Detection[]>('/api/detections?limit=6', 15_000, ['token', 'safety', 'evaluation']);
 
@@ -68,7 +75,50 @@ export function Overview() {
                   All charts →
                 </Link>
               </div>
-              {d.cumulative.length ? <PnlChart points={d.cumulative} height={240} /> : <Empty>No closed trades yet. The chart fills in as the bot paper trades.</Empty>}
+              <div className="mb-3 flex flex-wrap gap-1.5" role="group" aria-label="Timeframe">
+                {[['1h', '1 hour'], ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days'], ['all', 'All']].map(([k, label]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => {
+                      setRange(k!);
+                      try {
+                        localStorage.setItem('overview.range', k!);
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    className={`rounded-full px-3 py-1 text-sm ${range === k ? 'bg-accent text-white' : 'bg-surface-2 text-ink-2'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {d.window && (
+                <dl className="mb-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                  <div>
+                    <dt className="text-muted">Profit</dt>
+                    <dd className="font-semibold"><Pnl value={d.window.pnlSol} /></dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Wins</dt>
+                    <dd className="font-semibold text-ink">{d.window.trades ? `${d.window.wins} / ${d.window.trades} (${pct(d.window.winRate, 0)})` : '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Avg per trade</dt>
+                    <dd className={`font-semibold ${(d.window.avgPct ?? 0) >= 0 ? 'text-up' : 'text-down'}`}>{d.window.avgPct === null ? '—' : `${d.window.avgPct > 0 ? '+' : ''}${d.window.avgPct}%`}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted">Best / worst</dt>
+                    <dd className="font-semibold text-ink">{d.window.bestPct === null ? '—' : `+${d.window.bestPct}% / ${d.window.worstPct}%`}</dd>
+                  </div>
+                </dl>
+              )}
+              {(d.window?.cumulative ?? d.cumulative).length ? (
+                <PnlChart points={d.window?.cumulative ?? d.cumulative} height={240} />
+              ) : (
+                <Empty>{range === 'all' ? 'No closed trades yet. The chart fills in as the bot paper trades.' : 'No closed trades in this timeframe.'}</Empty>
+              )}
             </div>
           </section>
         </>
