@@ -61,6 +61,11 @@ export interface EntryResult {
   positionId?: string;
 }
 
+/** Owner's big-trade rule: score ≥ minScore, not a learning / probe / risky half-size trade, strategy not losing. */
+export function isHighConviction(hc: { enabled: boolean; minScore: number } | undefined, req: Pick<EntryRequest, 'score' | 'explore' | 'sizeMultiplier'>, probe: boolean, allocFactor: number): boolean {
+  return !!hc?.enabled && req.score >= hc.minScore && !req.explore && !probe && (req.sizeMultiplier ?? 1) >= 1 && allocFactor >= 1;
+}
+
 export class Trader {
   private lock: Promise<unknown> = Promise.resolve();
   private breakerTrippedDay: string | null = null;
@@ -170,8 +175,15 @@ export class Trader {
     const t = cfg.trading;
     // (a strategy may be allowed a bigger position — swings on big, deep coins)
     const stratMult = (t.maxPositionMultipleByStrategy as Partial<Record<string, number>> | undefined)?.[req.strategy];
-    const cap = Math.min(t.maxPositionSol * Math.max(t.maxConvictionMultiple ?? 1.6, stratMult ?? 0), (capital * (t.maxPositionPctOfCapital ?? 100)) / 100);
-    let size = Math.min(sized * (req.sizeMultiplier ?? 1), cap, budget, balance - reserve);
+    const hc = t.highConviction;
+    const highConviction = isHighConviction(hc, req, probe, this.allocFactor?.(req.strategy) ?? 1);
+    // Owner: only strong, well-researched setups get the big size; everything else stays at the normal size.
+    const cap = highConviction
+      ? Math.min(hc!.sizeSol, (capital * hc!.maxPctOfCapital) / 100)
+      : hc?.enabled
+        ? Math.min(t.maxPositionSol, (capital * (t.maxPositionPctOfCapital ?? 100)) / 100)
+        : Math.min(t.maxPositionSol * Math.max(t.maxConvictionMultiple ?? 1.6, stratMult ?? 0), (capital * (t.maxPositionPctOfCapital ?? 100)) / 100);
+    let size = Math.min(highConviction ? cap : sized * (req.sizeMultiplier ?? 1), cap, budget, balance - reserve);
     // Stacked multipliers (coach × conviction × regime × hour…) can shrink a buy under the minimum
     // and silently stop every entry → the minimum size, if the budget allows it.
     if (size < cfg.trading.minPositionSol && Math.min(cap, budget, balance - reserve) >= cfg.trading.minPositionSol) size = cfg.trading.minPositionSol;

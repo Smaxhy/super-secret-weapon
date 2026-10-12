@@ -161,6 +161,10 @@ export const EDITABLE: EditableSetting[] = [
 
   // ---- Size & risk ----
   S('Trade size & risk', 'trading.maxPositionSol', 'Normal trade size', 0.01, 50, 'SOL', 0.05),
+  S('Trade size & risk', 'trading.highConviction.enabled', 'Big trades only on strong setups: on (1) / off (0)', 0, 1, undefined, 1),
+  S('Trade size & risk', 'trading.highConviction.minScore', 'Big trade needs a score of at least', 50, 100, undefined, 1),
+  S('Trade size & risk', 'trading.highConviction.sizeSol', 'Big trade size', 0.1, 50, 'SOL', 0.1),
+  S('Trade size & risk', 'trading.highConviction.maxPctOfCapital', 'Big trade max % of the balance', 1, 50, '%', 1),
   S('Trade size & risk', 'trading.minPositionSol', 'Smallest trade', 0.01, 10, 'SOL', 0.01),
   S('Trade size & risk', 'trading.maxPositionPctOfLiquidity', 'Max trade size as % of the coin\'s liquidity (0 = off)', 0, 50, '%', 0.5),
   S('Trade size & risk', 'exit.stopLoss.minHoldSec', 'Hold at least … before the stop loss can sell (0 = off)', 0, 3600, 's', 30),
