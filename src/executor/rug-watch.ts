@@ -32,7 +32,7 @@ export interface RugGuardConfig {
   /** Exit: one holder with ≥ this % of supply sold ≥ bigSellerSoldPct % of it → out. */
   bigSellerMinSupplyPct: number;
   bigSellerSoldPct: number;
-  cascade: { enabled: boolean; windowSec: number; dropPct: number; sellBuyRatio: number; minSellers: number; maxMultiple: number };
+  cascade: { enabled: boolean; windowSec: number; dropPct: number; sellBuyRatio: number; minSellers: number; maxMultiple: number; soloDropPct?: number; crashWindowSec?: number; crashDropPct?: number; crashSellBuyRatio?: number };
 }
 
 export interface Holder {
@@ -89,20 +89,39 @@ export function holderDump(
   return { soldSupplyPct: (sold / supply) * 100, sellers, biggest };
 }
 
-/** Pure: is a sell cascade (the start of a rug) happening right now? */
-export function sellCascade(trades: readonly CrowdTrade[], now: number, c: RugGuardConfig['cascade']): { hit: boolean; dropPct: number; sellSol: number; buySol: number; sellers: number } {
-  const win = trades.filter((x) => now - x.t <= c.windowSec * 1000 && x.px > 0);
-  const none = { hit: false, dropPct: 0, sellSol: 0, buySol: 0, sellers: 0 };
-  if (win.length < 3) return none;
+/** One window of trades: drop from its high, sell vs buy SOL, distinct sellers. */
+function windowStats(trades: readonly CrowdTrade[], now: number, sec: number) {
+  const win = trades.filter((x) => now - x.t <= sec * 1000 && x.px > 0);
+  if (win.length < 3) return null;
   const px = (x: CrowdTrade) => (x.pp && x.pp > 0 ? x.pp : x.px);
   const high = win.reduce((m, x) => Math.max(m, px(x)), 0);
   const last = px(win[win.length - 1]!);
   const sellSol = win.filter((x) => !x.buy).reduce((s, x) => s + x.sol, 0);
   const buySol = win.filter((x) => x.buy).reduce((s, x) => s + x.sol, 0);
   const sellers = new Set(win.filter((x) => !x.buy).map((x) => x.w)).size;
-  const dropPct = high > 0 ? (1 - last / high) * 100 : 0;
-  const hit = c.enabled && dropPct >= c.dropPct && sellSol >= c.sellBuyRatio * Math.max(buySol, 0.01) && sellers >= c.minSellers;
-  return { hit, dropPct, sellSol, buySol, sellers };
+  return { dropPct: high > 0 ? (1 - last / high) * 100 : 0, sellSol, buySol, sellers };
+}
+
+/**
+ * Pure: is a rug happening right now? Three shapes (owner: "obvious rugs are the main issue"):
+ *  - cascade: ≥dropPct under the windowSec high, sells ≥ratio× buys, ≥minSellers sellers;
+ *  - solo dump: ONE wallet (dev / insider) crashes it ≥soloDropPct in the same window (the classic rug);
+ *  - crash: ≥crashDropPct under the crashWindowSec high with sells ≥crashSellBuyRatio× buys (a rug sold in slices).
+ */
+export function sellCascade(trades: readonly CrowdTrade[], now: number, c: RugGuardConfig['cascade']): { hit: boolean; dropPct: number; sellSol: number; buySol: number; sellers: number; kind?: 'cascade' | 'solo' | 'crash'; windowSec?: number } {
+  const none = { hit: false, dropPct: 0, sellSol: 0, buySol: 0, sellers: 0 };
+  if (!c.enabled) return none;
+  const w = windowStats(trades, now, c.windowSec);
+  if (w) {
+    const dumping = w.sellSol >= c.sellBuyRatio * Math.max(w.buySol, 0.01);
+    if (dumping && w.dropPct >= c.dropPct && w.sellers >= c.minSellers) return { hit: true, ...w, kind: 'cascade', windowSec: c.windowSec };
+    if (dumping && c.soloDropPct && w.sellers >= 1 && w.dropPct >= c.soloDropPct) return { hit: true, ...w, kind: 'solo', windowSec: c.windowSec };
+  }
+  if (c.crashWindowSec && c.crashDropPct) {
+    const k = windowStats(trades, now, c.crashWindowSec);
+    if (k && k.dropPct >= c.crashDropPct && k.sellSol >= (c.crashSellBuyRatio ?? 2) * Math.max(k.buySol, 0.01)) return { hit: true, ...k, kind: 'crash', windowSec: c.crashWindowSec };
+  }
+  return w ? { hit: false, ...w } : none;
 }
 
 const RUGGERS = 'rug:wallets';

@@ -62,6 +62,15 @@ describe('rug guard v2: while holding', () => {
     expect(sellCascade(rug, NOW, G.cascade).hit).toBe(true);
     expect(sellCascade(dip, NOW, G.cascade).hit).toBe(false);
   });
+  it('catches one wallet crashing it (classic dev rug) and a rug sold in slices, not a normal pullback', () => {
+    const t = (sec: number, buy: boolean, sol: number, px: number, w: string): CrowdTrade => ({ t: NOW - sec * 1000, w, buy, sol, tok: sol / px, px, pp: px });
+    const solo = [t(15, true, 0.5, 1, 'b1'), t(10, true, 0.3, 1.01, 'b2'), t(3, false, 6, 0.6, 'dev')];
+    expect(sellCascade(solo, NOW, G.cascade)).toMatchObject({ hit: true, kind: 'solo' });
+    const slices = [t(85, true, 1, 1, 'b1'), t(70, false, 1, 0.9, 'd'), t(50, false, 1, 0.8, 'd'), t(30, true, 0.2, 0.8, 'b2'), t(25, false, 1, 0.72, 'd'), t(5, false, 1, 0.65, 'd')];
+    expect(sellCascade(slices, NOW, G.cascade)).toMatchObject({ hit: true, kind: 'crash' });
+    const pullback = [t(80, true, 2, 1, 'b1'), t(60, false, 1, 0.9, 's1'), t(40, true, 1, 0.88, 'b2'), t(20, false, 1, 0.82, 's2'), t(5, true, 0.5, 0.85, 'b3')];
+    expect(sellCascade(pullback, NOW, G.cascade).hit).toBe(false);
+  });
   it('decideExit sells everything on a holder dump or a cascade (cascade only below 1.3x)', () => {
     const exitBase: ExitInput = {
       entryPriceSol: 1, peakPriceSol: 1, remainingPct: 100, tpTiersHit: [], trailingActive: false, refPriceSol: 1, lastMoveAtMs: NOW,

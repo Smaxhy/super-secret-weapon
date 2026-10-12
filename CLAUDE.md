@@ -474,6 +474,11 @@ smart money → learning engine → ML → social). See README.md.
   risky half-size, allocator ×≥1 → size up to 1 SOL (≤12% of capital, still ≤ strategy budget, balance, 3% of liquidity).
   Other trades keep the normal caps (owner: 0.3 conviction / 0.5 swing is fine). Editable on
   Controls → Rules → Trade size & risk. Test tests/high-conviction.test.ts.
+- **v10.11 (Oct 12): faster rug exits** (owner: "obvious rugs are the main issue"; they rode the 5-min hold to −35%).
+  `sellCascade` (rug-watch.ts) now has 3 shapes, all RUG_DETECTED before the min hold (≤1.3x): cascade (unchanged), **solo**
+  (`cascade.soloDropPct` 25: ONE wallet, ≥25% in 20 s, sells ≥3× buys — the old ≥2-sellers rule missed single-wallet dev
+  rugs), **crash** (`crashWindowSec` 90, `crashDropPct` 30, `crashSellBuyRatio` 2 — rugs sold in slices). Editable
+  (Trade size & risk). Tests in rug-guard.test.ts.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

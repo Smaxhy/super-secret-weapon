@@ -913,9 +913,11 @@ export class SellManager {
     try {
       const sc = sellCascade(trades, now, g.cascade);
       if (sc.hit) {
-        out.cascade = { hit: true, detail: `sell cascade: −${sc.dropPct.toFixed(0)}% in ${g.cascade.windowSec}s, ${sc.sellers} sellers dumped ${sc.sellSol.toFixed(1)} SOL vs ${sc.buySol.toFixed(1)} bought`, maxMultiple: g.cascade.maxMultiple };
+        const win = sc.windowSec ?? g.cascade.windowSec;
+        const what = sc.kind === 'solo' ? 'one wallet dumped it' : sc.kind === 'crash' ? 'crash' : 'sell cascade';
+        out.cascade = { hit: true, detail: `${what}: −${sc.dropPct.toFixed(0)}% in ${win}s, ${sc.sellers} seller${sc.sellers === 1 ? '' : 's'} dumped ${sc.sellSol.toFixed(1)} SOL vs ${sc.buySol.toFixed(1)} bought`, maxMultiple: g.cascade.maxMultiple };
         const bySeller = new Map<string, number>();
-        for (const x of trades) if (!x.buy && now - x.t <= g.cascade.windowSec * 1000) bySeller.set(x.w, (bySeller.get(x.w) ?? 0) + x.sol);
+        for (const x of trades) if (!x.buy && now - x.t <= win * 1000) bySeller.set(x.w, (bySeller.get(x.w) ?? 0) + x.sol);
         out.dumpers.push(...[...bySeller].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([w]) => w));
       }
       // Adopted coins: the ledger only starts at adoption, holder numbers aren't real.

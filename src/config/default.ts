@@ -239,7 +239,13 @@ export const DEFAULT_CONFIG = {
       bigSellerMinSupplyPct: 2,
       bigSellerSoldPct: 60,
       /** Sell cascade: ≥20% under the 20-second high, sells ≥3× buys, ≥2 sellers → out at once (not above 1.3x: the trail handles winners). */
-      cascade: { enabled: true as boolean, windowSec: 20, dropPct: 20, sellBuyRatio: 3, minSellers: 2, maxMultiple: 1.3 },
+      cascade: {
+        enabled: true as boolean, windowSec: 20, dropPct: 20, sellBuyRatio: 3, minSellers: 2, maxMultiple: 1.3,
+        /** v10.11 (owner: "obvious rugs are the main issue"): ONE wallet crashing it ≥25% in 20 s (sells ≥3× buys) → out. */
+        soloDropPct: 25,
+        /** …and a rug sold in slices: ≥30% under the 90-second high with sells ≥2× buys → out. Both skip the 5-min hold. */
+        crashWindowSec: 90, crashDropPct: 30, crashSellBuyRatio: 2,
+      },
       /**
        * Launch-whale pump (owner: "a dev or someone buys A LOT at the start → huge spike → a bunch of new
        * wallets buy it"): a wallet that bought ≥5% of the supply in the first 30 s and still holds ≥5% → no
