@@ -3,6 +3,14 @@
 # any IP into a hostname, no domain purchase needed).
 # The dashboard on GitHub Pages is HTTPS, so browsers require the API to be HTTPS too.
 {$API_DOMAIN} {
+	# Security headers (HTTPS only for a year, no MIME sniffing, no framing, no referrer leaks, hide the server name).
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
 	# Never gzip the live WebSocket stream (buffering delays it); normal API JSON is fine.
 	@notws not path /ws
 	encode @notws gzip
