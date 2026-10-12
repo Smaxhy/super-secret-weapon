@@ -74,7 +74,7 @@ describe('potential hold (owner: sells too early in the minus)', () => {
       resistance: { hit: false, level: 0, touches: 0 }, sizeSol: 1, costSol: 1.0015, proceedsSol: 0, volatilityPct: null, txFeeSol: 0.0015, strategy: 'CURVE_SNIPE' as const,
       breachSinceMs: NOW - 10_000, breachTicks: 5,
     };
-    const ex = DEFAULT_CONFIG.exit;
+    const ex = { ...DEFAULT_CONFIG.exit, stopLoss: { ...DEFAULT_CONFIG.exit.stopLoss, minHoldSec: 0 } };
     expect(decideExit(base, ex).sells.length).toBe(1); // without potential it is sold (stop or time stop)
     const p = { hit: true, why: 'buyers in control', extraMin: 10 };
     expect(decideExit({ ...base, potential: p }, ex).sells).toEqual([]);

@@ -162,6 +162,9 @@ export const EDITABLE: EditableSetting[] = [
   // ---- Size & risk ----
   S('Trade size & risk', 'trading.maxPositionSol', 'Normal trade size', 0.01, 50, 'SOL', 0.05),
   S('Trade size & risk', 'trading.minPositionSol', 'Smallest trade', 0.01, 10, 'SOL', 0.01),
+  S('Trade size & risk', 'trading.maxPositionPctOfLiquidity', 'Max trade size as % of the coin\'s liquidity (0 = off)', 0, 50, '%', 0.5),
+  S('Trade size & risk', 'exit.stopLoss.minHoldSec', 'Hold at least … before the stop loss can sell (0 = off)', 0, 3600, 's', 30),
+  S('Trade size & risk', 'exit.stopLoss.holdDisasterPct', 'During that hold, sell only past this loss (rug-level)', 15, 90, '%', 1),
   S('Trade size & risk', 'trading.maxConcurrentPositions', 'Max trades open at once', 1, 100, undefined, 1),
   S('Trade size & risk', 'exit.stopLoss.minPct', 'Stop loss from', 5, 30, '%', 1),
   S('Trade size & risk', 'exit.stopLoss.maxPct', 'Stop loss up to', 5, 40, '%', 1),

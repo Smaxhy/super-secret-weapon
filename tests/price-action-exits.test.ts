@@ -47,3 +47,21 @@ describe('price-action exits (owner big update, ported)', () => {
     expect(strengthTrailFactor(null, R)).toBe(1);
   });
 });
+
+describe('5-minute hold before the stop (owner, Oct 12)', () => {
+  const R0 = DEFAULT_CONFIG.exit;
+  it('holds through a −18% dip in the first 5 minutes, sells it after', () => {
+    expect(decideExit(base({ peakPriceSol: 1, priceSol: 0.82, openedAtMs: now - 60_000 }), R0).sells).toEqual([]);
+    const after = decideExit(base({ peakPriceSol: 1, priceSol: 0.78, openedAtMs: now - 6 * 60_000 }), R0);
+    expect(after.sells[0]?.reason).toBe('STOP_LOSS');
+  });
+  it('a rug-sized fall (past −35%) sells even inside the hold', () => {
+    const d = decideExit(base({ peakPriceSol: 1, priceSol: 0.6, openedAtMs: now - 30_000 }), R0);
+    expect(d.sells[0]?.reason).toBe('STOP_LOSS');
+    expect(d.sells[0]!.detail).toContain('disaster');
+  });
+  it('time stops wait too, rug signals do not', () => {
+    expect(decideExit(base({ peakPriceSol: 1.02, priceSol: 0.97, openedAtMs: now - 3 * 60_000, strategy: 'CURVE_SNIPE' }), R0).sells).toEqual([]);
+    expect(decideExit(base({ peakPriceSol: 1, priceSol: 0.95, openedAtMs: now - 30_000, devHoldingPctEntry: 5, devHoldingPctNow: 2 }), R0).sells[0]?.reason).toBe('RUG_DETECTED');
+  });
+});

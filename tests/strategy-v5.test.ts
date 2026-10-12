@@ -3,7 +3,8 @@ import { DEFAULT_CONFIG } from '../src/config/default';
 import { decideExit, settledHigh, type ExitInput } from '../src/executor/sell-manager';
 import { ammPostTradePrice, poolFeeBps, pumpSwapFeeBps } from '../src/lib/pumpfun';
 
-const rules = DEFAULT_CONFIG.exit;
+// The 5-minute hold (Oct 12) has its own tests; these test the stop / time-stop logic itself.
+const rules = { ...DEFAULT_CONFIG.exit, stopLoss: { ...DEFAULT_CONFIG.exit.stopLoss, minHoldSec: 0 } };
 const NOW = 50_000_000;
 const base: ExitInput = {
   entryPriceSol: 1, peakPriceSol: 1, remainingPct: 100, tpTiersHit: [], trailingActive: false, refPriceSol: 1, lastMoveAtMs: NOW,

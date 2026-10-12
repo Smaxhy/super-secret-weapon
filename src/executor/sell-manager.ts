@@ -625,8 +625,16 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
 
   // Stop loss: 10–20% band (volatility + coach). Past the hard limit → out at once.
   const sl = stopLossLevel(i.entryPriceSol, i.volatilityPct, rules, i.coachStopBiasPct ?? 0, i.exitCostPct ?? 0, i.strategy);
-  if (i.priceSol <= sl.hardPriceSol) return all('STOP_LOSS', `price ${((multiple - 1) * 100).toFixed(1)}% (hard limit −${sl.hardPct}% after fees)`);
-  const potential = i.potential?.hit === true;
+  // Owner: hold at least 5 minutes through a dip (memecoins bounce) — only a disaster-sized fall sells before that.
+  const slCfg = (rules as Partial<ExitRules>).stopLoss;
+  const minHoldMs = (slCfg?.minHoldSec ?? 0) * 1000;
+  const inMinHold = minHoldMs > 0 && i.nowMs - i.openedAtMs < minHoldMs;
+  if (inMinHold) {
+    const disasterPct = slCfg?.holdDisasterPct ?? 35;
+    const disasterPriceSol = i.entryPriceSol * (1 - disasterPct / 100);
+    if (i.priceSol <= disasterPriceSol) return all('STOP_LOSS', `price ${((multiple - 1) * 100).toFixed(1)}% — past the −${disasterPct}% disaster limit inside the ${Math.round(minHoldMs / 60_000)}-min hold`);
+  } else if (i.priceSol <= sl.hardPriceSol) return all('STOP_LOSS', `price ${((multiple - 1) * 100).toFixed(1)}% (hard limit −${sl.hardPct}% after fees)`);
+  const potential = i.potential?.hit === true || inMinHold;
   if (i.priceSol <= sl.stopPriceSol && !potential) {
     const tr = trailRules(rules);
     const slc = { ...DEFAULT_CONFIG.exit.stopLoss, ...((rules as Partial<ExitRules>).stopLoss ?? {}) };
@@ -651,7 +659,7 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   const heldMinNow = (i.nowMs - i.openedAtMs) / 60_000;
   const tsMins = ts ? ((i.strategy ? (ts.minutes as Record<string, number | undefined>)[i.strategy] : undefined) ?? ts.defaultMinutes) : 0;
   const waitForPotential = potential && heldMinNow < tsMins + (i.potential?.extraMin ?? 0);
-  if (ts?.enabled && !holding && !i.tpTiersHit.length && !waitForPotential) {
+  if (ts?.enabled && !holding && !inMinHold && !i.tpTiersHit.length && !waitForPotential) {
     const mins = tsMins;
     const heldMin = heldMinNow;
     const bestX = state.peakPriceSol / i.entryPriceSol;

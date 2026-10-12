@@ -28,6 +28,8 @@ export const DEFAULT_CONFIG = {
     maxPositionPctOfCapital: 6,
     /** A strategy may go up to this × maxPositionSol per position (swings on big, deep coins: more budget). */
     maxPositionMultipleByStrategy: { SWING: 2.5 } as Partial<Record<StrategyName, number>>,
+    /** Our position ≤ this % of the coin's SOL liquidity (thin coins gap through the stop → losses past −20%). 0 = off. */
+    maxPositionPctOfLiquidity: 3,
     /**
      * Fraction of capital per strategy. Must add up to 1. v5 (research, Oct 2026): the edge for a
      * bot with ~0.3 s latency is fresh pairs AFTER the snipers' supply is absorbed (CURVE_SNIPE =
@@ -773,6 +775,8 @@ export const DEFAULT_CONFIG = {
         ownerOnly: true,
         exit: { stopLoss: { minPct: 25, maxPct: 30, fallbackPct: 30, maxPctByStrategy: { MIGRATION_MOMENTUM: 25 } }, hardStopLossPct: 30 },
       },
+      // Owner-only: what would selling at the stop straight away (no 5-minute hold) have done? Never auto-applied.
+      { id: 'Q', name: 'No 5-minute hold (stop fires straight away)', ownerOnly: true, exit: { stopLoss: { minHoldSec: 0 } } },
     ] as Array<{ id: string; name: string; ownerOnly?: boolean; exit: Record<string, unknown> }>,
   },
 
@@ -1063,6 +1067,13 @@ export const DEFAULT_CONFIG = {
       /** A dip under the stop (not the hard limit) must hold this long before selling (no wick sells). */
       confirmTicks: 1,
       confirmSec: 2,
+      /**
+       * Owner (Oct 12): "memecoins dip and bounce — hold at least 5 minutes before panic selling, unless it's brutally
+       * past the stop like a rug". For the first `minHoldSec` the normal stop, the hard limit, the early risk cut and the
+       * time / stale stops wait; only a fall past `holdDisasterPct` (after fees) or a rug signal sells. 0 = off.
+       */
+      minHoldSec: 300,
+      holdDisasterPct: 35,
     },
     rugExit: {
       /** Bundle wallets sold this many % of supply since we bought → exit. */

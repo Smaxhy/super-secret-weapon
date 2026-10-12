@@ -36,6 +36,6 @@ export const V4_EXIT = {
   resistance: { ...d.resistance, minProfitMultiple: 1.2 },
   riskExit: { ...d.riskExit, minProfitMultiple: 1.15 },
   maxHoldMinutes: { CURVE_SNIPE: 45, SOON: 60, MIGRATION_MOMENTUM: 120, SMART_MONEY_COPY: 90 },
-  stopLoss: { ...d.stopLoss, minPct: 10, confirmSec: 1.5 },
+  stopLoss: { ...d.stopLoss, minPct: 10, confirmSec: 1.5, minHoldSec: 0 }, // (pre-Oct-12: no 5-minute hold)
   staleMinutes: { CURVE_SNIPE: 30, SOON: 20, MIGRATION_MOMENTUM: 120, SMART_MONEY_COPY: 120 },
 } as unknown as typeof DEFAULT_CONFIG.exit;

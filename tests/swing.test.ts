@@ -272,7 +272,7 @@ const exitBase: ExitInput = {
 };
 
 describe('swing exits: fast profits, spike sells, tight stop (owner: "10% is good profit, be faster")', () => {
-  const swing = exitRulesFor('SWING', DEFAULT_CONFIG.exit);
+  const swing = exitRulesFor('SWING', { ...DEFAULT_CONFIG.exit, stopLoss: { ...DEFAULT_CONFIG.exit.stopLoss, minHoldSec: 0 } });
   it('SWING gets its own exit settings layered on the shared ones; other strategies are untouched', () => {
     expect(swing.takeProfitTiers.map((t) => [t.multiple, t.sellPct])).toEqual([[1.1, 50], [1.2, 25], [1.5, 15]]);
     expect(swing.trail.breakEvenAfterMultiple).toBe(1.1);
@@ -280,7 +280,7 @@ describe('swing exits: fast profits, spike sells, tight stop (owner: "10% is goo
     expect(swing.spikeSell.enabled).toBe(true);
     expect(DEFAULT_CONFIG.exit.spikeSell.enabled).toBe(false); // only swings sell spikes by default
     expect(exitRulesFor('CURVE_SNIPE', DEFAULT_CONFIG.exit)).toBe(DEFAULT_CONFIG.exit);
-    expect(exitRulesFor('SWING', DEFAULT_CONFIG.exit)).toBe(swing); // cached
+    expect(exitRulesFor('SWING', DEFAULT_CONFIG.exit)).toBe(exitRulesFor('SWING', DEFAULT_CONFIG.exit)); // cached
   });
   it('half out at +10%, a quarter more at +20%', () => {
     const d = decideExit({ ...exitBase, priceSol: 1.11, peakPriceSol: 1.11 }, swing);

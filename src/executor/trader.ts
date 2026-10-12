@@ -176,6 +176,15 @@ export class Trader {
     // and silently stop every entry → the minimum size, if the budget allows it.
     if (size < cfg.trading.minPositionSol && Math.min(cap, budget, balance - reserve) >= cfg.trading.minPositionSol) size = cfg.trading.minPositionSol;
     if (probe) size = Math.min(size, cfg.trading.minPositionSol);
+    // Thin coins: a big position can't get out near the stop (the price gaps through it) → keep our size a small slice
+    // of the liquidity; too thin even for the minimum → no buy.
+    const maxLiqPct = cfg.trading.maxPositionPctOfLiquidity ?? 0;
+    const liq = req.market.liquiditySol;
+    if (maxLiqPct > 0 && liq > 0) {
+      const fit = (liq * maxLiqPct) / 100;
+      if (fit < cfg.trading.minPositionSol) return refuse(`too thin: ${liq.toFixed(1)} SOL liquidity — even the minimum ${cfg.trading.minPositionSol} SOL would be ${((cfg.trading.minPositionSol / liq) * 100).toFixed(1)}% of it (max ${maxLiqPct}%)`);
+      size = Math.min(size, fit);
+    }
     if (size < cfg.trading.minPositionSol) {
       return refuse(`size ${size.toFixed(3)} SOL below minimum (balance ${balance.toFixed(3)}, ${req.strategy} budget ${budget.toFixed(3)})`);
     }
