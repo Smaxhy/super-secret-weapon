@@ -35,7 +35,7 @@ export function DexTrending() {
     </button>
   );
   return (
-    <Card title="DexScreener trending" className="mt-4">
+    <Card title="DexScreener trending">
       <p className="mb-2 text-sm text-ink-2">
         Checked every 30 s. "Last 5 min" = coins popping up right now (5-min volume, trades, rising price, mostly buys). Tracked coins that show up get checked right
         away; DEX paid and trending add points to the score.

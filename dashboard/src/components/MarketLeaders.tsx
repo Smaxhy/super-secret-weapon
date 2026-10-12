@@ -11,7 +11,7 @@ interface Data {
 export function MarketLeadersCard() {
   const { data } = useApi<Data>('/api/market-leaders', 60_000);
   return (
-    <Card title="What's working now" className="mt-4">
+    <Card title="What's working now">
       <p className="mb-2 text-sm text-ink-2">Top coins of the last hour (our biggest-volume coins + DexScreener trending). Words they share are hot narratives — new coins matching them score higher.</p>
       {data && data.narratives.length > 0 && (
         <div className="mb-3 flex flex-wrap gap-1.5">

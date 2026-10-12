@@ -457,6 +457,17 @@ smart money → learning engine → ML → social). See README.md.
   sizes ×0.7–1.3 by p − base rate when a model is on. Tests: tree-model (XOR interaction the logistic can't learn → tree
   AUC >0.8; 0/20 false activations on noise), outcome-tracker. Brain page: "Win-probability models" (both) + "Learning from
   every coin it checks" (`coinsChecked` in the brain snapshot).
+- **v10.9 (Oct 12): cleaner phone layout** (owner: "make the app a lot cleaner, professional and organized, on mobile").
+  Shared UI (`components/ui.tsx`): Card `subtitle`, smaller PageHeader, `Tabs` (segmented; `sticky` pins it under the
+  phone header via CSS var `--hdr`) + `useTab(id…)` (remembered per device, `tab.<id>`), `Stack`, `Stat`, `Rows`/`Row`,
+  skeleton Loading. `components/Icon.tsx` = one SVG line-icon set (no emoji in the chrome). Shell (`App.tsx`): nav grouped
+  Trading / Results / Intelligence / System (sidebar sections), phone tab bar Overview / Positions / History / Performance /
+  More, "More" = grouped bottom sheet + theme (Auto/Light/Dark) + log out; one-line footer. Long pages are tabbed:
+  Performance (Results / Mistakes / Timing / Tests / AI), Controls (Trading / Rules / Alerts / Feed / System — the
+  Update card moved here from Overview; a floating Save bar only shows with unsaved changes), Brain (Talk / Models / Rules /
+  Budget / Changes), Scanner (Health / Market / Trending), Learning (Score / Coach / Signals / History), Wallets (KOLs /
+  Smart money / Analyze / My wallets). Phone lists instead of wide tables (Strategies, Shadow, Brain budget); History
+  filters fold away behind a button on phones. Cards no longer carry their own margins — pages space them with `Stack`.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

@@ -36,7 +36,7 @@ export function StrategyLab() {
   if (!data?.enabled) return null;
   const best = [...data.variants].filter((v) => v.n >= data.minTrades).sort((a, b) => b.lowerPct - a.lowerPct)[0];
   return (
-    <Card title="Strategy lab — which exit setup really makes money" className="mt-4">
+    <Card title="Strategy lab — which exit setup really makes money">
       <p className="mb-3 text-sm text-ink-2">
         Every buy signal is also traded on paper by each setup below (same prices, same fees, no money moves). {data.open} test trades open.
         {data.autoApply ? ` Once a setup has ${data.minTrades}+ results and clearly beats the live one, the bot switches to it.` : ' Auto-switching is off.'}

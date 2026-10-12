@@ -4,7 +4,7 @@
  * the learned entry styles and every change the bot made.
  */
 import { BrainTips } from '../components/BrainTips';
-import { Card, Empty, ErrorBox, Loading, PageHeader } from '../components/ui';
+import { Card, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Stack, Stat, Tabs, useTab } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { ago, STRATEGY_LABEL } from '../lib/format';
 
@@ -31,19 +31,28 @@ const strat = (s: string) => STRATEGY_LABEL[s] ?? s;
 const STATUS: Record<Discovered['status'], string> = { testing: 'testing on new trades', live: 'LIVE', retired: 'retired' };
 const r2 = (x: number | undefined) => (typeof x === 'number' && Number.isFinite(x) ? x.toFixed(2) : '—');
 
+const TABS = [
+  { key: 'talk', label: 'Talk' },
+  { key: 'models', label: 'Models' },
+  { key: 'rules', label: 'Rules' },
+  { key: 'budget', label: 'Budget' },
+  { key: 'changes', label: 'Changes' },
+] as const;
+type Tab = (typeof TABS)[number]['key'];
+
 export function Brain() {
   const { data, error } = useApi<BrainData | null>('/api/brain', 60_000);
+  const [tab, setTab] = useTab<Tab>('brain', TABS.map((t) => t.key), 'talk');
   return (
     <>
-      <PageHeader title="Brain" subtitle="What the bot has learned on its own, what it's testing, and what it changed. Nothing goes live without proving itself on new trades first." />
-      <div className="mb-4">
-        <BrainTips />
-      </div>
-      {error && <ErrorBox message={error} />}
-      {!data && !error && <Loading />}
-      {data === null && !error && <Empty>The brain starts a few minutes after the bot starts.</Empty>}
-      {data && (
-        <div className="space-y-4">
+      <PageHeader title="Brain" subtitle="What it learned on its own. Nothing goes live before it proves itself on new trades." />
+      <Tabs tabs={[...TABS]} value={tab} onChange={setTab} sticky label="Brain sections" />
+      {tab === 'talk' && <BrainTips />}
+      {tab !== 'talk' && error && <ErrorBox message={error} />}
+      {tab !== 'talk' && !data && !error && <Loading />}
+      {tab !== 'talk' && data === null && !error && <Empty>The brain starts a few minutes after the bot starts.</Empty>}
+      {tab === 'models' && data && (
+        <Stack>
           <Card title="Win-probability models">
             {!data.model ? (
               <p className="text-sm text-ink-2">Training soon (first run ~2 min after start, then hourly).</p>
@@ -129,7 +138,10 @@ export function Brain() {
               </div>
             )}
           </Card>
-
+        </Stack>
+      )}
+      {tab === 'rules' && data && (
+        <Stack>
           <Card title="Rules it discovered">
             <div className="space-y-3 text-sm">
               <p className="text-xs text-muted">
@@ -140,7 +152,7 @@ export function Brain() {
               ) : (
                 <ul className="divide-y divide-line">
                   {data.discoveredRules.map((r) => (
-                    <li key={r.title} className="py-2">
+                    <li key={r.title} className="py-2 first:pt-0 last:pb-0">
                       <div className="flex items-start justify-between gap-2">
                         <span className="min-w-0 break-words font-medium text-ink">{r.title}</span>
                         <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${r.status === 'live' ? 'bg-up/15 text-up' : r.status === 'retired' ? 'bg-surface-2 text-muted' : 'bg-accent/12 text-accent'}`}>{STATUS[r.status]}</span>
@@ -153,82 +165,68 @@ export function Brain() {
             </div>
           </Card>
 
-          <Card title="Budget per strategy">
-            {!data.allocation?.length ? (
-              <p className="text-sm text-ink-2">Every strategy on its normal budget until there's enough evidence (~10 trades each).</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[28rem] text-left text-sm">
-                  <thead className="text-xs text-muted">
-                    <tr>
-                      <th className="py-1 font-normal">Strategy</th>
-                      <th className="py-1 text-right font-normal">Trades</th>
-                      <th className="py-1 text-right font-normal">Likely per trade</th>
-                      <th className="py-1 text-right font-normal">Budget</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.allocation.map((a) => (
-                      <tr key={a.strategy} className="border-t border-line align-top">
-                        <td className="py-1.5 pr-2 text-ink">
-                          {strat(a.strategy)}
-                          <div className="text-xs text-muted">{a.why}</div>
-                        </td>
-                        <td className="py-1.5 text-right tabular-nums text-ink-2">{a.n}</td>
-                        <td className={`py-1.5 text-right tabular-nums ${a.meanPct >= 0 ? 'text-up' : 'text-down'}`}>
-                          {a.meanPct >= 0 ? '+' : ''}
-                          {a.meanPct.toFixed(1)}%
-                        </td>
-                        <td className={`py-1.5 text-right tabular-nums font-medium ${a.multiplier > 1.05 ? 'text-up' : a.multiplier < 0.95 ? 'text-down' : 'text-ink-2'}`}>×{a.multiplier.toFixed(2)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-
           {data.entryStyles.length > 0 && (
             <Card title="How it enters now (learned)">
-              <ul className="space-y-1.5 text-sm text-ink-2">
+              <Rows>
                 {data.entryStyles.map((s) => (
-                  <li key={s.strategy}>
-                    <span className="font-medium text-ink">{strat(s.strategy)}:</span> {[s.minOffHighPct ? `waits until ${s.minOffHighPct}%+ under the 10-min high` : '', s.maxRun3mPct !== null ? `no chasing above +${s.maxRun3mPct}% in 3 min` : ''].filter(Boolean).join(' · ')}
+                  <li key={s.strategy} className="py-2 first:pt-0 last:pb-0">
+                    <div className="font-medium text-ink">{strat(s.strategy)}</div>
+                    <div className="text-ink-2">{[s.minOffHighPct ? `Waits until ${s.minOffHighPct}%+ under the 10-min high` : '', s.maxRun3mPct !== null ? `no chasing above +${s.maxRun3mPct}% in 3 min` : ''].filter(Boolean).join(' · ')}</div>
                     <div className="text-xs text-muted">{s.why.join(' · ')}</div>
                   </li>
                 ))}
-              </ul>
+              </Rows>
             </Card>
           )}
-
-          <Card title="Exit timers — what coins did after it sold">
+          <Card title="Exit timers" subtitle="What coins did in the 30 minutes after a time-based sell.">
             {!data.exitTimers?.length ? (
               <p className="text-sm text-ink-2">Collecting: every time-based exit is followed for 30 minutes after the sell.</p>
             ) : (
-              <ul className="space-y-2 text-sm">
+              <Rows>
                 {data.exitTimers.map((v) => (
-                  <li key={`${v.strategy}:${v.timer}`} className="rounded-xl border border-line px-3 py-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-medium text-ink">{strat(v.strategy)} · {TIMER[v.timer] ?? v.timer}</span>
-                      <span className={`text-xs font-semibold ${v.action === 'longer' ? 'text-up' : v.action === 'shorter' ? 'text-down' : 'text-muted'}`}>
-                        {v.action === 'longer' ? 'waiting longer' : v.action === 'shorter' ? 'selling sooner' : 'keep'}
-                      </span>
-                    </div>
-                    <div className="text-xs text-muted">
-                      {v.n} exits · {v.ranPct}% ran +25% after · typical coin ended {v.medianEndX}x of the exit · best after avg {v.avgMaxAfterX}x
-                    </div>
-                  </li>
+                  <Row
+                    key={`${v.strategy}:${v.timer}`}
+                    label={<span className="font-medium text-ink">{strat(v.strategy)} · {TIMER[v.timer] ?? v.timer}</span>}
+                    sub={`${v.n} exits · ${v.ranPct}% ran +25% after · typical coin ended ${v.medianEndX}x of the exit · best after avg ${v.avgMaxAfterX}x`}
+                    value={<span className="text-xs">{v.action === 'longer' ? 'Waiting longer' : v.action === 'shorter' ? 'Selling sooner' : 'Keep'}</span>}
+                    tone={v.action === 'longer' ? 'up' : v.action === 'shorter' ? 'down' : 'muted'}
+                  />
                 ))}
-              </ul>
+              </Rows>
             )}
           </Card>
+        </Stack>
+      )}
+      {tab === 'budget' && data && (
+        <Stack>
+          <Card title="Budget per strategy" subtitle="Strategies that earn get more money per trade; losing ones get less.">
+            {!data.allocation?.length ? (
+              <p className="text-sm text-ink-2">Every strategy on its normal budget until there's enough evidence (~10 trades each).</p>
+            ) : (
+              <Rows>
+                {data.allocation.map((a) => (
+                  <Row
+                    key={a.strategy}
+                    label={<span className="font-medium text-ink">{strat(a.strategy)}</span>}
+                    sub={`${a.n} trades · likely ${a.meanPct >= 0 ? '+' : ''}${a.meanPct.toFixed(1)}% per trade · ${a.why}`}
+                    value={`×${a.multiplier.toFixed(2)}`}
+                    tone={a.multiplier > 1.05 ? 'up' : a.multiplier < 0.95 ? 'down' : 'muted'}
+                  />
+                ))}
+              </Rows>
+            )}
+          </Card>
+        </Stack>
+      )}
+      {tab === 'changes' && data && (
+        <Stack>
           <Card title="Everything it changed">
             {!data.changes.length ? (
               <p className="text-sm text-ink-2">No changes yet.</p>
             ) : (
               <ul className="divide-y divide-line text-sm">
                 {data.changes.map((c, i) => (
-                  <li key={`${c.at}-${i}`} className="py-2">
+                  <li key={`${c.at}-${i}`} className="py-2 first:pt-0 last:pb-0">
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="min-w-0 break-words font-medium text-ink">{c.what}</span>
                       <span className="shrink-0 text-xs text-muted">{ago(c.at)}</span>
@@ -239,18 +237,8 @@ export function Brain() {
               </ul>
             )}
           </Card>
-        </div>
+        </Stack>
       )}
     </>
-  );
-}
-
-function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="truncate text-xs text-muted">{label}</div>
-      <div className="font-semibold tabular-nums text-ink">{value}</div>
-      {sub && <div className="truncate text-xs text-muted">{sub}</div>}
-    </div>
   );
 }

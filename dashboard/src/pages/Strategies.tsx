@@ -4,9 +4,9 @@
  * paper-tested on real coins against random entries. Only strategies that beat random entries
  * on enough trades get a say in real buys. Also the exit-setup lab.
  */
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { StrategyLab } from '../components/StrategyLab';
-import { Card, Empty, ErrorBox, Loading, PageHeader } from '../components/ui';
+import { Card, Empty, ErrorBox, Loading, PageHeader, Stack, Tabs } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 
 interface Stats {
@@ -64,18 +64,22 @@ export function Strategies() {
   const [tf, setTf] = useState<'all' | '15s' | '5s' | '1m'>('all');
   const tfOf = (id: string) => (id.endsWith('@5s') ? '5s' : id.endsWith('@1m') ? '1m' : '15s');
   if (loading && !data) return <Loading />;
+  const shown = data?.strategies.filter((r) => tf === 'all' || tfOf(r.id) === tf) ?? [];
   return (
     <>
-      <PageHeader title="Strategies" subtitle="Every chart strategy is paper-tested on live coins. Only the ones that beat random entries get a say in real buys." />
+      <PageHeader title="Strategies" subtitle="Chart strategies paper-tested on live coins. Only ones that beat random entries get a say in real buys." />
       {error && <ErrorBox message={error} />}
       {data && !data.enabled && <Empty>The chart-strategy lab is switched off (config: ta.labEnabled).</Empty>}
+      <Stack>
       {data?.enabled && (
-        <Card title="Chart strategies — live test results">
-          <p className="mb-3 text-sm text-ink-2">
+        <Card title="Live test results" subtitle={`${data.open} test trades open · ${data.stats.signals.toLocaleString()} signals so far`}>
+          <details className="mb-3 text-sm text-ink-2">
+            <summary className="cursor-pointer select-none font-medium text-accent">How the test works</summary>
+            <p className="mt-2">
             Every 15 seconds the bot checks the most active coins with every strategy on 15 s, 5 s and 1 min candles ({data.strategies.length} tests in all). Each signal is traded on paper with the bot's real exits and fees.
             The <b>random entry</b> row is the yardstick: a strategy is <b>proven</b> after {data.minTrades}+ tests if it makes money and beats random entries by {data.minEdgePct}+ points per trade.
-            {` ${data.open} test trades open · ${data.stats.signals.toLocaleString()} signals so far.`}
-          </p>
+            </p>
+          </details>
           {data.baseline && (
             <div className="mb-3 rounded-xl border border-line px-3 py-2 text-sm">
               <span className="font-medium text-ink">Random entry (yardstick):</span>{' '}
@@ -88,14 +92,48 @@ export function Strategies() {
               )}
             </div>
           )}
-          <div className="mb-3 flex flex-wrap gap-2 text-sm" role="group" aria-label="Candle timeframe">
-            {(['all', '15s', '5s', '1m'] as const).map((k) => (
-              <button key={k} type="button" onClick={() => setTf(k)} className={`rounded-full px-3 py-1 ${tf === k ? 'bg-accent text-white' : 'bg-surface-2 text-ink-2'}`}>
-                {k === 'all' ? 'All timeframes' : k === '15s' ? '15 s candles' : k === '5s' ? '5 s candles' : '1 min candles'}
-              </button>
+          <Tabs
+            className="mb-3"
+            label="Candle timeframe"
+            value={tf}
+            onChange={setTf}
+            tabs={[
+              { key: 'all', label: 'All' },
+              { key: '15s', label: '15 s' },
+              { key: '5s', label: '5 s' },
+              { key: '1m', label: '1 min' },
+            ]}
+          />
+          {/* Phones: one compact row per strategy (tap for details) */}
+          <ul className="-my-1 divide-y divide-line md:hidden">
+            {shown.map((r) => (
+              <li key={r.id}>
+                <button type="button" onClick={() => setOpen(open === r.id ? null : r.id)} aria-expanded={open === r.id} className="flex w-full items-start justify-between gap-3 py-2.5 text-left">
+                  <span className="min-w-0">
+                    <span className="block font-medium text-ink">{r.name}</span>
+                    <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+                      {FAMILY[r.family] ?? r.family}
+                      <Status r={r} minTrades={data.minTrades} />
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-right">
+                    <span className={`tabular block text-sm font-semibold ${r.n ? tone(r.avgPnlPct) : 'text-muted'}`}>{r.n ? signed(r.avgPnlPct) : '—'}</span>
+                    <span className="tabular block text-xs text-muted">{r.n ? `${r.n} tests · ${r.winRate.toFixed(0)}% wins` : 'no tests yet'}</span>
+                  </span>
+                </button>
+                {open === r.id && (
+                  <div className="pb-3 text-sm text-ink-2">
+                    <p className="mb-1">{r.summary}</p>
+                    <p className="text-xs text-muted">
+                      vs random {r.edgePct === null ? '—' : signed(r.edgePct)} · curve {r.curve.n} tests {r.curve.n ? signed(r.curve.avgPnlPct) : ''} · migrated {r.amm.n} tests {r.amm.n ? signed(r.amm.avgPnlPct) : ''}
+                      {r.big ? ` · bigger coins ${r.big.n} tests ${r.big.n ? signed(r.big.avgPnlPct) : ''}` : ''}
+                    </p>
+                  </div>
+                )}
+              </li>
             ))}
-          </div>
-          <div className="overflow-x-auto">
+          </ul>
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[640px] text-sm tabular-nums">
               <thead>
                 <tr className="text-left text-ink-2">
@@ -108,8 +146,8 @@ export function Strategies() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {data.strategies.filter((r) => tf === 'all' || tfOf(r.id) === tf).map((r) => (
-                  <>
+                {shown.map((r) => (
+                  <Fragment key={r.id}>
                     <tr key={r.id} className="cursor-pointer hover:bg-line/30" onClick={() => setOpen(open === r.id ? null : r.id)}>
                       <td className="py-2 pr-2">
                         <div className="font-medium text-ink">{r.name}</div>
@@ -135,7 +173,7 @@ export function Strategies() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -144,6 +182,7 @@ export function Strategies() {
         </Card>
       )}
       <StrategyLab />
+      </Stack>
     </>
   );
 }

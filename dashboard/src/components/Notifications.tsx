@@ -106,7 +106,7 @@ export function Notifications() {
 
   const s = data?.settings;
   return (
-    <Card title="Notifications" className="mt-6">
+    <Card title="Notifications">
       <div className="space-y-3 text-sm">
         {!supported() ? (
           <p className="text-ink-2">{isIos() ? 'On iPhone: open this site in Safari, tap Share → "Add to Home Screen", open the app from the home screen, then turn notifications on here.' : "This browser can't show notifications. Use Chrome on Android, or install the app."}</p>

@@ -4,8 +4,9 @@
  * serve every page from one index.html.
  */
 import { useEffect, useState } from 'react';
-import { HashRouter, NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { HashRouter, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AppFooter, Brand, ModePill } from './components/Brand';
+import { Icon, type IconName } from './components/Icon';
 import { InstallButton } from './components/InstallButton';
 import { Toasts } from './components/Toasts';
 import { BotStatusBadge } from './components/StatusBadge';
@@ -28,26 +29,55 @@ import { Strategies } from './pages/Strategies';
 import { Shadow } from './pages/Shadow';
 import { Brain } from './pages/Brain';
 
-const NAV = [
-  { to: '/', label: 'Overview', icon: '◎' },
-  { to: '/feed', label: 'Live feed', icon: '⚡' },
-  { to: '/positions', label: 'Positions', icon: '▤' },
-  { to: '/history', label: 'History', icon: '☰' },
-  { to: '/performance', label: 'Performance', icon: '↗' },
-  { to: '/strategies', label: 'Strategies', icon: '⌁' },
-  { to: '/wallets', label: 'Wallets', icon: '◈' },
-  { to: '/brain', label: 'Brain', icon: '❖' },
-  { to: '/learning', label: 'Learning', icon: '✦' },
-  { to: '/shadow', label: 'Shadow trades', icon: '◌' },
-  { to: '/scanner', label: 'Scanner', icon: '◉' },
-  { to: '/controls', label: 'Controls', icon: '⚙' },
+interface NavItem {
+  to: string;
+  label: string;
+  icon: IconName;
+  /** One line for the phone "More" sheet. */
+  desc: string;
+}
+/** Pages grouped by what they're for (sidebar sections on desktop, the "More" sheet on phones). */
+const GROUPS: Array<{ label: string; items: NavItem[] }> = [
+  {
+    label: 'Trading',
+    items: [
+      { to: '/', label: 'Overview', icon: 'home', desc: 'Profit, open trades, latest activity' },
+      { to: '/positions', label: 'Positions', icon: 'layers', desc: 'What it holds right now' },
+      { to: '/history', label: 'History', icon: 'clock', desc: 'Every closed trade' },
+      { to: '/feed', label: 'Live feed', icon: 'bolt', desc: 'New coins as they launch' },
+    ],
+  },
+  {
+    label: 'Results',
+    items: [
+      { to: '/performance', label: 'Performance', icon: 'chart', desc: 'Charts, mistakes, best times, tests' },
+      { to: '/strategies', label: 'Strategies', icon: 'flask', desc: 'Chart strategies tested live' },
+      { to: '/shadow', label: 'Shadow trades', icon: 'eye', desc: 'Coins it skipped, traded on paper' },
+    ],
+  },
+  {
+    label: 'Intelligence',
+    items: [
+      { to: '/brain', label: 'Brain', icon: 'cpu', desc: 'Models, rules it found, tips' },
+      { to: '/learning', label: 'Learning', icon: 'sparkles', desc: 'Score weights, coach, lessons' },
+      { to: '/wallets', label: 'Wallets', icon: 'wallet', desc: 'KOLs, smart money, copy wallets' },
+    ],
+  },
+  {
+    label: 'System',
+    items: [
+      { to: '/scanner', label: 'Scanner', icon: 'radar', desc: 'Bot health, market, trending' },
+      { to: '/controls', label: 'Controls', icon: 'sliders', desc: 'Settings, rules, alerts, data feed' },
+    ],
+  },
 ];
+const NAV = GROUPS.flatMap((g) => g.items);
 /** Phone bottom bar: the four pages you check most; the rest live under "More". */
-const PHONE_MAIN = ['/', '/positions', '/history', '/feed'];
+const PHONE_MAIN = ['/', '/positions', '/history', '/performance'];
 
 type Theme = 'system' | 'light' | 'dark';
 
-function useTheme(): [Theme, () => void] {
+function useTheme(): [Theme, (t: Theme) => void] {
   const [theme, setTheme] = useState<Theme>(() => {
     try {
       return (localStorage.getItem('solbot.theme') as Theme) || 'system';
@@ -65,8 +95,7 @@ function useTheme(): [Theme, () => void] {
       /* private mode */
     }
   }, [theme]);
-  const next = () => setTheme((t) => (t === 'system' ? 'light' : t === 'light' ? 'dark' : 'system'));
-  return [theme, next];
+  return [theme, setTheme];
 }
 
 function useAuthed(): boolean {
@@ -79,17 +108,43 @@ function useAuthed(): boolean {
   return authed;
 }
 
+const THEMES: Array<[Theme, string]> = [
+  ['system', 'Auto'],
+  ['light', 'Light'],
+  ['dark', 'Dark'],
+];
+
+function ThemeSwitch({ theme, setTheme }: { theme: Theme; setTheme: (t: Theme) => void }) {
+  return (
+    <div role="radiogroup" aria-label="Theme" className="flex gap-0.5 rounded-lg bg-surface-2 p-0.5">
+      {THEMES.map(([k, l]) => (
+        <button key={k} type="button" role="radio" aria-checked={theme === k} onClick={() => setTheme(k)} className={`flex-1 rounded-md px-2.5 py-1 text-xs font-medium ${theme === k ? 'bg-surface text-ink shadow-[0_1px_2px_rgba(0,0,0,0.12)]' : 'text-ink-2'}`}>
+          {l}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const logOut = () => {
+  disconnectSocket();
+  setToken(null);
+};
+
 function Shell() {
-  const [theme, nextTheme] = useTheme();
+  const [theme, setTheme] = useTheme();
   const status = useSocketStatus();
   const botUptime = useBotUptime();
   const [more, setMore] = useState(false);
+  const { pathname } = useLocation();
+  useEffect(() => setMore(false), [pathname]);
   // Mode (PAPER/LIVE) + paused state for the header pill and footer. Light poll; also refreshes on trades.
   const ov = useApi<OverviewData>('/api/overview', 60_000);
   const mode = ov.data?.mode;
   const paused = ov.data?.paused || ov.data?.killSwitch;
+  const inMore = NAV.some((n) => n.to !== '/' && !PHONE_MAIN.includes(n.to) && pathname.startsWith(n.to));
   const linkCls = ({ isActive }: { isActive: boolean }) =>
-    `flex items-center gap-3 rounded-xl px-3 py-2.5 font-medium transition-colors ${isActive ? 'bg-accent/12 text-accent' : 'text-ink-2 hover:bg-surface-2 hover:text-ink'}`;
+    `flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm font-medium transition-colors ${isActive ? 'bg-accent/12 text-accent' : 'text-ink-2 hover:bg-surface-2 hover:text-ink'}`;
 
   return (
     <div className="min-h-screen md:flex">
@@ -97,54 +152,54 @@ function Shell() {
         Skip to content
       </a>
       {/* Desktop sidebar */}
-      <aside className="hidden w-60 shrink-0 flex-col border-r border-line bg-surface p-4 md:sticky md:top-0 md:flex md:h-screen md:overflow-y-auto">
-        <div className="mb-6 flex items-center justify-between gap-2 px-2">
+      <aside className="hidden w-60 shrink-0 flex-col border-r border-line bg-surface px-3 py-4 md:sticky md:top-0 md:flex md:h-screen md:overflow-y-auto">
+        <div className="mb-5 flex items-center justify-between gap-2 px-2">
           <Brand />
           <ModePill mode={mode} />
         </div>
-        <nav className="flex flex-col gap-1" aria-label="Main">
-          {NAV.map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.to === '/'} className={linkCls}>
-              <span aria-hidden="true" className="w-5 text-center">{n.icon}</span>
-              {n.label}
-            </NavLink>
+        <nav className="flex flex-col gap-4" aria-label="Main">
+          {GROUPS.map((g) => (
+            <div key={g.label}>
+              <div className="mb-1 px-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted">{g.label}</div>
+              <div className="flex flex-col gap-0.5">
+                {g.items.map((n) => (
+                  <NavLink key={n.to} to={n.to} end={n.to === '/'} className={linkCls}>
+                    <Icon name={n.icon} size={18} />
+                    {n.label}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
         <div className="mt-auto flex flex-col gap-2 pt-6">
           <InstallButton />
           <BotStatusBadge status={status} paused={paused} />
-          <button type="button" onClick={nextTheme} className="rounded-lg px-3 py-2 text-left text-sm text-ink-2 hover:bg-surface-2">
-            Theme: {theme}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              disconnectSocket();
-              setToken(null);
-            }}
-            className="rounded-lg px-3 py-2 text-left text-sm text-ink-2 hover:bg-surface-2"
-          >
+          <ThemeSwitch theme={theme} setTheme={setTheme} />
+          <button type="button" onClick={logOut} className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-ink-2 hover:bg-surface-2">
+            <Icon name="logout" size={16} />
             Log out
           </button>
         </div>
       </aside>
 
-      {/* Mobile top bar */}
-      <header className="glass sticky top-0 z-20 flex items-center justify-between border-b border-line px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] md:hidden">
-        <span className="flex items-center gap-2">
-          <Brand size="sm" />
-          <ModePill mode={mode} />
-        </span>
-        <div className="flex items-center gap-2">
-          <InstallButton compact />
-          <BotStatusBadge status={status} paused={paused} />
+      {/* Phone top bar (fixed height so sticky tabs can sit right under it) */}
+      <header className="glass sticky top-0 z-20 h-[var(--hdr)] border-b border-line pt-[env(safe-area-inset-top)] md:hidden">
+        <div className="flex h-14 items-center justify-between gap-2 px-4">
+          <span className="flex min-w-0 items-center gap-2">
+            <Brand size="sm" />
+            <ModePill mode={mode} />
+          </span>
+          <div className="flex items-center gap-2">
+            <InstallButton compact />
+            <BotStatusBadge status={status} paused={paused} compact />
+          </div>
         </div>
       </header>
 
-      {/* Page column: content, then the footer. The bottom padding keeps the footer
-          (and everything else) clear of the fixed phone nav bar. */}
-      <div className="flex min-w-0 flex-1 flex-col md:min-h-screen pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-6">
-        <main id="main" className="mx-auto w-full max-w-7xl flex-1 px-4 pt-5 sm:px-6">
+      {/* Page column: content, then the footer. The bottom padding keeps everything clear of the phone tab bar. */}
+      <div className="flex min-w-0 flex-1 flex-col pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:min-h-screen md:pb-6">
+        <main id="main" className="mx-auto w-full max-w-7xl flex-1 px-4 pt-4 sm:px-6 md:pt-6">
           <Routes>
             <Route path="/" element={<Overview />} />
             <Route path="/feed" element={<LiveFeed />} />
@@ -167,48 +222,84 @@ function Shell() {
 
       <Toasts />
 
-      {/* Mobile bottom nav: 4 main pages + More */}
+      {/* Phone tab bar: 4 main pages + More */}
       <nav className="glass fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-line pb-[env(safe-area-inset-bottom)] md:hidden" aria-label="Main">
         {NAV.filter((n) => PHONE_MAIN.includes(n.to)).map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.to === '/'} onClick={() => setMore(false)} className={({ isActive }) => `flex min-h-16 flex-col items-center justify-center gap-1 text-xs font-medium ${isActive ? 'text-accent' : 'text-ink-2'}`}>
-            <span aria-hidden="true" className="text-xl leading-none">{n.icon}</span>
-            {n.label.split(' ')[0]}
+          <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => `flex h-16 flex-col items-center justify-center gap-0.5 text-[11px] font-medium ${isActive && !more ? 'text-accent' : 'text-ink-2'}`}>
+            {({ isActive }) => (
+              <>
+                <span className={`grid h-7 w-12 place-items-center rounded-full transition-colors ${isActive && !more ? 'bg-accent/12' : ''}`}>
+                  <Icon name={n.icon} size={21} strokeWidth={isActive && !more ? 2.1 : 1.8} />
+                </span>
+                {n.label}
+              </>
+            )}
           </NavLink>
         ))}
-        <button type="button" onClick={() => setMore((m) => !m)} aria-expanded={more} className={`flex min-h-16 flex-col items-center justify-center gap-1 text-xs font-medium ${more ? 'text-accent' : 'text-ink-2'}`}>
-          <span aria-hidden="true" className="text-xl leading-none">☰</span>
+        <button type="button" onClick={() => setMore((m) => !m)} aria-expanded={more} className={`flex h-16 flex-col items-center justify-center gap-0.5 text-[11px] font-medium ${more || inMore ? 'text-accent' : 'text-ink-2'}`}>
+          <span className={`grid h-7 w-12 place-items-center rounded-full transition-colors ${more || inMore ? 'bg-accent/12' : ''}`}>
+            <Icon name="grid" size={20} strokeWidth={more || inMore ? 2.1 : 1.8} />
+          </span>
           More
         </button>
       </nav>
+
+      {/* Phone "More" sheet: every other page, grouped, plus theme and log out */}
       {more && (
-        <div className="fixed inset-0 z-10 bg-black/40 md:hidden" onClick={() => setMore(false)} aria-hidden="true">
+        <div className="fixed inset-0 z-30 bg-black/45 md:hidden" onClick={() => setMore(false)} aria-hidden="true">
           <div
             role="dialog"
+            aria-modal="true"
             aria-label="More pages"
             onClick={(e) => e.stopPropagation()}
-            className="absolute inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] rounded-t-2xl border-t border-line bg-surface p-3 shadow-2xl"
+            className="sheet-up absolute inset-x-0 bottom-0 max-h-[88vh] overflow-y-auto rounded-t-3xl border-t border-line bg-page px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-2 shadow-2xl"
           >
-            <div className="grid grid-cols-3 gap-2">
-              {NAV.filter((n) => !PHONE_MAIN.includes(n.to)).map((n) => (
-                <NavLink key={n.to} to={n.to} onClick={() => setMore(false)} className={({ isActive }) => `flex flex-col items-center gap-1 rounded-xl border border-line py-3 text-sm font-medium ${isActive ? 'bg-accent text-white' : 'text-ink'}`}>
-                  <span aria-hidden="true" className="text-xl">{n.icon}</span>
-                  {n.label}
-                </NavLink>
-              ))}
-              <button type="button" onClick={nextTheme} className="flex flex-col items-center gap-1 rounded-xl border border-line py-3 text-sm font-medium text-ink">
-                <span aria-hidden="true" className="text-xl">◐</span>
-                Theme: {theme}
+            <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-line" aria-hidden="true" />
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-ink">More</h2>
+              <button type="button" onClick={() => setMore(false)} aria-label="Close" className="grid h-8 w-8 place-items-center rounded-full bg-surface-2 text-ink-2">
+                <Icon name="x" size={16} />
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  disconnectSocket();
-                  setToken(null);
-                }}
-                className="flex flex-col items-center gap-1 rounded-xl border border-line py-3 text-sm font-medium text-down"
-              >
-                <span aria-hidden="true" className="text-xl">⎋</span>
-                Log out
+            </div>
+            {GROUPS.map((g) => {
+              const items = g.items.filter((n) => !PHONE_MAIN.includes(n.to));
+              if (!items.length) return null;
+              return (
+                <div key={g.label} className="mb-4">
+                  <div className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wider text-muted">{g.label}</div>
+                  <div className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
+                    {items.map((n) => (
+                      <NavLink key={n.to} to={n.to} className={({ isActive }) => `flex items-center gap-3 px-3.5 py-3 ${isActive ? 'bg-accent/8' : 'active:bg-surface-2'}`}>
+                        <span className="grid h-9 w-9 place-items-center rounded-xl bg-accent/12 text-accent">
+                          <Icon name={n.icon} size={19} />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block font-medium text-ink">{n.label}</span>
+                          <span className="block truncate text-xs text-muted">{n.desc}</span>
+                        </span>
+                        <Icon name="chevron" size={16} className="text-muted" />
+                      </NavLink>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            <div className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wider text-muted">App</div>
+            <div className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
+              <div className="flex items-center gap-3 px-3.5 py-3">
+                <span className="grid h-9 w-9 place-items-center rounded-xl bg-surface-2 text-ink-2">
+                  <Icon name="sun" size={19} />
+                </span>
+                <span className="flex-1 font-medium text-ink">Theme</span>
+                <div className="w-44">
+                  <ThemeSwitch theme={theme} setTheme={setTheme} />
+                </div>
+              </div>
+              <button type="button" onClick={logOut} className="flex w-full items-center gap-3 px-3.5 py-3 text-left active:bg-surface-2">
+                <span className="grid h-9 w-9 place-items-center rounded-xl bg-critical/12 text-down">
+                  <Icon name="logout" size={19} />
+                </span>
+                <span className="flex-1 font-medium text-down">Log out</span>
               </button>
             </div>
           </div>

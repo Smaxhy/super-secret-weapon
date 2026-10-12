@@ -38,7 +38,6 @@ export function AiCoach() {
   return (
     <Card
       title="AI coach"
-      className="mb-4"
       action={
         data.hasKey ? (
           <span className="flex gap-3">

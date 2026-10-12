@@ -9,7 +9,7 @@ import { useState } from 'react';
 import { DipWatch, type DipRow } from '../components/DipWatch';
 import { PositionRow } from '../components/PositionRow';
 import { SwingCoins, type SwingData } from '../components/SwingCoins';
-import { Chip, Empty, ErrorBox, Loading, PageHeader, Pnl } from '../components/ui';
+import { Chip, Empty, ErrorBox, Loading, PageHeader, Pnl, Stat, Tabs } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { useLivePositions, type LivePosition } from '../hooks/useLivePositions';
 import { sol } from '../lib/format';
@@ -65,39 +65,23 @@ export function Positions() {
   // [tab, label, short label for phones, count]
   const tabs: Array<[Tab, string, string, number | null]> = [
     ['invested', 'Invested now', 'Invested', list.length],
-    ['bigger', 'Bigger coins', 'Bigger', swingLive],
-    ['dips', 'Waiting for a dip', 'Dips', dips.data?.length ?? 0],
+    ['bigger', 'Bigger coins', 'Bigger coins', swingLive],
+    ['dips', 'Waiting for a dip', 'Dip watch', dips.data?.length ?? 0],
   ];
 
   return (
     <>
-      <PageHeader title="Positions" subtitle="What the bot is invested in right now. Prices update live on every trade." />
+      <PageHeader title="Positions" subtitle="What it holds right now. Prices update live on every trade." />
 
       {/* Summary — always visible */}
-      <section aria-label="Invested now summary" className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
-        <Summary label="Open trades" value={`${list.length}${ov.data ? ` / ${ov.data.maxPositions}` : ''}`} sub={bigOpen ? `${bigOpen} on bigger coins` : undefined} />
-        <Summary label="In trades" value={sol(inSol, 2)} sub={ov.data ? `${sol(ov.data.balanceSol, 2)} free` : undefined} />
-        <Summary label="Unrealised" value={<Pnl value={list.length ? unreal : null} />} sub="if sold now, after fees" />
-        <Summary label="Banked" value={<Pnl value={list.length ? banked : null} />} sub="partial sells on open trades" />
+      <section aria-label="Invested now summary" className="mb-4 grid grid-cols-2 gap-x-4 gap-y-3 rounded-2xl border border-line bg-surface p-4 shadow-card sm:grid-cols-4">
+        <Stat label="Open trades" value={`${list.length}${ov.data ? ` / ${ov.data.maxPositions}` : ''}`} sub={bigOpen ? `${bigOpen} on bigger coins` : undefined} />
+        <Stat label="In trades" value={sol(inSol, 2)} sub={ov.data ? `${sol(ov.data.balanceSol, 2)} free` : undefined} />
+        <Stat label="Unrealised" value={<Pnl value={list.length ? unreal : null} />} sub="if sold now, after fees" />
+        <Stat label="Banked" value={<Pnl value={list.length ? banked : null} />} sub="partial sells on open trades" />
       </section>
 
-      {/* Tabs */}
-      <div role="tablist" aria-label="Positions" className="mb-4 grid grid-cols-3 gap-1 rounded-xl border border-line bg-surface p-1">
-        {tabs.map(([k, label, short, n]) => (
-          <button
-            key={k}
-            type="button"
-            role="tab"
-            aria-selected={tab === k}
-            onClick={() => setTab(k)}
-            className={`flex min-w-0 items-center justify-center gap-1.5 rounded-lg px-1.5 py-2 text-sm font-semibold transition-colors sm:px-3 ${tab === k ? 'bg-accent text-white' : 'text-ink-2 hover:bg-surface-2'}`}
-          >
-            <span className="truncate sm:hidden">{short}</span>
-            <span className="hidden truncate sm:inline">{label}</span>
-            {n !== null && <span className={`shrink-0 rounded-full px-1.5 text-xs ${tab === k ? 'bg-white/25' : 'bg-surface-2 text-ink-2'}`}>{n}</span>}
-          </button>
-        ))}
-      </div>
+      <Tabs tabs={tabs.map(([key, , short, n]) => ({ key, label: short, badge: n }))} value={tab} onChange={setTab} sticky label="Positions" />
 
       {tab === 'invested' && (
         <>
@@ -138,15 +122,5 @@ export function Positions() {
       {tab === 'bigger' && <SwingCoins data={swing.data} reload={swing.reload} />}
       {tab === 'dips' && <DipWatch rows={dips.data} />}
     </>
-  );
-}
-
-function Summary({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
-  return (
-    <div className="min-w-0 rounded-xl border border-line bg-surface px-3 py-2.5 shadow-card">
-      <div className="truncate text-xs font-medium uppercase tracking-wide text-muted">{label}</div>
-      <div className="tabular mt-0.5 truncate text-lg font-semibold text-ink">{value}</div>
-      {sub && <div className="truncate text-xs text-muted">{sub}</div>}
-    </div>
   );
 }

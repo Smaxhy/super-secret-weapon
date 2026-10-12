@@ -25,7 +25,6 @@ export function Backtest() {
   return (
     <Card
       title="Backtest: other exits on the same trades"
-      className="mt-6"
       action={
         <select aria-label="Days" value={days} onChange={(e) => setDays(Number(e.target.value))} className="rounded-lg border border-line bg-page px-2 py-1 text-sm text-ink">
           {[1, 3, 7, 14].map((d) => (

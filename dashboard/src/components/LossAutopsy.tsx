@@ -39,7 +39,6 @@ export function LossAutopsy() {
   return (
     <Card
       title="What keeps going wrong"
-      className="mb-4"
       action={
         <button type="button" disabled={busy} onClick={() => void rerun()} className="text-sm text-accent hover:underline disabled:opacity-50">
           {busy ? 'Checking…' : 'Check now'}

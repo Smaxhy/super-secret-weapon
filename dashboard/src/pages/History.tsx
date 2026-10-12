@@ -1,5 +1,6 @@
 /** Trade history: filterable, sortable, exportable to CSV. */
 import { useMemo, useState } from 'react';
+import { Icon } from '../components/Icon';
 import { TradeCard, TradeRow } from '../components/TradeRow';
 import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl, Select } from '../components/ui';
 import { useApi } from '../hooks/useApi';
@@ -27,6 +28,15 @@ export function History() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'closedAt', dir: -1 });
+  const [showFilters, setShowFilters] = useState(false);
+  const filtered = !!(strategy || outcome || exitReason || from || to);
+  const clearFilters = () => {
+    setStrategy('');
+    setOutcome('');
+    setExitReason('');
+    setFrom('');
+    setTo('');
+  };
 
   const qs = new URLSearchParams({ limit: '2000', ...(strategy && { strategy }), ...(outcome && { outcome }), ...(exitReason && { exitReason }), ...(from && { from }), ...(to && { to: `${to}T23:59:59Z` }) }).toString();
   const { data, error, loading } = useApi<TradeRowData[]>(`/api/trades?${qs}`, 60_000, ['trade']);
@@ -58,30 +68,43 @@ export function History() {
     <>
       <PageHeader
         title="Trade history"
-        subtitle="Every completed trade. Click a column to sort."
+        subtitle={
+          <>
+            {rows.length} trades{filtered ? ' (filtered)' : ''} · total <Pnl value={total} />
+          </>
+        }
         action={
-          <button type="button" onClick={exportCsv} disabled={!rows.length} className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-            ⬇ Export CSV
-          </button>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setShowFilters((f) => !f)} aria-expanded={showFilters} className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium md:hidden ${filtered ? 'border-accent text-accent' : 'border-line bg-surface text-ink'}`}>
+              <Icon name="sliders" size={15} />
+              Filters{filtered ? ' ·' : ''}
+            </button>
+            <button type="button" onClick={exportCsv} disabled={!rows.length} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-ink disabled:opacity-50">
+              <Icon name="download" size={15} />
+              CSV
+            </button>
+          </div>
         }
       />
-      <Card className="mb-4">
+      <Card className={`mb-4 ${showFilters ? '' : 'hidden md:block'}`}>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
           <Select label="Strategy" value={strategy} onChange={setStrategy} options={[['', 'All'], ...Object.entries(STRATEGY_LABEL)]} />
           <Select label="Result" value={outcome} onChange={setOutcome} options={[['', 'All'], ['win', 'Wins'], ['loss', 'Losses']]} />
           <Select label="Exit reason" value={exitReason} onChange={setExitReason} options={[['', 'All'], ...Object.entries(EXIT_LABEL)]} />
-          <label className="flex flex-col gap-1 text-sm text-ink-2">
+          <label className="flex flex-col gap-1 text-xs font-medium text-muted">
             From
-            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="rounded-lg border border-line bg-surface px-3 py-2 text-ink" />
+            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink" />
           </label>
-          <label className="flex flex-col gap-1 text-sm text-ink-2">
+          <label className="flex flex-col gap-1 text-xs font-medium text-muted">
             To
-            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="rounded-lg border border-line bg-surface px-3 py-2 text-ink" />
+            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink" />
           </label>
         </div>
-        <div className="mt-3 text-sm text-ink-2">
-          {rows.length} trades · total <Pnl value={total} />
-        </div>
+        {filtered && (
+          <button type="button" onClick={clearFilters} className="mt-3 text-sm font-medium text-accent">
+            Clear filters
+          </button>
+        )}
       </Card>
       {error && <ErrorBox message={error} />}
       {loading && !data ? (

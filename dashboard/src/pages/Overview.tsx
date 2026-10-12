@@ -3,15 +3,24 @@ import { Link } from 'react-router-dom';
 import { ResetPaperDialog } from '../components/ResetPaper';
 import { AddFundsDialog } from '../components/AddFunds';
 import { HealthBanner } from '../components/SystemHealth';
-import { UpdateCard } from '../components/UpdateCard';
 import { PnlChart } from '../components/Charts';
-import { TokenCard } from '../components/TokenCard';
+import { Icon } from '../components/Icon';
+import { StatusBadge } from '../components/StatusBadge';
 import { McChange } from '../components/McCompare';
-import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl } from '../components/ui';
+import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl, Stack, Tabs } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { useLivePositions } from '../hooks/useLivePositions';
 import { ago, duration, EXIT_LABEL, mcSol, multiple, pct, pnl, sol, usd } from '../lib/format';
 import type { Detection, Overview as OverviewData, TradeRowData } from '../lib/types';
+
+const RANGES = [
+  { key: '1h', label: '1H' },
+  { key: '6h', label: '6H' },
+  { key: '24h', label: '24H' },
+  { key: '7d', label: '7D' },
+  { key: 'all', label: 'All' },
+] as const satisfies ReadonlyArray<{ key: string; label: string }>;
+type Range = (typeof RANGES)[number]['key'];
 
 export function Overview() {
   const [range, setRange] = useState<string>(() => {
@@ -31,14 +40,7 @@ export function Overview() {
     <>
       <PageHeader
         title="Overview"
-        subtitle={
-          d ? (
-            <>
-              <span className="whitespace-nowrap">{d.mode === 'PAPER' ? '📝 Paper trading (fake money)' : '💸 LIVE trading'}</span>{' '}
-              <span className="whitespace-nowrap">· running for {duration(d.uptimeSec)}</span>
-            </>
-          ) : undefined
-        }
+        subtitle={d ? `${d.mode === 'PAPER' ? 'Paper trading' : 'Live trading'} · running for ${duration(d.uptimeSec)}` : undefined}
       />
       <HealthBanner />
       {o.error && <ErrorBox message={o.error} />}
@@ -71,51 +73,46 @@ export function Overview() {
             <div className="mt-5 border-t border-line pt-4">
               <div className="mb-2 flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-ink">Profit over time</h2>
-                <Link to="/performance" className="text-sm text-accent hover:underline">
-                  All charts →
+                <Link to="/performance" className="text-sm font-medium text-accent">
+                  All charts
                 </Link>
               </div>
-              <div className="mb-3 flex flex-wrap gap-1.5" role="group" aria-label="Timeframe">
-                {[['1h', '1 hour'], ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days'], ['all', 'All']].map(([k, label]) => (
-                  <button
-                    key={k}
-                    type="button"
-                    onClick={() => {
-                      setRange(k!);
-                      try {
-                        localStorage.setItem('overview.range', k!);
-                      } catch {
-                        /* ignore */
-                      }
-                    }}
-                    className={`rounded-full px-3 py-1 text-sm ${range === k ? 'bg-accent text-white' : 'bg-surface-2 text-ink-2'}`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <Tabs
+                className="mb-3 sm:max-w-md"
+                label="Timeframe"
+                tabs={RANGES}
+                value={range as Range}
+                onChange={(k) => {
+                  setRange(k);
+                  try {
+                    localStorage.setItem('overview.range', k);
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              />
               {d.window && (
-                <dl className="mb-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                <dl className="mb-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-4">
                   <div>
-                    <dt className="text-muted">Profit</dt>
+                    <dt className="text-xs text-muted">Profit</dt>
                     <dd className="font-semibold"><Pnl value={d.window.pnlSol} /></dd>
                   </div>
                   <div>
-                    <dt className="text-muted">Wins</dt>
+                    <dt className="text-xs text-muted">Wins</dt>
                     <dd className="font-semibold text-ink">{d.window.trades ? `${d.window.wins} / ${d.window.trades} (${pct(d.window.winRate, 0)})` : '—'}</dd>
                   </div>
                   <div>
-                    <dt className="text-muted">Avg per trade</dt>
+                    <dt className="text-xs text-muted">Avg per trade</dt>
                     <dd className={`font-semibold ${(d.window.avgPct ?? 0) >= 0 ? 'text-up' : 'text-down'}`}>{d.window.avgPct === null ? '—' : `${d.window.avgPct > 0 ? '+' : ''}${d.window.avgPct}%`}</dd>
                   </div>
                   <div>
-                    <dt className="text-muted">Best / worst</dt>
+                    <dt className="text-xs text-muted">Best / worst</dt>
                     <dd className="font-semibold text-ink">{d.window.bestPct === null ? '—' : `+${d.window.bestPct}% / ${d.window.worstPct}%`}</dd>
                   </div>
                 </dl>
               )}
               {(d.window?.cumulative ?? d.cumulative).length ? (
-                <PnlChart points={d.window?.cumulative ?? d.cumulative} height={240} />
+                <PnlChart points={d.window?.cumulative ?? d.cumulative} height={210} />
               ) : (
                 <Empty>{range === 'all' ? 'No closed trades yet. The chart fills in as the bot paper trades.' : 'No closed trades in this timeframe.'}</Empty>
               )}
@@ -124,39 +121,63 @@ export function Overview() {
         </>
       )}
 
-      <OpenPreview />
-
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Card title="Latest trades" action={<Link to="/history" className="text-sm text-accent hover:underline">History →</Link>}>
-          {trades.data?.length ? (
-            <ul className="divide-y divide-line">
-              {trades.data.map((t) => (
-                <li key={t.id}>
-                  <Link to={`/token/${t.mint}`} className="flex items-center justify-between gap-3 py-2.5 hover:bg-surface-2">
-                    <div className="min-w-0">
-                      <div className="truncate font-semibold text-ink">{t.symbol}</div>
-                      <div className="truncate text-sm text-muted">
-                        {EXIT_LABEL[t.exitReason ?? ''] ?? t.exitReason} · peak {t.peakMultiple.toFixed(2)}× · {ago(t.closedAt)}
+      <Stack className="mt-4">
+        <OpenPreview />
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card title="Latest trades" action={<Link to="/history" className="font-medium text-accent">See all</Link>}>
+            {trades.data?.length ? (
+              <ul className="-my-1 divide-y divide-line">
+                {trades.data.map((t) => (
+                  <li key={t.id}>
+                    <Link to={`/token/${t.mint}`} className="-mx-2 flex items-center justify-between gap-3 rounded-lg px-2 py-2.5 hover:bg-surface-2">
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold text-ink">{t.symbol}</div>
+                        <div className="truncate text-xs text-muted">
+                          {EXIT_LABEL[t.exitReason ?? ''] ?? t.exitReason} · peak {t.peakMultiple.toFixed(2)}× · {ago(t.closedAt)}
+                        </div>
                       </div>
-                    </div>
-                    <div className="shrink-0 whitespace-nowrap text-right">
-                      <Pnl value={t.pnlSol} />
-                      <div className={`text-sm ${t.pnlPct >= 0 ? 'text-up' : 'text-down'}`}>{pct(t.pnlPct, 1, true)}</div>
-                    </div>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <Empty>No trades yet.</Empty>
-          )}
-        </Card>
-        <Card title="Just launched" action={<Link to="/feed" className="text-sm text-accent hover:underline">Live feed →</Link>}>
-          <div className="flex flex-col gap-2">{feed.data?.map((t) => <TokenCard key={t.mint} d={t} />)}</div>
-          {feed.data && !feed.data.length && <Empty>Waiting for launches…</Empty>}
-        </Card>
-      </div>
-      <UpdateCard />
+                      <div className="shrink-0 whitespace-nowrap text-right">
+                        <Pnl value={t.pnlSol} className="text-sm" />
+                        <div className={`tabular text-xs ${t.pnlPct >= 0 ? 'text-up' : 'text-down'}`}>{pct(t.pnlPct, 1, true)}</div>
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <Empty>No trades yet.</Empty>
+            )}
+          </Card>
+          <Card title="Just launched" action={<Link to="/feed" className="font-medium text-accent">Live feed</Link>}>
+            {feed.data?.length ? (
+              <ul className="-my-1 divide-y divide-line">
+                {feed.data.slice(0, 5).map((t) => (
+                  <li key={t.mint}>
+                    <Link to={`/token/${t.mint}`} className="-mx-2 flex items-center justify-between gap-3 rounded-lg px-2 py-2.5 hover:bg-surface-2">
+                      <div className="min-w-0">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="truncate font-semibold text-ink">{t.symbol || '?'}</span>
+                          <StatusBadge status={t.feedStatus} />
+                        </div>
+                        <div className="tabular truncate text-xs text-muted">
+                          {ago(t.createdAt)}
+                          {t.live ? ` · MC ${sol(t.live.marketCapSol, 1)} · ${t.live.holders} holders` : ''}
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="tabular font-semibold text-ink">{t.combinedScore !== null ? Math.round(t.combinedScore) : '—'}</div>
+                        <div className="text-xs text-muted">score</div>
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <Empty>Waiting for launches…</Empty>
+            )}
+          </Card>
+        </div>
+      </Stack>
     </>
   );
 }
@@ -176,7 +197,7 @@ function HeroMenu({ startingBalanceSol }: { startingBalanceSol: number }) {
         onClick={() => setOpen((o) => !o)}
         className="-my-1 grid h-8 w-8 place-items-center rounded-full text-lg leading-none text-ink-2 hover:bg-surface-2"
       >
-        ⋯
+        <Icon name="more" size={18} />
       </button>
       {open && (
         <>
@@ -191,7 +212,7 @@ function HeroMenu({ startingBalanceSol }: { startingBalanceSol: number }) {
               }}
               className="w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium text-ink hover:bg-surface-2"
             >
-              + Add paper SOL…
+              Add paper SOL…
             </button>
             <button
               type="button"
@@ -202,7 +223,7 @@ function HeroMenu({ startingBalanceSol }: { startingBalanceSol: number }) {
               }}
               className="w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium text-down hover:bg-surface-2"
             >
-              ↺ Reset paper account…
+              Reset paper account…
             </button>
           </div>
         </>
@@ -216,7 +237,7 @@ function HeroMenu({ startingBalanceSol }: { startingBalanceSol: number }) {
 function HeroStat({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
   return (
     <div className="min-w-0">
-      <dt className="truncate text-xs font-medium uppercase tracking-wide text-muted">{label}</dt>
+      <dt className="truncate text-xs text-muted">{label}</dt>
       <dd className="tabular mt-0.5 break-words text-lg font-semibold leading-snug text-ink sm:text-xl [&>span]:whitespace-normal">{value}</dd>
       {sub && <dd className="truncate text-xs text-muted">{sub}</dd>}
     </div>
@@ -235,14 +256,13 @@ function OpenPreview() {
           <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs font-semibold text-ink-2">{positions.length}</span>
         </span>
       }
-      className="mt-4"
       action={
-        <Link to="/positions" className="text-sm text-accent hover:underline">
-          Charts &amp; details →
+        <Link to="/positions" className="font-medium text-accent">
+          Details
         </Link>
       }
     >
-      <ul className="divide-y divide-line">
+      <ul className="-my-1 divide-y divide-line">
         {positions.map((p) => {
           const m = p.multiple;
           const fresh = p.live && Date.now() - p.live.at < 6_000;
@@ -254,7 +274,7 @@ function OpenPreview() {
                     {p.symbol}
                     {fresh && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-good" aria-label="live" />}
                   </div>
-                  <div className="tabular truncate text-sm text-muted">
+                  <div className="tabular truncate text-xs text-muted">
                     <span className="sr-only">Market cap bought at </span>
                     {p.mcEntryUsd !== null ? usd(p.mcEntryUsd) : mcSol(p.entryMarketCapSol)}
                     <span aria-hidden="true"> → </span>

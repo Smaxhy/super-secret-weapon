@@ -38,7 +38,7 @@ export function WalletAnalyzer() {
   };
 
   return (
-    <Card title="Analyze a wallet" className="mb-4">
+    <Card title="Analyze a wallet">
       <form onSubmit={(e) => void run(e)} className="grid gap-3 sm:grid-cols-[2fr_auto_auto] sm:items-end">
         <label className="flex min-w-0 flex-col gap-1 text-sm text-ink-2">
           Wallet address

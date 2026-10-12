@@ -4,6 +4,7 @@
  */
 import { useApi } from '../hooks/useApi';
 import { duration } from '../lib/format';
+import { Icon } from './Icon';
 import { Card } from './ui';
 
 interface SystemData {
@@ -54,8 +55,19 @@ export function HealthBanner() {
   if (data.trading && data.trading.minutesSinceEntry >= 30 && data.uptimeSec > 10 * 60) issues.push(`no buy for ${duration(data.trading.minutesSinceEntry * 60)}: ${data.trading.summary}`);
   if (!issues.length) return null;
   return (
-    <div role="status" className="mb-4 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-ink">
-      <strong>Bot health:</strong> {issues.join(' · ')}. Details on the Scanner page. On the VPS run <code className="break-all">bash /root/bot/scripts/diagnose.sh</code>.
+    <div role="status" className="mb-4 flex items-start gap-2.5 rounded-xl border border-warning/40 bg-warning/10 px-3.5 py-3 text-sm text-ink">
+      <Icon name="alert" size={18} className="mt-px text-warning" />
+      <div className="min-w-0">
+        <div className="font-semibold">Bot health</div>
+        <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-ink-2">
+          {issues.map((x) => (
+            <li key={x} className="break-words">{x}</li>
+          ))}
+        </ul>
+        <p className="mt-1.5 text-xs text-muted">
+          Details: Scanner → Health. Update button: Controls → System. On the VPS: <code className="break-all">bash /root/bot/scripts/diagnose.sh</code>
+        </p>
+      </div>
     </div>
   );
 }
@@ -64,7 +76,7 @@ export function SystemPanel() {
   const { data, error } = useApi<SystemData>('/api/system', 30_000);
   const { data: upd } = useApi<UpdateInfo>('/api/update', 120_000);
   return (
-    <Card title="Bot health" className="mt-4">
+    <Card title="Bot health">
       {error && <p className="text-sm text-down">{error}</p>}
       {data && (
         <>

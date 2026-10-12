@@ -1,7 +1,8 @@
 /** What the bot has learned: weights, pattern odds, market mood, and what it got wrong. */
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Card, Empty, ErrorBox, Loading, PageHeader, StatTile } from '../components/ui';
+import { Icon } from '../components/Icon';
+import { Card, Empty, ErrorBox, Loading, PageHeader, Stack, StatTile, Tabs, useTab } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 import { ago, num, pct } from '../lib/format';
@@ -69,8 +70,17 @@ const REGIME: Record<LearnerData['regime'], { icon: string; label: string; note:
   RUG_HEAVY: { icon: '✕', label: 'Rug-heavy', note: 'Many tokens dumping — half size, much stricter buy bar.', cls: 'text-down' },
 };
 
+const TABS = [
+  { key: 'score', label: 'Score' },
+  { key: 'coach', label: 'Coach' },
+  { key: 'signals', label: 'Signals' },
+  { key: 'history', label: 'History' },
+] as const;
+type Tab = (typeof TABS)[number]['key'];
+
 export function Learning() {
   const { data: d, error, loading, reload } = useApi<LearnerData>('/api/learner', 60_000);
+  const [tab, setTab] = useTab<Tab>('learning', TABS.map((t) => t.key), 'score');
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -95,17 +105,19 @@ export function Learning() {
     <>
       <PageHeader
         title="Learning"
-        subtitle={d ? `Every scored coin is tracked for an hour: did it reach ${d.winMultiple}× before dropping 30%? Weights adjust every 20 min and after every closed trade — own trades count 3×, losses count extra, and a change is only kept if it would have picked recent coins better.` : undefined}
+        subtitle={d ? `Every scored coin is followed for an hour (did it reach ${d.winMultiple}× first?). Weights adjust every 20 min and only when they'd have picked recent coins better.` : undefined}
         action={
-          <button type="button" onClick={() => void adjustNow()} disabled={busy} className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
-            {busy ? 'Adjusting…' : '↻ Adjust weights now'}
+          <button type="button" onClick={() => void adjustNow()} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-ink disabled:opacity-60">
+            <Icon name="refresh" size={15} />
+            {busy ? 'Adjusting…' : 'Adjust now'}
           </button>
         }
       />
+      <Tabs tabs={[...TABS]} value={tab} onChange={setTab} sticky label="Learning sections" />
       {msg && <div className="mb-4 rounded-lg border border-line bg-surface px-4 py-3 text-sm text-ink" role="status">{msg}</div>}
       {error && <ErrorBox message={error} />}
-      {d && r && (
-        <>
+      {d && r && tab === 'score' && (
+        <Stack>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatTile label="Market mood" value={<span className={r.cls}><span aria-hidden="true">{r.icon}</span> {r.label}</span>} sub={r.note} />
             <StatTile label="Outcomes checked (24h)" value={num(d.labeled24h)} />
@@ -113,7 +125,7 @@ export function Learning() {
             <StatTile label="Weights version" value={`v${d.weightsVersion}`} sub={d.history[0] ? `updated ${ago(d.history[0].createdAt)}` : 'still the defaults'} />
           </div>
 
-          <Card title="Did the bot's decisions hold up? (24h)" className="mt-4">
+          <Card title="Did its decisions hold up?" subtitle="Last 24 h · bought coins should do clearly better than skipped ones.">
             {d.byDecision.length ? (
               <table className="w-full text-sm tabular">
                 <thead>
@@ -136,11 +148,10 @@ export function Learning() {
             ) : (
               <Empty>Outcomes appear one hour after coins are scored.</Empty>
             )}
-            <p className="mt-2 text-sm text-muted">Good learning = bought coins average a clearly higher best price than skipped ones.</p>
           </Card>
 
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <Card title="Score weights (how much each signal counts)">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card title="Score weights" subtitle="How much each signal counts. Tick = starting default.">
               <ul className="space-y-2">
                 {[...d.weights].sort((a, b) => b.weight - a.weight).map((w) => {
                   const diff = w.weight - w.default;
@@ -183,8 +194,55 @@ export function Learning() {
             </Card>
           </div>
 
-          <Card title="Trade coach (learns from every trade)" className="mt-4">
-            <p className="mb-3 text-sm text-ink-2">30 min after each trade it checks what the price did next, names the mistake, and adjusts that strategy: buy bar, size, stop and trail.</p>
+                    <Card title="Do high scores win?" subtitle="Last 7 days · losing bands get points off and smaller size automatically.">
+            {d.calibration && d.calibration.bands.some((b) => b.n >= 5) ? (
+              <div className="space-y-3">
+                {Object.entries(d.calibration.base).map(([strategy, base]) => (
+                  <div key={strategy} className="min-w-0 text-sm">
+                    <div className="font-semibold text-ink">
+                      {STRAT[strategy] ?? strategy} <span className="font-normal text-muted">· {Math.round(base.winRate * 100)}% overall (n={base.n})</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {d.calibration!.bands
+                        .filter((b) => b.strategy === strategy && b.n >= 5)
+                        .map((b) => (
+                          <span key={b.lo} className={`rounded-md border border-line px-2 py-0.5 tabular-nums ${b.winRate < base.winRate * 0.8 ? 'text-down' : b.winRate > base.winRate * 1.2 ? 'text-up' : 'text-ink-2'}`}>
+                            {b.lo}–{b.hi}: {Math.round(b.winRate * 100)}% <span className="text-muted">({b.n})</span>
+                          </span>
+                        ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Empty>Fills in as scored coins get their 1-hour result.</Empty>
+            )}
+          </Card>
+
+          <Card title="Learning status">
+            <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+              <div className="min-w-0"><div className="text-muted">Last adjust</div><div className="font-medium text-ink">{d.lastAdjustAt ? ago(d.lastAdjustAt) : '—'}</div></div>
+              <div className="min-w-0"><div className="text-muted">Next adjust</div><div className="font-medium text-ink">{d.nextAdjustAt ? new Date(d.nextAdjustAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</div></div>
+              <div className="min-w-0"><div className="text-muted">Clean labels</div><div className="font-medium text-ink">{d.labelStats ? `${d.labelStats.wins} W / ${d.labelStats.losses} L` : '—'}</div></div>
+              <div className="min-w-0"><div className="text-muted">Bad data ignored</div><div className="font-medium text-ink">{d.labelStats?.excluded ?? 0}</div></div>
+            </div>
+            {d.adjustments && d.adjustments.length > 0 && (
+              <ul className="mt-3 space-y-1 text-sm">
+                {d.adjustments.slice(0, 5).map((a) => (
+                  <li key={a.at} className="min-w-0 break-words">
+                    <span className={a.accepted ? 'text-up' : 'text-muted'}>{a.accepted ? '✓ kept' : '– skipped'}</span>{' '}
+                    <span className="text-muted">{ago(a.at)} · {a.trigger.replace('_', ' ')}</span> <span className="text-ink-2">{a.message}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+
+        </Stack>
+      )}
+      {d && tab === 'coach' && (
+        <Stack>
+          <Card title="Trade coach" subtitle="30 min after each trade it checks what the price did next, names the mistake and adjusts that strategy.">
             <div className="grid gap-3 sm:grid-cols-2">
               {(d.coach?.states ?? []).map((c) => (
                 <div key={c.strategy} className="min-w-0 rounded-lg border border-line p-3 text-sm">
@@ -221,33 +279,30 @@ export function Learning() {
             )}
           </Card>
 
-          <Card title="Do high scores win? (last 7 days)" className="mt-4">
-            <p className="mb-2 text-sm text-ink-2">Real win rate per score band. Bands that lose more than average get points taken off and smaller size automatically.</p>
-            {d.calibration && d.calibration.bands.some((b) => b.n >= 5) ? (
-              <div className="space-y-3">
-                {Object.entries(d.calibration.base).map(([strategy, base]) => (
-                  <div key={strategy} className="min-w-0 text-sm">
-                    <div className="font-semibold text-ink">
-                      {STRAT[strategy] ?? strategy} <span className="font-normal text-muted">· {Math.round(base.winRate * 100)}% overall (n={base.n})</span>
-                    </div>
-                    <div className="mt-1 flex flex-wrap gap-1.5">
-                      {d.calibration!.bands
-                        .filter((b) => b.strategy === strategy && b.n >= 5)
-                        .map((b) => (
-                          <span key={b.lo} className={`rounded-md border border-line px-2 py-0.5 tabular-nums ${b.winRate < base.winRate * 0.8 ? 'text-down' : b.winRate > base.winRate * 1.2 ? 'text-up' : 'text-ink-2'}`}>
-                            {b.lo}–{b.hi}: {Math.round(b.winRate * 100)}% <span className="text-muted">({b.n})</span>
-                          </span>
-                        ))}
-                    </div>
-                  </div>
+          <Card title="Mistakes it's learning from">
+            {d.missed.length ? (
+              <ul className="divide-y divide-line">
+                {d.missed.map((m) => (
+                  <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                    <Link to={`/token/${m.mint}`} className="font-semibold text-ink hover:underline">
+                      {m.symbol}
+                    </Link>
+                    <span className={m.decision === 'BUY' ? 'text-down' : 'text-up'}>{m.outcome}</span>
+                    <span className="text-muted">
+                      score {m.scoreAtDecision.toFixed(0)} · {ago(m.createdAt)}
+                    </span>
+                  </li>
                 ))}
-              </div>
+              </ul>
             ) : (
-              <Empty>Fills in as scored coins get their 1-hour result.</Empty>
+              <Empty>None yet — skipped coins that later ran 2×, or buys that fell 40%, show up here.</Empty>
             )}
           </Card>
-
-          <Card title="Smart wallets it found" className="mt-4">
+        </Stack>
+      )}
+      {d && tab === 'signals' && (
+        <Stack>
+          <Card title="Smart wallets it found">
             {d.smartWallets && d.smartWallets.wallets.length > 0 ? (
               <ul className="space-y-1 text-sm">
                 {d.smartWallets.wallets.map((w) => (
@@ -264,26 +319,7 @@ export function Learning() {
             )}
           </Card>
 
-          <Card title="Learning status" className="mt-4">
-            <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-              <div className="min-w-0"><div className="text-muted">Last adjust</div><div className="font-medium text-ink">{d.lastAdjustAt ? ago(d.lastAdjustAt) : '—'}</div></div>
-              <div className="min-w-0"><div className="text-muted">Next adjust</div><div className="font-medium text-ink">{d.nextAdjustAt ? new Date(d.nextAdjustAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</div></div>
-              <div className="min-w-0"><div className="text-muted">Clean labels</div><div className="font-medium text-ink">{d.labelStats ? `${d.labelStats.wins} W / ${d.labelStats.losses} L` : '—'}</div></div>
-              <div className="min-w-0"><div className="text-muted">Bad data ignored</div><div className="font-medium text-ink">{d.labelStats?.excluded ?? 0}</div></div>
-            </div>
-            {d.adjustments && d.adjustments.length > 0 && (
-              <ul className="mt-3 space-y-1 text-sm">
-                {d.adjustments.slice(0, 5).map((a) => (
-                  <li key={a.at} className="min-w-0 break-words">
-                    <span className={a.accepted ? 'text-up' : 'text-muted'}>{a.accepted ? '✓ kept' : '– skipped'}</span>{' '}
-                    <span className="text-muted">{ago(a.at)} · {a.trigger.replace('_', ' ')}</span> <span className="text-ink-2">{a.message}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
-
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-2">
             <Card title="Words that win">
               <KeywordList rows={d.keywords?.good ?? []} cls="text-up" />
             </Card>
@@ -292,7 +328,11 @@ export function Learning() {
             </Card>
           </div>
 
-          <Card title="What changed and why" className="mt-4">
+        </Stack>
+      )}
+      {d && tab === 'history' && (
+        <Stack>
+          <Card title="What changed and why">
             {d.history.length ? (
               <ul className="space-y-4">
                 {d.history.map((h) => (
@@ -319,26 +359,7 @@ export function Learning() {
             )}
           </Card>
 
-          <Card title="Mistakes it's learning from" className="mt-4">
-            {d.missed.length ? (
-              <ul className="divide-y divide-line">
-                {d.missed.map((m) => (
-                  <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                    <Link to={`/token/${m.mint}`} className="font-semibold text-ink hover:underline">
-                      {m.symbol}
-                    </Link>
-                    <span className={m.decision === 'BUY' ? 'text-down' : 'text-up'}>{m.outcome}</span>
-                    <span className="text-muted">
-                      score {m.scoreAtDecision.toFixed(0)} · {ago(m.createdAt)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <Empty>None yet — skipped coins that later ran 2×, or buys that fell 40%, show up here.</Empty>
-            )}
-          </Card>
-        </>
+        </Stack>
       )}
     </>
   );

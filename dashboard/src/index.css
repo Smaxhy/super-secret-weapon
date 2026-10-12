@@ -132,3 +132,34 @@ body {
   backdrop-filter: saturate(1.4) blur(12px);
   -webkit-backdrop-filter: saturate(1.4) blur(12px);
 }
+
+/* Height of the phone header (sticky tabs sit right under it); 0 on wide screens with the sidebar. */
+:root {
+  --hdr: calc(3.5rem + env(safe-area-inset-top));
+}
+@media (min-width: 48rem) {
+  :root {
+    --hdr: 0px;
+  }
+}
+/* Sideways-scrolling rows (tabs, chips) without a visible scrollbar. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+/* Bottom sheet slide-up on phones. */
+@keyframes sheet-up {
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.sheet-up {
+  animation: sheet-up 0.18s ease-out;
+}

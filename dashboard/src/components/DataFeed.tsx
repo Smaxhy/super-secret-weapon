@@ -45,7 +45,7 @@ export function DataFeed() {
   const a = data?.active;
   const s = data?.saved;
   return (
-    <Card title="Data feed" className="mt-6">
+    <Card title="Data feed">
       {error && <p className="text-sm text-down">{error}</p>}
       {data && (
         <div className="mb-4 space-y-1 text-sm">

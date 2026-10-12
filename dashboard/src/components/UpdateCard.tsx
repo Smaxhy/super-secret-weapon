@@ -73,7 +73,7 @@ export function UpdateCard() {
   };
 
   return (
-    <Card title="Updates" className="mt-4">
+    <Card title="Updates">
       <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
         <Row label="Bot runs" value={data?.running ?? '—'} warn={behind} sub={behind ? `newest ${last?.remote}` : last ? STATE[last.state] : undefined} />
         <Row label="Server checked" value={last ? ago(last.at) : '—'} sub={last?.message} warn={last?.state === 'failed'} />

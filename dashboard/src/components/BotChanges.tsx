@@ -16,7 +16,7 @@ export function BotChanges() {
   const tunes = (data?.tuning ?? []).filter((t) => t.barDelta || t.sizeFactor !== 1 || t.trailFactor !== 1);
   const styles = data?.entryStyles ?? [];
   return (
-    <Card title="What the bot changed" className="mb-4">
+    <Card title="What the bot changed">
       {error && <p className="text-sm text-down">{error}</p>}
       {data && (
         <div className="space-y-4 text-sm">

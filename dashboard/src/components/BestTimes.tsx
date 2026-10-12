@@ -29,7 +29,7 @@ export function BestTimes() {
   const [hover, setHover] = useState<number | null>(null);
   const nowUtc = new Date().getUTCHours();
   return (
-    <Card title="Best times to trade" className="mb-4">
+    <Card title="Best times to trade">
       {error && <p className="text-sm text-down">{error}</p>}
       {!data && !error && <p className="text-sm text-ink-2">Learning from the live market — the first picture shows up after a few hours, a reliable one after about 3 days.</p>}
       {data && (

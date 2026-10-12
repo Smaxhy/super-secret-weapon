@@ -1,5 +1,6 @@
 /** Real-time scrolling feed of every detected token. */
 import { useCallback, useEffect, useState } from 'react';
+import { Icon } from '../components/Icon';
 import { TokenCard } from '../components/TokenCard';
 import type { FeedStatus } from '../components/StatusBadge';
 import { Chip, Empty, ErrorBox, Loading, PageHeader } from '../components/ui';
@@ -9,10 +10,10 @@ import type { Detection } from '../lib/types';
 
 const FILTERS: Array<[FeedStatus | 'all', string]> = [
   ['all', 'All'],
-  ['bought', '✓ Bought'],
-  ['interesting', '★ Interesting'],
-  ['flagged', '✕ Dangerous'],
-  ['skipped', '– Skipped'],
+  ['bought', 'Bought'],
+  ['interesting', 'Interesting'],
+  ['flagged', 'Dangerous'],
+  ['skipped', 'Skipped'],
 ];
 
 export function LiveFeed() {
@@ -68,14 +69,15 @@ export function LiveFeed() {
     <>
       <PageHeader
         title="Live feed"
-        subtitle="Every new Pump.fun token as the bot sees it. Click one for the full breakdown."
+        subtitle="New Pump.fun coins as the bot sees them. Tap one for the breakdown."
         action={
-          <button type="button" onClick={() => setPaused((p) => !p)} className="rounded-lg border border-line bg-surface px-3 py-2 text-sm font-medium text-ink hover:bg-surface-2" aria-pressed={paused}>
-            {paused ? '▶ Resume feed' : '⏸ Pause feed'}
+          <button type="button" onClick={() => setPaused((p) => !p)} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-ink hover:bg-surface-2" aria-pressed={paused}>
+            <Icon name={paused ? 'play' : 'pause'} size={14} />
+            {paused ? 'Resume' : 'Pause'}
           </button>
         }
       />
-      <div className="mb-4 flex flex-wrap gap-2" role="group" aria-label="Filter">
+      <div className="no-scrollbar -mx-4 mb-4 flex gap-2 overflow-x-auto px-4 sm:mx-0 sm:flex-wrap sm:px-0" role="group" aria-label="Filter">
         {FILTERS.map(([k, l]) => (
           <Chip key={k} active={filter === k} onClick={() => setFilter(k)}>
             {l}

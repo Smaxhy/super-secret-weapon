@@ -3,7 +3,7 @@
  * Shows what skipping cost: per filter, per refusal reason, and the winners it missed.
  */
 import { useState } from 'react';
-import { Card, Empty, ErrorBox, Loading, PageHeader } from '../components/ui';
+import { Card, Empty, ErrorBox, Loading, PageHeader, Stack, Tabs } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { ago, STRATEGY_LABEL } from '../lib/format';
 
@@ -26,7 +26,7 @@ export function Shadow() {
   const [tab, setTab] = useState<'filters' | 'missed' | 'recent'>('filters');
   return (
     <>
-      <PageHeader title="Shadow trades" subtitle="Pretend trades on coins the bot didn't buy — no money, same exits and fees. They show what skipping cost and help the bot learn faster." />
+      <PageHeader title="Shadow trades" subtitle="Pretend trades on coins it didn't buy (same exits and fees, no money): what skipping cost." />
       {error && <ErrorBox message={error} />}
       {!data && !error && <Loading />}
       {data && !data.total && (
@@ -35,20 +35,26 @@ export function Shadow() {
         </Empty>
       )}
       {data && data.total > 0 && (
-        <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-3">
-            {(Object.keys(KIND) as Kind[]).map((k) => {
-              const g = data.byKind[k];
-              return (
-                <Card key={k}>
-                  <div className="text-sm font-medium text-ink">{KIND[k].label}</div>
-                  <div className="text-xs text-muted">{KIND[k].sub}</div>
-                  <div className={`mt-2 text-2xl font-semibold tabular-nums ${g.n ? tone(g.avgPct) : 'text-muted'}`}>{g.n ? pct(g.avgPct) : '—'}</div>
-                  <div className="text-xs text-muted tabular-nums">{g.n} trades · {g.winRatePct}% wins · {g.went2xPct}% went 2x+</div>
-                </Card>
-              );
-            })}
-          </div>
+        <Stack>
+          <Card title="If it had bought them">
+            <ul className="-my-1 divide-y divide-line">
+              {(Object.keys(KIND) as Kind[]).map((k) => {
+                const g = data.byKind[k];
+                return (
+                  <li key={k} className="flex items-start justify-between gap-3 py-2.5">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-ink">{KIND[k].label}</div>
+                      <div className="text-xs text-muted">{KIND[k].sub}</div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div className={`text-lg font-semibold tabular-nums ${g.n ? tone(g.avgPct) : 'text-muted'}`}>{g.n ? pct(g.avgPct) : '—'}</div>
+                      <div className="text-xs text-muted tabular-nums">{g.n} · {g.winRatePct}% wins · {g.went2xPct}% 2x+</div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </Card>
           {data.findings.length > 0 && (
             <Card title="What it found">
               <ul className="list-disc space-y-1 pl-5 text-sm text-ink-2">
@@ -58,13 +64,16 @@ export function Shadow() {
               </ul>
             </Card>
           )}
-          <div className="flex gap-1 rounded-xl border border-line bg-surface p-1 text-sm" role="tablist">
-            {([['filters', 'What the filters cost'], ['missed', 'Missed winners'], ['recent', 'Latest']] as const).map(([id, label]) => (
-              <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)} className={`flex-1 rounded-lg px-2 py-2 font-medium ${tab === id ? 'bg-accent/12 text-accent' : 'text-ink-2 hover:bg-surface-2'}`}>
-                {label}
-              </button>
-            ))}
-          </div>
+          <Tabs
+            label="Shadow trade views"
+            value={tab}
+            onChange={setTab}
+            tabs={[
+              { key: 'filters', label: 'Filter cost' },
+              { key: 'missed', label: 'Missed winners' },
+              { key: 'recent', label: 'Latest' },
+            ]}
+          />
           {tab === 'filters' && (
             <>
               <Card title="Skipped by a rule">
@@ -86,7 +95,7 @@ export function Shadow() {
             </Card>
           )}
           <p className="text-xs text-muted">Counted toward learning: "wanted" and "just under the bar" trades, at half the weight of a real trade. "Skipped by a rule" trades only measure what each filter costs or saves.</p>
-        </div>
+        </Stack>
       )}
     </>
   );
@@ -95,33 +104,22 @@ export function Shadow() {
 function GroupTable({ rows, label, empty }: { rows: Group[]; label: string; empty: string }) {
   if (!rows.length) return <p className="text-sm text-ink-2">{empty}</p>;
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[28rem] text-left text-sm">
-        <thead className="text-xs text-muted">
-          <tr>
-            <th className="py-1 font-normal">{label}</th>
-            <th className="py-1 text-right font-normal">Coins</th>
-            <th className="py-1 text-right font-normal">If bought</th>
-            <th className="py-1 text-right font-normal">Wins</th>
-            <th className="py-1 text-right font-normal">2x+</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((g) => (
-            <tr key={g.key} className="border-t border-line align-top">
-              <td className="py-1.5 pr-2 text-ink">
-                <div className="break-words">{g.example}</div>
-                {g.best.length > 0 && g.best[0]!.peakX >= 1.5 && <div className="text-xs text-muted">best: {g.best.map((b) => `${b.symbol} ${b.peakX}x`).join(', ')}</div>}
-              </td>
-              <td className="py-1.5 text-right tabular-nums text-ink-2">{g.n}</td>
-              <td className={`py-1.5 text-right tabular-nums ${tone(g.avgPct)}`}>{pct(g.avgPct)}</td>
-              <td className="py-1.5 text-right tabular-nums text-ink-2">{g.winRatePct}%</td>
-              <td className="py-1.5 text-right tabular-nums text-ink-2">{g.went2xPct}%</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <ul className="-my-1 divide-y divide-line">
+      {rows.map((g) => (
+        <li key={g.key} className="flex items-start justify-between gap-3 py-2.5 text-sm">
+          <div className="min-w-0">
+            <div className="break-words text-ink">{g.example}</div>
+            {g.best.length > 0 && g.best[0]!.peakX >= 1.5 && <div className="text-xs text-muted">best: {g.best.map((b) => `${b.symbol} ${b.peakX}x`).join(', ')}</div>}
+          </div>
+          <div className="shrink-0 text-right">
+            <div className={`font-semibold tabular-nums ${tone(g.avgPct)}`}>{pct(g.avgPct)}</div>
+            <div className="text-xs text-muted tabular-nums">
+              {g.n} {label === 'Rule' ? 'coins' : 'signals'} · {g.winRatePct}% wins · {g.went2xPct}% 2x+
+            </div>
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }
 

@@ -88,7 +88,7 @@ export function BuyRules() {
   const groups = new Map<string, Setting[]>();
   for (const s of data?.settings ?? []) groups.set(s.group, [...(groups.get(s.group) ?? []), s]);
   return (
-    <Card title="Buy rules per strategy" className="mt-6">
+    <Card title="Buy rules per strategy">
       <p className="mb-3 text-xs text-muted">Each change saves at once and shows up under "What the bot changed". Budget share is 0–1 (0.3 = 30%).</p>
       {error && <p className="text-sm text-down">{error}</p>}
       <div className="space-y-2">

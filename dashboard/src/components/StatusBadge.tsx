@@ -21,7 +21,7 @@ export function StatusBadge({ status }: { status: FeedStatus }) {
   );
 }
 
-export function BotStatusBadge({ status, paused }: { status: ConnStatus; paused?: boolean }) {
+export function BotStatusBadge({ status, paused, compact = false }: { status: ConnStatus; paused?: boolean; compact?: boolean }) {
   const state =
     status === 'offline'
       ? { dot: 'bg-critical', label: 'Offline' }
@@ -31,8 +31,8 @@ export function BotStatusBadge({ status, paused }: { status: ConnStatus; paused?
           ? { dot: 'bg-warning', label: 'Paused' }
           : { dot: 'bg-good', label: 'Live' };
   return (
-    <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-line bg-surface px-3 py-1 text-sm font-medium text-ink" role="status">
-      <span className={`h-2.5 w-2.5 rounded-full ${state.dot}`} aria-hidden="true" />
+    <span className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full border border-line bg-surface font-medium text-ink ${compact ? 'gap-1.5 px-2.5 py-1 text-xs' : 'gap-2 px-3 py-1 text-sm'}`} role="status">
+      <span className={`${compact ? 'h-2 w-2' : 'h-2.5 w-2.5'} rounded-full ${state.dot}`} aria-hidden="true" />
       {state.label}
     </span>
   );

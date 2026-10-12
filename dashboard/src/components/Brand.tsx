@@ -31,10 +31,7 @@ export function ModePill({ mode }: { mode: 'PAPER' | 'LIVE' | undefined }) {
   );
 }
 
-/**
- * Footer ("bottom text") on every page. On phones it sits at the end of the
- * page content, above the fixed bottom nav (the wrapper adds room for it).
- */
+/** Footer on every page: one quiet line — connection, mode, last restart. */
 export function AppFooter({ mode, status, paused, uptimeSec }: { mode: 'PAPER' | 'LIVE' | undefined; status: ConnStatus; paused?: boolean; uptimeSec?: number | null }) {
   // Re-render every 30s so "restarted Xm ago" stays current.
   const [, tick] = useState(0);
@@ -44,33 +41,23 @@ export function AppFooter({ mode, status, paused, uptimeSec }: { mode: 'PAPER' |
   }, []);
   const st =
     status === 'offline'
-      ? { dot: 'bg-critical', text: 'Offline — trying to reconnect…' }
+      ? { dot: 'bg-critical', text: 'Offline, reconnecting' }
       : status === 'reconnecting'
-        ? { dot: 'bg-warning', text: 'Reconnecting…' }
+        ? { dot: 'bg-warning', text: 'Reconnecting' }
         : paused
-          ? { dot: 'bg-warning', text: 'Connected · bot paused' }
-          : { dot: 'bg-good', text: 'Connected · updating live' };
+          ? { dot: 'bg-warning', text: 'Connected · paused' }
+          : { dot: 'bg-good', text: 'Connected' };
   const restarted = restartNote(uptimeSec);
   return (
-    <footer className="mx-auto mt-10 w-full max-w-7xl border-t border-line px-4 pt-4 text-xs leading-relaxed text-muted sm:px-6">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <p>
-          {mode === 'LIVE' ? (
-            <strong className="text-down">Live trading — real money at risk.</strong>
-          ) : (
-            <span>
-              <strong className="font-semibold text-ink-2">Paper trading</strong> — simulated money, not financial advice.
-            </span>
-          )}{' '}
-          Data: PumpPortal + Solana · Prices update every ~2s.
-        </p>
-        <p className="inline-flex items-center gap-2" role="status">
-          <span className={`h-2 w-2 shrink-0 rounded-full ${st.dot}`} aria-hidden="true" />
+    <footer className="mx-auto mt-8 w-full max-w-7xl px-4 pb-2 text-center text-xs text-muted sm:px-6 md:text-left">
+      <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 border-t border-line pt-4 md:justify-between">
+        <span className="inline-flex items-center gap-1.5" role="status">
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.dot}`} aria-hidden="true" />
           {st.text}
-          {restarted && <span className="text-ink-2">· {restarted}</span>}
-        </p>
+          {restarted && <span>· {restarted}</span>}
+        </span>
+        <span>{mode === 'LIVE' ? <strong className="font-semibold text-down">Live trading: real money at risk</strong> : 'Paper trading · simulated money · not financial advice'}</span>
       </div>
-      <p className="mt-1.5">Solbot · Pump.fun scanner, scorer &amp; trader · {new Date().getFullYear()}</p>
     </footer>
   );
 }

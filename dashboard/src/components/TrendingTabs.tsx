@@ -44,7 +44,7 @@ export function TrendingTabs() {
   const { data } = useApi<{ coins: Coin[]; health: Health[]; narratives: string[] }>('/api/trending', 30_000);
   if (!data) return null;
   return (
-    <Card title="Trending tabs" className="mt-4">
+    <Card title="Trending tabs">
       <p className="mb-2 text-sm text-ink-2">
         What pump.fun and GeckoTerminal show as trending right now. A coin new on a tab is checked straight away (never bought just for trending — lists usually catch a coin
         after its move) and the Strategies lab measures whether those entries pay.

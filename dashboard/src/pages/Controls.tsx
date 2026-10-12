@@ -4,7 +4,9 @@ import { ResetPaperForm } from '../components/ResetPaper';
 import { BuyRules } from '../components/BuyRules';
 import { DataFeed } from '../components/DataFeed';
 import { Notifications } from '../components/Notifications';
-import { Card, ErrorBox, Loading, PageHeader } from '../components/ui';
+import { Icon } from '../components/Icon';
+import { UpdateCard } from '../components/UpdateCard';
+import { Card, ErrorBox, Loading, PageHeader, Stack, Tabs, useTab } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 
@@ -16,42 +18,60 @@ interface ControlsData {
   paper: { startingBalanceSol: number };
 }
 
-const STRATS: Array<[string, string]> = [
-  ['SOON', 'Soon (curve 70%+, about to graduate)'],
-  ['CURVE_SNIPE', 'New pairs (after the launch snipers)'],
-  ['MIGRATION_MOMENTUM', 'After migration'],
-  ['SMART_MONEY_COPY', 'Copy tracked wallets'],
-  ['SWING', 'Swing trades on bigger coins (dips that bounce)'],
-  ['RUNNER', 'Runners (real buying took off after the first checks)'],
+const STRATS: Array<[string, string, string]> = [
+  ['CURVE_SNIPE', 'New pairs', 'After the launch snipers'],
+  ['SOON', 'Soon', 'Curve 70%+, about to graduate'],
+  ['MIGRATION_MOMENTUM', 'After migration', 'Migrated coins with real volume'],
+  ['RUNNER', 'Runners', 'Real buying took off after the first checks'],
+  ['SWING', 'Swing', 'Dips that bounce on bigger coins'],
+  ['SMART_MONEY_COPY', 'KOL follow / copy', 'Coins several KOLs or tracked wallets buy'],
 ];
 
 function NumberField({ label, value, onChange, step = 1, min, max, suffix, hint }: { label: string; value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; suffix?: string; hint?: string }) {
   return (
-    <label className="flex flex-col gap-1 text-sm text-ink-2">
+    <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-muted">
       {label}
-      <span className="flex items-center gap-2">
-        <input type="number" inputMode="decimal" value={value} step={step} min={min} max={max} onChange={(e) => onChange(Number(e.target.value))} className="w-full rounded-lg border border-line bg-page px-3 py-2.5 text-base text-ink tabular" />
-        {suffix && <span className="shrink-0 text-ink-2">{suffix}</span>}
+      <span className="flex items-center rounded-lg border border-line bg-page focus-within:border-accent focus-within:ring-1 focus-within:ring-accent">
+        <input type="number" inputMode="decimal" value={value} step={step} min={min} max={max} onChange={(e) => onChange(Number(e.target.value))} className="w-full min-w-0 bg-transparent px-3 py-2.5 text-base text-ink tabular outline-none focus-visible:outline-none" />
+        {suffix && <span className="shrink-0 pr-3 text-sm text-muted">{suffix}</span>}
       </span>
-      {hint && <span className="text-xs text-muted">{hint}</span>}
+      {hint && <span className="font-normal">{hint}</span>}
     </label>
   );
 }
 
-function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+/** iOS-style switch row; sits inside a divided list. */
+function Toggle({ label, sub, checked, onChange }: { label: string; sub?: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
-    <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-line px-3 py-3 text-ink">
-      <span>{label}</span>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="h-5 w-5 accent-[var(--accent)]" />
+    <label className="flex cursor-pointer items-center justify-between gap-3 py-3 first:pt-1 last:pb-1">
+      <span className="min-w-0">
+        <span className="block text-sm font-medium text-ink">{label}</span>
+        {sub && <span className="block text-xs text-muted">{sub}</span>}
+      </span>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="peer sr-only" />
+      <span aria-hidden="true" className="relative h-7 w-12 shrink-0 rounded-full bg-surface-2 ring-1 ring-line transition-colors peer-checked:bg-accent peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-accent after:absolute after:left-0.5 after:top-0.5 after:h-6 after:w-6 after:rounded-full after:bg-white after:shadow after:transition-transform peer-checked:after:translate-x-5" />
     </label>
   );
 }
+
+const TABS = [
+  { key: 'trading', label: 'Trading' },
+  { key: 'rules', label: 'Rules' },
+  { key: 'alerts', label: 'Alerts' },
+  { key: 'feed', label: 'Feed' },
+  { key: 'system', label: 'System' },
+] as const;
+type Tab = (typeof TABS)[number]['key'];
+
+/** The part of the form the Save button sends (dirty check compares it to the saved copy). */
+const editable = (c: ControlsData) => JSON.stringify({ t: c.trading, e: c.entry, k: c.keywords });
 
 export function Controls() {
   const { data, error, loading, reload } = useApi<ControlsData>('/api/controls');
   const [form, setForm] = useState<ControlsData | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useTab<Tab>('controls', TABS.map((t) => t.key), 'trading');
   useEffect(() => {
     if (data) setForm(structuredClone(data));
   }, [data]);
@@ -61,19 +81,20 @@ export function Controls() {
     setMsg(null);
     try {
       await fn();
-      setMsg(ok);
+      setMsg({ ok: true, text: ok });
       await reload();
     } catch (e) {
-      setMsg(`⚠ ${(e as Error).message}`);
+      setMsg({ ok: false, text: (e as Error).message });
     } finally {
       setBusy(false);
     }
   }
 
   if (loading && !data) return <Loading />;
-  if (!form) return error ? <ErrorBox message={error} /> : null;
+  if (!form || !data) return error ? <ErrorBox message={error} /> : null;
   const set = <K extends keyof ControlsData>(k: K, v: Partial<ControlsData[K]>) => setForm({ ...form, [k]: { ...form[k], ...v } });
   const stopped = form.state.killSwitch || form.state.paused;
+  const dirty = editable(form) !== editable(data);
 
   const save = () =>
     run(
@@ -86,95 +107,133 @@ export function Controls() {
             keywords: form.keywords,
           }),
         }),
-      '✓ Saved — the bot uses the new settings within 30 seconds.',
+      'Saved. The bot uses the new settings within 30 seconds.',
     );
+
+  const state = form.state.killSwitch
+    ? { dot: 'bg-critical', title: 'Kill switch on', text: 'No trading at all.' }
+    : form.state.paused
+      ? { dot: 'bg-warning', title: 'Paused', text: 'No new buys; open trades are still managed.' }
+      : { dot: 'bg-good', title: 'Running', text: 'Scanning and trading.' };
 
   return (
     <>
-      <PageHeader title="Controls" subtitle="Change how the bot trades. Changes apply within 30 seconds, no restart needed." />
-      {msg && <div role="status" className="mb-4 rounded-lg border border-line bg-surface px-4 py-3 text-sm text-ink">{msg}</div>}
-
-      <Card title="Bot status" className="mb-4">
-        <div className="mb-3 text-ink">
-          {form.state.killSwitch ? '⛔ Kill switch ON — no trading.' : form.state.paused ? '⏸ Paused — no new buys (open positions are still managed).' : '● Running — scanning and trading.'}
+      <PageHeader title="Controls" subtitle="Changes apply within 30 seconds, no restart needed." />
+      <Tabs tabs={[...TABS]} value={tab} onChange={setTab} sticky label="Settings sections" />
+      {msg && (
+        <div role="status" className={`mb-4 flex items-start gap-2 rounded-xl border px-3.5 py-3 text-sm ${msg.ok ? 'border-good/40 bg-good/10 text-ink' : 'border-critical/40 bg-critical/10 text-ink'}`}>
+          <Icon name={msg.ok ? 'check' : 'alert'} size={18} className={msg.ok ? 'text-up' : 'text-critical'} />
+          {msg.text}
         </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          {stopped ? (
-            <button type="button" disabled={busy} onClick={() => run(() => api('/api/controls/resume', { method: 'POST' }), '▶ Resumed')} className="rounded-xl bg-accent px-4 py-3 font-semibold text-white">
-              ▶ Resume trading
+      )}
+
+      {tab === 'trading' && (
+        <Stack>
+          <Card title="Bot status">
+            <div className="mb-4 flex items-center gap-3">
+              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${state.dot}`} aria-hidden="true" />
+              <div>
+                <div className="font-semibold text-ink">{state.title}</div>
+                <div className="text-sm text-muted">{state.text}</div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {stopped ? (
+                <button type="button" disabled={busy} onClick={() => run(() => api('/api/controls/resume', { method: 'POST' }), 'Resumed.')} className="inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-3 py-3 text-sm font-semibold text-white">
+                  <Icon name="play" size={16} />
+                  Resume
+                </button>
+              ) : (
+                <button type="button" disabled={busy} onClick={() => run(() => api('/api/controls/pause', { method: 'POST', body: JSON.stringify({ paused: true }) }), 'Paused: no new buys.')} className="inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-surface px-3 py-3 text-sm font-semibold text-ink">
+                  <Icon name="pause" size={16} />
+                  Pause buys
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => window.confirm('KILL SWITCH: stop all trading and sell every open position now?') && run(() => api('/api/controls/kill', { method: 'POST' }), 'Kill switch on: all positions sold.')}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-critical px-3 py-3 text-sm font-semibold text-white"
+              >
+                <Icon name="stop" size={16} />
+                Sell all &amp; stop
+              </button>
+            </div>
+          </Card>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card title="Trade size">
+              <div className="grid grid-cols-2 gap-3">
+                <NumberField label="Size per trade" value={form.trading.maxPositionSol} step={0.05} min={0.01} max={10} suffix="SOL" onChange={(v) => set('trading', { maxPositionSol: v })} hint="Raise as results improve." />
+                <NumberField label="Max open trades" value={form.trading.maxConcurrentPositions} min={1} max={20} onChange={(v) => set('trading', { maxConcurrentPositions: v })} />
+              </div>
+            </Card>
+
+            <Card title="Strategies" subtitle="Which kinds of trades it may open.">
+              <div className="divide-y divide-line">
+                {STRATS.map(([k, l, sub]) => (
+                  <Toggle key={k} label={l} sub={sub} checked={form.trading.enabledStrategies[k] ?? false} onChange={(v) => set('trading', { enabledStrategies: { ...form.trading.enabledStrategies, [k]: v } })} />
+                ))}
+              </div>
+            </Card>
+
+            <Card title="Basic buy rules" subtitle="Per-strategy limits are under Buy rules.">
+              <div className="grid grid-cols-2 gap-3">
+                <NumberField label="Min score" value={form.entry.minCombinedScore} min={30} max={95} onChange={(v) => set('entry', { minCombinedScore: v })} hint="Lower = more trades." />
+                <NumberField label="Min fees paid" value={form.entry.minTotalFeesSol} step={0.1} suffix="SOL" onChange={(v) => set('entry', { minTotalFeesSol: v })} />
+                <NumberField label="Min volume" value={form.entry.minVolumeUsd} step={1000} suffix="$" onChange={(v) => set('entry', { minVolumeUsd: v })} />
+                <NumberField label="Min market cap" value={form.entry.minMarketCapUsd} step={1000} suffix="$" onChange={(v) => set('entry', { minMarketCapUsd: v })} />
+                <NumberField label="Max bundlers" value={form.entry.maxBundlePct} suffix="%" onChange={(v) => set('entry', { maxBundlePct: v })} />
+                <NumberField label="Max top 10" value={form.entry.maxTop10Pct} suffix="%" onChange={(v) => set('entry', { maxTop10Pct: v })} />
+                <NumberField label="Max dev holds" value={form.entry.maxDevHoldingPct} suffix="%" onChange={(v) => set('entry', { maxDevHoldingPct: v })} />
+              </div>
+              <div className="mt-3 divide-y divide-line border-t border-line pt-1">
+                <Toggle label="Half size on strong coins with bundlers" checked={form.entry.riskyEntry.enabled} onChange={(v) => set('entry', { riskyEntry: { ...form.entry.riskyEntry, enabled: v } })} />
+                <Toggle label="Only coins with an X link" checked={form.entry.requireTwitter} onChange={(v) => set('entry', { requireTwitter: v })} />
+              </div>
+            </Card>
+
+            <Card title="Keywords" subtitle="Comma separated.">
+              <div className="grid gap-3">
+                <label className="flex flex-col gap-1 text-xs font-medium text-muted">
+                  Boost (raises the score)
+                  <textarea rows={3} value={form.keywords.boost.join(', ')} onChange={(e) => set('keywords', { boost: e.target.value.split(',').map((x) => x.trim()) })} className="rounded-lg border border-line bg-page px-3 py-2 text-sm text-ink" />
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-medium text-muted">
+                  Block (never buys)
+                  <textarea rows={3} value={form.keywords.block.join(', ')} onChange={(e) => set('keywords', { block: e.target.value.split(',').map((x) => x.trim()) })} className="rounded-lg border border-line bg-page px-3 py-2 text-sm text-ink" />
+                </label>
+              </div>
+            </Card>
+          </div>
+        </Stack>
+      )}
+      {tab === 'rules' && <BuyRules />}
+      {tab === 'alerts' && <Notifications />}
+      {tab === 'feed' && <DataFeed />}
+      {tab === 'system' && (
+        <Stack>
+          <UpdateCard />
+          <Card title="Reset paper account" subtitle={`Current starting balance: ${form.paper.startingBalanceSol} SOL.`} className="border-critical/40">
+            <ResetPaperForm defaultBalance={10} />
+          </Card>
+        </Stack>
+      )}
+
+      {/* Save bar: only while the Trading tab has unsaved changes. Sits above the phone tab bar. */}
+      {dirty && (
+        <div className="fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-20 px-4 md:bottom-6 md:left-60 md:px-6">
+          <div className="mx-auto flex max-w-xl items-center gap-2 rounded-2xl border border-line bg-surface p-2 pl-4 shadow-2xl">
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">Unsaved changes</span>
+            <button type="button" disabled={busy} onClick={() => setForm(structuredClone(data))} className="rounded-xl px-3 py-2 text-sm font-medium text-ink-2 hover:bg-surface-2">
+              Discard
             </button>
-          ) : (
-            <button type="button" disabled={busy} onClick={() => run(() => api('/api/controls/pause', { method: 'POST', body: JSON.stringify({ paused: true }) }), '⏸ Paused')} className="rounded-xl border border-line px-4 py-3 font-semibold text-ink">
-              ⏸ Pause new buys
+            <button type="button" disabled={busy} onClick={save} className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+              {busy ? 'Saving…' : 'Save'}
             </button>
-          )}
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => window.confirm('KILL SWITCH: stop all trading and sell every open position now?') && run(() => api('/api/controls/kill', { method: 'POST' }), '⛔ Kill switch on — all positions sold')}
-            className="rounded-xl bg-critical px-4 py-3 font-bold text-white sm:col-span-2"
-          >
-            ⛔ KILL SWITCH — sell everything & stop
-          </button>
+          </div>
         </div>
-      </Card>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card title="Trade size">
-          <div className="grid grid-cols-2 gap-3">
-            <NumberField label="Size per trade" value={form.trading.maxPositionSol} step={0.05} min={0.01} max={10} suffix="SOL" onChange={(v) => set('trading', { maxPositionSol: v })} hint="Raise as results improve." />
-            <NumberField label="Max open trades" value={form.trading.maxConcurrentPositions} min={1} max={20} onChange={(v) => set('trading', { maxConcurrentPositions: v })} />
-          </div>
-          <div className="mt-3 grid gap-2">
-            {STRATS.map(([k, l]) => (
-              <Toggle key={k} label={l} checked={form.trading.enabledStrategies[k] ?? false} onChange={(v) => set('trading', { enabledStrategies: { ...form.trading.enabledStrategies, [k]: v } })} />
-            ))}
-          </div>
-        </Card>
-
-        <Card title="Buy rules">
-          <div className="grid grid-cols-2 gap-3">
-            <NumberField label="Min score" value={form.entry.minCombinedScore} min={30} max={95} onChange={(v) => set('entry', { minCombinedScore: v })} hint="Lower = more trades." />
-            <NumberField label="Min fees paid" value={form.entry.minTotalFeesSol} step={0.1} suffix="SOL" onChange={(v) => set('entry', { minTotalFeesSol: v })} />
-            <NumberField label="Min volume" value={form.entry.minVolumeUsd} step={1000} suffix="$" onChange={(v) => set('entry', { minVolumeUsd: v })} />
-            <NumberField label="Min market cap" value={form.entry.minMarketCapUsd} step={1000} suffix="$" onChange={(v) => set('entry', { minMarketCapUsd: v })} />
-            <NumberField label="Max bundlers" value={form.entry.maxBundlePct} suffix="%" onChange={(v) => set('entry', { maxBundlePct: v })} />
-            <NumberField label="Max top 10" value={form.entry.maxTop10Pct} suffix="%" onChange={(v) => set('entry', { maxTop10Pct: v })} />
-            <NumberField label="Max dev holds" value={form.entry.maxDevHoldingPct} suffix="%" onChange={(v) => set('entry', { maxDevHoldingPct: v })} />
-          </div>
-          <div className="mt-3 grid gap-2">
-            <Toggle label="Half-size buys on strong coins with bundlers" checked={form.entry.riskyEntry.enabled} onChange={(v) => set('entry', { riskyEntry: { ...form.entry.riskyEntry, enabled: v } })} />
-            <Toggle label="Only buy coins with an X link" checked={form.entry.requireTwitter} onChange={(v) => set('entry', { requireTwitter: v })} />
-          </div>
-        </Card>
-
-        <Card title="Keywords" className="lg:col-span-2">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1 text-sm text-ink-2">
-              Boost (raises the score) — comma separated
-              <textarea rows={3} value={form.keywords.boost.join(', ')} onChange={(e) => set('keywords', { boost: e.target.value.split(',').map((x) => x.trim()) })} className="rounded-lg border border-line bg-page px-3 py-2 text-ink" />
-            </label>
-            <label className="flex flex-col gap-1 text-sm text-ink-2">
-              Block (never buys) — comma separated
-              <textarea rows={3} value={form.keywords.block.join(', ')} onChange={(e) => set('keywords', { block: e.target.value.split(',').map((x) => x.trim()) })} className="rounded-lg border border-line bg-page px-3 py-2 text-ink" />
-            </label>
-          </div>
-        </Card>
-      </div>
-
-      <div className="sticky bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-10 mt-4 md:bottom-4">
-        <button type="button" disabled={busy} onClick={save} className="w-full rounded-xl bg-accent py-3.5 text-base font-semibold text-white shadow-lg disabled:opacity-60">
-          {busy ? 'Saving…' : 'Save settings'}
-        </button>
-      </div>
-
-      <BuyRules />
-      <Notifications />
-      <DataFeed />
-      <Card title="Reset paper account" className="mt-6 border-critical/40">
-        <ResetPaperForm defaultBalance={10} />
-        <p className="mt-3 text-xs text-muted">Current paper starting balance: {form.paper.startingBalanceSol} SOL.</p>
-      </Card>
+      )}
     </>
   );
 }

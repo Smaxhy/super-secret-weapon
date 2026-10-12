@@ -1,6 +1,6 @@
 /** Wallets: COPY wallets (copied one by one) and KOLs (Cupsey, Cented… — "how many KOLs are in" signal). */
 import { useState, type FormEvent } from 'react';
-import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl } from '../components/ui';
+import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl, Stack, Tabs, useTab } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { WalletAnalyzer } from '../components/WalletAnalyzer';
 import { api } from '../lib/api';
@@ -37,7 +37,7 @@ interface KolCoin {
 function KolBoard() {
   const { data } = useApi<{ windowMin: number; coins: KolCoin[] }>('/api/kols', 30_000);
   return (
-    <Card title="KOLs buying now" className="mb-4">
+    <Card title="KOLs buying now">
       {data && data.coins.length ? (
         <ul className="divide-y divide-line text-sm">
           {data.coins.map((c) => (
@@ -73,7 +73,7 @@ interface SmartRow {
 function SmartMoney() {
   const { data } = useApi<SmartRow[]>('/api/smart-wallets', 60_000);
   return (
-    <Card title="Smart money the bot found (~7 days)" className="mb-4">
+    <Card title="Smart money the bot found (~7 days)">
       <p className="mb-2 text-sm text-ink-2">
         Real profit of every wallet the bot sees trading (devs and launch snipers left out). The best ones become KOLs automatically every 30 min — so it isn't
         limited to the names you know.
@@ -123,7 +123,7 @@ function BulkImport({ onDone }: { onDone: () => void }) {
     }
   }
   return (
-    <Card title="Import a KOL list" className="mb-4">
+    <Card title="Import a KOL list">
       <p className="mb-2 text-sm text-ink-2">Paste one wallet per line, e.g. <code>Cupsey 2fg5QD…</code> (from kolscan.io / gmgn.ai). KOLs aren't copied one by one — the bot watches how many of them are in a coin.</p>
       <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} placeholder={'Cupsey 2fg5QD1eD7rzNNCsvnhmXFm5hqNgwTTG8p7kQ6f3rx6f\nCented CyaE1VxvBrahnPWkqm5VsdCvyS2QmNht2UFrKJHga54o'} className="w-full rounded-lg border border-line bg-page px-3 py-2 font-mono text-xs text-ink" />
       <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -136,7 +136,16 @@ function BulkImport({ onDone }: { onDone: () => void }) {
   );
 }
 
+const TABS = [
+  { key: 'kols', label: 'KOLs' },
+  { key: 'smart', label: 'Smart money' },
+  { key: 'analyze', label: 'Analyze' },
+  { key: 'mine', label: 'My wallets' },
+] as const;
+type Tab = (typeof TABS)[number]['key'];
+
 export function Wallets() {
+  const [tab, setTab] = useTab<Tab>('wallets', TABS.map((t) => t.key), 'kols');
   const { data, error, loading, reload } = useApi<WalletRow[]>('/api/wallets', 30_000, ['trade']);
   const [address, setAddress] = useState('');
   const [label, setLabel] = useState('');
@@ -171,45 +180,8 @@ export function Wallets() {
     await reload();
   }
 
-  return (
+  const wallets = (
     <>
-      <PageHeader title="Wallets & KOLs" subtitle="KOLs (Cupsey, Cented…): when several buy the same coin the bot checks it right away and scores it higher; KOLs dumping = no buy / take profit. Copy wallets: each buy is checked and copied (half size, strict) if it passes the rules." />
-
-      <WalletAnalyzer />
-      <KolBoard />
-      <SmartMoney />
-
-      <Card title="Add a wallet" className="mb-4">
-        <form onSubmit={add} className="grid gap-3 sm:grid-cols-[2fr_1fr_auto_auto] sm:items-end">
-          <label className="flex flex-col gap-1 text-sm text-ink-2">
-            Wallet address
-            <input required value={address} onChange={(e) => setAddress(e.target.value)} placeholder="e.g. 7xKX…" className="rounded-lg border border-line bg-page px-3 py-2.5 font-mono text-sm text-ink" />
-          </label>
-          <label className="flex flex-col gap-1 text-sm text-ink-2">
-            Name (optional)
-            <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={40} placeholder="e.g. Cupsey" className="rounded-lg border border-line bg-page px-3 py-2.5 text-ink" />
-          </label>
-          <label className="flex flex-col gap-1 text-sm text-ink-2">
-            Type
-            <select value={kind} onChange={(e) => setKind(e.target.value as 'COPY' | 'KOL')} className="rounded-lg border border-line bg-page px-3 py-2.5 text-ink">
-              <option value="KOL">KOL (signal)</option>
-              <option value="COPY">Copy trades</option>
-            </select>
-          </label>
-          <button type="submit" disabled={busy} className="rounded-lg bg-accent px-5 py-2.5 font-semibold text-white disabled:opacity-60">
-            {busy ? 'Adding…' : '+ Add'}
-          </button>
-        </form>
-        {formError && (
-          <p role="alert" className="mt-2 text-sm text-down">
-            {formError}
-          </p>
-        )}
-      </Card>
-
-      <BulkImport onDone={() => void reload()} />
-
-      {error && <ErrorBox message={error} />}
       {loading && !data ? (
         <Loading />
       ) : !data?.length ? (
@@ -238,7 +210,7 @@ export function Wallets() {
                 </div>
                 <div className="flex gap-2">
                   <button type="button" onClick={() => void toggle(w)} className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink hover:bg-surface-2" aria-pressed={!w.active}>
-                    {w.active ? '⏸ Pause' : '▶ Resume'}
+                    {w.active ? 'Pause' : 'Resume'}
                   </button>
                   <button type="button" onClick={() => void remove(w)} className="rounded-lg border border-line px-3 py-1.5 text-sm text-down hover:bg-surface-2">
                     Remove
@@ -272,6 +244,52 @@ export function Wallets() {
             </Card>
           ))}
         </div>
+      )}
+    </>
+  );
+
+  return (
+    <>
+      <PageHeader title="Wallets & KOLs" subtitle="Several KOLs buying one coin = checked at once and scored higher; KOLs dumping = no buy / take profit." />
+      <Tabs tabs={TABS} value={tab} onChange={setTab} sticky label="Wallet sections" />
+      {tab === 'kols' && <KolBoard />}
+      {tab === 'smart' && <SmartMoney />}
+      {tab === 'analyze' && <WalletAnalyzer />}
+      {tab === 'mine' && (
+      <Stack>
+      <Card title="Add a wallet" subtitle="KOL = a signal only. Copy = each buy is checked and copied at half size if it passes the rules.">
+        <form onSubmit={add} className="grid gap-3 sm:grid-cols-[2fr_1fr_auto_auto] sm:items-end">
+          <label className="flex flex-col gap-1 text-sm text-ink-2">
+            Wallet address
+            <input required value={address} onChange={(e) => setAddress(e.target.value)} placeholder="e.g. 7xKX…" className="rounded-lg border border-line bg-page px-3 py-2.5 font-mono text-sm text-ink" />
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-ink-2">
+            Name (optional)
+            <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={40} placeholder="e.g. Cupsey" className="rounded-lg border border-line bg-page px-3 py-2.5 text-ink" />
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-ink-2">
+            Type
+            <select value={kind} onChange={(e) => setKind(e.target.value as 'COPY' | 'KOL')} className="rounded-lg border border-line bg-page px-3 py-2.5 text-ink">
+              <option value="KOL">KOL (signal)</option>
+              <option value="COPY">Copy trades</option>
+            </select>
+          </label>
+          <button type="submit" disabled={busy} className="rounded-lg bg-accent px-5 py-2.5 font-semibold text-white disabled:opacity-60">
+            {busy ? 'Adding…' : 'Add'}
+          </button>
+        </form>
+        {formError && (
+          <p role="alert" className="mt-2 text-sm text-down">
+            {formError}
+          </p>
+        )}
+      </Card>
+
+      <BulkImport onDone={() => void reload()} />
+
+      {error && <ErrorBox message={error} />}
+      {wallets}
+      </Stack>
       )}
     </>
   );
