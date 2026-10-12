@@ -27,6 +27,7 @@
 import type { Redis } from 'ioredis';
 import { moduleLogger } from '../lib/logger';
 
+import { FittedTreeModel, trainTreeModel, type TreeReport } from './tree-model';
 const log = moduleLogger('win-model');
 
 export interface LearnRow {
@@ -37,7 +38,7 @@ export interface LearnRow {
   pnlPct: number; // result after all costs, % of the position (e.g. +25, -14)
   peakX: number; // best multiple reached after entry (1 = never up)
   weight: number; // 1 = real paper trade, 0.5 = shadow trade it would have taken, lower for weaker labels
-  source: 'real' | 'shadow';
+  source: 'real' | 'shadow' | 'outcome';
 }
 
 export interface WinModelOptions {
@@ -886,16 +887,23 @@ export async function trainWinModel(rows: readonly LearnRow[], now = Date.now(),
 
 export interface WinModelStatus {
   trainedAtMs: number;
+  /** Either model (logistic or trees) is shifting the bar. */
   active: boolean;
   report: ValidationReport;
   explain: ReturnType<FittedWinModel['explain']>;
+  /** The gradient-boosted tree model (tree-model.ts) trained on the same rows. */
+  tree: { active: boolean; report: TreeReport; explain: ReturnType<FittedTreeModel['explain']> } | null;
+  /** Which model(s) the bot listens to right now. */
+  using: 'both' | 'logistic' | 'trees' | 'none';
 }
 
 const KEY = 'model:win';
+const TREE_KEY = 'model:tree';
 const NOT_ACTIVE: WinPrediction = { p: 0, baseRate: 0, points: 0 };
 
 export class WinModel {
   private model: FittedWinModel | null = null;
+  private tree: FittedTreeModel | null = null;
   private timers: NodeJS.Timeout[] = [];
   private training = false;
 
@@ -916,22 +924,63 @@ export class WinModel {
       await this.redis.set(KEY, JSON.stringify(m.toJSON()), 'EX', 14 * 86_400);
       const r = m.json.report;
       log.info({ ms: Date.now() - t0, n: r.n, valAuc: r.valAuc, baselineAuc: r.baselineAuc, active: r.active, reason: r.reason }, 'win model trained');
+      // The tree model learns combinations the straight-line model can't; same rows, same exam.
+      const t1 = Date.now();
+      try {
+        const t = await trainTreeModel(rows, now, { pointsScale: this.opts.pointsScale ?? DEFAULT_WIN_MODEL_OPTIONS.pointsScale, maxPoints: this.opts.maxPoints ?? DEFAULT_WIN_MODEL_OPTIONS.maxPoints });
+        this.tree = t;
+        await this.redis.set(TREE_KEY, JSON.stringify(t.json), 'EX', 14 * 86_400);
+        const tr = t.json.report;
+        log.info({ ms: Date.now() - t1, n: tr.n, trees: tr.trees, valAuc: tr.valAuc, baselineAuc: tr.baselineAuc, active: tr.active, reason: tr.reason }, 'tree model trained');
+      } catch (err) {
+        log.warn({ err: (err as Error).message }, 'tree model training failed');
+      }
       return this.snapshot();
     } finally {
       this.training = false;
     }
   }
 
+  /** Which model(s) passed their exam. */
+  using(): WinModelStatus['using'] {
+    const l = !!this.model?.active;
+    const t = !!this.tree?.active;
+    return l && t ? 'both' : l ? 'logistic' : t ? 'trees' : 'none';
+  }
+
+  /** Both passed → their average (an ensemble beats either alone); one passed → that one; none → 0 points. */
   predict(flat: Readonly<Record<string, number>>, strategy: string): WinPrediction {
-    return this.model ? this.model.predict(flat, strategy) : NOT_ACTIVE;
+    const use = this.using();
+    if (use === 'none') return this.model ? this.model.predict(flat, strategy) : NOT_ACTIVE;
+    if (use === 'logistic') return this.model!.predict(flat, strategy);
+    if (use === 'trees') return this.tree!.predict(flat, strategy);
+    const a = this.model!.predict(flat, strategy);
+    const b = this.tree!.predict(flat, strategy);
+    const p = (a.p + b.p) / 2;
+    const baseRate = (a.baseRate + b.baseRate) / 2;
+    const scale = this.opts.pointsScale ?? DEFAULT_WIN_MODEL_OPTIONS.pointsScale;
+    const max = this.opts.maxPoints ?? DEFAULT_WIN_MODEL_OPTIONS.maxPoints;
+    return { p, baseRate, points: Math.max(-max, Math.min(max, Math.round((p - baseRate) * scale))) || 0 };
   }
 
   snapshot(): WinModelStatus | null {
     const m = this.model;
-    return m ? { trainedAtMs: m.json.trainedAtMs, active: m.active, report: m.json.report, explain: m.explain() } : null;
+    const t = this.tree;
+    if (!m && !t) return null;
+    const tree = t ? { active: t.active, report: t.json.report, explain: t.explain() } : null;
+    if (!m) return { trainedAtMs: t!.json.trainedAtMs, active: t!.active, report: null as unknown as ValidationReport, explain: [], tree, using: this.using() };
+    return { trainedAtMs: m.json.trainedAtMs, active: m.active || !!t?.active, report: m.json.report, explain: m.explain(), tree, using: this.using() };
   }
 
   async restore(): Promise<void> {
+    const rawTree = await this.redis.get(TREE_KEY);
+    if (rawTree && !this.tree) {
+      try {
+        this.tree = FittedTreeModel.fromJSON(rawTree, { pointsScale: this.opts.pointsScale ?? DEFAULT_WIN_MODEL_OPTIONS.pointsScale, maxPoints: this.opts.maxPoints ?? DEFAULT_WIN_MODEL_OPTIONS.maxPoints });
+      } catch (err) {
+        log.warn({ err: (err as Error).message }, 'stored tree model rejected');
+      }
+    }
     const raw = await this.redis.get(KEY);
     if (!raw || this.model) return;
     try {

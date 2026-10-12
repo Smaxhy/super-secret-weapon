@@ -22,6 +22,7 @@ import { entryStyleFor } from './entry-style';
 import { LearnRows } from './learn-rows';
 import { PolicySearch } from './policy-search';
 import type { ShadowResult } from './shadow-trades';
+import type { OutcomeResult } from './outcome-tracker';
 import { WinModel } from './win-model';
 import type { TimerVerdict } from './exit-tuner';
 
@@ -39,12 +40,16 @@ export class Brain {
   /** What coins did after time-based exits (exit-tuner.ts) — set in index.ts. */
   exitSource: (() => { at: string; verdicts: TimerVerdict[] } | null) | null = null;
 
+  /** What the coins it didn't buy did (outcome-tracker.ts) — set in index.ts. */
+  outcomeSource: (() => Promise<unknown>) | null = null;
+
   constructor(
     redis: Redis,
     shadowSource: (sinceMs: number) => Promise<ShadowResult[]>,
     private readonly coach: AiCoach,
+    outcomeSource: ((sinceMs: number) => Promise<OutcomeResult[]>) | null = null,
   ) {
-    this.rows = new LearnRows(redis, shadowSource);
+    this.rows = new LearnRows(redis, shadowSource, outcomeSource);
     this.model = new WinModel(redis, () => this.rows.load());
     this.search = new PolicySearch(() => this.rows.load());
     this.alloc = new Allocator(redis, () => this.rows.load({ onlyTaken: true }), () => getConfig().trading.allocation as Record<string, number>);
@@ -103,8 +108,8 @@ export class Brain {
         void recordChange({
           source: 'win-model',
           strategy: null,
-          what: m.active ? 'Win-probability model switched ON — it now shifts the buy bar' : 'Win-probability model switched off',
-          why: m.report.reason ?? (m.active ? 'it predicts winners better than the score on the newest trades' : 'it no longer beats the score on the newest trades'),
+          what: m.active ? `Win-probability model switched ON (${m.using === 'both' ? 'straight-line + tree models together' : m.using === 'trees' ? 'tree model' : 'straight-line model'}) — it now shifts the buy bar` : 'Win-probability model switched off',
+          why: m.active ? 'it predicts winners better than the score on the newest trades' : (m.report?.reason ?? m.tree?.report.reason ?? 'it no longer beats the score on the newest trades'),
         });
       }
       if (m) this.lastActive = m.active;
@@ -132,7 +137,16 @@ export class Brain {
     const fromSearch = rules.filter((r) => r.source === 'search');
     return {
       model: m
-        ? { active: m.active, trainedAt: new Date(m.trainedAtMs).toISOString(), report: compact ? { reason: m.report.reason, valAuc: (m.report as { valAuc?: number }).valAuc, baselineAuc: (m.report as { baselineAuc?: number }).baselineAuc } : m.report, explain: m.explain.slice(0, compact ? 6 : 10) }
+        ? {
+            active: m.active,
+            using: m.using,
+            trainedAt: new Date(m.trainedAtMs).toISOString(),
+            report: m.report ? (compact ? { reason: m.report.reason, valAuc: m.report.valAuc, baselineAuc: m.report.baselineAuc } : m.report) : null,
+            explain: m.explain.slice(0, compact ? 6 : 10),
+            tree: m.tree
+              ? { active: m.tree.active, report: compact ? { reason: m.tree.report.reason, valAuc: m.tree.report.valAuc, baselineAuc: m.tree.report.baselineAuc, trees: m.tree.report.trees } : m.tree.report, explain: m.tree.explain.slice(0, compact ? 6 : 10) }
+              : null,
+          }
         : null,
       search: s ? { ranAt: s.ranAt, rows: s.rows, tested: s.tested, found: s.rules.length, rules: compact ? s.rules.map((r) => r.title) : s.rules } : null,
       discoveredRules: fromSearch.map((r) => ({ title: r.title, status: r.status, statusWhy: r.statusWhy, forward: r.forward, backtest: r.backtest })),
@@ -142,6 +156,7 @@ export class Brain {
         return e ? [e] : [];
       }),
       exitTimers: this.exitSource?.()?.verdicts.slice(0, compact ? 8 : 30) ?? [],
+      coinsChecked: this.outcomeSource ? await this.outcomeSource().catch(() => null) : null,
       changes: (await recentChanges(compact ? 12 : 40).catch(() => [])).map((c) => (compact ? `${c.at.slice(0, 16)} ${c.what}` : c)),
     };
   }

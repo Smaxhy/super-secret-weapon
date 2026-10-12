@@ -29,7 +29,7 @@ export interface LearnRow {
   pnlPct: number; // result after all costs, % of the position (e.g. +25, -14)
   peakX: number; // best multiple reached after entry (1 = never up)
   weight: number; // 1 = real paper trade, 0.5 = shadow trade it would have taken, lower for weaker labels
-  source: 'real' | 'shadow';
+  source: 'real' | 'shadow' | 'outcome';
 }
 
 export interface PolicyCondition {

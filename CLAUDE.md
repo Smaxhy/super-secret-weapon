@@ -443,6 +443,20 @@ smart money → learning engine → ML → social). See README.md.
   40% hard stop / 30% trail / old time stop (owner's 10–20% band + v5 time stops), old scorer weights.
 - **v10.6 (Oct 12): Overview timeframe** — `/api/overview?range=1h|6h|24h|7d|all` adds `window` (profit, wins/trades, win rate, avg %, best/worst, curve for that window); Overview chips (remembered per device).
 - **v10.7 (Oct 12): 5-minute hold + thin-coin sizing** (owner CSV 341 trades: 19% wins, −7.8 SOL, 174 stop losses = −7.9 SOL, 46 past −20%; owner: "memecoins dip and bounce, hold ≥5 min unless brutally past the stop like a rug"). `exit.stopLoss.minHoldSec` 300 + `holdDisasterPct` 35: first 5 min the soft stop, hard limit, early risk cut, time stops and stale wait (via `inMinHold`); only −35% or a rug signal sells. Lab variant Q (ownerOnly) = no hold, so the strategy lab + backtester show what the hold costs/saves. Overshoot fix: `trading.maxPositionPctOfLiquidity` 3 (trader caps size to 3% of the coin's SOL liquidity; too thin for the minimum → refused). All editable (Controls → Trade size & risk). Old exit tests run with minHoldSec 0 (tests/legacy-exit.ts etc.).
+- **v10.8 (Oct 12): learn from every coin + tree model** (owner: "improve the learning drastically, full approval").
+  **Outcome tracker** (`src/learner/outcome-tracker.ts`, `outcomes` config): every coin the evaluator checks and doesn't
+  buy (no shadow trade opened; once per coin + strategy per 20 min; ≤4,000 waiting) is replayed 45 min later on its real
+  crowd-log trades through `backtester.replayTape` (VirtualBook + decideExit, paper costs; chart-reading exits off in the
+  replay for CPU, ~8 ms each, ≤120 a minute); no trades after the check = dead coin = −round-trip cost. Redis
+  `outcome:res` (6,000) → learn-rows source 'outcome' at weight 0.25 (allocator still ignores them: onlyTaken).
+  **Tree model** (`src/learner/tree-model.ts`, pure TS): histogram gradient-boosted trees (≤32 quantile bins, learned
+  missing direction, strategy 0/1 features, depth 3, lr 0.08, L2 3, min child weight 2, col sample 0.7 seeded, ≤250
+  trees early-stopped on the newest part of TRAIN, ≤12,000 rows, ≤120 features, yields after every tree); same exam as the
+  win model (newest 25%, stratified AUC ≥0.58 and ≥ score + 0.02, plus log-loss < base). `WinModel` trains both hourly
+  (Redis `model:tree`); `predict` = average of both when both pass, else the one that passed (`using()`); evaluator also
+  sizes ×0.7–1.3 by p − base rate when a model is on. Tests: tree-model (XOR interaction the logistic can't learn → tree
+  AUC >0.8; 0/20 false activations on noise), outcome-tracker. Brain page: "Win-probability models" (both) + "Learning from
+  every coin it checks" (`coinsChecked` in the brain snapshot).
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

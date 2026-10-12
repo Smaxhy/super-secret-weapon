@@ -657,6 +657,13 @@ export const DEFAULT_CONFIG = {
   brain: { enabled: true as boolean },
 
   /**
+   * Outcome tracker (learner/outcome-tracker.ts): every coin the bot checks and doesn't buy (once per coin + strategy per
+   * cooldownMin) is replayed `watchMin` later on its real trades with the bot's own exits → a training row for the brain at
+   * `weight` (real trade 1, shadow 0.5). Thousands of examples a day instead of a handful. No AI, no RPC.
+   */
+  outcomes: { enabled: true as boolean, watchMin: 45, cooldownMin: 20, maxPending: 4000, maxPerTick: 120, keep: 6000, weight: 0.25 },
+
+  /**
    * Shadow trades (src/learner/shadow-trades.ts; owner: "speed up the learning"): coins the bot didn't buy
    * (refused by the trader, just under the bar, or skipped by a rule with a score within skipWithinPoints)
    * are followed with the live exits — no money. Refused + near ones count for the autopsy / best times /

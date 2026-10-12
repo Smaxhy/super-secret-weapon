@@ -20,6 +20,7 @@ import { screenEntry } from './executor/rug-screen';
 import { RuggerMemory } from './executor/rug-watch';
 import { TimingLearner } from './learner/timing';
 import { shadowAsClosed, ShadowTrades, wouldHaveTaken } from './learner/shadow-trades';
+import { OutcomeTracker } from './learner/outcome-tracker';
 import { ExitTuner } from './learner/exit-tuner';
 import { TapeArchiver } from './learner/tape-archiver';
 import { Brain } from './learner/brain';
@@ -233,6 +234,10 @@ async function main(): Promise<void> {
   evaluator.shadow = shadow;
   registry.onTradeApplied.push((mint) => shadow.onTrade(mint));
   shadow.start();
+  // Learn from every coin it checks, not only its trades (replayed with its own exits 45 min later).
+  const coinOutcomes = new OutcomeTracker(redis, (m) => crowd.trades(m));
+  evaluator.coinOutcomes = coinOutcomes;
+  coinOutcomes.start();
   // Shadow trades the bot would have taken count for the autopsy, the best times and the AI coach too.
   const shadowCfg = () => getConfig().shadow ?? DEFAULT_CONFIG.shadow;
   autopsy.shadowSource = async (since) => (await shadow.results(since)).filter(wouldHaveTaken).map((r) => shadowAsClosed(r, shadowCfg().weight, getConfig().trading.minPositionSol));
@@ -242,7 +247,8 @@ async function main(): Promise<void> {
   // The brain: win-probability model, statistical rule search and budget allocator on real + shadow trades.
   // Phone notifications: a trade closed in profit → push to the installed app.
   const stopPush = startPushNotifier();
-  const brain = new Brain(redis, (since) => shadow.results(since), aiCoach);
+  const brain = new Brain(redis, (since) => shadow.results(since), aiCoach, (since) => coinOutcomes.results(since));
+  brain.outcomeSource = () => coinOutcomes.snapshot();
   brain.exitSource = () => exitTuner.snapshot();
   if ((getConfig().brain ?? DEFAULT_CONFIG.brain).enabled) brain.start();
   evaluator.brain = brain;

@@ -25,6 +25,7 @@ import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { timingNow } from '../learner/timing';
 import { entryStyleBlock, entryStyleFor, pullbackZone } from '../learner/entry-style';
 import type { ShadowKind, ShadowTrades } from '../learner/shadow-trades';
+import type { OutcomeTracker } from '../learner/outcome-tracker';
 import type { Brain } from '../learner/brain';
 import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
 import { Worker, type Job } from 'bullmq';
@@ -97,6 +98,8 @@ export class Evaluator {
   vamp: VampGuard | null = null;
   /** Pretend trades on coins it didn't buy — faster learning (set in index.ts). */
   shadow: ShadowTrades | null = null;
+  /** Every coin checked and not bought → replayed later as a training row (learner/outcome-tracker.ts). */
+  coinOutcomes: OutcomeTracker | null = null;
   /** Win model + rule search + allocator (set in index.ts). */
   brain: Brain | null = null;
 
@@ -491,7 +494,9 @@ export class Evaluator {
     // likely losers a harder one (±10). 0 points while it hasn't proven itself.
     const wm = this.brain?.model.predict(aiFlat, STRATEGY.name) ?? null;
     if (wm?.points) threshold -= wm.points;
-    const modelNote = wm?.points ? `win model: ${Math.round(wm.p * 100)}% chance to win vs ${Math.round(wm.baseRate * 100)}% usual → bar ${wm.points > 0 ? '−' : '+'}${Math.abs(wm.points)}` : null;
+    // …and sizes the trade: ×0.7–1.3 by how much better / worse than usual it expects this one to do.
+    const modelSize = wm?.points ? Math.max(0.7, Math.min(1.3, 1 + (wm.p - wm.baseRate) * 2)) : 1;
+    const modelNote = wm?.points ? `win model: ${Math.round(wm.p * 100)}% chance to win vs ${Math.round(wm.baseRate * 100)}% usual → bar ${wm.points > 0 ? '−' : '+'}${Math.abs(wm.points)}${modelSize !== 1 ? `, size ×${modelSize.toFixed(2)}` : ''}` : null;
 
     let { decision, reasons } = decide(result.score, threshold, ruleFails, token.safetyHardFail);
 
@@ -649,9 +654,14 @@ export class Evaluator {
         offHigh10m: shape?.offHigh10m ?? null,
         flat: aiFlat,
       });
+    let shadowed = false;
     if (decision === 'SKIP' && !reasons.some((r) => r.startsWith('waiting for a dip'))) {
-      if (ruleFails.length === 0) shadowOf('near', reasons[0] ?? 'score under the bar');
-      else shadowOf('skipped', ruleFails[0]!);
+      if (ruleFails.length === 0) shadowed = !!shadowOf('near', reasons[0] ?? 'score under the bar');
+      else shadowed = !!shadowOf('skipped', ruleFails[0]!);
+    }
+    // Every other coin it looked at and didn't buy: what would buying it now have made? (labelled 45 min later)
+    if (decision === 'SKIP' && !shadowed && market.raw.priceSol > 0) {
+      this.coinOutcomes?.record({ mint, symbol: token.symbol, strategy: STRATEGY.name, atMs: Date.now(), onAmm: market.raw.onAmm, marketCapSol: market.raw.marketCapSol ?? null, score: result.score, bar: threshold, why: ruleFails[0] ?? reasons[0] ?? 'skipped', flat: aiFlat });
     }
 
     if (decision === 'BUY') noteSignal();
@@ -682,7 +692,7 @@ export class Evaluator {
         kolFollow,
         sizeMultiplier: tune.sizeFactor * (explore
           ? ex.sizeMultiplier * coach.sizeFactor * (trend?.sizeFactor ?? 1)
-          : (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? (STRATEGY.name === 'CURVE_SNIPE' ? npCfg.sizeMultiplier : STRATEGY.name === 'RUNNER' ? (cfg.runner ?? DEFAULT_CONFIG.runner).sizeMultiplier : 1)) * coach.sizeFactor * conv.factor * copyMult * (trend?.sizeFactor ?? 1)),
+          : (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? (STRATEGY.name === 'CURVE_SNIPE' ? npCfg.sizeMultiplier : STRATEGY.name === 'RUNNER' ? (cfg.runner ?? DEFAULT_CONFIG.runner).sizeMultiplier : 1)) * coach.sizeFactor * conv.factor * copyMult * (trend?.sizeFactor ?? 1) * modelSize),
         swing,
         explore,
         explain: (sizeSol) =>

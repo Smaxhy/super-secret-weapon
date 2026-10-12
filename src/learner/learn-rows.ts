@@ -6,7 +6,10 @@
  * Cached for 5 minutes so the three learners share one DB read.
  */
 import type { Redis } from 'ioredis';
+import { DEFAULT_CONFIG } from '../config/default';
+import { getConfig } from '../config/runtime-config';
 import { prisma } from '../lib/prisma';
+import type { OutcomeResult } from './outcome-tracker';
 import { flattenFeatures } from './ai-coach';
 import { learningSince } from './labels';
 import { wouldHaveTaken, type ShadowResult } from './shadow-trades';
@@ -18,7 +21,7 @@ export interface LearnRow {
   pnlPct: number;
   peakX: number;
   weight: number;
-  source: 'real' | 'shadow';
+  source: 'real' | 'shadow' | 'outcome';
 }
 
 const WEIGHT = { real: 1, learning: 0.8, wouldTake: 0.5, skipped: 0.3 };
@@ -41,6 +44,8 @@ export class LearnRows {
   constructor(
     private readonly redis: Redis,
     private readonly shadowSource: ((sinceMs: number) => Promise<ShadowResult[]>) | null,
+    /** Every coin it checked and didn't buy, replayed with its exits (outcome-tracker.ts). */
+    private readonly outcomeSource: ((sinceMs: number) => Promise<OutcomeResult[]>) | null = null,
   ) {}
 
   /** All rows (real + shadow). `onlyTaken` drops shadow trades the bot would NOT have taken (for the allocator). */
@@ -86,10 +91,12 @@ export class LearnRows {
         };
       });
     const shadow = this.shadowSource ? (await this.shadowSource(since).catch(() => [])).map(shadowRow) : [];
+    const ow = (getConfig().outcomes ?? DEFAULT_CONFIG.outcomes).weight;
+    const outcomes = this.outcomeSource ? (await this.outcomeSource(since).catch(() => [])).map((r): LearnRow => ({ flat: { ...r.flat, 'entry.score': r.score }, strategy: r.strategy, atMs: r.atMs, pnlPct: r.pnlPct, peakX: r.peakX, weight: ow, source: 'outcome' })) : [];
     // Closed trades only exist once they closed: recently opened LONG holds are still open, so the newest slice would
     // over-represent quick losers (stops / time stops). Drop rows younger than the strategy's longest normal hold.
     const now = Date.now();
-    const rows = [...real, ...shadow]
+    const rows = [...real, ...shadow, ...outcomes]
       .filter((r) => Number.isFinite(r.pnlPct) && Number.isFinite(r.atMs) && r.atMs <= now - embargoMs(r.strategy))
       .sort((a, b) => a.atMs - b.atMs);
     this.cache = { at: Date.now(), rows };

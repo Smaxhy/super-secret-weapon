@@ -16,7 +16,8 @@ interface Alloc { strategy: string; n: number; effN: number; meanPct: number; lo
 interface Style { strategy: string; minOffHighPct: number; maxRun3mPct: number | null; why: string[] }
 interface Change { at: string; source: string; what: string; why: string }
 interface BrainData {
-  model: { active: boolean; trainedAt: string; report: Report; explain: Explain[] } | null;
+  model: { active: boolean; using?: 'both' | 'logistic' | 'trees' | 'none'; trainedAt: string; report: Report | null; explain: Explain[]; tree?: { active: boolean; report: Report & { trees: number }; explain: Explain[] } | null } | null;
+  coinsChecked?: { pending: number; stored: number; stats: { recorded: number; labelled: number; dropped: number }; byStrategy: Array<{ strategy: string; n: number; avgPct: number; winRatePct: number; went2xPct: number }>; byScore: Array<{ band: string; n: number; avgPct: number; winRatePct: number }> } | null;
   search: { ranAt: number | string; rows: number; tested: number; found: number; rules: Rule[] } | null;
   discoveredRules: Discovered[];
   allocation: Alloc[] | null;
@@ -43,28 +44,84 @@ export function Brain() {
       {data === null && !error && <Empty>The brain starts a few minutes after the bot starts.</Empty>}
       {data && (
         <div className="space-y-4">
-          <Card title="Win-probability model">
+          <Card title="Win-probability models">
             {!data.model ? (
               <p className="text-sm text-ink-2">Training soon (first run ~2 min after start, then hourly).</p>
             ) : (
-              <div className="space-y-3 text-sm">
+              <div className="space-y-4 text-sm">
                 <div>
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${data.model.active ? 'bg-up/15 text-up' : 'bg-surface-2 text-ink-2'}`}>{data.model.active ? 'ON — shifts the buy bar' : 'not trusted yet'}</span>
-                  <span className="ml-2 text-xs text-muted">trained {ago(data.model.trainedAt)} on {data.model.report.n} trades</span>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${data.model.active ? 'bg-up/15 text-up' : 'bg-surface-2 text-ink-2'}`}>
+                    {data.model.using === 'both' ? 'ON — both models together' : data.model.using === 'trees' ? 'ON — tree model' : data.model.using === 'logistic' ? 'ON — straight-line model' : 'not trusted yet'}
+                  </span>
+                  <span className="ml-2 text-xs text-muted">trained {ago(data.model.trainedAt)} · they only get a say after beating the score on the newest, unseen trades</span>
                 </div>
-                <p className="text-ink-2">{data.model.report.reason}</p>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <Stat label="Predicts winners (AUC)" value={r2(data.model.report.valAuc)} sub="0.5 = coin flip" />
-                  <Stat label="Current score (AUC)" value={r2(data.model.report.baselineAuc)} sub="what it must beat" />
-                  <Stat label="Exam trades" value={String(data.model.report.nVal)} sub="newest trades, unseen" />
-                  <Stat label="Features used" value={String(data.model.report.features)} />
-                </div>
-                {data.model.explain.length > 0 && (
+                {[
+                  { title: 'Straight-line model', sub: 'learns "more of this → more wins"', r: data.model.report, ex: data.model.explain, extra: null as string | null },
+                  { title: 'Tree model', sub: 'learns combinations ("many buyers only helps when the dev sold")', r: data.model.tree?.report ?? null, ex: data.model.tree?.explain ?? [], extra: data.model.tree ? `${data.model.tree.report.trees} trees` : null },
+                ].map((m) => (
+                  <div key={m.title} className="rounded-xl border border-line p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-semibold text-ink">{m.title}</span>
+                      <span className={`text-xs font-semibold ${m.r?.active ? 'text-up' : 'text-muted'}`}>{m.r ? (m.r.active ? 'passed the exam' : 'not yet') : 'training soon'}</span>
+                    </div>
+                    <p className="text-xs text-muted">{m.sub}</p>
+                    {m.r && (
+                      <>
+                        <p className="mt-1 text-ink-2">{m.r.reason}</p>
+                        <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                          <Stat label="Predicts winners (AUC)" value={r2(m.r.valAuc)} sub="0.5 = coin flip" />
+                          <Stat label="Current score (AUC)" value={r2(m.r.baselineAuc)} sub="what it must beat" />
+                          <Stat label="Learned from" value={m.r.n.toLocaleString()} sub={`${m.r.nVal.toLocaleString()} kept for the exam`} />
+                          <Stat label="Features" value={String(m.r.features)} sub={m.extra ?? undefined} />
+                        </div>
+                      </>
+                    )}
+                    {m.ex.length > 0 && (
+                      <div className="mt-2">
+                        <div className="mb-1 text-xs font-medium text-muted">What it weighs most</div>
+                        <ul className="list-disc space-y-0.5 pl-5 text-ink-2">
+                          {m.ex.slice(0, 6).map((e) => (
+                            <li key={e.feature} className="break-words">{e.text}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          <Card title="Learning from every coin it checks">
+            {!data.coinsChecked ? (
+              <p className="text-sm text-ink-2">Starting — every coin it looks at and doesn't buy is replayed 45 min later with its own exits.</p>
+            ) : (
+              <div className="space-y-3 text-sm">
+                <p className="text-ink-2">
+                  {data.coinsChecked.stored.toLocaleString()} coins learned from · {data.coinsChecked.pending.toLocaleString()} waiting to be scored. Each one is a lesson: "what would buying it right then have made?"
+                </p>
+                {data.coinsChecked.byScore.some((b) => b.n > 0) && (
                   <div>
-                    <div className="mb-1 text-xs font-medium text-muted">What it weighs most</div>
-                    <ul className="list-disc space-y-0.5 pl-5 text-ink-2">
-                      {data.model.explain.slice(0, 8).map((e) => (
-                        <li key={e.feature} className="break-words">{e.text}</li>
+                    <div className="mb-1 text-xs font-medium text-muted">Coins it skipped, by how close they were to the buy bar (last 2 days)</div>
+                    <ul className="space-y-1">
+                      {data.coinsChecked.byScore.filter((b) => b.n > 0).map((b) => (
+                        <li key={b.band} className="flex justify-between gap-2">
+                          <span className="text-ink-2">{b.band}</span>
+                          <span className={b.avgPct >= 0 ? 'text-up' : 'text-down'}>{b.avgPct > 0 ? '+' : ''}{b.avgPct}% avg · {b.winRatePct}% wins · {b.n}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {data.coinsChecked.byStrategy.length > 0 && (
+                  <div>
+                    <div className="mb-1 text-xs font-medium text-muted">By strategy</div>
+                    <ul className="space-y-1">
+                      {data.coinsChecked.byStrategy.map((b) => (
+                        <li key={b.strategy} className="flex justify-between gap-2">
+                          <span className="text-ink-2">{strat(b.strategy)}</span>
+                          <span className={b.avgPct >= 0 ? 'text-up' : 'text-down'}>{b.avgPct > 0 ? '+' : ''}{b.avgPct}% avg · {b.went2xPct}% went 2x · {b.n}</span>
+                        </li>
                       ))}
                     </ul>
                   </div>
