@@ -470,9 +470,9 @@ smart money → learning engine → ML → social). See README.md.
   filters fold away behind a button on phones. Cards no longer carry their own margins — pages space them with `Stack`.
 - **v10.10 (Oct 12): big trades only on strong setups** (owner: "1 SOL only with good research and score >80, otherwise
   the lower cap — big weak trades ruin the PnL"). `trading.highConviction` {enabled, minScore 80, sizeSol 1,
-  maxPctOfCapital 12}: `isHighConviction` (trader.ts) = score ≥ 80, not learning / probe / risky half-size, allocator ×≥1 →
-  size = 1 SOL (≤12% of capital, still ≤ strategy budget, balance, 3% of liquidity). Every other trade is capped at
-  `maxPositionSol` (0.2) — conviction ×1.6 and the SWING ×2.5 upsizing no longer apply while it's on. Editable on
+  maxPctOfCapital 12, minMarketCapUsd 50k}: `isHighConviction` (trader.ts) = score ≥ 80, MC ≥ $50k, not learning / probe /
+  risky half-size, allocator ×≥1 → size up to 1 SOL (≤12% of capital, still ≤ strategy budget, balance, 3% of liquidity).
+  Other trades keep the normal caps (owner: 0.3 conviction / 0.5 swing is fine). Editable on
   Controls → Rules → Trade size & risk. Test tests/high-conviction.test.ts.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).

@@ -163,6 +163,7 @@ export const EDITABLE: EditableSetting[] = [
   S('Trade size & risk', 'trading.maxPositionSol', 'Normal trade size', 0.01, 50, 'SOL', 0.05),
   S('Trade size & risk', 'trading.highConviction.enabled', 'Big trades only on strong setups: on (1) / off (0)', 0, 1, undefined, 1),
   S('Trade size & risk', 'trading.highConviction.minScore', 'Big trade needs a score of at least', 50, 100, undefined, 1),
+  S('Trade size & risk', 'trading.highConviction.minMarketCapUsd', 'Big trade needs a market cap of at least', 0, 100_000_000, '$', 5000),
   S('Trade size & risk', 'trading.highConviction.sizeSol', 'Big trade size', 0.1, 50, 'SOL', 0.1),
   S('Trade size & risk', 'trading.highConviction.maxPctOfCapital', 'Big trade max % of the balance', 1, 50, '%', 1),
   S('Trade size & risk', 'trading.minPositionSol', 'Smallest trade', 0.01, 10, 'SOL', 0.01),

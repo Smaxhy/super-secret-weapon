@@ -28,6 +28,8 @@ import { timingNow } from '../learner/timing';
 import type { MarketRaw } from '../evaluator/market-analyzer';
 import type { Executor } from './types';
 
+import { getSolUsd } from '../lib/sol-price';
+
 const log = moduleLogger('trader');
 
 export interface EntryRequest {
@@ -62,8 +64,10 @@ export interface EntryResult {
 }
 
 /** Owner's big-trade rule: score ≥ minScore, not a learning / probe / risky half-size trade, strategy not losing. */
-export function isHighConviction(hc: { enabled: boolean; minScore: number } | undefined, req: Pick<EntryRequest, 'score' | 'explore' | 'sizeMultiplier'>, probe: boolean, allocFactor: number): boolean {
-  return !!hc?.enabled && req.score >= hc.minScore && !req.explore && !probe && (req.sizeMultiplier ?? 1) >= 1 && allocFactor >= 1;
+export function isHighConviction(hc: { enabled: boolean; minScore: number; minMarketCapUsd?: number } | undefined, req: Pick<EntryRequest, 'score' | 'explore' | 'sizeMultiplier'>, probe: boolean, allocFactor: number, mcUsd: number | null): boolean {
+  if (!hc?.enabled || req.score < hc.minScore || req.explore || probe || (req.sizeMultiplier ?? 1) < 1 || allocFactor < 1) return false;
+  // Low-MC coins never get the big size (unknown MC → no).
+  return !hc.minMarketCapUsd || (mcUsd !== null && mcUsd >= hc.minMarketCapUsd);
 }
 
 export class Trader {
@@ -176,13 +180,13 @@ export class Trader {
     // (a strategy may be allowed a bigger position — swings on big, deep coins)
     const stratMult = (t.maxPositionMultipleByStrategy as Partial<Record<string, number>> | undefined)?.[req.strategy];
     const hc = t.highConviction;
-    const highConviction = isHighConviction(hc, req, probe, this.allocFactor?.(req.strategy) ?? 1);
-    // Owner: only strong, well-researched setups get the big size; everything else stays at the normal size.
-    const cap = highConviction
-      ? Math.min(hc!.sizeSol, (capital * hc!.maxPctOfCapital) / 100)
-      : hc?.enabled
-        ? Math.min(t.maxPositionSol, (capital * (t.maxPositionPctOfCapital ?? 100)) / 100)
-        : Math.min(t.maxPositionSol * Math.max(t.maxConvictionMultiple ?? 1.6, stratMult ?? 0), (capital * (t.maxPositionPctOfCapital ?? 100)) / 100);
+    const solUsd = hc?.enabled ? await getSolUsd().catch(() => null) : null;
+    const mcUsd = solUsd ? req.market.marketCapSol * solUsd : null;
+    const highConviction = isHighConviction(hc, req, probe, this.allocFactor?.(req.strategy) ?? 1, mcUsd);
+    // Owner: normal trades keep the normal caps (×1.6 conviction, swings ×2.5); only strong, well-researched setups on
+    // coins that aren't tiny get the big size.
+    const normalCap = Math.min(t.maxPositionSol * Math.max(t.maxConvictionMultiple ?? 1.6, stratMult ?? 0), (capital * (t.maxPositionPctOfCapital ?? 100)) / 100);
+    const cap = highConviction ? Math.max(normalCap, Math.min(hc!.sizeSol, (capital * hc!.maxPctOfCapital) / 100)) : normalCap;
     let size = Math.min(highConviction ? cap : sized * (req.sizeMultiplier ?? 1), cap, budget, balance - reserve);
     // Stacked multipliers (coach × conviction × regime × hour…) can shrink a buy under the minimum
     // and silently stop every entry → the minimum size, if the budget allows it.

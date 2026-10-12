@@ -32,11 +32,11 @@ export const DEFAULT_CONFIG = {
     maxPositionPctOfLiquidity: 3,
     /**
      * v10.10 (owner: "only big trades like 1 SOL when the research is good and the score is 80+, otherwise stick to
-     * the lower cap — big weak trades ruin the PnL"). Every other trade is capped at maxPositionSol (no conviction /
-     * swing upsizing). High-conviction = score ≥ minScore, not a learning / probe trade, no risk half-size, and the
+     * the lower cap"; then: "0.3 / 0.5 is fine, just no big amounts on low-MC or messy coins"). Normal caps stay; the big
+     * size needs score ≥ minScore, MC ≥ minMarketCapUsd, not a learning / probe trade, no risk half-size, and the
      * strategy isn't losing (allocator ×≥1). Still limited by the strategy budget, balance and coin liquidity.
      */
-    highConviction: { enabled: true, minScore: 80, sizeSol: 1, maxPctOfCapital: 12 },
+    highConviction: { enabled: true, minScore: 80, minMarketCapUsd: 50_000, sizeSol: 1, maxPctOfCapital: 12 },
     /**
      * Fraction of capital per strategy. Must add up to 1. v5 (research, Oct 2026): the edge for a
      * bot with ~0.3 s latency is fresh pairs AFTER the snipers' supply is absorbed (CURVE_SNIPE =
