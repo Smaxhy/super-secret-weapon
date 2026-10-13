@@ -72,6 +72,7 @@ import { LiveState } from './scanner/live-state';
 import { GrpcListener } from './scanner/grpc-listener';
 import { effectiveFeed, loadFeedSettings, setActiveFeed } from './lib/feed-settings';
 import { PumpFunListener, type ListenerStats } from './scanner/pumpfun-listener';
+import { recordEvent } from './lib/bot-events';
 import { PumpPortalListener } from './scanner/pumpportal-listener';
 import { WhaleTracker } from './scanner/whale-tracker';
 import { startSpikeWatcher } from './scanner/spike-watcher';
@@ -409,6 +410,31 @@ async function main(): Promise<void> {
     return l;
   };
 
+  /**
+   * Free-feed watchdog (owner: "no coins checked for hours", 0 paid credits): a free trade stream that delivers
+   * nothing for 2 minutes gets a fresh socket; after 2 restarts in a row that didn't help it switches to
+   * TRADES_WS_URL_BACKUP (if set) and back. Never touches paid streams.
+   */
+  const watchFreeFeed = (l: PumpFunListener, name: string) => {
+    let since = Date.now();
+    let fails = 0;
+    setInterval(() => {
+      const now = Date.now();
+      if (now - Math.max(l.stats.lastEventAt ?? 0, since) < 120_000) {
+        fails = 0;
+        return;
+      }
+      fails++;
+      const urls = [env.TRADES_WS_URL, env.TRADES_WS_URL_BACKUP].filter(Boolean);
+      const next = fails >= 3 && urls.length > 1 ? urls[(urls.indexOf(l.url) + 1) % urls.length] : undefined;
+      if (next) fails = 0;
+      since = now;
+      log.warn({ feed: name, switchTo: next ? redactUrl(next) : undefined }, 'free trade stream silent for 2 min — restarting it');
+      void recordEvent({ level: 'WARN', module: 'scanner', type: 'feed_restart', message: `${name} trade stream silent for 2 min — restarted${next ? ' on the backup node' : ''}` });
+      void l.restart(next);
+    }, 30_000).unref();
+  };
+
   // Paid feed pasted on the dashboard (stored in this server's DB only) wins over .env.
   const feed = effectiveFeed(await loadFeedSettings(), env);
   setActiveFeed(feed);
@@ -423,9 +449,11 @@ async function main(): Promise<void> {
       const curve = startLogs(env.TRADES_WS_URL, false, 'curve');
       backupRef = startLogs(feed.tradesWsUrl, false, 'amm');
       logsRef = curve;
+      watchFreeFeed(curve, 'curve');
       log.info({ trades: redactUrl(feed.tradesWsUrl) }, 'data source: hybrid — paid node for migrated coins only, free node for curve coins');
     } else {
-      startLogs(feed.tradesWsUrl, false);
+      const l = startLogs(feed.tradesWsUrl, false);
+      if (feed.tradesWsUrl === env.TRADES_WS_URL) watchFreeFeed(l, 'main');
       log.info({ trades: redactUrl(feed.tradesWsUrl) }, 'data source: hybrid (PumpPortal launches + trade stream)');
     }
   } else if (feed.dataSource === 'grpc' && feed.grpcEndpoint) {
@@ -436,6 +464,7 @@ async function main(): Promise<void> {
     const curve = startLogs(env.TRADES_WS_URL, false, 'curve');
     const ammBackup = startLogs(env.TRADES_WS_URL, false, 'amm', false);
     logsRef = curve;
+    watchFreeFeed(curve, 'curve');
     const g = new GrpcListener(feed.grpcEndpoint, feed.grpcToken);
     g.on('event', registry.handle);
     g.on('event', whales.onEvent);

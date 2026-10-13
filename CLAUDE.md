@@ -479,6 +479,11 @@ smart money → learning engine → ML → social). See README.md.
   (`cascade.soloDropPct` 25: ONE wallet, ≥25% in 20 s, sells ≥3× buys — the old ≥2-sellers rule missed single-wallet dev
   rugs), **crash** (`crashWindowSec` 90, `crashDropPct` 30, `crashSellBuyRatio` 2 — rugs sold in slices). Editable
   (Trade size & risk). Tests in rug-guard.test.ts.
+- **v10.12 (Oct 13): free-feed watchdog** (owner: "no coins checked for hours"; Chainstack credits fine; paid gRPC
+  fallback for the curve REJECTED — could burn millions of credits/day). `watchFreeFeed` (index.ts): a FREE trade stream
+  (grpc mode: the curve feed; hybrid: the curve / main feed when it's the free URL) silent for 2 min → fresh socket
+  (`PumpFunListener.restart`), after 3 failed restarts → `TRADES_WS_URL_BACKUP` (optional .env, free node) and back.
+  WARN event `feed_restart`. Paid streams untouched.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

@@ -98,7 +98,7 @@ export class PumpFunListener extends EventEmitter {
   };
 
   constructor(
-    private readonly wsUrl: string,
+    private wsUrl: string,
     /** Fetch full transactions (Helius RPC credits) when a create's event is missing. Off when another source supplies launches. */
     private readonly fetchMissingCreates = true,
     /** Which programs to follow: both (default), only the bonding curve, or only PumpSwap (migrated coins). */
@@ -115,6 +115,17 @@ export class PumpFunListener extends EventEmitter {
     if (!this.stopped) return;
     this.stopped = false;
     this.connect();
+  }
+
+  /** Fresh socket (optionally to another node) — used by the feed watchdog when the stream goes silent. */
+  async restart(url?: string): Promise<void> {
+    await this.stop();
+    if (url) this.wsUrl = url;
+    this.start();
+  }
+
+  get url(): string {
+    return this.wsUrl;
   }
 
   async stop(): Promise<void> {

@@ -57,6 +57,8 @@ const EnvSchema = z.object({
   GRPC_TOKEN: optionalString,
   /** Free WebSocket for the trade stream in hybrid mode (Solana's public node by default). */
   TRADES_WS_URL: z.string().default('wss://api.mainnet-beta.solana.com'),
+  /** Optional second FREE node the feed watchdog switches to when the main free trade stream keeps dying. */
+  TRADES_WS_URL_BACKUP: z.string().default(''),
   PUMPPORTAL_API_KEY: optionalString,
   ENABLE_SCANNER: bool(true),
   ENABLE_SAFETY_CHECKS: bool(true),
