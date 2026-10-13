@@ -36,7 +36,13 @@ export const DEFAULT_CONFIG = {
      * size needs score ≥ minScore, MC ≥ minMarketCapUsd, not a learning / probe trade, no risk half-size, and the
      * strategy isn't losing (allocator ×≥1). Still limited by the strategy budget, balance and coin liquidity.
      */
-    highConviction: { enabled: true, minScore: 80, minMarketCapUsd: 50_000, sizeSol: 1, maxPctOfCapital: 12 },
+    highConviction: {
+      enabled: true, minScore: 80, minMarketCapUsd: 50_000, sizeSol: 1, maxPctOfCapital: 12,
+      /** v10.13: every trade that ISN'T a big strong-setup trade is capped here (SOL), whatever the size settings say. */
+      normalMaxSol: 0.5,
+      /** …and a score under this never gets more than lowScoreMaxSol (no upsizing on weak setups). */
+      lowScore: 65, lowScoreMaxSol: 0.25,
+    },
     /**
      * Fraction of capital per strategy. Must add up to 1. v5 (research, Oct 2026): the edge for a
      * bot with ~0.3 s latency is fresh pairs AFTER the snipers' supply is absorbed (CURVE_SNIPE =
@@ -89,6 +95,11 @@ export const DEFAULT_CONFIG = {
       /** Real demand in the last minute. */
       minTrades60: 5,
       minUniqueBuyers60: 4,
+      /**
+       * v10.13 (owner: "it bought 1.6 SOL on a 50 score chasing a candle and got top-blasted"): the "stretched → wait for a
+       * dip" part works even while the buy rules above are off. It never blocks a coin, it only waits for a pullback.
+       */
+      waitWhenStretched: true as boolean,
       /** Don't chase: up more than this in 60 s, or this far above its own trend line → wait for a dip. */
       maxChange60Pct: 40,
       maxExtensionPct: 30,

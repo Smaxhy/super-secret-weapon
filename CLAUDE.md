@@ -484,6 +484,11 @@ smart money → learning engine → ML → social). See README.md.
   (grpc mode: the curve feed; hybrid: the curve / main feed when it's the free URL) silent for 2 min → fresh socket
   (`PumpFunListener.restart`), after 3 failed restarts → `TRADES_WS_URL_BACKUP` (optional .env, free node) and back.
   WARN event `feed_restart`. Paid streams untouched.
+- **v10.13 (Oct 13): no big chases on weak scores** (owner: "1.6 SOL on a 50 score, chasing a candle, top-blasted").
+  `trading.highConviction.normalMaxSol` 0.5 (any non-strong-setup trade, whatever maxPositionSol × conviction says) +
+  `lowScore` 65 / `lowScoreMaxSol` 0.25 (trader.ts `weakCap`). `entry.priceAction.waitWhenStretched` (default on): the
+  stretched → DipWatcher wait (+40%/60 s, 30% over the trend line, EXTENDED) works even with the price-action BUY rules
+  off (never blocks, only waits; not CURVE_SNIPE <$15k, not learning trades). All editable (Trade size & risk).
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

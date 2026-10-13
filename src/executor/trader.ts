@@ -186,7 +186,8 @@ export class Trader {
     // Owner: normal trades keep the normal caps (×1.6 conviction, swings ×2.5); only strong, well-researched setups on
     // coins that aren't tiny get the big size.
     const normalCap = Math.min(t.maxPositionSol * Math.max(t.maxConvictionMultiple ?? 1.6, stratMult ?? 0), (capital * (t.maxPositionPctOfCapital ?? 100)) / 100);
-    const cap = highConviction ? Math.max(normalCap, Math.min(hc!.sizeSol, (capital * hc!.maxPctOfCapital) / 100)) : normalCap;
+    const weakCap = hc?.enabled ? Math.min(hc.normalMaxSol ?? Infinity, req.score < (hc.lowScore ?? 0) ? (hc.lowScoreMaxSol ?? Infinity) : Infinity) : Infinity;
+    const cap = highConviction ? Math.max(normalCap, Math.min(hc!.sizeSol, (capital * hc!.maxPctOfCapital) / 100)) : Math.min(normalCap, weakCap);
     let size = Math.min(highConviction ? cap : sized * (req.sizeMultiplier ?? 1), cap, budget, balance - reserve);
     // Stacked multipliers (coach × conviction × regime × hour…) can shrink a buy under the minimum
     // and silently stop every entry → the minimum size, if the budget allows it.
