@@ -584,7 +584,9 @@ export class Evaluator {
       reasons = [`waiting for a dip: ${chart.summary}`];
     }
     // Price action says "right coin, wrong moment" (vertical last minute / far above its trend line) → wait for a dip.
-    const stretched = (paCfg.enabled || paCfg.dipWait?.enabled) && paRead && paRead.setup !== 'THIN' && (paRead.setup === 'EXTENDED' || paRead.change60Pct > paCfg.maxChange60Pct || paRead.extensionPct > paCfg.maxExtensionPct);
+    // (v10.16: with only the dip-wait switch on, the broad EXTENDED label alone no longer delays buys — it held back most
+    // signals; a real chase = +40% in 60 s or 30% over the trend line.)
+    const stretched = (paCfg.enabled || paCfg.dipWait?.enabled) && paRead && paRead.setup !== 'THIN' && ((paCfg.enabled && paRead.setup === 'EXTENDED') || paRead.change60Pct > paCfg.maxChange60Pct || paRead.extensionPct > paCfg.maxExtensionPct);
     if (decision === 'BUY' && !dipEntry && !noDipWait && !explore && stretched && chartCfg.dip.enabled && this.dips && paRead) {
       const high = paRead.athPriceSol > 0 ? paRead.athPriceSol : market.raw.priceSol;
       const why = `+${paRead.change60Pct.toFixed(0)}% in 60 s, ${paRead.extensionPct.toFixed(0)}% above its trend line`;

@@ -498,6 +498,10 @@ smart money → learning engine → ML → social). See README.md.
   = startSol, addedSol 0, offset = net SOL spent so far → balance = startSol now; Overview / Performance `closedTrades` and
   today's PnL count only trades closed after statsSince. Learners keep the full history (they use paper:resetAt). Applied
   ONCE via oneTimeUpgrade `stats-reset-oct13` (15 SOL). A full paper reset clears both fields.
+- **v10.16 (Oct 13): more trades to learn from** (owner screenshot: 4,793 checked, 9 buy signals, 2 bought — the stream is
+  fine). Dip-wait-only mode no longer delays on the broad EXTENDED label (only +40%/60 s or 30% over the trend line);
+  learning trades `explore.scoreMargin` 8 → 12 (migration v16; all rules still pass, half size). Holder minimums
+  (CURVE_SNIPE 15) are the top skip but are early checkpoints on dying launches — kept.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

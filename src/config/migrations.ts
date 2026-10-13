@@ -249,6 +249,11 @@ export const MIGRATIONS: ConfigMigration[] = [
     note: 'v10.5.1 (owner: "trade more like before"): the new price-action buy rules off (chart read still stored for the learners; chart exits stay on)',
     set: [['entry', ['priceAction', 'enabled'], false]],
   },
+  {
+    version: 16,
+    note: 'v10.16 (owner: "big lack of trades, the bot can\'t learn"): learning trades for coins up to 12 points under the bar (was 8) — every rule must still pass, half size, low-score cap 0.25 SOL',
+    set: [['explore', ['scoreMargin'], 12]],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

@@ -635,7 +635,7 @@ export const DEFAULT_CONFIG = {
     enabled: true as boolean,
     // v8: only just-missed coins (owner: stop trading stupidly), never swings (owner: be very strict there).
     // v9.6: wider and more of them (owner: trade a lot more) — still every rule passed, still half size.
-    scoreMargin: 8,
+    scoreMargin: 12, // v10.16 (owner: more trades to learn from) — was 8
     // Half size (0.1 SOL at the default 0.2): smaller and the fixed tx costs (~3% round trip) distort what it learns.
     sizeMultiplier: 0.5,
     maxOpen: 6,
