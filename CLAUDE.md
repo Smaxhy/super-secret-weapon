@@ -489,6 +489,10 @@ smart money → learning engine → ML → social). See README.md.
   `lowScore` 65 / `lowScoreMaxSol` 0.25 (trader.ts `weakCap`). `entry.priceAction.dipWait.enabled` (default on): the
   stretched → DipWatcher wait (+40%/60 s, 30% over the trend line, EXTENDED) works even with the price-action BUY rules
   off (never blocks, only waits; not CURVE_SNIPE <$15k, not learning trades). All editable (Trade size & risk).
+- **v10.14 (Oct 13): blow-off guard on dip entries** (owner: "a coin scalps hard, dips, the bot thinks that's the entry
+  but it's the ATH and it dumps"). `chart.dip.blowOff` {runPct 100, minDipPct 35, holdSec 45, dropRunPct 500}: DipWatcher
+  measures the run from the 15-min low (crowd log) to the high; run ≥ +100% → the dip must be ≥35% off the high AND the low
+  must hold 45 s (`lowestAt`); run ≥ +500% → stop waiting (blow-off top). Editable (Trade size & risk). tests/dip-blowoff.test.ts.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

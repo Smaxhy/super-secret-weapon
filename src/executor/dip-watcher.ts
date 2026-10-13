@@ -33,6 +33,8 @@ export interface DipWatch {
   expiresAt: number;
   /** Lowest price seen inside the zone (null = not in the zone yet). */
   lowest: number | null;
+  /** When `lowest` was last lowered (a dip that keeps making new lows hasn't found a floor yet). */
+  lowestAt?: number | null;
   why: string;
   swing?: boolean;
   wallet?: string;
@@ -45,11 +47,20 @@ export interface DipRules {
   breakdownPct: number;
   /** Bounce must happen within this % above the zone top — past it the entry was missed (not chasing). */
   maxAboveZonePct?: number;
+  /**
+   * Blow-off guard (owner: "a coin scalps hard, dips, the bot thinks that's the entry, but it's the all-time high and it
+   * dumps"): after a run of ≥ runPct from the 15-min low, a dip only counts if it went ≥ minDipPct off the high AND the
+   * low held ≥ holdSec; a run ≥ dropRunPct is a blow-off top → stop waiting (no entry).
+   */
+  blowOff?: { enabled: boolean; runPct: number; minDipPct: number; holdSec: number; dropRunPct: number };
 }
 
 /** Pure: what to do with a watch at this price. Mutates `w.lowest`. */
-export function dipDecision(w: DipWatch, price: number, buyRatio1m: number | null, now: number, c: DipRules): { action: 'wait' | 'buy' | 'drop'; why: string } {
+export function dipDecision(w: DipWatch, price: number, buyRatio1m: number | null, now: number, c: DipRules, runLowPx: number | null = null): { action: 'wait' | 'buy' | 'drop'; why: string } {
   if (!(price > 0)) return { action: 'wait', why: 'no price' };
+  const bo = c.blowOff;
+  const runPct = runLowPx && runLowPx > 0 ? (w.high / runLowPx - 1) * 100 : 0;
+  if (bo?.enabled && bo.dropRunPct > 0 && runPct >= bo.dropRunPct) return { action: 'drop', why: `blow-off top: +${Math.round(runPct)}% in 15 min — dips after a run like that usually keep dumping` };
   if (now > w.expiresAt) return { action: 'drop', why: `no dip within ${Math.round((w.expiresAt - w.startedAt) / 60_000)} min` };
   if (price > w.signalPrice * (1 + c.runAwayPct / 100)) return { action: 'drop', why: `ran +${Math.round((price / w.signalPrice - 1) * 100)}% without a dip (not chasing)` };
   if (price < w.zone.lo * (1 - c.breakdownPct / 100)) return { action: 'drop', why: 'broke down below the buy zone' };
@@ -59,7 +70,10 @@ export function dipDecision(w: DipWatch, price: number, buyRatio1m: number | nul
     w.zone = { lo: w.zone.lo * k, hi: w.zone.hi * k };
     w.high = price;
   }
-  if (price <= w.zone.hi) w.lowest = w.lowest === null ? price : Math.min(w.lowest, price);
+  if (price <= w.zone.hi && (w.lowest === null || price < w.lowest)) {
+    w.lowest = price;
+    w.lowestAt = now;
+  }
   if (w.lowest !== null && price > w.zone.hi * (1 + (c.maxAboveZonePct ?? 8) / 100)) {
     // Shot back up before we could confirm: missed this dip — wait for the next one from here.
     w.lowest = null;
@@ -72,6 +86,10 @@ export function dipDecision(w: DipWatch, price: number, buyRatio1m: number | nul
   }
   if (w.lowest !== null && price >= w.lowest * (1 + c.bounceConfirmPct / 100) && (buyRatio1m ?? 0) >= c.minBuyRatio) {
     const off = (1 - w.lowest / w.high) * 100;
+    if (bo?.enabled && runPct >= bo.runPct) {
+      if (off < bo.minDipPct) return { action: 'wait', why: `after a +${Math.round(runPct)}% run, a ${off.toFixed(0)}% dip is still near the top — waiting for ≥${bo.minDipPct}%` };
+      if (now - (w.lowestAt ?? now) < bo.holdSec * 1000) return { action: 'wait', why: `after a +${Math.round(runPct)}% run, waiting for the low to hold ${bo.holdSec}s` };
+    }
     return { action: 'buy', why: `dipped ${off.toFixed(0)}% from the high into the buy zone and bounced ${((price / w.lowest - 1) * 100).toFixed(0)}% with buyers in control` };
   }
   return { action: 'wait', why: w.lowest === null ? 'waiting for the dip' : 'in the zone, waiting for the bounce' };
@@ -136,7 +154,10 @@ export class DipWatcher {
     const b = minute.filter((x) => x.buy).reduce((s, x) => s + x.sol, 0);
     const s = minute.filter((x) => !x.buy).reduce((s2, x) => s2 + x.sol, 0);
     const ratio = b + s >= 0.2 ? (s > 0 ? b / s : 5) : null;
-    const d = dipDecision(w, price, ratio, now, getConfig().chart.dip);
+    // Lowest price in the 15 min before now: how big the run into the high was (blow-off guard).
+    let runLow: number | null = null;
+    for (const x of trades) if (now - x.t <= 15 * 60_000) { const p = x.pp && x.pp > 0 ? x.pp : x.px; if (p > 0 && (runLow === null || p < runLow)) runLow = p; }
+    const d = dipDecision(w, price, ratio, now, getConfig().chart.dip, runLow);
     if (d.action === 'wait') return;
     this.watches.delete(`${w.mint}:${w.strategy}`);
     if (d.action === 'drop') {
