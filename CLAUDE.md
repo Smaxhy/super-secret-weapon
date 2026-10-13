@@ -486,7 +486,7 @@ smart money → learning engine → ML → social). See README.md.
   WARN event `feed_restart`. Paid streams untouched.
 - **v10.13 (Oct 13): no big chases on weak scores** (owner: "1.6 SOL on a 50 score, chasing a candle, top-blasted").
   `trading.highConviction.normalMaxSol` 0.5 (any non-strong-setup trade, whatever maxPositionSol × conviction says) +
-  `lowScore` 65 / `lowScoreMaxSol` 0.25 (trader.ts `weakCap`). `entry.priceAction.waitWhenStretched` (default on): the
+  `lowScore` 65 / `lowScoreMaxSol` 0.25 (trader.ts `weakCap`). `entry.priceAction.dipWait.enabled` (default on): the
   stretched → DipWatcher wait (+40%/60 s, 30% over the trend line, EXTENDED) works even with the price-action BUY rules
   off (never blocks, only waits; not CURVE_SNIPE <$15k, not learning trades). All editable (Trade size & risk).
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold

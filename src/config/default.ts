@@ -99,7 +99,7 @@ export const DEFAULT_CONFIG = {
        * v10.13 (owner: "it bought 1.6 SOL on a 50 score chasing a candle and got top-blasted"): the "stretched → wait for a
        * dip" part works even while the buy rules above are off. It never blocks a coin, it only waits for a pullback.
        */
-      waitWhenStretched: true as boolean,
+      dipWait: { enabled: true as boolean },
       /** Don't chase: up more than this in 60 s, or this far above its own trend line → wait for a dip. */
       maxChange60Pct: 40,
       maxExtensionPct: 30,

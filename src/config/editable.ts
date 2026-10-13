@@ -167,7 +167,7 @@ export const EDITABLE: EditableSetting[] = [
   S('Trade size & risk', 'trading.highConviction.normalMaxSol', 'Max size for any normal (not strong-setup) trade', 0.05, 50, 'SOL', 0.05),
   S('Trade size & risk', 'trading.highConviction.lowScoreMaxSol', 'Max size when the score is under the low-score line', 0.05, 50, 'SOL', 0.05),
   S('Trade size & risk', 'trading.highConviction.lowScore', 'Low-score line', 0, 100, undefined, 1),
-  S('Trade size & risk', 'entry.priceAction.waitWhenStretched', 'Wait for a dip instead of chasing a pumped candle: on (1) / off (0)', 0, 1, undefined, 1),
+  S('Trade size & risk', 'entry.priceAction.dipWait.enabled', 'Wait for a dip instead of chasing a pumped candle: on (1) / off (0)', 0, 1, undefined, 1),
   S('Trade size & risk', 'trading.highConviction.sizeSol', 'Big trade size', 0.1, 50, 'SOL', 0.1),
   S('Trade size & risk', 'trading.highConviction.maxPctOfCapital', 'Big trade max % of the balance', 1, 50, '%', 1),
   S('Trade size & risk', 'antiRug.rugGuard.cascade.soloDropPct', 'Rug exit: one wallet crashes it by … in 20 s (0 = off)', 0, 90, '%', 1),
