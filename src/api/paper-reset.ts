@@ -61,6 +61,24 @@ export async function addPaperFunds(sol: number): Promise<{ ok: true; addedSol: 
   return { ok: true, addedSol: sol, totalAddedSol: total, startingBalanceSol: p.startingBalanceSol };
 }
 
+/**
+ * Fresh stats only (owner): balance back to `startSol`, profit counted from now. Nothing is deleted — trades, positions,
+ * learning and charts stay; the learners keep reading the full history.
+ */
+export async function resetPaperStats(startSol: number, now = new Date()): Promise<{ ok: true; startingBalanceSol: number; statsSince: string }> {
+  const [buys, sells] = await Promise.all([
+    prisma.trade.aggregate({ where: { mode: 'PAPER', side: 'BUY', status: 'SIMULATED' }, _sum: { amountSol: true, feeSol: true } }),
+    prisma.trade.aggregate({ where: { mode: 'PAPER', side: 'SELL', status: 'SIMULATED' }, _sum: { amountSol: true, feeSol: true } }),
+  ]);
+  // Offset so start + offset − buys + sells = startSol right now.
+  const net = (buys._sum.amountSol ?? 0) + (buys._sum.feeSol ?? 0) - (sells._sum.amountSol ?? 0) + (sells._sum.feeSol ?? 0);
+  const statsSince = now.toISOString();
+  await updateConfigSection('paper', { startingBalanceSol: startSol, addedSol: 0, balanceOffsetSol: Math.round(net * 1e6) / 1e6, statsSince } as never);
+  void recordEvent({ level: 'WARN', module: 'controls', type: 'paper_stats_reset', message: `Paper stats restarted at ${startSol} SOL (nothing deleted; profit counts from ${statsSince})` });
+  bus.publish({ type: 'stats', data: { reset: true, resetAt: statsSince } });
+  return { ok: true, startingBalanceSol: startSol, statsSince };
+}
+
 let resetting = false;
 export const isResetting = () => resetting;
 
@@ -84,7 +102,7 @@ export async function resetPaperAccount(opts: { startingBalanceSol?: number; set
     const [t, p] = await prisma.$transaction([prisma.trade.deleteMany({ where: { mode: 'PAPER' } }), prisma.position.deleteMany({ where: { mode: 'PAPER' } })]);
 
     // A fresh account starts without the old top-ups.
-    await updateConfigSection('paper', { ...(opts.startingBalanceSol !== undefined ? { startingBalanceSol: opts.startingBalanceSol } : {}), addedSol: 0 } as never);
+    await updateConfigSection('paper', { ...(opts.startingBalanceSol !== undefined ? { startingBalanceSol: opts.startingBalanceSol } : {}), addedSol: 0, balanceOffsetSol: 0, statsSince: '' } as never);
     const resetAt = now.toISOString();
     try {
       await redis.set(PAPER_RESET_AT_KEY, resetAt);

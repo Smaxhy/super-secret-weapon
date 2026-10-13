@@ -73,6 +73,7 @@ import { GrpcListener } from './scanner/grpc-listener';
 import { effectiveFeed, loadFeedSettings, setActiveFeed } from './lib/feed-settings';
 import { PumpFunListener, type ListenerStats } from './scanner/pumpfun-listener';
 import { recordEvent } from './lib/bot-events';
+import { resetPaperStats } from './api/paper-reset';
 import { PumpPortalListener } from './scanner/pumpportal-listener';
 import { WhaleTracker } from './scanner/whale-tracker';
 import { startSpikeWatcher } from './scanner/spike-watcher';
@@ -93,6 +94,10 @@ async function main(): Promise<void> {
   await ensureTimescale();
   // Push deliberate setting changes into saved settings (owner edits elsewhere are kept).
   await runConfigMigrations();
+  // Owner (Oct 13): "reset the PnL, not the trades or data — start from 15 SOL again" (once; nothing deleted).
+  await oneTimeUpgrade('stats-reset-oct13', async () => {
+    await resetPaperStats(15);
+  });
   // v5 strategy: the trade coach's lessons came from the old setup (late-curve buys, 1.15x trails) —
   // they'd shrink sizes and raise the bar for the new one. Start its lessons fresh, once.
   await oneTimeUpgrade('v5-strategy', async () => {

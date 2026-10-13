@@ -335,9 +335,10 @@ export function swingReentryReason(
 }
 
 /** Sum of realised P&L from sells since 00:00 UTC. */
-export async function realisedPnlToday(mode: 'PAPER' | 'LIVE'): Promise<number> {
-  const midnight = new Date();
+export async function realisedPnlToday(mode: 'PAPER' | 'LIVE', since: Date | null = null): Promise<number> {
+  let midnight = new Date();
   midnight.setUTCHours(0, 0, 0, 0);
+  if (since && since > midnight) midnight = since;
   const sells = await prisma.trade.findMany({
     where: { mode, side: 'SELL', createdAt: { gte: midnight }, status: { in: ['SIMULATED', 'CONFIRMED'] } },
     select: { context: true },

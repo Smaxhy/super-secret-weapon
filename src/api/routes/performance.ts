@@ -7,8 +7,16 @@ import { prisma } from '../../lib/prisma';
 import { summarise, type ClosedTrade } from '../performance-calc';
 import type { ApiDeps } from '../deps';
 
+/** Fresh-stats marker (paper.statsSince): headline numbers only count trades closed after it. */
+function statsSince(): Date | null {
+  const iso = getConfig().paper.statsSince;
+  const d = iso ? new Date(iso) : null;
+  return d && !Number.isNaN(d.getTime()) ? d : null;
+}
+
 async function closedTrades(mode: 'PAPER' | 'LIVE'): Promise<ClosedTrade[]> {
-  const rows = await prisma.position.findMany({ where: { status: 'CLOSED', mode }, include: { token: { select: { symbol: true } } } });
+  const since = mode === 'PAPER' ? statsSince() : null;
+  const rows = await prisma.position.findMany({ where: { status: 'CLOSED', mode, ...(since ? { closedAt: { gte: since } } : {}) }, include: { token: { select: { symbol: true } } } });
   return rows.map((p) => ({
     id: p.id,
     mint: p.mint,
@@ -55,7 +63,7 @@ export async function performanceRoutes(app: FastifyInstance, deps: ApiDeps): Pr
       deps.executor.getBalanceSol(),
       prisma.position.count({ where: { status: 'OPEN', mode } }),
       closedTrades(mode),
-      realisedPnlToday(mode),
+      realisedPnlToday(mode, mode === 'PAPER' ? statsSince() : null),
       prisma.token.count({ where: { createdAt: { gte: dayStart } } }),
     ]);
     const s = summarise(closed, cfg.paper.startingBalanceSol + (cfg.paper.addedSol ?? 0));

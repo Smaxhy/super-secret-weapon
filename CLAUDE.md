@@ -493,6 +493,11 @@ smart money → learning engine → ML → social). See README.md.
   but it's the ATH and it dumps"). `chart.dip.blowOff` {runPct 100, minDipPct 35, holdSec 45, dropRunPct 500}: DipWatcher
   measures the run from the 15-min low (crowd log) to the high; run ≥ +100% → the dip must be ≥35% off the high AND the low
   must hold 45 s (`lowestAt`); run ≥ +500% → stop waiting (blow-off top). Editable (Trade size & risk). tests/dip-blowoff.test.ts.
+- **v10.15 (Oct 13): fresh stats without deleting anything** (owner: "reset the PnL, not the trades or data, start from
+  15 SOL"). `paper.statsSince` (ISO) + `paper.balanceOffsetSol`: `resetPaperStats(startSol)` (api/paper-reset.ts) sets start
+  = startSol, addedSol 0, offset = net SOL spent so far → balance = startSol now; Overview / Performance `closedTrades` and
+  today's PnL count only trades closed after statsSince. Learners keep the full history (they use paper:resetAt). Applied
+  ONCE via oneTimeUpgrade `stats-reset-oct13` (15 SOL). A full paper reset clears both fields.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

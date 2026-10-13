@@ -43,7 +43,7 @@ export class PaperExecutor implements Executor {
       prisma.trade.aggregate({ where: { mode: 'PAPER', side: 'BUY', status: 'SIMULATED' }, _sum: { amountSol: true, feeSol: true } }),
       prisma.trade.aggregate({ where: { mode: 'PAPER', side: 'SELL', status: 'SIMULATED' }, _sum: { amountSol: true, feeSol: true } }),
     ]);
-    return start - (buys._sum.amountSol ?? 0) - (buys._sum.feeSol ?? 0) + (sells._sum.amountSol ?? 0) - (sells._sum.feeSol ?? 0);
+    return start + (p.balanceOffsetSol ?? 0) - (buys._sum.amountSol ?? 0) - (buys._sum.feeSol ?? 0) + (sells._sum.amountSol ?? 0) - (sells._sum.feeSol ?? 0);
   }
 
   async buy(req: BuyRequest): Promise<Fill> {

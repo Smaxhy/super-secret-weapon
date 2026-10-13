@@ -1148,6 +1148,13 @@ export const DEFAULT_CONFIG = {
     startingBalanceSol: 10,
     /** Fake SOL added on top since the last reset ("Add paper SOL" — owner: top up without resetting the learning). */
     addedSol: 0,
+    /**
+     * Fresh stats WITHOUT deleting anything (owner: "reset the PnL, not the trades or data"): profit / win rate / charts on
+     * Overview + Performance count only trades closed after `statsSince` (ISO, '' = all), and the balance gets
+     * `balanceOffsetSol` added so it restarts at the chosen amount. Trades, positions and all learning stay.
+     */
+    statsSince: '' as string,
+    balanceOffsetSol: 0,
     /** Pump.fun curve fee (protocol + creator), basis points per side. Approximate. */
     curveFeeBps: 125,
     /** Extra adverse price movement assumed between decision and fill (latency). */

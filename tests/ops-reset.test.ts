@@ -76,7 +76,7 @@ describe('resetPaperAccount', () => {
       'state:{"paused":true}',
       'freeze:CLOSED:paused=true',
       'tx',
-      'paper:{"startingBalanceSol":25,"addedSol":0}',
+      'paper:{"startingBalanceSol":25,"addedSol":0,"balanceOffsetSol":0,"statsSince":""}',
       'state:{"paused":false}',
     ]);
     expect(redisStore.get(PAPER_RESET_AT_KEY)).toBe(r.resetAt);
