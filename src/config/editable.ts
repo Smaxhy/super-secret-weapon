@@ -88,6 +88,10 @@ export const EDITABLE: EditableSetting[] = [
   S('Every coin (safety & holders)', 'entry.maxBundlePct', 'Max bundlers hold', 0, 100, '%', 1),
   S('Every coin (safety & holders)', 'antiRug.rugGuard.maxTopDumpImpactPct', 'Rug guard: one holder could crash it', 10, 100, '%', 5),
   S('Every coin (safety & holders)', 'antiRug.rugGuard.maxTop3DumpImpactPct', 'Rug guard: top-3 could crash it', 10, 100, '%', 5),
+  S('Every coin (safety & holders)', 'antiRug.rugGuard.bundle.enabled', 'Bundle guard (same-size / same-day wallets) on (1) / off (0)', 0, 1, undefined, 1),
+  S('Every coin (safety & holders)', 'antiRug.rugGuard.bundle.sameSizeMinWallets', 'Bundle guard: same-size wallets needed', 3, 30, undefined, 1),
+  S('Every coin (safety & holders)', 'antiRug.rugGuard.bundle.sameSizeTolerancePct', 'Bundle guard: "same size" means within', 1, 25, '%', 1),
+  S('Every coin (safety & holders)', 'antiRug.rugGuard.bundle.sameDayMinWallets', 'Bundle guard: top holders made the same day', 3, 15, undefined, 1),
 
   // ---- Timeframes (every coin; 0 = off) ----
   S('Timeframes (every coin, 0 = off)', 'entry.timeframes.maxLastCandlePct.s5', "5 s: don't buy if the candle is up more than", 0, 1000, '%', 1),

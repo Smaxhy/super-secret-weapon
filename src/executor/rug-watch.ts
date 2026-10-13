@@ -261,3 +261,106 @@ export function launchPumpVerdict(lp: LaunchPump | null, freshPct: number | null
   }
   return null;
 }
+
+/**
+ * Spread-out bundle (owner: "all the top holders held 0.5%, wallets made on the same day 5 months ago, bought
+ * the exact same — an incredibly big bundle"). One operator splits the supply over many aged wallets so no
+ * single-wallet / top-10 limit fires. Two tells, either is enough:
+ *  - same size: many of the biggest holders hold (almost) exactly the same amount;
+ *  - same birthday: many of the biggest holders' wallets were created within one day of each other
+ *    (aged wallets — fresh ones are the funding graph's job), or a few same-size wallets share a birthday.
+ */
+export interface BundleGuardConfig {
+  enabled: boolean;
+  /** Biggest holders compared (dev excluded). */
+  topHolders: number;
+  /** Holders under this % of supply don't count (dust isn't a bundle). */
+  minHolderPct: number;
+  /** "Same size" = the biggest and smallest wallet of the group within this % of each other. */
+  sameSizeTolerancePct: number;
+  sameSizeMinWallets: number;
+  sameSizeMinTotalPct: number;
+  /** Wallet ages (first transaction; cached 24 h, shared with the funding graph) of this many top holders. */
+  ageWallets: number;
+  sameDayHours: number;
+  sameDayMinWallets: number;
+  /** Wallets younger than this don't count for the birthday check. */
+  sameDayMinAgeDays: number;
+  /** Same size AND same birthday: this many wallets is already a bundle. */
+  comboMinWallets: number;
+  /** Look up missing wallet ages over RPC right before a buy (≤ ageWallets × 2 calls, cached 24 h). */
+  rpcLookups: boolean;
+  lookupTimeoutMs: number;
+}
+
+export interface BundleHolder {
+  w: string;
+  /** Token amount (any unit, same for every holder and the supply). */
+  amt: number;
+}
+
+export interface WalletBirth {
+  w: string;
+  /** Unix seconds of the wallet's first transaction. */
+  bornSec: number;
+}
+
+/** Pure: the biggest group of holders whose balances are within `tolerancePct` of each other. */
+export function sameSizeGroup(holders: readonly BundleHolder[], supply: number, c: Pick<BundleGuardConfig, 'minHolderPct' | 'sameSizeTolerancePct'>): { wallets: string[]; eachPct: number; totalPct: number } | null {
+  if (!(supply > 0)) return null;
+  const s = holders.filter((h) => (h.amt / supply) * 100 >= c.minHolderPct).sort((a, b) => a.amt - b.amt);
+  let bi = 0;
+  let bj = -1;
+  let j = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (j < i) j = i;
+    while (j + 1 < s.length && s[j + 1]!.amt <= s[i]!.amt * (1 + c.sameSizeTolerancePct / 100)) j++;
+    if (j - i > bj - bi) {
+      bi = i;
+      bj = j;
+    }
+  }
+  if (bj - bi + 1 < 2) return null;
+  const g = s.slice(bi, bj + 1);
+  const total = g.reduce((t, h) => t + h.amt, 0);
+  return { wallets: g.map((h) => h.w), eachPct: (g[Math.floor(g.length / 2)]!.amt / supply) * 100, totalPct: (total / supply) * 100 };
+}
+
+/** Pure: the biggest group of wallets (≥ minAgeDays old) created within `sameDayHours` of each other. */
+export function sameDayGroup(births: readonly WalletBirth[], nowSec: number, c: Pick<BundleGuardConfig, 'sameDayHours' | 'sameDayMinAgeDays'>): { wallets: string[]; ageDays: number } | null {
+  const s = births.filter((b) => b.bornSec > 0 && nowSec - b.bornSec >= c.sameDayMinAgeDays * 86_400).sort((a, b) => a.bornSec - b.bornSec);
+  const span = c.sameDayHours * 3600;
+  let bi = 0;
+  let bj = -1;
+  let j = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (j < i) j = i;
+    while (j + 1 < s.length && s[j + 1]!.bornSec - s[i]!.bornSec <= span) j++;
+    if (j - i > bj - bi) {
+      bi = i;
+      bj = j;
+    }
+  }
+  if (bj - bi + 1 < 2) return null;
+  const g = s.slice(bi, bj + 1);
+  return { wallets: g.map((b) => b.w), ageDays: Math.round((nowSec - g[Math.floor(g.length / 2)]!.bornSec) / 86_400) };
+}
+
+/** Pure: is this a spread-out bundle? Returns the refusal reason or null. */
+export function holderBundleVerdict(holders: readonly BundleHolder[], supply: number, births: readonly WalletBirth[], nowSec: number, c: BundleGuardConfig): string | null {
+  if (!c.enabled) return null;
+  const top = [...holders].sort((a, b) => b.amt - a.amt).slice(0, c.topHolders);
+  const size = sameSizeGroup(top, supply, c);
+  const f = (x: number) => (x >= 1 ? x.toFixed(1) : x.toFixed(2));
+  if (size && size.wallets.length >= c.sameSizeMinWallets && size.totalPct >= c.sameSizeMinTotalPct) {
+    return `bundle: ${size.wallets.length} wallets hold the same ~${f(size.eachPct)}% each (${f(size.totalPct)}% together)`;
+  }
+  const day = sameDayGroup(births, nowSec, c);
+  if (day && day.wallets.length >= c.sameDayMinWallets) return `bundle: ${day.wallets.length} top holders' wallets were made the same day (${day.ageDays} days ago)`;
+  if (size && size.wallets.length >= c.comboMinWallets) {
+    const inSize = new Set(size.wallets);
+    const both = sameDayGroup(births.filter((b) => inSize.has(b.w)), nowSec, c);
+    if (both && both.wallets.length >= c.comboMinWallets) return `bundle: ${both.wallets.length} wallets made the same day (${both.ageDays} days ago) hold the same ~${f(size.eachPct)}% each`;
+  }
+  return null;
+}

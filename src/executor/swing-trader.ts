@@ -19,8 +19,6 @@ import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { timingNow } from '../learner/timing';
 import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
 import type { Prisma } from '@prisma/client';
-import { getAssociatedTokenAddressSync } from '@solana/spl-token';
-import { PublicKey } from '@solana/web3.js';
 import type { Redis } from 'ioredis';
 import { DEFAULT_CONFIG } from '../config/default';
 import { getConfig } from '../config/runtime-config';
@@ -38,9 +36,8 @@ import { coachFor } from '../learner/trade-coach';
 import { bus } from '../lib/bus';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
-import { bondingCurveAddress } from '../lib/pump-pda';
-import { PUMP_DEFAULT_TOTAL_SUPPLY, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '../lib/pumpfun';
-import { getConnection } from '../lib/solana';
+import { largestHolderAccounts } from '../lib/holders-rpc';
+import { PUMP_DEFAULT_TOTAL_SUPPLY } from '../lib/pumpfun';
 import { getSolUsd } from '../lib/sol-price';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
 import { kolActivity } from '../scanner/kol-signal';
@@ -61,17 +58,7 @@ const STORE_EVERY_MS = 60_000;
  */
 export async function topHoldersPct(mint: string, pool: string | null): Promise<number | null> {
   try {
-    const mintKey = new PublicKey(mint);
-    const exclude = new Set<string>();
-    for (const owner of [pool, bondingCurveAddress(mint)]) {
-      if (!owner) continue;
-      for (const prog of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) exclude.add(getAssociatedTokenAddressSync(mintKey, new PublicKey(owner), true, new PublicKey(prog)).toBase58());
-    }
-    const res = await getConnection().getTokenLargestAccounts(mintKey, 'confirmed');
-    const amounts = res.value
-      .filter((a) => !exclude.has(a.address.toBase58()))
-      .map((a) => Number(a.amount))
-      .sort((a, b) => b - a);
+    const amounts = (await largestHolderAccounts(mint, pool)).map((a) => a.amount);
     const top = amounts.slice(0, 10).reduce((s, x) => s + x, 0);
     return Math.round((top / Number(PUMP_DEFAULT_TOTAL_SUPPLY)) * 1000) / 10;
   } catch (err) {

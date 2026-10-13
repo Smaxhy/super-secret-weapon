@@ -510,6 +510,14 @@ smart money → learning engine → ML → social). See README.md.
   15% 5x, no initials, trail 25→30→28→25% from 1.5x, max hold 8 h) vs L = live MIGRATION exits. Redis `moon:res`; GET
   `/api/moonshot`; Performance → Tests card "Moonshot test"; thresholds editable (Controls → Rules → Moonshot). Real trades
   NOT built yet — when results prove it, add a live path (trader entry with the moonshot exits) behind `moonshot.live`.
+- **v10.18 (Oct 13): bundle guard** (owner: "top holders all held 0.5%, wallets made the same day 5 months ago, bought
+  the exact same — an incredibly big bundle"; `antiRug.rugGuard.bundle`, rug-watch `sameSizeGroup` / `sameDayGroup` /
+  `holderBundleVerdict`, rug-screen `bundleCheck`, every strategy, right before a buy). No buy when ≥8 of the 30 biggest
+  holders (≥0.2% each, dev excluded) are within 5% of the same size and ≥3% together; or ≥5 of the 15 biggest holders'
+  wallets (≥2 days old) were created within 24 h; or ≥3 same-size wallets share a birthday. Wallet birth = first
+  transaction (`FunderInfo.firstSec`, funding-graph cache 24 h; missing ones over RPC, ≤2.5 s wait, then cache only).
+  Late-joined / adopted coins: RPC top-20 accounts (`src/lib/holders-rpc.ts`, also used by swing top-10), same-size
+  only, cached 60 s. Editable (Every coin → Bundle guard). Test tests/bundle-guard.test.ts.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

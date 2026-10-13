@@ -280,6 +280,8 @@ export interface FunderInfo {
   ageHours: number | null;
   /** ≥1000 transactions: an old, busy wallet (age is a lower bound, funder unknown). */
   veryActive: boolean;
+  /** Unix seconds of the wallet's first transaction (not set for very active wallets / older cache entries). */
+  firstSec?: number | null;
 }
 
 /** The two RPC calls we need — injectable for tests. */
@@ -315,6 +317,7 @@ export async function lookupFunder(redis: Redis, wallet: string, rpc: FundingRpc
     const oldest = sigs[sigs.length - 1];
     info.veryActive = sigs.length >= 1000;
     if (oldest?.blockTime) info.ageHours = (Date.now() / 1000 - oldest.blockTime) / 3600;
+    if (oldest?.blockTime && !info.veryActive) info.firstSec = oldest.blockTime;
     if (oldest && !info.veryActive) {
       const tx = await rpc.getParsedTransaction(oldest.signature, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' });
       info.funder = findFunder(tx, wallet);

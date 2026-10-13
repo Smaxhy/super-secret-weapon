@@ -11,17 +11,22 @@
  *   - a whale just sold a big chunk of the liquidity
  *   - the price fell 15%+ since the signal
  *   - (rug guard v2) the biggest holders could crash it too far, or known ruggers hold it
+ *   - a spread-out bundle: many top holders with the same size, or wallets created the same day
  */
 import type { Redis } from 'ioredis';
 import { DEFAULT_CONFIG } from '../config/default';
 import { getConfig } from '../config/runtime-config';
 import { staircase } from '../evaluator/price-shape';
-import { dumpRisk, launchPump, launchPumpVerdict, ruggerVerdict, topHolders, type RuggerMemory } from './rug-watch';
-import { insiderDumpSignal } from '../evaluator/insider-cluster';
+import { dumpRisk, holderBundleVerdict, launchPump, launchPumpVerdict, ruggerVerdict, topHolders, type BundleGuardConfig, type RuggerMemory } from './rug-watch';
+import { antiRugConfig, insiderDumpSignal, lookupFunder, type FunderInfo, type FundingRpc } from '../evaluator/insider-cluster';
+import { largestHolderAccounts } from '../lib/holders-rpc';
+import { canonicalPumpPool } from '../lib/pump-pda';
+import { PUMP_DEFAULT_TOTAL_SUPPLY } from '../lib/pumpfun';
+import { getConnection } from '../lib/solana';
 import type { MarketRaw } from '../evaluator/market-analyzer';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
 import { kolActivity } from '../scanner/kol-signal';
-import { deriveMetrics, type LiveState } from '../scanner/live-state';
+import { ADOPTED_CREATOR, deriveMetrics, type LiveState, type LiveTokenView } from '../scanner/live-state';
 
 export interface RugSnapshot {
   devHoldingPct: number;
@@ -48,6 +53,8 @@ export interface RugScreenInput {
   ruggers?: string | null;
   /** Launch-whale pump set-up (rug-watch.launchPumpVerdict) or null. */
   launchPump?: string | null;
+  /** Spread-out bundle (rug-watch.holderBundleVerdict) or null. */
+  bundle?: string | null;
   /** Staircase chart (price-shape.staircase) or null. */
   staircase?: string | null;
   guard?: { maxTop3DumpImpactPct: number; maxTopDumpImpactPct: number } | null;
@@ -61,6 +68,7 @@ export function rugScreen(i: RugScreenInput): string | null {
   if (i.kolDump) return `KOLs dumping (${i.kolDump})`;
   if (i.ruggers) return `rugger memory: ${i.ruggers}`;
   if (i.launchPump) return i.launchPump;
+  if (i.bundle) return i.bundle;
   if (i.staircase) return i.staircase;
   if (i.dumpRisk && i.guard) {
     if (i.dumpRisk.top1Pct > i.guard.maxTopDumpImpactPct) return `one holder could dump it ${i.dumpRisk.top1Pct.toFixed(0)}% (max ${i.guard.maxTopDumpImpactPct}%)`;
@@ -78,6 +86,60 @@ export function rugScreen(i: RugScreenInput): string | null {
     if (n.liquiditySol > 0 && f.biggestSellSol >= n.liquiditySol * 0.15) return `whale just sold ${f.biggestSellSol.toFixed(1)} SOL`;
   }
   return null;
+}
+
+const lateCache = new Map<string, { at: number; why: string | null }>();
+
+/** Resolves to null when `p` takes longer than `ms` (the work keeps going and still fills caches). */
+function within<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(null), ms);
+    p.then((v) => resolve(v), () => resolve(null)).finally(() => clearTimeout(t));
+  });
+}
+
+/**
+ * Spread-out bundle check. Coins we saw from launch: the wallet ledger (free) + wallet ages of the biggest
+ * holders (funding-graph cache, RPC for missing ones within `lookupTimeoutMs`). Coins we joined late
+ * (ledger incomplete): RPC top-20 accounts, same-size check only.
+ */
+export async function bundleCheck(mint: string, view: LiveTokenView, redis: Redis, c: BundleGuardConfig, now = Date.now()): Promise<string | null> {
+  if (!c.enabled) return null;
+  const supply = Number(view.curve.totalSupply) || Number(PUMP_DEFAULT_TOTAL_SUPPLY);
+  const nowSec = now / 1000;
+  const late = !!view.adopted || !view.creator || view.creator === ADOPTED_CREATOR;
+  if (late) {
+    if (!c.rpcLookups) return null;
+    // Refused coins are retried every few seconds (swing trader): one RPC read per coin per minute.
+    const hit = lateCache.get(mint);
+    if (hit && now - hit.at < 60_000) return hit.why;
+    const pool = view.ammBaseReserve !== null || view.complete ? canonicalPumpPool(mint) : null;
+    const accts = await within(largestHolderAccounts(mint, pool), c.lookupTimeoutMs);
+    const why = accts ? holderBundleVerdict(accts.map((a) => ({ w: a.account, amt: a.amount })), supply, [], nowSec, c) : null;
+    if (accts) {
+      if (lateCache.size > 2000) lateCache.clear();
+      lateCache.set(mint, { at: now, why });
+    }
+    return why;
+  }
+  const holders = topHolders(view.balances, c.topHolders, new Set([view.creator])).map((h) => ({ w: h.w, amt: Number(h.raw) }));
+  const sameSize = holderBundleVerdict(holders, supply, [], nowSec, c);
+  if (sameSize) return sameSize;
+  const wallets = holders.slice(0, c.ageWallets).map((h) => h.w);
+  if (wallets.length < Math.min(c.sameDayMinWallets, c.comboMinWallets)) return null;
+  let rpc: FundingRpc | null = null;
+  if (c.rpcLookups) {
+    try {
+      rpc = getConnection() as unknown as FundingRpc;
+    } catch {
+      rpc = null;
+    }
+  }
+  const cacheHours = antiRugConfig().fundingCacheHours;
+  const look = (r: FundingRpc | null) => Promise.all(wallets.map((w) => lookupFunder(redis, w, r, cacheHours).catch(() => null)));
+  const infos: Array<FunderInfo | null> = (rpc ? await within(look(rpc), c.lookupTimeoutMs) : null) ?? (await look(null));
+  const births = wallets.flatMap((w, k) => (infos[k]?.firstSec ? [{ w, bornSec: infos[k]!.firstSec! }] : []));
+  return holderBundleVerdict(holders, supply, births, nowSec, c);
 }
 
 /** Build the inputs from live data and run the screen. Never throws (a failed read is treated as clean). */
@@ -110,6 +172,7 @@ export async function screenEntry(
     let dumpRiskNow: { top1Pct: number; top3Pct: number } | null = null;
     let ruggers: string | null = null;
     let launch: string | null = null;
+    const bundle = g.enabled ? await bundleCheck(req.mint, view, deps.redis, g.bundle ?? DEFAULT_CONFIG.antiRug.rugGuard.bundle, now).catch(() => null) : null;
     if (g.enabled && !view.adopted) {
       // Launch whale + spike + swarm of brand-new wallets = the classic pump-and-dump set-up.
       const lpc = g.launchPump ?? DEFAULT_CONFIG.antiRug.rugGuard.launchPump;
@@ -137,6 +200,7 @@ export async function screenEntry(
     return rugScreen({
       staircase: stair?.hit ? stair.why : null,
       launchPump: launch,
+      bundle,
       dumpRisk: dumpRiskNow,
       ruggers,
       guard: g.enabled ? g : null,
