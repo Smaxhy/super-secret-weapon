@@ -265,15 +265,16 @@ export const DEFAULT_CONFIG = {
        */
       launchPump: { enabled: true as boolean, windowSec: 30, whaleSupplyPct: 5, maxWhaleHoldPct: 5, spikeMultiple: 1.8, whaleBuySharePct: 30, swarmMinBuyers: 15, swarmFreshPct: 75 },
       /**
-       * Spread-out bundle (owner: "all the top holders held 0.5%, wallets made the same day 5 months ago, bought the
-       * exact same"): ≥8 of the 30 biggest holders (≥0.2% each, dev excluded) within 5% of the same size and ≥3% of the
-       * supply together → no buy; or ≥5 of the 15 biggest holders' wallets (≥2 days old) created within the same 24 h;
-       * or ≥3 same-size wallets that share a birthday. Wallet ages come from the funding-graph cache (24 h); missing
-       * ones are looked up over RPC right before a buy (≤2.5 s wait). Coins we joined late: same-size check only (RPC top 20).
+       * Spread-out bundle (owner: "top holders all held 0.5%, wallets made the same day 5 months ago, bought the exact
+       * same"; then "tiny bundlers are okay, every coin has them — loosen it a little"). Only BIG groups (≥5% of the supply
+       * together) count: ≥10 of the 30 biggest holders (≥0.3% each, dev excluded) within 5% of the same size; or ≥6 of the 15
+       * biggest holders' wallets (≥2 days old) created within the same 24 h; or ≥4 same-size wallets sharing a birthday.
+       * Wallet ages come from the funding-graph cache (24 h); missing ones over RPC right before a buy (≤2.5 s wait).
+       * Coins we joined late: same-size check only (RPC top 20).
        */
       bundle: {
-        enabled: true as boolean, topHolders: 30, minHolderPct: 0.2, sameSizeTolerancePct: 5, sameSizeMinWallets: 8, sameSizeMinTotalPct: 3,
-        ageWallets: 15, sameDayHours: 24, sameDayMinWallets: 5, sameDayMinAgeDays: 2, comboMinWallets: 3, rpcLookups: true as boolean, lookupTimeoutMs: 2500,
+        enabled: true as boolean, topHolders: 30, minHolderPct: 0.3, sameSizeTolerancePct: 5, sameSizeMinWallets: 10, minGroupPct: 5,
+        ageWallets: 15, sameDayHours: 24, sameDayMinWallets: 6, sameDayMinAgeDays: 2, comboMinWallets: 4, rpcLookups: true as boolean, lookupTimeoutMs: 2500,
       },
     },
   },

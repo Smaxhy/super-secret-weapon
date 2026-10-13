@@ -279,7 +279,8 @@ export interface BundleGuardConfig {
   /** "Same size" = the biggest and smallest wallet of the group within this % of each other. */
   sameSizeTolerancePct: number;
   sameSizeMinWallets: number;
-  sameSizeMinTotalPct: number;
+  /** A flagged group must hold at least this % of the supply together (tiny bundles are normal). */
+  minGroupPct: number;
   /** Wallet ages (first transaction; cached 24 h, shared with the funding graph) of this many top holders. */
   ageWallets: number;
   sameDayHours: number;
@@ -348,19 +349,26 @@ export function sameDayGroup(births: readonly WalletBirth[], nowSec: number, c: 
 
 /** Pure: is this a spread-out bundle? Returns the refusal reason or null. */
 export function holderBundleVerdict(holders: readonly BundleHolder[], supply: number, births: readonly WalletBirth[], nowSec: number, c: BundleGuardConfig): string | null {
-  if (!c.enabled) return null;
+  if (!c.enabled || !(supply > 0)) return null;
   const top = [...holders].sort((a, b) => b.amt - a.amt).slice(0, c.topHolders);
+  const amt = new Map(top.map((h) => [h.w, h.amt]));
+  const heldPct = (ws: readonly string[]) => (ws.reduce((t, w) => t + (amt.get(w) ?? 0), 0) / supply) * 100;
   const size = sameSizeGroup(top, supply, c);
   const f = (x: number) => (x >= 1 ? x.toFixed(1) : x.toFixed(2));
-  if (size && size.wallets.length >= c.sameSizeMinWallets && size.totalPct >= c.sameSizeMinTotalPct) {
+  if (size && size.wallets.length >= c.sameSizeMinWallets && size.totalPct >= c.minGroupPct) {
     return `bundle: ${size.wallets.length} wallets hold the same ~${f(size.eachPct)}% each (${f(size.totalPct)}% together)`;
   }
-  const day = sameDayGroup(births, nowSec, c);
-  if (day && day.wallets.length >= c.sameDayMinWallets) return `bundle: ${day.wallets.length} top holders' wallets were made the same day (${day.ageDays} days ago)`;
+  const inTop = births.filter((b) => amt.has(b.w));
+  const day = sameDayGroup(inTop, nowSec, c);
+  if (day && day.wallets.length >= c.sameDayMinWallets && heldPct(day.wallets) >= c.minGroupPct) {
+    return `bundle: ${day.wallets.length} top holders' wallets were made the same day (${day.ageDays} days ago) and hold ${f(heldPct(day.wallets))}%`;
+  }
   if (size && size.wallets.length >= c.comboMinWallets) {
     const inSize = new Set(size.wallets);
-    const both = sameDayGroup(births.filter((b) => inSize.has(b.w)), nowSec, c);
-    if (both && both.wallets.length >= c.comboMinWallets) return `bundle: ${both.wallets.length} wallets made the same day (${both.ageDays} days ago) hold the same ~${f(size.eachPct)}% each`;
+    const both = sameDayGroup(inTop.filter((b) => inSize.has(b.w)), nowSec, c);
+    if (both && both.wallets.length >= c.comboMinWallets && heldPct(both.wallets) >= c.minGroupPct) {
+      return `bundle: ${both.wallets.length} wallets made the same day (${both.ageDays} days ago) hold the same ~${f(size.eachPct)}% each (${f(heldPct(both.wallets))}% together)`;
+    }
   }
   return null;
 }

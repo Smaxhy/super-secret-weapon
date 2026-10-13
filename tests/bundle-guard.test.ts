@@ -28,10 +28,16 @@ describe('bundle guard', () => {
   });
 
   it('flags a few same-size wallets that share a birthday', () => {
-    const trio = [0.8, 0.81, 0.805].map((p, k) => ({ w: `t${k}`, amt: pct(p) }));
-    const holders = [...natural(10), ...trio];
-    const births: WalletBirth[] = trio.map((h, k) => ({ w: h.w, bornSec: NOW - 90 * DAY + k * 3600 }));
-    expect(holderBundleVerdict(holders, SUPPLY, births, NOW, c)).toMatch(/3 wallets made the same day \(90 days ago\) hold the same/);
+    const four = [1.3, 1.31, 1.305, 1.3].map((p, k) => ({ w: `t${k}`, amt: pct(p) }));
+    const holders = [...natural(10), ...four];
+    const births: WalletBirth[] = four.map((h, k) => ({ w: h.w, bornSec: NOW - 90 * DAY + k * 3600 }));
+    expect(holderBundleVerdict(holders, SUPPLY, births, NOW, c)).toMatch(/4 wallets made the same day \(90 days ago\) hold the same/);
+  });
+
+  it('lets tiny bundles through (every new pair has a few)', () => {
+    const small = Array.from({ length: 8 }, (_, k) => ({ w: `s${k}`, amt: pct(0.4) }));
+    const births: WalletBirth[] = small.map((h, k) => ({ w: h.w, bornSec: NOW - 60 * DAY + k * 60 }));
+    expect(holderBundleVerdict([...natural(10), ...small], SUPPLY, births, NOW, c)).toBeNull();
   });
 
   it('leaves a natural holder list alone (no same-size group, spread-out wallet ages)', () => {

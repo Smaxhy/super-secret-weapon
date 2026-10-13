@@ -254,6 +254,17 @@ export const MIGRATIONS: ConfigMigration[] = [
     note: 'v10.16 (owner: "big lack of trades, the bot can\'t learn"): learning trades for coins up to 12 points under the bar (was 8) — every rule must still pass, half size, low-score cap 0.25 SOL',
     set: [['explore', ['scoreMargin'], 12]],
   },
+  {
+    version: 17,
+    note: 'v10.18.1 (owner: "tiny bundlers are okay, every coin has them — loosen it a little"): the bundle guard only blocks big groups — ≥5% of the supply together, 10 same-size wallets (≥0.3% each), 6 same-day wallets, 4 for both',
+    set: [
+      ['antiRug', ['rugGuard', 'bundle', 'minHolderPct'], 0.3],
+      ['antiRug', ['rugGuard', 'bundle', 'sameSizeMinWallets'], 10],
+      ['antiRug', ['rugGuard', 'bundle', 'minGroupPct'], 5],
+      ['antiRug', ['rugGuard', 'bundle', 'sameDayMinWallets'], 6],
+      ['antiRug', ['rugGuard', 'bundle', 'comboMinWallets'], 4],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */
