@@ -16,6 +16,7 @@ import type { SwingTrader } from '../executor/swing-trader';
 import type { LossAutopsy } from '../learner/loss-autopsy';
 import type { TimingLearner } from '../learner/timing';
 import type { ShadowTrades } from '../learner/shadow-trades';
+import type { MoonshotLab } from '../learner/moonshot';
 import type { Brain } from '../learner/brain';
 import type { AiCoach } from '../learner/ai-coach';
 
@@ -38,6 +39,7 @@ export interface ApiDeps {
   aiCoach?: AiCoach | null;
   timing?: TimingLearner | null;
   shadow?: ShadowTrades | null;
+  moonshot?: MoonshotLab | null;
   brain?: Brain | null;
 }
 

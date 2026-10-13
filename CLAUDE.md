@@ -502,6 +502,14 @@ smart money → learning engine → ML → social). See README.md.
   fine). Dip-wait-only mode no longer delays on the broad EXTENDED label (only +40%/60 s or 30% over the trend line);
   learning trades `explore.scoreMargin` 8 → 12 (migration v16; all rules still pass, half size). Holder minimums
   (CURVE_SNIPE 15) are the top skip but are early checkpoints on dying launches — kept.
+- **v10.17 (Oct 13): moonshot TEST mode** (owner: "mega real volume on a migrated coin + narrative + KOLs → enter early,
+  moon it, clip along the way"; agreed: test first). `src/learner/moonshot.ts` (`moonshot` config, live false): every 15 s
+  over `crowd.activeAmmMints` → `organicFlow` (≥40 real buyers, ≥20 SOL in 5 min, buys ≥60%, ≥65% organic, ≤+60%/3 min,
+  MC ≥$30k) + `kolActivity` (≥2 KOLs bought and not sold) + trending (TrendingHub lists or DexScreener) → `moonshotVerdict`;
+  a hit (once per coin per 60 min) opens TWO VirtualBook pretend trades: M = `moonshotRules` (20% at 1.5x / 20% 2x / 15% 3x /
+  15% 5x, no initials, trail 25→30→28→25% from 1.5x, max hold 8 h) vs L = live MIGRATION exits. Redis `moon:res`; GET
+  `/api/moonshot`; Performance → Tests card "Moonshot test"; thresholds editable (Controls → Rules → Moonshot). Real trades
+  NOT built yet — when results prove it, add a live path (trader entry with the moonshot exits) behind `moonshot.live`.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

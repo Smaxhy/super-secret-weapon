@@ -1,6 +1,7 @@
 import { PnlChart, SignedBars } from '../components/Charts';
 import { StrategyLab } from '../components/StrategyLab';
 import { Backtest } from '../components/Backtest';
+import { MoonshotCard } from '../components/MoonshotCard';
 import { LossAutopsy } from '../components/LossAutopsy';
 import { BestTimes } from '../components/BestTimes';
 import { BotChanges } from '../components/BotChanges';
@@ -38,6 +39,7 @@ export function Performance() {
       {tab === 'timing' && <BestTimes />}
       {tab === 'tests' && (
         <Stack>
+          <MoonshotCard />
           <StrategyLab />
           <Backtest />
         </Stack>

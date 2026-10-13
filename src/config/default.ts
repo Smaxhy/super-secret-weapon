@@ -631,6 +631,44 @@ export const DEFAULT_CONFIG = {
    * from their real results: if near-misses win, their score band gets marked up and they become normal
    * buys; if they lose, they stay small learning trades. They don't count for the strategy cool-off.
    */
+  /**
+   * Moonshot TEST mode (src/learner/moonshot.ts, owner Oct 13): migrated coins where everything lines up — huge
+   * organic buying, ≥2 KOLs still holding, on a trending list — get two pretend trades (moonshot exits vs normal
+   * exits). `live` stays false (no paper money) until the results prove it.
+   */
+  moonshot: {
+    enabled: true as boolean,
+    live: false as boolean,
+    everySec: 15,
+    minBuyers5m: 40,
+    minBuySol5m: 20,
+    minBuySharePct: 60,
+    minOrganicPct: 65,
+    maxRun3mPct: 60,
+    minMarketCapUsd: 30_000,
+    minKolsHolding: 2,
+    needTrend: true as boolean,
+    cooldownMin: 60,
+    maxOpen: 60,
+    keep: 1000,
+    exits: {
+      tiers: [
+        { multiple: 1.5, sellPct: 20 },
+        { multiple: 2, sellPct: 20 },
+        { multiple: 3, sellPct: 15 },
+        { multiple: 5, sellPct: 15 },
+      ],
+      trailFrom: 1.5,
+      trailLadder: [
+        { fromMultiple: 1.5, pct: 25 },
+        { fromMultiple: 3, pct: 30 },
+        { fromMultiple: 5, pct: 28 },
+        { fromMultiple: 10, pct: 25 },
+      ],
+      maxHoldMinutes: 480,
+    },
+  },
+
   explore: {
     enabled: true as boolean,
     // v8: only just-missed coins (owner: stop trading stupidly), never swings (owner: be very strict there).

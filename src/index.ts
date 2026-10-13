@@ -20,6 +20,7 @@ import { screenEntry } from './executor/rug-screen';
 import { RuggerMemory } from './executor/rug-watch';
 import { TimingLearner } from './learner/timing';
 import { shadowAsClosed, ShadowTrades, wouldHaveTaken } from './learner/shadow-trades';
+import { MoonshotLab } from './learner/moonshot';
 import { OutcomeTracker } from './learner/outcome-tracker';
 import { ExitTuner } from './learner/exit-tuner';
 import { TapeArchiver } from './learner/tape-archiver';
@@ -272,6 +273,19 @@ async function main(): Promise<void> {
   const trendFeeds = new TrendingFeeds();
   const trending = new TrendingHub(trendFeeds);
   evaluator.trending = trending;
+  // Moonshot TEST mode: migrated coins where huge real buying + KOLs + trending all line up → two pretend trades
+  // (moonshot exits vs normal exits). No paper money until moonshot.live is switched on.
+  const moonshot = new MoonshotLab(
+    redis,
+    crowd,
+    (mint) => {
+      const i = trending.info(mint);
+      return { lists: i ? new Set([...i.sources, ...i.recentSources]).size : 0, dex: !!dex.trendingInfo(mint) };
+    },
+    async (mint) => (await prisma.token.findUnique({ where: { mint }, select: { symbol: true } }))?.symbol ?? mint.slice(0, 6),
+  );
+  registry.onTradeApplied.push((mint) => moonshot.onTrade(mint));
+  moonshot.start();
   trendFeeds.onEntry = (source, coin) => {
     trending.sample();
     const tc = getConfig().trending;
@@ -547,7 +561,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, moonshot }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -628,6 +642,7 @@ async function main(): Promise<void> {
       dips.stop();
       lab.stop();
       shadow.stop();
+      moonshot.stop();
       brain.stop();
       stopPush();
       taLab.stop();

@@ -87,6 +87,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     secured.get('/api/brain', async () => (deps.brain ? deps.brain.snapshot(false) : null));
     secured.get('/api/timing', async () => deps.timing?.snapshot() ?? null);
     // Shadow trades: what the coins it didn't buy would have done (since the last paper reset).
+    secured.get('/api/moonshot', async () => (deps.moonshot ? deps.moonshot.report() : null));
     secured.get('/api/shadow', async () => (deps.shadow ? deps.shadow.report((await learningSince(redis))?.getTime() ?? 0) : null));
     // AI coach: insights + rules under test / live, spend; POST = review now.
     secured.get('/api/ai-coach', async (_req, reply) => {
