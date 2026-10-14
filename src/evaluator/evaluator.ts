@@ -46,7 +46,7 @@ import { explainBuy } from '../learner/explain';
 import { hotKeywords } from '../scanner/x-watcher';
 import type { OutcomeLabeler } from '../learner/outcome-labeler';
 import { currentRegime } from '../learner/regime-detector';
-import { keywordCheck, NEUTRAL_SOCIAL_FEATURES, SocialAnalyzer, socialsScore, twitterInfo } from './social-analyzer';
+import { keywordCheck, NEUTRAL_SOCIAL_FEATURES, SocialAnalyzer, socialsScore, hasXLink, xLinkOf } from './social-analyzer';
 import { analyzeMarket, withInsider, type PrevCheckpoint } from './market-analyzer';
 import { checkEntryRules, convictionFactor, decide, manipulationCheck, learnedOddsAdjustment, scoreFeatures, withOdds, type FeatureVector, type LearnedOdds, type ScoreResult } from './scorer';
 import { ALL_PATTERN, beliefCache, patternsOf, strategyPattern, type StoredFeatures } from '../learner/bayesian-updater';
@@ -382,8 +382,8 @@ export class Evaluator {
       log.warn({ mint, err: (err as Error).message }, 'narrative check failed — using keyword match only');
     }
     if (token.metadataFetchedAt) {
-      const tw = twitterInfo(token.twitter);
-      socialInfo = { hasTwitter: !!(tw.handle || tw.isCommunity), blockedKeyword: kw.blocked };
+      // X account, post or community — in the X field, or pasted into the website / Telegram field or description.
+      socialInfo = { hasTwitter: hasXLink(token), blockedKeyword: kw.blocked };
       socialFeatures = { socials: socialsScore(token, await this.social.reuseCounts(token)), narrative: narrativeScore };
     } else {
       socialFeatures = { ...NEUTRAL_SOCIAL_FEATURES, narrative: narrativeScore };
@@ -466,9 +466,10 @@ export class Evaluator {
     const xc = cfg.x?.check ?? DEFAULT_CONFIG.x.check;
     let xv: XVerdict | null = null;
     if (xc.enabled && token.metadataFetchedAt) {
-      const reused = await xLinkReuse(this.redis, token.twitter).catch(() => 0);
-      const live = xc.live && ruleFails.length === 0 && !token.safetyHardFail && result.score >= threshold - xc.liveWithinPoints ? await xLive(this.redis, mint, token.twitter, xc.maxReadsPerDay).catch(() => null) : null;
-      xv = xVerdict(parseXLink(token.twitter), reused, live);
+      const xUrl = xLinkOf(token);
+      const reused = await xLinkReuse(this.redis, xUrl).catch(() => 0);
+      const live = xc.live && ruleFails.length === 0 && !token.safetyHardFail && result.score >= threshold - xc.liveWithinPoints ? await xLive(this.redis, mint, xUrl, xc.maxReadsPerDay).catch(() => null) : null;
+      xv = xVerdict(parseXLink(xUrl), reused, live);
       threshold -= xv.points;
     }
 

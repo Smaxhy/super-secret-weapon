@@ -33,10 +33,12 @@ export function parseXLink(url: string | null | undefined): XLink {
   if (!url) return { kind: 'none', handle: null, id: null };
   const c = /(?:twitter\.com|x\.com)\/i\/communities\/(\d+)/i.exec(url);
   if (c) return { kind: 'community', handle: null, id: c[1]! };
+  const ip = /(?:twitter\.com|x\.com)\/i\/(?:web\/)?status\/(\d+)/i.exec(url);
+  if (ip) return { kind: 'post', handle: null, id: ip[1]! };
   const p = /(?:twitter\.com|x\.com)\/([^/?#]+)\/status(?:es)?\/(\d+)/i.exec(url);
   if (p) return { kind: 'post', handle: p[1]!.toLowerCase(), id: p[2]! };
   const h = /(?:twitter\.com|x\.com)\/@?([A-Za-z0-9_]{1,15})(?:[/?#]|$)/i.exec(url);
-  if (h && !['i', 'home', 'search', 'intent', 'share'].includes(h[1]!.toLowerCase())) return { kind: 'profile', handle: h[1]!.toLowerCase(), id: null };
+  if (h && !['i', 'home', 'search', 'intent', 'share', 'hashtag', 'explore', 'settings', 'login', 'signup', 'messages', 'notifications'].includes(h[1]!.toLowerCase())) return { kind: 'profile', handle: h[1]!.toLowerCase(), id: null };
   return { kind: 'none', handle: null, id: null };
 }
 

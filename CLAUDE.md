@@ -544,6 +544,9 @@ smart money → learning engine → ML → social). See README.md.
   237 / "CURVE_SNIPE: no X link" 87 — the owner had switched ON Controls → "Only coins with an X link", `entry.requireTwitter`,
   default off). `focus.migrated.minSafetyScore` 40 (`strategyMinimums().minSafetyScore`, editable "Min safety score
   (migrated coins)"): soft insider flags stack under 55 on any busy graduated coin; hard fails + rug / bundle guard unchanged.
+  X links (owner: "often it's an X page / group / account"): `social-analyzer.xLinkOf` finds the X link in the X field, the
+  website / Telegram field or the description (+ bare "@handle"); account, post (incl. x.com/i/status, /i/web/status) or
+  community all count (`hasXLink` → "no X link" rule, socials score, reuse, X check). tests/x-links.test.ts.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

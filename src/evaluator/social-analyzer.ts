@@ -60,11 +60,40 @@ export function parseMetadata(json: unknown): TokenSocials {
 /** "https://x.com/Foo/status/123" → { handle: "foo", isPost: true }. */
 export function twitterInfo(url: string | null): { handle: string | null; isPost: boolean; isCommunity: boolean } {
   if (!url) return { handle: null, isPost: false, isCommunity: false };
-  const m = /(?:twitter\.com|x\.com)\/([^/?#]+)(\/status\/\d+)?/i.exec(url);
+  const m = /(?:twitter\.com|x\.com)\/([^/?#\s]+)(\/status\/\d+)?/i.exec(url);
   if (!m) return { handle: null, isPost: false, isCommunity: false };
   const first = m[1]!.toLowerCase();
-  if (first === 'i') return { handle: null, isPost: false, isCommunity: /communities/i.test(url) };
+  // x.com/i/communities/<id> (X group), x.com/i/status/<id> + x.com/i/web/status/<id> (a post without the handle).
+  if (first === 'i') return { handle: null, isPost: /\/i\/(?:web\/)?status\/\d+/i.test(url), isCommunity: /communities/i.test(url) };
+  if (NOT_HANDLES.has(first)) return { handle: null, isPost: false, isCommunity: false };
   return { handle: first.replace(/^@/, ''), isPost: !!m[2], isCommunity: false };
+}
+
+/** x.com paths that aren't an account. */
+const NOT_HANDLES = new Set(['home', 'search', 'intent', 'share', 'hashtag', 'explore', 'settings', 'login', 'signup', 'messages', 'notifications']);
+
+const X_URL = /(?:https?:\/\/)?(?:www\.|mobile\.)?(?:twitter\.com|x\.com)\/[^\s"'<>)\]]+/i;
+
+/**
+ * The coin's X link wherever the dev put it: the X field first, then the website or Telegram field (devs often paste the
+ * X account / community / post there) and the description; a bare "@handle" in the X field counts too. null = none.
+ */
+export function xLinkOf(t: { twitter?: string | null; website?: string | null; telegram?: string | null; description?: string | null }): string | null {
+  for (const f of [t.twitter, t.website, t.telegram, t.description]) {
+    const m = f ? X_URL.exec(f) : null;
+    if (m) {
+      const url = m[0].startsWith('http') ? m[0] : `https://${m[0]}`;
+      const tw = twitterInfo(url);
+      if (tw.handle || tw.isCommunity || tw.isPost) return url;
+    }
+  }
+  const bare = t.twitter?.trim().match(/^@?([A-Za-z0-9_]{1,15})$/);
+  return bare ? `https://x.com/${bare[1]}` : null;
+}
+
+/** Has any X presence (account, post or community), wherever it was linked. */
+export function hasXLink(t: Parameters<typeof xLinkOf>[0]): boolean {
+  return xLinkOf(t) !== null;
 }
 
 function domainOf(url: string | null): string | null {
@@ -84,7 +113,7 @@ export interface ReuseCounts {
 
 /** Score 0-1 for social presence. Pure — exported for tests. */
 export function socialsScore(s: TokenSocials, reuse: ReuseCounts): number {
-  const tw = twitterInfo(s.twitter);
+  const tw = twitterInfo(xLinkOf(s));
   let score = 0;
   // A real profile link is worth most; a link to a single post or a community less.
   if (tw.handle && !tw.isPost) score += 0.4;
@@ -349,10 +378,11 @@ export class SocialAnalyzer {
       await this.recordLaunch(mint, row.name, row.symbol, row.createdAt.getTime());
       // Remember which links this launch used, to spot copy-paste reuse.
       const p = this.redis.multi();
-      const handle = twitterInfo(socials.twitter).handle;
+      const xUrl = xLinkOf(socials);
+      const handle = twitterInfo(xUrl).handle;
       if (handle) p.sadd(`reuse:tw:${handle}`, mint).expire(`reuse:tw:${handle}`, REUSE_WINDOW_SECONDS);
       // Same X community / post used by other launches (handles are covered above).
-      void recordXLink(this.redis, mint, socials.twitter).catch(() => undefined);
+      void recordXLink(this.redis, mint, xUrl).catch(() => undefined);
       const site = domainOf(socials.website);
       if (site) p.sadd(`reuse:web:${site}`, mint).expire(`reuse:web:${site}`, REUSE_WINDOW_SECONDS);
       await p.exec();
@@ -362,7 +392,7 @@ export class SocialAnalyzer {
   }
 
   async reuseCounts(s: TokenSocials): Promise<ReuseCounts> {
-    const handle = twitterInfo(s.twitter).handle;
+    const handle = twitterInfo(xLinkOf(s)).handle;
     const site = domainOf(s.website);
     const [tw, web] = await Promise.all([
       handle ? this.redis.scard(`reuse:tw:${handle}`) : Promise.resolve(0),
