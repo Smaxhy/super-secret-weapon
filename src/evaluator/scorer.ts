@@ -116,6 +116,8 @@ export function strategyMinimums(e: BotConfigShape['entry'], focus: BotConfigSha
   const np = strategy === 'CURVE_SNIPE' ? focus?.newPair : undefined;
   const fr = strategy === 'SOON' ? focus?.soon : strategy === 'MIGRATION_MOMENTUM' ? focus?.migrated : undefined;
   return {
+    /** Migrated coins: their own (lower) safety minimum — soft insider flags pile up on any busy coin. */
+    minSafetyScore: fr && 'minSafetyScore' in fr && typeof fr.minSafetyScore === 'number' ? fr.minSafetyScore : e.minSafetyScore,
     minTotalFeesSol: np?.minTotalFeesSol ?? fr?.minTotalFeesSol ?? e.minTotalFeesSol,
     minMarketCapUsd: np?.minMarketCapUsd ?? fr?.minMarketCapUsd ?? e.minMarketCapUsd,
     maxMarketCapUsd: np?.maxMarketCapUsd ?? null,
@@ -137,7 +139,7 @@ export function checkEntryRules(i: EntryCheckInput): string[] {
   const mins = strategyMinimums(e, i.focus, s.name);
   const fails: string[] = [];
   if (i.safetyHardFail) fails.push('safety hard fail');
-  if (i.safetyScore < e.minSafetyScore) fails.push(`safety ${i.safetyScore} < ${e.minSafetyScore}`);
+  if (i.safetyScore < mins.minSafetyScore) fails.push(`safety ${i.safetyScore} < ${mins.minSafetyScore}`);
   if (m.holders < s.minHolders) fails.push(`holders ${m.holders} < ${s.minHolders}`);
   if (m.devHoldingPct > e.maxDevHoldingPct) fails.push(`dev holds ${m.devHoldingPct.toFixed(1)}% > ${e.maxDevHoldingPct}%`);
   // Anti-rug: concentrated supply means a few wallets can crash the price at will.

@@ -22,6 +22,7 @@ export const EDITABLE: EditableSetting[] = [
   S('Migrated coins', 'focus.migrated.minLiquidityUsd', 'Min liquidity', 0, 5_000_000, '$', 500),
   S('Migrated coins', 'focus.migrated.minTotalFeesSol', 'Min total fees paid', 0, 1000, 'SOL', 0.5),
   S('Migrated coins', 'entry.minHoldersMigration', 'Min holders', 0, 5000, undefined, 5),
+  S('Migrated coins', 'focus.migrated.minSafetyScore', 'Min safety score (migrated coins)', 0, 100, 'pts', 1),
   S('Migrated coins', 'focus.migrated.minActiveWallets5m', 'Min active wallets (5 min)', 0, 1000, undefined, 1),
   S('Migrated coins', 'focus.migrated.noEntryFirstSec', 'No buys in the first … after migration', 0, 3600, 's', 30),
   S('Migrated coins', 'focus.migrated.scan.minOrganicBuyers5m', 'Real buyers needed (5 min)', 0, 500, undefined, 1),

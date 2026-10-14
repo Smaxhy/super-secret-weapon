@@ -87,3 +87,13 @@ describe('strategy cards: does each strategy deserve to run?', () => {
     expect(scoreInversions(ts, 15)[0]).toMatch(/score 80–90 averages -8% vs 6% for score 70–80/);
   });
 });
+
+describe('migrated coins have their own safety minimum', () => {
+  it('40 for migrated coins, the general 55 for everything else', async () => {
+    const { strategyMinimums } = await import('../src/evaluator/scorer');
+    const { DEFAULT_CONFIG } = await import('../src/config/default');
+    expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'MIGRATION_MOMENTUM').minSafetyScore).toBe(40);
+    expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'CURVE_SNIPE').minSafetyScore).toBe(55);
+    expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'SOON').minSafetyScore).toBe(55);
+  });
+});

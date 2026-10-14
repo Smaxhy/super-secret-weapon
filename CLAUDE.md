@@ -540,6 +540,10 @@ smart money → learning engine → ML → social). See README.md.
     its 3 best / newest 30% / never-up vs gave-back losers → profitable (30+ trades, avg−SE>0, positive without top 3
     and recently) / losing (avg+SE<0) / unproven; `scoreInversions` flags a higher score band doing worse. Shown in
     Performance → Mistakes ("Does each strategy deserve to run?") + autopsy findings. Tests: tests/honest-learning.test.ts.
+- **v10.20 (Oct 14): 0 buy signals** (owner: 2,618 checked, 0 signals; top skips holders / curve / "MIGRATION: safety < 55"
+  237 / "CURVE_SNIPE: no X link" 87 — the owner had switched ON Controls → "Only coins with an X link", `entry.requireTwitter`,
+  default off). `focus.migrated.minSafetyScore` 40 (`strategyMinimums().minSafetyScore`, editable "Min safety score
+  (migrated coins)"): soft insider flags stack under 55 on any busy graduated coin; hard fails + rug / bundle guard unchanged.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

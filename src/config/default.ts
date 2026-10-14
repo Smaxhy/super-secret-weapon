@@ -374,6 +374,13 @@ export const DEFAULT_CONFIG = {
        * first 5 min (mechanical, front-run by bots) and liquidity drains ~57% from minute 5 to 30.
        */
       noEntryFirstSec: 330,
+      /**
+       * v10.20 (owner: "0 buy signals"; "MIGRATION: safety < 55" was the top migrated skip): a coin that graduated with
+       * real trading collects soft insider flags (tokens moved by transfer, sells in the dev's slot, same-size bursts,
+       * dev's launch buy) just by being busy — they stack under 55. Its own minimum: 40. Hard fails (mint / freeze
+       * authority, bad extensions, serial rugger, hidden dev over the limit) still block; rug / bundle guard still run.
+       */
+      minSafetyScore: 40,
       // v9.7 (owner: "trade A LOT more on migrated coins with ≥$2k liquidity, ≥$25k MC, ≥9 SOL fees"): those rules
       // are the filter, so the score bar is 15 lower for migrated coins (safety / rug / staircase / vamp still apply).
       scoreThresholdDelta: -15,
