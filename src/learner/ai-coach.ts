@@ -13,7 +13,7 @@
  * prefer: ≥5 pts better and positive), and is retired when it stops working. Live avoid rules refuse
  * the buy (1 in 5 still goes through small so the evidence keeps coming); live prefer rules lower the bar.
  *
- * Cost control: ANTHROPIC_API_KEY only in the VPS .env; AI_DAILY_BUDGET_USD (default 2) hard daily cap,
+ * Cost control: ANTHROPIC_API_KEY only in the VPS .env; AI_DAILY_BUDGET_USD (default 0.5) hard daily cap,
  * counted from each response's real token usage; no call without new trades to read.
  */
 import Anthropic from '@anthropic-ai/sdk';
@@ -295,10 +295,10 @@ export class AiCoach {
   }
 
   get model(): string {
-    // Owner: Haiku to keep costs down (AI_MODEL in .env overrides).
-    return process.env.AI_MODEL?.trim() || 'claude-haiku-5-5';
+    // Owner (Oct 14): Sonnet 5.5 for every review — better judgment; the daily budget caps the spend (AI_MODEL in .env overrides).
+    return process.env.AI_MODEL?.trim() || 'claude-sonnet-5-5';
   }
-  /** Once a day a deeper review on a stronger model (owner: Haiku hourly + Sonnet daily). */
+  /** Once a day a deeper review (twice the trades, effort high) — same Sonnet by default. */
   get deepModel(): string {
     return process.env.AI_DEEP_MODEL?.trim() || 'claude-sonnet-5-5';
   }

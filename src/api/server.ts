@@ -105,7 +105,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       if (text.length < 3) return reply.code(400).send({ error: 'Write a tip first' });
       if (!deps.aiCoach) return reply.code(503).send({ error: 'AI coach not running' });
       const { tip, review } = await deps.aiCoach.addTip(text);
-      // Wait a little for the answer (a Haiku review usually takes 10–40 s); the page keeps polling after that.
+      // Wait a little for the answer (a review usually takes 10–60 s); the page keeps polling after that.
       const r = await Promise.race([review, new Promise<null>((res) => setTimeout(() => res(null), 45_000))]);
       return { ok: true, tip, review: r ?? { ran: false, why: 'still thinking — the answer shows up here in a minute' } };
     });

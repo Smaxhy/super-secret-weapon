@@ -720,7 +720,7 @@ export const DEFAULT_CONFIG = {
 
   /**
    * AI coach (src/learner/ai-coach.ts; owner: "learn from the behaviours it sees, not only statistics").
-   * Needs ANTHROPIC_API_KEY in the VPS .env (optional AI_MODEL, AI_DAILY_BUDGET_USD — default $2/day).
+   * Needs ANTHROPIC_API_KEY in the VPS .env (optional AI_MODEL — default claude-sonnet-5-5 —, AI_DAILY_BUDGET_USD — default $0.5/day).
    * Every `everyMin` with ≥ minNewTrades new closed trades, Claude reads the last `tradesPerReview` trades
    * and proposes insights + rules; a rule goes live only after ≥ minForward new trades prove it
    * (≥ edgePct points better/worse than the rest). Live avoid rules let 1 in probeEvery through small.
