@@ -417,6 +417,18 @@ export const DEFAULT_CONFIG = {
       onlyAfterProfit: true as boolean,
       maxReentries: 1,
       cooldownSec: 120,
+      /**
+       * v10.22 (owner: "already traded this token" refused the scanner's re-signals on coins it made money on): a SOON /
+       * migrated coin we closed in PROFIT may be bought once more when the scanner flags it again, ≥ profitCooldownMin later.
+       */
+      reentryOnRescan: true as boolean,
+      profitCooldownMin: 30,
+      /**
+       * v10.22 (owner: "rebuy if it looks good for a rebound"): after a LOSS (never a rug) the coin is watched for a rebound
+       * (pullback + bounce with buyers in control, swingSignal) and bought once more ≥ cooldownMin later — only as a
+       * minimum-size learning trade, so the data shows whether loss rebounds pay before they get real size.
+       */
+      reboundAfterLoss: { enabled: true as boolean, cooldownMin: 60 },
       watchMinutes: 120,
       minPullbackPct: 15,
       maxPullbackPct: 45,

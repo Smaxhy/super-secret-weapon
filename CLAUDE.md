@@ -555,6 +555,13 @@ smart money → learning engine → ML → social). See README.md.
   `entry.confirm` {maxDropPct 4, maxPumpPct 15, minBuyRatio 1.1} (price must hold); `trading.quietHours` {0–4 UTC}
   (trader `inQuietHours`, refusals → shadow trades); `exit.byStrategy.SOON / MIGRATION_MOMENTUM.takeProfitTiers` 30% at
   1.2x, 30% at 1.4x, 15% at 5x. All editable (Controls → Rules). Then FREEZE 5–7 days and judge. tests/focus-cut.test.ts.
+- **v10.22 (Oct 14): re-buys** (owner: banner "already traded this token" on migrated re-signals; "rebuy if it looks good
+  for a rebound"). `trader.reentryVerdict` (pure; SOON / MIGRATION_MOMENTUM only, SWING keeps swingReentryReason, others
+  never): profit → once more (`focus.swing.maxReentries` 1) when the scanner re-signals it ≥ `profitCooldownMin` 30 later
+  (`reentryOnRescan`) or on a swing-watcher setup ≥ cooldownSec; loss → only a swing-watcher rebound setup (swingSignal)
+  ≥ `reboundAfterLoss.cooldownMin` 60 later, as a minimum-size learning trade (probe path, entryContext.explore); rug /
+  open position → never. Swing watcher now also watches losing exits (cool-down 60 min) when reboundAfterLoss is on.
+  Editable (Migrated coins). tests/reentry.test.ts.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

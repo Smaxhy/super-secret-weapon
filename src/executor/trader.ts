@@ -70,6 +70,37 @@ export function inQuietHours(hourUtc: number, fromUtc: number, toUtc: number): b
   return fromUtc < toUtc ? hourUtc >= fromUtc && hourUtc < toUtc : hourUtc >= fromUtc || hourUtc < toUtc;
 }
 
+/**
+ * Pure: may we buy a coin we traded before (SOON / migrated coins; SWING has its own rules)? Profit → once more after
+ * `profitCooldownMin` (or `cooldownSec` on a swing-watcher rebound); loss → only a rebound setup (swing watcher) after
+ * `reboundAfterLoss.cooldownMin`, as a learning trade; a rug or an open position → never.
+ */
+export function reentryVerdict(
+  before: ReadonlyArray<{ status: string; closedAtMs: number | null; exitReason: string | null; pnlSol: number }>,
+  now: number,
+  req: { strategy: string; swingSignal: boolean },
+  sw: { enabled: boolean; onlyAfterProfit?: boolean; maxReentries: number; cooldownSec: number; reentryOnRescan?: boolean; profitCooldownMin?: number; reboundAfterLoss?: { enabled: boolean; cooldownMin: number } },
+): { refuse: string | null; learning: boolean } {
+  const no = (why: string) => ({ refuse: why, learning: false });
+  const curveOrMigrated = req.strategy === 'SOON' || req.strategy === 'MIGRATION_MOMENTUM';
+  if (!sw.enabled || !curveOrMigrated || (!req.swingSignal && !sw.reentryOnRescan)) return no('already traded this token');
+  if (before.some((p) => p.status !== 'CLOSED')) return no('still holding this token');
+  if (before.some((p) => p.exitReason === 'RUG_DETECTED')) return no('rugged before — no re-entry');
+  if (before.length > sw.maxReentries) return no(`re-entries used up (${sw.maxReentries})`);
+  const last = Math.max(...before.map((p) => p.closedAtMs ?? 0));
+  const lost = before.some((p) => p.pnlSol <= 0);
+  if (lost && (sw.onlyAfterProfit ?? true)) {
+    // Re-buying a coin that already beat us was the bot's worst habit — only a real rebound, small, as a test.
+    const rb = sw.reboundAfterLoss;
+    if (!rb?.enabled || !req.swingSignal) return no('lost on this coin before — only a rebound setup re-buys it');
+    if (now - last < rb.cooldownMin * 60_000) return no(`lost on this coin ${Math.round((now - last) / 60_000)} min ago — rebound re-buy after ${rb.cooldownMin} min`);
+    return { refuse: null, learning: true };
+  }
+  const wait = req.swingSignal ? sw.cooldownSec * 1000 : (sw.profitCooldownMin ?? 30) * 60_000;
+  if (now - last < wait) return no(req.swingSignal ? 'swing cooldown' : `made money on it ${Math.round((now - last) / 60_000)} min ago — re-buy after ${sw.profitCooldownMin ?? 30} min`);
+  return { refuse: null, learning: false };
+}
+
 export function isHighConviction(hc: { enabled: boolean; minScore: number; minMarketCapUsd?: number } | undefined, req: Pick<EntryRequest, 'score' | 'explore' | 'sizeMultiplier'>, probe: boolean, allocFactor: number, mcUsd: number | null): boolean {
   if (!hc?.enabled || req.score < hc.minScore || req.explore || probe || (req.sizeMultiplier ?? 1) < 1 || allocFactor < 1) return false;
   // Low-MC coins never get the big size (unknown MC → no).
@@ -149,6 +180,8 @@ export class Trader {
       if (lastHour.filter(isExplore).length >= ex.maxPerHour) return refuse(`max ${ex.maxPerHour} learning trades per hour`);
     }
     const before = await prisma.position.findMany({ where: { mint: req.mint, mode }, select: { status: true, closedAt: true, exitReason: true, realizedPnlSol: true } });
+    // A rebound re-buy after a loss is a minimum-size learning trade.
+    let rebound = false;
     if (before.length && req.strategy === 'SWING') {
       // Swing trading a coin that keeps bouncing means trading it again and again — with cooldowns.
       const why = swingReentryReason(
@@ -158,22 +191,20 @@ export class Trader {
       );
       if (why) return refuse(why);
     } else if (before.length) {
-      const sw = cfg.focus.swing;
-      if (!req.swing || !sw.enabled) return refuse('already traded this token');
-      if (before.some((p) => p.status !== 'CLOSED')) return refuse('still holding this token');
-      if (before.some((p) => p.exitReason === 'RUG_DETECTED')) return refuse('rugged before — no swing re-entry');
-      // Re-buying a coin that already beat us was the bot's worst habit (same coin, 4 stop losses in a row).
-      // Only a coin we made money on gets another go.
-      if ((sw.onlyAfterProfit ?? true) && before.some((p) => p.realizedPnlSol <= 0)) return refuse('lost on this coin before — no re-entry');
-      if (before.length > sw.maxReentries) return refuse(`swing re-entries used up (${sw.maxReentries})`);
-      const last = Math.max(...before.map((p) => p.closedAt?.getTime() ?? 0));
-      if (Date.now() - last < sw.cooldownSec * 1000) return refuse('swing cooldown');
+      const r = reentryVerdict(
+        before.map((p) => ({ status: p.status, closedAtMs: p.closedAt?.getTime() ?? null, exitReason: p.exitReason, pnlSol: p.realizedPnlSol })),
+        Date.now(),
+        { strategy: req.strategy, swingSignal: req.swing === true },
+        cfg.focus.swing,
+      );
+      if (r.refuse) return refuse(r.refuse);
+      rebound = r.learning;
     }
 
     // Kinds of trades the loss autopsy found losing again and again → no (probe = small learning trade).
     const band = this.bandCheck?.(req) ?? null;
     if (band?.block) return refuse(band.block);
-    const probe = band?.probe === true;
+    const probe = band?.probe === true || rebound;
 
     const strategyOpen = open.filter((p) => p.strategy === req.strategy).reduce((s, p) => s + (p.sizeSol * p.remainingPct) / 100, 0);
     // The allocator shifts budget toward strategies that are proven to make money (×0.5–1.6, 1 until it knows).

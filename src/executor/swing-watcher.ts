@@ -53,11 +53,14 @@ export class SwingWatcher {
     if (!sw.enabled) return;
     const p = await closedPosition(mint);
     if (!p || (p.strategy !== 'SOON' && p.strategy !== 'MIGRATION_MOMENTUM') || p.exitReason === 'RUG_DETECTED' || p.exitReason === 'KILL_SWITCH') return;
-    // A coin that beat us isn't worth watching for a re-entry (the trader refuses those anyway).
-    if ((sw.onlyAfterProfit ?? true) && p.realizedPnlSol <= 0) return;
-    await this.redis.zadd(K_WATCH, String(now + sw.watchMinutes * 60_000), mint);
-    await this.redis.set(coolKey(mint), '1', 'EX', Math.max(30, sw.cooldownSec));
-    log.info({ mint }, `🔁 watching for a swing re-entry (${sw.watchMinutes} min)`);
+    // A coin that beat us is only watched for a real rebound (a small learning re-buy, after a longer cool-down).
+    const lost = p.realizedPnlSol <= 0;
+    const rb = sw.reboundAfterLoss;
+    if ((sw.onlyAfterProfit ?? true) && lost && !rb?.enabled) return;
+    const coolSec = lost && rb?.enabled ? rb.cooldownMin * 60 : sw.cooldownSec;
+    await this.redis.zadd(K_WATCH, String(now + Math.max(sw.watchMinutes, lost && rb?.enabled ? rb.cooldownMin + 60 : 0) * 60_000), mint);
+    await this.redis.set(coolKey(mint), '1', 'EX', Math.max(30, coolSec));
+    log.info({ mint, lost }, lost ? `🔁 watching for a rebound after the loss (small learning re-buy, from ${rb!.cooldownMin} min)` : `🔁 watching for a swing re-entry (${sw.watchMinutes} min)`);
   }
 
   private async tick(now = Date.now()): Promise<void> {
