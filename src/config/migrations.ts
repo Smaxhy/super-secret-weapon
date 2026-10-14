@@ -275,6 +275,27 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['learning', ['minHoldoutPerClass'], 20],
     ],
   },
+  {
+    version: 19,
+    note: 'v10.21 (owner\'s CSV, 515 trades: RUNNER / SWING / new pairs clearly losing, 70% of losses died in the first 60 s, 00–04 UTC worst, few trades reach 1.4x): those 3 strategies off, budget to MIGRATION 45% / SOON 35% / KOL follow 20%, wait 25 s and the price must hold, no new buys 00–04 UTC, SOON + migrated sell 30% at 1.2x',
+    set: [
+      ['trading', ['enabledStrategies', 'RUNNER'], false],
+      ['trading', ['enabledStrategies', 'SWING'], false],
+      ['trading', ['enabledStrategies', 'CURVE_SNIPE'], false],
+      ['trading', ['allocation', 'MIGRATION_MOMENTUM'], 0.45],
+      ['trading', ['allocation', 'SOON'], 0.35],
+      ['trading', ['allocation', 'SMART_MONEY_COPY'], 0.2],
+      ['trading', ['allocation', 'RUNNER'], 0],
+      ['trading', ['allocation', 'SWING'], 0],
+      ['trading', ['allocation', 'CURVE_SNIPE'], 0],
+      ['trading', ['maxOpenByStrategy', 'SOON'], 4],
+      ['trading', ['quietHours'], { enabled: true, fromUtc: 0, toUtc: 4 }],
+      ['entry', ['confirmDelaySec'], 25],
+      ['entry', ['confirm'], { maxDropPct: 4, maxPumpPct: 15, minBuyRatio: 1.1 }],
+      ['exit', ['byStrategy', 'SOON', 'takeProfitTiers'], [{ multiple: 1.2, sellPct: 30 }, { multiple: 1.4, sellPct: 30 }, { multiple: 5, sellPct: 15 }]],
+      ['exit', ['byStrategy', 'MIGRATION_MOMENTUM', 'takeProfitTiers'], [{ multiple: 1.2, sellPct: 30 }, { multiple: 1.4, sellPct: 30 }, { multiple: 5, sellPct: 15 }]],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

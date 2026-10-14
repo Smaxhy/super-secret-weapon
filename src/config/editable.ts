@@ -83,6 +83,12 @@ export const EDITABLE: EditableSetting[] = [
   // ---- Every coin ----
   S('Every coin (safety & holders)', 'entry.minCombinedScore', 'Base score bar', 0, 100, 'pts', 1),
   S('Every coin (safety & holders)', 'entry.minSafetyScore', 'Min safety score', 0, 100, 'pts', 1),
+  S('Every coin (safety & holders)', 'entry.confirmDelaySec', 'Wait before buying (price must hold)', 0, 120, 's', 5),
+  S('Every coin (safety & holders)', 'entry.confirm.maxDropPct', 'While waiting: max price drop', 0, 50, '%', 1),
+  S('Every coin (safety & holders)', 'entry.confirm.maxPumpPct', 'While waiting: max price rise (no chasing)', 0, 200, '%', 1),
+  S('Every coin (safety & holders)', 'trading.quietHours.enabled', 'Night pause (no new buys) on (1) / off (0)', 0, 1, undefined, 1),
+  S('Every coin (safety & holders)', 'trading.quietHours.fromUtc', 'Night pause from (UTC hour)', 0, 23, 'h', 1),
+  S('Every coin (safety & holders)', 'trading.quietHours.toUtc', 'Night pause until (UTC hour)', 0, 23, 'h', 1),
   S('Every coin (safety & holders)', 'entry.maxTop10Pct', 'Max top-10 holders', 5, 100, '%', 1),
   S('Every coin (safety & holders)', 'entry.maxSingleHolderPct', 'Max one wallet holds', 1, 100, '%', 1),
   S('Every coin (safety & holders)', 'entry.maxDevHoldingPct', 'Max dev holds', 0, 100, '%', 1),

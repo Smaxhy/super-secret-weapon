@@ -64,6 +64,12 @@ export interface EntryResult {
 }
 
 /** Owner's big-trade rule: score ≥ minScore, not a learning / probe / risky half-size trade, strategy not losing. */
+/** Pure: is this UTC hour inside the quiet window [from, to) (wraps past midnight when from > to)? */
+export function inQuietHours(hourUtc: number, fromUtc: number, toUtc: number): boolean {
+  if (fromUtc === toUtc) return false;
+  return fromUtc < toUtc ? hourUtc >= fromUtc && hourUtc < toUtc : hourUtc >= fromUtc || hourUtc < toUtc;
+}
+
 export function isHighConviction(hc: { enabled: boolean; minScore: number; minMarketCapUsd?: number } | undefined, req: Pick<EntryRequest, 'score' | 'explore' | 'sizeMultiplier'>, probe: boolean, allocFactor: number, mcUsd: number | null): boolean {
   if (!hc?.enabled || req.score < hc.minScore || req.explore || probe || (req.sizeMultiplier ?? 1) < 1 || allocFactor < 1) return false;
   // Low-MC coins never get the big size (unknown MC → no).
@@ -104,6 +110,8 @@ export class Trader {
     if (cfg.state.killSwitch) return refuse('kill switch active');
     if (cfg.state.paused) return refuse('bot paused');
     if (!cfg.trading.enabledStrategies[req.strategy]) return refuse(`strategy ${req.strategy} disabled`);
+    const qh = cfg.trading.quietHours ?? DEFAULT_CONFIG.trading.quietHours;
+    if (qh?.enabled && inQuietHours(new Date().getUTCHours(), qh.fromUtc, qh.toUtc)) return refuse(`quiet hours (${String(qh.fromUtc).padStart(2, '0')}–${String(qh.toUtc).padStart(2, '0')} UTC) — no new buys`);
 
     const open = await prisma.position.findMany({ where: { mode, status: { in: ['OPEN', 'CLOSING'] } } });
     const balance = await this.executor.getBalanceSol();

@@ -547,6 +547,14 @@ smart money → learning engine → ML → social). See README.md.
   X links (owner: "often it's an X page / group / account"): `social-analyzer.xLinkOf` finds the X link in the X field, the
   website / Telegram field or the description (+ bare "@handle"); account, post (incl. x.com/i/status, /i/web/status) or
   community all count (`hasXLink` → "no X link" rule, socials score, reuse, X check). tests/x-links.test.ts.
+- **v10.21 (Oct 14): focus cut from the owner's CSV** (515 trades Oct 9–14, −10.3 SOL; avg/trade −10.8% Oct 10 → −4.1% since
+  the 5-min hold; 228 trades died in <60 s = −7.3 SOL, 70% of losses, most never up 2%; 69% of losers never went 1.05x; since
+  Oct 12 SOON −1.8% / MIGRATION −2.9% / KOL −3.5% vs RUNNER −10.7% / SWING −10% / CURVE_SNIPE −12%; 00–04 UTC 9% winners;
+  only 11% reached 1.4x, 26% reached 1.2x; score doesn't predict). Owner approved all 4 → migration v19: RUNNER / SWING /
+  CURVE_SNIPE OFF, allocation MIGRATION 0.45 / SOON 0.35 / KOL 0.2, SOON max 4 open; `entry.confirmDelaySec` 25 +
+  `entry.confirm` {maxDropPct 4, maxPumpPct 15, minBuyRatio 1.1} (price must hold); `trading.quietHours` {0–4 UTC}
+  (trader `inQuietHours`, refusals → shadow trades); `exit.byStrategy.SOON / MIGRATION_MOMENTUM.takeProfitTiers` 30% at
+  1.2x, 30% at 1.4x, 15% at 5x. All editable (Controls → Rules). Then FREEZE 5–7 days and judge. tests/focus-cut.test.ts.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

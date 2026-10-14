@@ -49,28 +49,35 @@ export const DEFAULT_CONFIG = {
      * "New pairs"); late-curve / migration plays get less; copying wallets lost under every exit
      * rule in public tests (2 s late = their exit liquidity) → off.
      */
+    /**
+     * v10.21 (owner's CSV, 515 trades Oct 9–14: since the 5-min hold SOON −1.8% / MIGRATION −2.9% / KOL follow −3.5% per
+     * trade vs RUNNER −10.7%, SWING −10%, new pairs −12%): the budget goes to the three that are close to break-even.
+     */
     allocation: {
-      CURVE_SNIPE: 0.2,
-      // v9.2 / v9.7: more on migrated coins with real volume (migrated-scanner).
-      MIGRATION_MOMENTUM: 0.3,
-      SOON: 0.05,
-      // v9.4 (owner: "stop skipping coins that then go 2–4×"): curve coins with proven organic momentum.
-      RUNNER: 0.2,
+      CURVE_SNIPE: 0,
+      MIGRATION_MOMENTUM: 0.45,
+      SOON: 0.35,
+      RUNNER: 0,
       // v8.9: KOL follow (kol.follow) — coins several KOLs / smart wallets bought.
-      SMART_MONEY_COPY: 0.1,
-      // v7 (owner): swing trade bigger coins that keep bouncing back (src/evaluator/swing.ts).
-      SWING: 0.15,
+      SMART_MONEY_COPY: 0.2,
+      SWING: 0,
     } satisfies Record<StrategyName, number>,
+    /** v10.21: RUNNER, SWING and new pairs (CURVE_SNIPE) off — they lost clearly (Controls → Rules can switch them back on). */
     enabledStrategies: {
       MIGRATION_MOMENTUM: true,
       SOON: true,
       SMART_MONEY_COPY: true,
-      CURVE_SNIPE: true,
-      SWING: true,
-      RUNNER: true,
+      CURVE_SNIPE: false,
+      SWING: false,
+      RUNNER: false,
     } satisfies Record<StrategyName, boolean>,
-    /** At most this many open positions per strategy (fresh pairs: 4, swings on bigger coins: 3). */
-    maxOpenByStrategy: { CURVE_SNIPE: 4, SOON: 2, MIGRATION_MOMENTUM: 6, SMART_MONEY_COPY: 3, SWING: 3, RUNNER: 4 } as Partial<Record<StrategyName, number>>,
+    /**
+     * v10.21: no NEW buys between these UTC hours (00–04 UTC: 97 trades, 9% winners, −2.8 SOL). Open trades are still
+     * managed; refused signals still become shadow trades, so the learners keep seeing those hours.
+     */
+    quietHours: { enabled: true as boolean, fromUtc: 0, toUtc: 4 },
+    /** At most this many open positions per strategy. */
+    maxOpenByStrategy: { CURVE_SNIPE: 4, SOON: 4, MIGRATION_MOMENTUM: 6, SMART_MONEY_COPY: 3, SWING: 3, RUNNER: 4 } as Partial<Record<StrategyName, number>>,
     /**
      * Strategy cool-off: once a strategy has `minTrades` closed trades among its last `lastN` and they
      * average worse than `maxAvgPnlPct` per trade, it takes no new entries for `pauseMinutes`
@@ -169,8 +176,10 @@ export const DEFAULT_CONFIG = {
      * executed if it still passes AND the price didn't dump > maxDropPct, didn't run
      * away > maxPumpPct (no chasing), and buyers are still at least even with sellers.
      */
-    confirmDelaySec: 12,
-    confirm: { maxDropPct: 8, maxPumpPct: 30, minBuyRatio: 1 },
+    // v10.21 (owner's CSV: 228 of 515 trades died within 60 s, −7.3 SOL = 70% of all losses, most never went up 2% —
+    // bought the top of a spike): wait 25 s and the price must HOLD (≤4% lower, ≤15% higher, buyers ≥1.1× sellers).
+    confirmDelaySec: 25,
+    confirm: { maxDropPct: 4, maxPumpPct: 15, minBuyRatio: 1.1 },
     /**
      * Fake volume / bundles / chasing (from the live trade log):
      *  - fake volume = wallets trading back and forth (wash trading, volume bots)
@@ -1089,6 +1098,10 @@ export const DEFAULT_CONFIG = {
      * stop, no follow-through after an hour / no new high for 2 hours → out.
      */
     byStrategy: {
+      // v10.21 (owner's CSV: only ~1 in 9 trades reached the 1.4x first take-profit, 1 in 4 reached 1.2x; selling half at
+      // 1.2x would have added ~2 SOL): SOON + migrated coins bank 30% at 1.2x, 30% at 1.4x, 15% at 5x; trail as before.
+      SOON: { takeProfitTiers: [{ multiple: 1.2, sellPct: 30 }, { multiple: 1.4, sellPct: 30 }, { multiple: 5, sellPct: 15 }] },
+      MIGRATION_MOMENTUM: { takeProfitTiers: [{ multiple: 1.2, sellPct: 30 }, { multiple: 1.4, sellPct: 30 }, { multiple: 5, sellPct: 15 }] },
       // v8 (owner: "10% is good profit — be faster and stricter with swing trading, sell on spikes"):
       // half out at +10%, a quarter at +20%, 15% at +50%; the rest on a tight trail with a break-even
       // floor from 1.1x; a spike of +8% within 2 minutes sells half of what's left at once.
