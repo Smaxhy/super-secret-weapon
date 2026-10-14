@@ -27,7 +27,7 @@ describe('weight tuning', () => {
     expect(r.evidence).toBe(1);
   });
   it('less evidence → smaller step', () => {
-    const small = adjustWeights({ ...DEFAULT_WEIGHTS }, [...many(12, () => s(0.6, true)), ...many(100, () => s(0.5, false))])!;
+    const small = adjustWeights({ ...DEFAULT_WEIGHTS }, [...many(12, () => s(0.6, true)), ...many(100, () => s(0.5, false))], undefined, { minSamples: 100, minPerClass: 10 })!;
     const big = adjustWeights({ ...DEFAULT_WEIGHTS }, [...many(300, () => s(0.6, true)), ...many(300, () => s(0.5, false))])!;
     expect(small.evidence).toBeLessThan(big.evidence);
     expect(small.weights.holders - DEFAULT_WEIGHTS.holders).toBeLessThan(big.weights.holders - DEFAULT_WEIGHTS.holders);

@@ -71,6 +71,7 @@ const learningCfg = () => getConfig().learning ?? DEFAULT_CONFIG.learning;
 interface Row {
   mint: string;
   decision: string;
+  strategy: string | null;
   createdAt: Date;
   outcomeMax: number | null;
   outcomeMin: number | null;
@@ -98,14 +99,14 @@ export async function loadLabelled(r: Redis = defaultRedis, withFeatures = true)
   const since = resetAt && resetAt > windowStart ? resetAt : windowStart;
   const rows = withFeatures
     ? await prisma.$queryRaw<Row[]>`
-        SELECT mint, decision::text AS decision, "createdAt", "outcomeMax", "outcomeMin",
+        SELECT mint, decision::text AS decision, strategy::text AS strategy, "createdAt", "outcomeMax", "outcomeMin",
                features->'features' AS f, features->'outcome' AS o, features->'tradeResult' AS t
         FROM "Evaluation"
         WHERE "outcomeLabeledAt" IS NOT NULL AND "createdAt" >= ${since}
           AND (strategy IS NULL OR strategy::text <> 'SWING')
         ORDER BY "createdAt" DESC LIMIT 20000`
     : await prisma.$queryRaw<Row[]>`
-        SELECT mint, decision::text AS decision, "createdAt", "outcomeMax", "outcomeMin",
+        SELECT mint, decision::text AS decision, strategy::text AS strategy, "createdAt", "outcomeMax", "outcomeMin",
                NULL::jsonb AS f, features->'outcome' AS o, features->'tradeResult' AS t
         FROM "Evaluation"
         WHERE "outcomeLabeledAt" IS NOT NULL AND "createdAt" >= ${since}
@@ -133,6 +134,8 @@ export async function loadLabelled(r: Redis = defaultRedis, withFeatures = true)
       win: res.win,
       ownBuy: row.decision === 'BUY',
       ageHours: (now - new Date(row.createdAt).getTime()) / 3600_000,
+      strategy: row.strategy,
+      pnlPct: res.source === 'trade' && typeof row.t?.pnlPct === 'number' ? row.t.pnlPct : null,
     });
   }
   return out;
@@ -176,7 +179,15 @@ export async function runAdjustment(trigger: AdjustTrigger, r: Redis = defaultRe
       log.info(msg);
       return { ok: false, message: msg };
     }
-    const verdict = holdoutCheck(current, result.weights, holdout, l.minHoldoutPerClass);
+    // Strict: never on a thin holdout, a real AUC gain, no strategy made worse, and the trades it would have
+    // picked must earn at least as much after costs (otherwise the current weights stay).
+    const verdict = holdoutCheck(current, result.weights, holdout, l.minHoldoutPerClass, {
+      rejectWhenSkipped: true,
+      minAucGain: l.minAucGain ?? DEFAULT_CONFIG.learning.minAucGain,
+      strategyMinPerClass: l.strategyMinPerClass ?? DEFAULT_CONFIG.learning.strategyMinPerClass,
+      maxStrategyDrop: l.maxStrategyDrop ?? DEFAULT_CONFIG.learning.maxStrategyDrop,
+      minTradeSamples: l.minTradeHoldout ?? DEFAULT_CONFIG.learning.minTradeHoldout,
+    });
     const step: AdjustmentStep = {
       at: new Date().toISOString(),
       trigger,
@@ -197,7 +208,9 @@ export async function runAdjustment(trigger: AdjustTrigger, r: Redis = defaultRe
     const aucTxt = verdict.aucBefore !== null ? `AUC ${verdict.aucBefore.toFixed(3)} → ${verdict.aucAfter?.toFixed(3)}` : 'no holdout check';
 
     if (!verdict.accepted) {
-      step.message = `Rejected: new weights ranked the newest ${holdout.length} tokens worse (${aucTxt})`;
+      step.message = verdict.skipped
+        ? `Kept the current weights: not enough unseen data to test new ones (${verdict.skipped})`
+        : `Kept the current weights: ${verdict.why ?? `new weights ranked the newest ${holdout.length} tokens worse`} (${aucTxt})`;
       log.info(step.message);
       await pushStep(r, step);
       return { ok: false, message: step.message };

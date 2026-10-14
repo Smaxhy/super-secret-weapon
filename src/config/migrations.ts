@@ -265,6 +265,16 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['antiRug', ['rugGuard', 'bundle', 'comboMinWallets'], 4],
     ],
   },
+  {
+    version: 18,
+    note: 'v10.19 (review: "the learner changes weights on weak evidence"): weights only move with 300+ clean labels (40+ wins and losses), tested on the newest 300 it never trained on (20+ of each)',
+    set: [
+      ['learning', ['minSamples'], 300],
+      ['learning', ['minPerClass'], 40],
+      ['learning', ['holdoutSize'], 300],
+      ['learning', ['minHoldoutPerClass'], 20],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

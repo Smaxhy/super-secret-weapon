@@ -23,6 +23,7 @@ interface BrainData {
   allocation: Alloc[] | null;
   entryStyles: Style[];
   changes: Change[];
+  lossExits?: Array<{ kind: string; label: string; n: number; avgPnlPct: number; backAbovePct: number; diedPct: number; overshootPts: number | null; verdict: 'good' | 'false_alarm' | 'late' | 'mixed'; why: string }>;
   exitTimers?: Array<{ strategy: string; timer: string; n: number; ranPct: number; medianEndX: number; avgMaxAfterX: number; action: 'longer' | 'shorter' | 'keep'; why: string }>;
 }
 const TIMER: Record<string, string> = { timeStop: 'No follow-through', stall: 'Stalled', stale: 'Stale (no movement)', maxHold: 'Max hold' };
@@ -190,6 +191,23 @@ export function Brain() {
                     sub={`${v.n} exits · ${v.ranPct}% ran +25% after · typical coin ended ${v.medianEndX}x of the exit · best after avg ${v.avgMaxAfterX}x`}
                     value={<span className="text-xs">{v.action === 'longer' ? 'Waiting longer' : v.action === 'shorter' ? 'Selling sooner' : 'Keep'}</span>}
                     tone={v.action === 'longer' ? 'up' : v.action === 'shorter' ? 'down' : 'muted'}
+                  />
+                ))}
+              </Rows>
+            )}
+          </Card>
+          <Card title="Stop-loss & rug exits" subtitle="Every loss exit followed for 30 minutes: did the coin really die (good exit) or come back above our entry (false alarm)?">
+            {!data.lossExits?.length ? (
+              <p className="text-sm text-ink-2">Collecting: every stop-loss and rug exit is followed for 30 minutes after the sell.</p>
+            ) : (
+              <Rows>
+                {data.lossExits.map((v) => (
+                  <Row
+                    key={v.kind}
+                    label={<span className="font-medium text-ink">{v.label}</span>}
+                    sub={`${v.n} exits · avg ${v.avgPnlPct}% · ${v.backAbovePct}% came back above entry · ${v.diedPct}% kept collapsing${v.overshootPts !== null ? ` · ${v.overshootPts} pts past the stop` : ''}`}
+                    value={<span className="text-xs">{v.verdict === 'good' ? 'Saves money' : v.verdict === 'false_alarm' ? 'Too twitchy' : v.verdict === 'late' ? 'Too late' : 'Mixed'}</span>}
+                    tone={v.verdict === 'good' ? 'up' : v.verdict === 'mixed' ? 'muted' : 'down'}
                   />
                 ))}
               </Rows>

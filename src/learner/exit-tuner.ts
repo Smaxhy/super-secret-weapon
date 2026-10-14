@@ -19,7 +19,7 @@ import { prisma } from '../lib/prisma';
 import type { CrowdTrade } from '../scanner/crowd-tracker';
 
 const log = moduleLogger('exit-tuner');
-const K = { done: 'exitafter:done', res: 'exitafter:res', changed: (k: string) => `exitafter:chg:${k}` };
+const K = { done: 'exitafter:done', res: 'exitafter:res', loss: 'exitafter:loss', changed: (k: string) => `exitafter:chg:${k}` };
 
 export type ExitTimer = 'timeStop' | 'stall' | 'stale' | 'maxHold';
 /** The config map each timer reads (exit.<path>.<STRATEGY>). */
@@ -48,6 +48,8 @@ export interface ExitTunerConfig {
   minHoursBetween: number;
   maxFactor: number;
   minFactor: number;
+  /** Loss exits (stops + rug exits): judged with ≥ minExits; chart rug exits re-tuned when allowed. */
+  lossExits?: { enabled: boolean; minExits: number; falseAlarmPct: number; maxDiedPct: number; lateOvershootPts: number; tuneRugExits: boolean; step: number };
 }
 
 /** Pure: which timer closed the trade, from the sell's reason text. */
@@ -79,6 +81,118 @@ export function afterExit(trades: readonly CrowdTrade[], closedAtMs: number, exi
   if (n < 3) return null;
   const r2 = (x: number) => Math.round(x * 100) / 100;
   return { maxAfterX: r2(max / exitPriceSol), minAfterX: r2(min / exitPriceSol), endX: r2(end / exitPriceSol), trades: n };
+}
+
+/**
+ * Loss exits (review: "stop loss and rug detected are most of the losses — find out if it's a bad entry, a late
+ * rug exit, unrealistic paper fills or an exit that came too late"). Every STOP_LOSS / RUG_DETECTED exit is followed
+ * for the same 30 minutes: did the coin really die (a good exit), or come back above our entry (a false alarm /
+ * a stop that sold the bottom)? Stops also record how far past the stop the fill landed (overshoot = late exit or
+ * bad fill). The three rug-exit shapes that read the chart (cascade / one wallet / crash) are loosened a little on
+ * their own when they keep firing on coins that recover, and tightened when every one of them was a real rug.
+ */
+export type LossExitKind =
+  | 'stop_soft' | 'stop_hard' | 'stop_disaster' | 'stop_early'
+  | 'rug_cascade' | 'rug_solo' | 'rug_crash' | 'rug_holders' | 'rug_insiders' | 'rug_whale' | 'rug_dev' | 'rug_bundlers' | 'rug_top10' | 'rug_other';
+
+export const LOSS_KIND_LABEL: Record<LossExitKind, string> = {
+  stop_soft: 'stop loss', stop_hard: 'hard stop', stop_disaster: 'disaster stop (inside the 5-min hold)', stop_early: 'early risk exit',
+  rug_cascade: 'rug exit: sell cascade', rug_solo: 'rug exit: one wallet dumped', rug_crash: 'rug exit: crash', rug_holders: 'rug exit: top holders sold',
+  rug_insiders: 'rug exit: insiders dumped', rug_whale: 'rug exit: whale sell', rug_dev: 'rug exit: dev sold', rug_bundlers: 'rug exit: bundlers dumped',
+  rug_top10: 'rug exit: top-10 jump', rug_other: 'rug exit: other',
+};
+
+/** The config path of the chart-reading rug exits the tuner may adjust, with its allowed range. */
+export const RUG_TUNE: Partial<Record<LossExitKind, { path: string; min: number; max: number }>> = {
+  rug_cascade: { path: 'antiRug.rugGuard.cascade.dropPct', min: 15, max: 35 },
+  rug_solo: { path: 'antiRug.rugGuard.cascade.soloDropPct', min: 20, max: 40 },
+  rug_crash: { path: 'antiRug.rugGuard.cascade.crashDropPct', min: 25, max: 45 },
+};
+
+/** Pure: which kind of loss exit, from the exit reason + the sell's text. null = not a loss exit we follow. */
+export function lossExitKind(exitReason: string, text: string): { kind: LossExitKind; stopPct: number | null } | null {
+  const r = text.toLowerCase();
+  const num = (re: RegExp) => {
+    const m = r.match(re);
+    return m ? Number(m[1]) : null;
+  };
+  if (exitReason === 'STOP_LOSS') {
+    if (r.includes('disaster')) return { kind: 'stop_disaster', stopPct: num(/−(\d+(?:\.\d+)?)% disaster/) };
+    if (r.includes('hard limit')) return { kind: 'stop_hard', stopPct: num(/hard limit −(\d+(?:\.\d+)?)%/) };
+    if (r.includes('early exit')) return { kind: 'stop_early', stopPct: null };
+    return { kind: 'stop_soft', stopPct: num(/−(\d+(?:\.\d+)?)% stop/) };
+  }
+  if (exitReason !== 'RUG_DETECTED') return null;
+  const kind: LossExitKind = r.includes('sell cascade') ? 'rug_cascade'
+    : r.includes('one wallet dumped') ? 'rug_solo'
+    : r.startsWith('crash') ? 'rug_crash'
+    : r.includes('top holder') ? 'rug_holders'
+    : r.includes('insider') ? 'rug_insiders'
+    : r.includes('whale') ? 'rug_whale'
+    : r.includes('dev sold') || r.includes('dev ') ? 'rug_dev'
+    : r.includes('bundlers') ? 'rug_bundlers'
+    : r.includes('top-10') ? 'rug_top10'
+    : 'rug_other';
+  return { kind, stopPct: null };
+}
+
+export interface LossExitAfter {
+  id: string;
+  strategy: string;
+  kind: LossExitKind;
+  closedAtMs: number;
+  /** Exit price ÷ entry price. */
+  exitX: number;
+  pnlPct: number;
+  stopPct: number | null;
+  maxAfterX: number;
+  minAfterX: number;
+  endX: number;
+  trades: number;
+}
+
+export interface LossVerdict {
+  kind: LossExitKind;
+  label: string;
+  n: number;
+  avgPnlPct: number;
+  /** % that came back above our entry (+5%) within 30 min — holding would have made money. */
+  backAbovePct: number;
+  /** % that kept collapsing (ended ≤ 0.6× our exit) — the exit saved money. */
+  diedPct: number;
+  /** Stops: how far past the stop the realised loss landed, on average (pts). */
+  overshootPts: number | null;
+  verdict: 'good' | 'false_alarm' | 'late' | 'mixed';
+  why: string;
+}
+
+/** Pure: per kind of loss exit, was it right? */
+export function judgeLossExits(rows: readonly LossExitAfter[], c: { minExits: number; falseAlarmPct: number; maxDiedPct: number; lateOvershootPts: number }): LossVerdict[] {
+  const groups = new Map<LossExitKind, LossExitAfter[]>();
+  for (const r of rows) groups.set(r.kind, [...(groups.get(r.kind) ?? []), r]);
+  const out: LossVerdict[] = [];
+  for (const [kind, g] of groups) {
+    const pct = (k: number) => Math.round((k / g.length) * 100);
+    const backAbovePct = pct(g.filter((r) => r.maxAfterX * r.exitX >= 1.05).length);
+    const diedPct = pct(g.filter((r) => r.endX <= 0.6).length);
+    const avgPnlPct = Math.round((g.reduce((t, r) => t + r.pnlPct, 0) / g.length) * 10) / 10;
+    const withStop = g.filter((r) => r.stopPct !== null);
+    const overshootPts = withStop.length ? Math.round((withStop.reduce((t, r) => t + (-r.pnlPct - r.stopPct!), 0) / withStop.length) * 10) / 10 : null;
+    let verdict: LossVerdict['verdict'] = 'mixed';
+    let why = `${g.length} exits: ${backAbovePct}% came back above our entry within 30 min, ${diedPct}% kept collapsing`;
+    if (g.length >= c.minExits && backAbovePct >= c.falseAlarmPct && diedPct <= c.maxDiedPct) {
+      verdict = 'false_alarm';
+      why = `${backAbovePct}% of ${g.length} exits came back above our entry within 30 min and only ${diedPct}% really died — this exit fires too easily`;
+    } else if (g.length >= c.minExits && overshootPts !== null && overshootPts >= c.lateOvershootPts) {
+      verdict = 'late';
+      why = `losses landed ${overshootPts} pts past the stop on average — the exit (or the fill) comes too late`;
+    } else if (g.length >= c.minExits && diedPct >= 100 - c.falseAlarmPct && backAbovePct <= 10) {
+      verdict = 'good';
+      why = `${diedPct}% of ${g.length} exits kept collapsing after we sold — this exit saves money`;
+    }
+    out.push({ kind, label: LOSS_KIND_LABEL[kind], n: g.length, avgPnlPct, backAbovePct, diedPct, overshootPts, verdict, why });
+  }
+  return out.sort((a, b) => b.n - a.n);
 }
 
 export interface TimerVerdict {
@@ -120,7 +234,7 @@ export function judgeTimers(rows: readonly ExitAfter[], c: Pick<ExitTunerConfig,
 
 export class ExitTuner {
   private timer: NodeJS.Timeout | null = null;
-  private last: { at: string; verdicts: TimerVerdict[] } | null = null;
+  private last: { at: string; verdicts: TimerVerdict[]; lossExits: LossVerdict[] } | null = null;
 
   constructor(
     private readonly redis: Redis,
@@ -138,8 +252,68 @@ export class ExitTuner {
     if (this.timer) clearInterval(this.timer);
   }
 
-  snapshot(): { at: string; verdicts: TimerVerdict[] } | null {
+  snapshot(): { at: string; verdicts: TimerVerdict[]; lossExits: LossVerdict[] } | null {
     return this.last;
+  }
+
+  async lossResults(): Promise<LossExitAfter[]> {
+    return (await this.redis.lrange(K.loss, 0, 2999)).flatMap((x) => {
+      try {
+        return [JSON.parse(x) as LossExitAfter];
+      } catch {
+        return [];
+      }
+    });
+  }
+
+  /** Follow stop-loss / rug exits closed `watchMin`…`watchMin + 25` minutes ago, judge them, re-tune chart rug exits. */
+  private async lossExits(now: number, c: ExitTunerConfig): Promise<LossVerdict[]> {
+    const lc = c.lossExits ?? DEFAULT_CONFIG.exitTuner.lossExits;
+    if (!lc.enabled) return [];
+    const watchMs = c.watchMin * 60_000;
+    const ps = await prisma.position.findMany({
+      where: { mode: 'PAPER', status: 'CLOSED', exitReason: { in: ['STOP_LOSS', 'RUG_DETECTED'] }, closedAt: { gte: new Date(now - watchMs - 25 * 60_000), lte: new Date(now - watchMs) } },
+      select: { id: true, mint: true, strategy: true, exitReason: true, entryPriceSol: true, sizeSol: true, realizedPnlSol: true, closedAt: true, trades: { where: { side: 'SELL' }, orderBy: { createdAt: 'desc' }, take: 1, select: { reason: true, priceSol: true } } },
+      take: 300,
+    });
+    for (const p of ps) {
+      if (await this.redis.sismember(K.done, `L${p.id}`)) continue;
+      await this.redis.sadd(K.done, `L${p.id}`);
+      const sell = p.trades[0];
+      const k = sell && p.exitReason ? lossExitKind(p.exitReason, sell.reason) : null;
+      if (!sell || !k || !p.closedAt || !(p.entryPriceSol > 0)) continue;
+      const a = afterExit(this.trades(p.mint), p.closedAt.getTime(), sell.priceSol, watchMs);
+      // No trades at all after a rug exit = the coin died: count it (it's the most common "good" outcome).
+      const after = a ?? { maxAfterX: 1, minAfterX: 1, endX: k.kind.startsWith('rug') ? 0 : 1, trades: 0 };
+      if (!a && !k.kind.startsWith('rug')) continue;
+      const row: LossExitAfter = {
+        id: p.id, strategy: p.strategy, kind: k.kind, closedAtMs: p.closedAt.getTime(), exitX: Math.round((sell.priceSol / p.entryPriceSol) * 1000) / 1000,
+        pnlPct: p.sizeSol > 0 ? Math.round((p.realizedPnlSol / p.sizeSol) * 1000) / 10 : 0, stopPct: k.stopPct, ...after,
+      };
+      await this.redis.multi().lpush(K.loss, JSON.stringify(row)).ltrim(K.loss, 0, 2999).exec();
+    }
+    const rows = (await this.lossResults()).filter((r) => now - r.closedAtMs <= 7 * 86_400_000);
+    const verdicts = judgeLossExits(rows, lc);
+    if (!lc.tuneRugExits) return verdicts;
+    for (const v of verdicts) {
+      const t = RUG_TUNE[v.kind];
+      if (!t || (v.verdict !== 'false_alarm' && v.verdict !== 'good')) continue;
+      const key = `loss:${v.kind}`;
+      const lastChange = Number((await this.redis.get(K.changed(key))) ?? 0);
+      if (now - lastChange < c.minHoursBetween * 3_600_000) continue;
+      if (rows.filter((r) => r.kind === v.kind && r.closedAtMs > lastChange).length < lc.minExits) continue;
+      const cur = Number(t.path.split('.').reduce<unknown>((o, x) => (o as Record<string, unknown> | undefined)?.[x], getConfig()));
+      if (!(cur > 0)) continue;
+      // False alarms → needs a deeper drop before it calls a rug; every one a real rug → may call it a bit sooner.
+      const next = Math.min(t.max, Math.max(t.min, cur + (v.verdict === 'false_alarm' ? lc.step : -Math.round(lc.step / 2))));
+      if (next === cur) continue;
+      const r = await applyEdit(t.path, next, 'exit-tuner', v.why);
+      if (r.ok) {
+        await this.redis.set(K.changed(key), String(now), 'EX', 30 * 86_400);
+        log.info({ kind: v.kind, from: cur, to: next }, '🧯 rug exit re-tuned from what coins did after we sold');
+      }
+    }
+    return verdicts;
   }
 
   async results(): Promise<ExitAfter[]> {
@@ -177,7 +351,11 @@ export class ExitTuner {
       await this.redis.expire(K.done, 3 * 86_400);
       const rows = (await this.results()).filter((r) => now - r.closedAtMs <= 7 * 86_400_000);
       const verdicts = judgeTimers(rows, c);
-      this.last = { at: new Date(now).toISOString(), verdicts };
+      const lossExits = await this.lossExits(now, c).catch((err: Error) => {
+        log.warn({ err: err.message }, 'loss exit review failed');
+        return this.last?.lossExits ?? [];
+      });
+      this.last = { at: new Date(now).toISOString(), verdicts, lossExits };
       for (const v of verdicts) {
         if (v.action === 'keep') continue;
         const key = `${v.strategy}:${v.timer}`;

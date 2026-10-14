@@ -765,7 +765,15 @@ export const DEFAULT_CONFIG = {
    * triggerChecks, make the bot check a coin the moment one fires. `disabled` = ids to skip.
    */
   /** Exit tuner (learner/exit-tuner.ts): follows time-based exits for 30 min after the sell and tunes those timers. */
-  exitTuner: { enabled: true as boolean, watchMin: 30, minExits: 12, ranAfterPct: 40, deadAfterPct: 15, minHoursBetween: 6, maxFactor: 3, minFactor: 0.5 },
+  exitTuner: {
+    enabled: true as boolean, watchMin: 30, minExits: 12, ranAfterPct: 40, deadAfterPct: 15, minHoursBetween: 6, maxFactor: 3, minFactor: 0.5,
+    /**
+     * v10.19: every stop-loss / rug exit followed 30 min. ≥15 of a kind with ≥40% back above our entry (+5%) and ≤30%
+     * really dying = false alarm; stops landing ≥5 pts past the stop = late. The three chart rug exits (cascade / one
+     * wallet / crash) get their drop % raised by `step` on false alarms, lowered by half a step when they're always right.
+     */
+    lossExits: { enabled: true as boolean, minExits: 15, falseAlarmPct: 40, maxDiedPct: 30, lateOvershootPts: 5, tuneRugExits: true as boolean, step: 5 },
+  },
 
   ta: {
     enabled: true as boolean,
@@ -1295,14 +1303,25 @@ export const DEFAULT_CONFIG = {
     ownBuyWeight: 3,
     /** Effective sample size (per class) at which a step reaches full size; less data = smaller steps. */
     fullEvidenceAt: 150,
-    minSamples: 100,
-    minPerClass: 10,
+    /** v10.19: weights only move on real evidence (was 100 / 10 — coincidences moved them). */
+    minSamples: 300,
+    minPerClass: 40,
     /** Each weight stays within these multiples of its default. */
     minWeightFactor: 0.4,
     maxWeightFactor: 2.5,
     /** Newest N labelled evaluations are held out: new weights must rank them at least as well (AUC) as the old. */
-    holdoutSize: 200,
-    minHoldoutPerClass: 5,
+    holdoutSize: 300,
+    minHoldoutPerClass: 20,
+    /**
+     * v10.19 (review: "learning should mean measurable improvement"): new weights are kept only if, on the held-out
+     * newest data they never trained on, they rank better by ≥ minAucGain, no strategy with ≥ strategyMinPerClass
+     * winners and losers gets worse by > maxStrategyDrop, and (≥ minTradeHoldout real trades) the trades they'd
+     * have picked earn at least as much after costs. A thin holdout = keep the current weights.
+     */
+    minAucGain: 0.005,
+    strategyMinPerClass: 8,
+    maxStrategyDrop: 0.02,
+    minTradeHoldout: 20,
     /** Learned pattern odds → score points. */
     oddsEnabled: true,
     oddsMinSamples: 15,

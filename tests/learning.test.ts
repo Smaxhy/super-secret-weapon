@@ -4,6 +4,9 @@ import { patternsOf } from '../src/learner/bayesian-updater';
 import { adjustWeights } from '../src/learner/daily-adjuster';
 import { classify } from '../src/learner/regime-detector';
 
+/** These tests check the maths, not the v10.19 evidence minimums (300 / 40). */
+const OLD_MIN = { minSamples: 100, minPerClass: 10 };
+
 describe('daily weight adjustment', () => {
   const sample = (holders: number, snipers: number, win: boolean) => ({ features: { holders, snipers } as Partial<Record<FeatureName, number>>, win });
   // Winners have many holders; snipers don't matter.
@@ -13,17 +16,17 @@ describe('daily weight adjustment', () => {
   ];
 
   it('raises the weight of a feature that separates winners from losers', () => {
-    const r = adjustWeights({ ...DEFAULT_WEIGHTS }, samples)!;
+    const r = adjustWeights({ ...DEFAULT_WEIGHTS }, samples, undefined, OLD_MIN)!;
     expect(r.weights.holders).toBeGreaterThan(DEFAULT_WEIGHTS.holders);
     expect(r.changes[0]?.feature).toBe('holders');
   });
   it('keeps weights summing to 1 and moves at most ~5% per run', () => {
-    const r = adjustWeights({ ...DEFAULT_WEIGHTS }, samples)!;
+    const r = adjustWeights({ ...DEFAULT_WEIGHTS }, samples, undefined, OLD_MIN)!;
     expect(Object.values(r.weights).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 3);
     for (const f of Object.keys(DEFAULT_WEIGHTS) as FeatureName[]) expect(Math.abs(r.weights[f] / DEFAULT_WEIGHTS[f] - 1)).toBeLessThan(0.11);
   });
   it('refuses to learn from too little data', () => {
-    expect(adjustWeights({ ...DEFAULT_WEIGHTS }, samples.slice(0, 50))).toBeNull();
+    expect(adjustWeights({ ...DEFAULT_WEIGHTS }, samples.slice(0, 50), undefined, OLD_MIN)).toBeNull();
   });
 });
 

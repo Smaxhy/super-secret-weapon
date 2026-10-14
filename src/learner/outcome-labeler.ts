@@ -166,7 +166,8 @@ export class OutcomeLabeler {
       await recordIfMissed({ mint, evaluationId, decision: ev.decision, score: ev.combinedScore, max: path.max, min: path.min });
       return;
     }
-    await updateBeliefs(patternsOf(feats, ev.strategy), res.win);
+    // Our buy still open (or closed after this label) → its real P&L teaches the odds when it closes (onTradeClosed).
+    if (!(ownBuy && res.source === 'price')) await updateBeliefs(patternsOf(feats, ev.strategy), res.win, ownBuy ? lc.ownBuyWeight : 1, ev.strategy);
     // Who was buying when we scored it? Credit / debit those wallets (smart-wallet learning).
     await learnFromLabel(this.redis, evaluationId, res.win);
     if (ev.token) {
@@ -191,8 +192,14 @@ export class OutcomeLabeler {
       { realizedPnlSol: p.realizedPnlSol, sizeSol: p.sizeSol, peakMultiple: p.entryPriceSol > 0 ? p.peakPriceSol / p.entryPriceSol : null, closedAt: p.closedAt, suspicious },
       labelOptions(),
     );
-    const ev = await prisma.evaluation.findUnique({ where: { id: p.evaluationId }, select: { features: true } });
+    const ev = await prisma.evaluation.findUnique({ where: { id: p.evaluationId }, select: { features: true, strategy: true, decision: true } });
     if (!ev) return false;
+    // Already labelled from the price path (the trade outlived the 1-hour window): the real result teaches the odds now.
+    const prev = (ev.features ?? {}) as StoredFeatures & { outcome?: PriceOutcome; tradeResult?: TradeOutcome };
+    if (prev.outcome && !prev.outcome.excluded && !prev.tradeResult && !t.excluded && ev.decision === 'BUY' && ev.strategy !== 'SWING') {
+      const lc = getConfig().learning ?? DEFAULT_CONFIG.learning;
+      await updateBeliefs(patternsOf(prev, ev.strategy), t.win, lc.ownBuyWeight, ev.strategy);
+    }
     await prisma.evaluation.update({
       where: { id: p.evaluationId },
       data: { features: { ...((ev.features ?? {}) as object), tradeResult: t } as unknown as Prisma.InputJsonValue },

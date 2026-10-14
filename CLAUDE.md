@@ -519,6 +519,27 @@ smart money → learning engine → ML → social). See README.md.
   transaction (`FunderInfo.firstSec`, funding-graph cache 24 h; missing ones over RPC, ≤2.5 s wait, then cache only).
   Late-joined / adopted coins: RPC top-20 accounts (`src/lib/holders-rpc.ts`, also used by swing top-10), same-size
   only, cached 60 s. Editable (Every coin → Bundle guard). Test tests/bundle-guard.test.ts.
+- **v10.19 (Oct 14): honest learning** (owner pasted an outside review of a 495-trade CSV: stop loss 193 trades −9.8 SOL,
+  rug detected 187 −3.9 SOL, trailing +2.4, every strategy negative; "score 70–80 beat 80–100"). Migration v18.
+  - **Weight adjuster** (`daily-adjuster.ts` + `weight-tuning.holdoutCheck` options): needs 300 clean labels with 40+
+    wins and losses; tested on the newest 300 it never trained on (20+ of each — a thin holdout now KEEPS the current
+    weights instead of accepting blindly); must beat the old AUC by `minAucGain` 0.005; no strategy with 8+ held-out
+    wins and losses may drop > 0.02 AUC; with 20+ real trades in the holdout the new weights' better-scored half must
+    earn ≥ the old one's after costs. Rejections say why on the Learning page.
+  - **Pattern odds** (`bayesian-updater.ts`): every outcome also counts per strategy (`strategyPattern` "SOON · …");
+    the evaluator uses a strategy's own odds once it has 3× `oddsMinSamples`. Own buys teach with their REAL P&L
+    after fees (weight `ownBuyWeight`); a buy still open at the 1-hour label waits and teaches when it closes
+    (`onTradeClosed`). Watched coins keep the 1.4x-before-0.85x label (the first TP before the stop), not "doubled".
+  - **Loss-exit review** (`exit-tuner.ts` `lossExitKind` / `judgeLossExits`, `exitTuner.lossExits`, Redis
+    `exitafter:loss`): every STOP_LOSS / RUG_DETECTED exit followed 30 min — backAbovePct (came back above entry +5% =
+    false alarm / sold the bottom), diedPct (ended ≤0.6× = good exit), stop overshoot (pts past the stop = late exit or
+    bad fill). ≥15 of a kind → verdict good / false_alarm / late / mixed. Chart rug exits (cascade dropPct, soloDropPct,
+    crashDropPct) re-tuned by the tuner: false alarms +5 pts, always right −2 (ranges 15–35 / 20–40 / 25–45, ≤ once per
+    6 h). Brain page card "Stop-loss & rug exits", AI input `lossExitsAfter`.
+  - **Strategy cards** (`loss-autopsy.strategyCards`): per strategy (real trades, % after fees) avg / median / without
+    its 3 best / newest 30% / never-up vs gave-back losers → profitable (30+ trades, avg−SE>0, positive without top 3
+    and recently) / losing (avg+SE<0) / unproven; `scoreInversions` flags a higher score band doing worse. Shown in
+    Performance → Mistakes ("Does each strategy deserve to run?") + autopsy findings. Tests: tests/honest-learning.test.ts.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

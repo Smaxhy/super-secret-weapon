@@ -69,6 +69,76 @@ export interface ClosedTrade extends EntryShape {
   explore: boolean;
   /** A shadow trade (a coin it wanted but didn't buy, src/learner/shadow-trades.ts) — counts for bands + tuning only. */
   shadow?: boolean;
+  /** When it closed (orders the out-of-sample check); unknown = input order. */
+  closedAtMs?: number;
+}
+
+/**
+ * Does a strategy deserve to run? (review: "evaluate each strategy separately — don't let a profitable one hide a
+ * losing one"). Real trades only, P&L % after every fee (size-independent):
+ *  - profitable: ≥ minN trades, average − 1 SE > 0, still positive without its 3 best trades, AND the newest 30%
+ *    (later than everything the tuning learned from) is positive too;
+ *  - losing: ≥ minN trades and average + 1 SE < 0;
+ *  - unproven: anything else (too few trades or not clear yet).
+ */
+export interface StrategyCard {
+  strategy: string;
+  n: number;
+  avgPct: number;
+  medianPct: number;
+  sePct: number;
+  /** Average without its 3 best trades (one lucky moonshot can't carry it). */
+  withoutTop3Pct: number;
+  /** Average of the newest 30% of its trades. */
+  recentPct: number;
+  /** % of its losers that never went up 5% after the buy (bad entries) vs were up 15%+ (gave it back). */
+  neverUpPct: number;
+  gaveBackPct: number;
+  verdict: 'profitable' | 'losing' | 'unproven';
+  why: string;
+}
+
+export function strategyCards(trades: readonly ClosedTrade[], minN = 30): StrategyCard[] {
+  const out: StrategyCard[] = [];
+  for (const strategy of [...new Set(trades.map((t) => t.strategy))]) {
+    const ts = trades.filter((t) => t.strategy === strategy).slice().sort((a, b) => (a.closedAtMs ?? 0) - (b.closedAtMs ?? 0));
+    const rec = record(ts);
+    const avg = (xs: readonly number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+    const sorted = ts.map((t) => t.pnlPct).sort((a, b) => b - a);
+    const withoutTop3Pct = r1(avg(sorted.slice(Math.min(3, Math.max(0, sorted.length - 1)))));
+    const recentPct = r1(avg(ts.slice(Math.floor(ts.length * 0.7)).map((t) => t.pnlPct)));
+    const losers = ts.filter((t) => t.pnlSol <= 0);
+    const neverUpPct = losers.length ? Math.round((losers.filter((t) => t.peakMultiple < 1.05).length / losers.length) * 100) : 0;
+    const gaveBackPct = losers.length ? Math.round((losers.filter((t) => t.peakMultiple >= 1.15).length / losers.length) * 100) : 0;
+    let verdict: StrategyCard['verdict'] = 'unproven';
+    let why = rec.n < minN ? `only ${rec.n} trades — needs ${minN}+ to judge` : `average ${rec.avgPct}% ± ${rec.sePct}% — not clear yet`;
+    if (rec.n >= minN && rec.avgPct + rec.sePct < 0) {
+      verdict = 'losing';
+      why = `${rec.n} trades average ${rec.avgPct}% (± ${rec.sePct}%) after costs; ${neverUpPct}% of its losers never went up 5% → ${neverUpPct >= 50 ? 'bad entries' : gaveBackPct >= 30 ? 'gives profit back' : 'entries and exits both'}`;
+    } else if (rec.n >= minN && rec.avgPct - rec.sePct > 0 && withoutTop3Pct > 0 && recentPct > 0) {
+      verdict = 'profitable';
+      why = `${rec.n} trades average +${rec.avgPct}% after costs, +${withoutTop3Pct}% without its 3 best, newest 30% +${recentPct}%`;
+    }
+    out.push({ strategy, n: rec.n, avgPct: rec.avgPct, medianPct: rec.medianPct, sePct: rec.sePct, withoutTop3Pct, recentPct, neverUpPct, gaveBackPct, verdict, why });
+  }
+  return out.sort((a, b) => a.avgPct - b.avgPct);
+}
+
+/** Pure: strategies where a higher score band did WORSE than the one below it (the score isn't predicting there). */
+export function scoreInversions(trades: readonly ClosedTrade[], minN: number): string[] {
+  const out: string[] = [];
+  const order = ['score <70', 'score 70–80', 'score 80–90', 'score 90+'];
+  for (const strategy of [...new Set(trades.map((t) => t.strategy))]) {
+    const bands = order.map((b) => record(trades.filter((t) => t.strategy === strategy && bandOf('score', t) === b))).map((r, i) => ({ band: order[i]!, ...r }));
+    for (let i = 0; i + 1 < bands.length; i++) {
+      const lo = bands[i]!;
+      const hi = bands[i + 1]!;
+      if (lo.n >= minN && hi.n >= minN && hi.avgPct + hi.sePct < lo.avgPct - lo.sePct) {
+        out.push(`${strategy}: ${hi.band} averages ${hi.avgPct}% vs ${lo.avgPct}% for ${lo.band} — a higher score is NOT a better trade here (score calibration marks it down; the win models / rule search look for what does predict).`);
+      }
+    }
+  }
+  return out;
 }
 
 type Dim = 'mc' | 'age' | 'curve' | 'score' | 'hour' | 'day' | 'kols' | 'chase' | 'entry';
@@ -219,6 +289,8 @@ export interface Autopsy {
   trades: number;
   overall: Record_ & { avgWinPct: number; avgLossPct: number; neededWinRatePct: number | null; profitFactor: number | null };
   byStrategy: Array<Record_ & { strategy: string }>;
+  /** Does each strategy deserve to run (real trades, out-of-sample, without its best trades). */
+  cards?: StrategyCard[];
   byExit: Array<{ reason: string; n: number; pnlSol: number; avgPct: number }>;
   losers: { n: number; neverUpPct: number; gaveBackPct: number; avgPeakMultiple: number };
   learning: Record_;
@@ -310,6 +382,9 @@ export function runAutopsy(realTrades: readonly ClosedTrade[], c: AutopsyConfig,
   for (const st of styles) findings.push(`ENTRIES CHANGED for ${st.strategy}: ${st.why.join('; ')}`);
   if (shadow.length) findings.push(`${shadow.length} shadow trades (coins it wanted but didn't buy) are counted in the kinds of trades and the tuning, at half weight in SOL.`);
   for (const t of tuning) if (t.why) findings.push(`ADJUSTED ${t.strategy}: ${t.why}`);
+  const cards = strategyCards(trades, Math.max(30, c.minTrades * 2));
+  for (const k of cards) if (k.verdict !== 'unproven') findings.push(`${k.verdict === 'losing' ? 'LOSING' : 'PROFITABLE'} strategy ${k.strategy}: ${k.why}.`);
+  findings.push(...scoreInversions(trades, c.minTrades));
 
   return {
     at: new Date(now).toISOString(),
@@ -319,6 +394,7 @@ export function runAutopsy(realTrades: readonly ClosedTrade[], c: AutopsyConfig,
     trades: trades.length,
     overall: { ...all, avgWinPct: r1(avgWin), avgLossPct: r1(avgLoss), neededWinRatePct: needed, profitFactor: grossL > 0 ? Math.round((grossW / grossL) * 100) / 100 : null },
     byStrategy,
+    cards,
     byExit,
     losers: { n: losses.length, neverUpPct: losses.length ? Math.round((neverUp / losses.length) * 100) : 0, gaveBackPct: losses.length ? Math.round((gaveBack / losses.length) * 100) : 0, avgPeakMultiple: losses.length ? Math.round((losses.reduce((a, t) => a + t.peakMultiple, 0) / losses.length) * 100) / 100 : 0 },
     learning,
@@ -433,6 +509,7 @@ export class LossAutopsy {
           peakMultiple: p.entryPriceSol > 0 ? p.peakPriceSol / p.entryPriceSol : 1,
           heldMin: p.closedAt ? (p.closedAt.getTime() - p.openedAt.getTime()) / 60_000 : 0,
           explore: ec.explore === true,
+          closedAtMs: p.closedAt?.getTime(),
         };
       });
       const sh = this.shadowSource ? await this.shadowSource(since.getTime()).catch(() => []) : [];

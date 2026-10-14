@@ -184,6 +184,7 @@ export const EDITABLE: EditableSetting[] = [
   S('Trade size & risk', 'chart.dip.blowOff.dropRunPct', 'Blow-off guard: a run bigger than … = never buy (0 = off)', 0, 3000, '%', 10),
   S('Trade size & risk', 'trading.highConviction.sizeSol', 'Big trade size', 0.1, 50, 'SOL', 0.1),
   S('Trade size & risk', 'trading.highConviction.maxPctOfCapital', 'Big trade max % of the balance', 1, 50, '%', 1),
+  S('Trade size & risk', 'antiRug.rugGuard.cascade.dropPct', 'Rug exit: price crashes … in 20 s with several sellers', 5, 90, '%', 1),
   S('Trade size & risk', 'antiRug.rugGuard.cascade.soloDropPct', 'Rug exit: one wallet crashes it by … in 20 s (0 = off)', 0, 90, '%', 1),
   S('Trade size & risk', 'antiRug.rugGuard.cascade.crashDropPct', 'Rug exit: price crashes … in 90 s with heavy selling (0 = off)', 0, 90, '%', 1),
   S('Trade size & risk', 'trading.minPositionSol', 'Smallest trade', 0.01, 10, 'SOL', 0.01),

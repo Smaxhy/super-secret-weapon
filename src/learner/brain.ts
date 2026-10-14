@@ -24,7 +24,7 @@ import { PolicySearch } from './policy-search';
 import type { ShadowResult } from './shadow-trades';
 import type { OutcomeResult } from './outcome-tracker';
 import { WinModel } from './win-model';
-import type { TimerVerdict } from './exit-tuner';
+import type { LossVerdict, TimerVerdict } from './exit-tuner';
 
 const log = moduleLogger('brain');
 const STRATS = ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'SMART_MONEY_COPY', 'SWING', 'RUNNER'];
@@ -38,7 +38,7 @@ export class Brain {
   private lastActive: boolean | null = null;
   private lastMult = new Map<string, number>();
   /** What coins did after time-based exits (exit-tuner.ts) — set in index.ts. */
-  exitSource: (() => { at: string; verdicts: TimerVerdict[] } | null) | null = null;
+  exitSource: (() => { at: string; verdicts: TimerVerdict[]; lossExits?: LossVerdict[] } | null) | null = null;
 
   /** What the coins it didn't buy did (outcome-tracker.ts) — set in index.ts. */
   outcomeSource: (() => Promise<unknown>) | null = null;
@@ -156,6 +156,7 @@ export class Brain {
         return e ? [e] : [];
       }),
       exitTimers: this.exitSource?.()?.verdicts.slice(0, compact ? 8 : 30) ?? [],
+      lossExits: this.exitSource?.()?.lossExits?.slice(0, compact ? 8 : 20) ?? [],
       coinsChecked: this.outcomeSource ? await this.outcomeSource().catch(() => null) : null,
       changes: (await recentChanges(compact ? 12 : 40).catch(() => [])).map((c) => (compact ? `${c.at.slice(0, 16)} ${c.what}` : c)),
     };

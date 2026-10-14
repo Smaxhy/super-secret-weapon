@@ -1,10 +1,14 @@
 /**
- * Bayesian beliefs — "when we see pattern X, how often does the token go on to 1.8×?"
+ * Bayesian beliefs — "when we see pattern X, how often would a trade have made money?"
  *
- * Each pattern keeps a Beta(alpha, beta) distribution: alpha counts wins,
- * beta counts losses (both start at 1 = "no idea yet"). The win probability
- * estimate is alpha / (alpha + beta) and it sharpens with every labelled
- * outcome. Shown on the Learning page; the daily adjuster uses the same labels.
+ * The outcome (labels.ts): for coins we bought, the REAL trade result after every fee and the slippage of our
+ * fills (P&L > 0); for coins we only watched, whether the price reached the first take-profit the bot really sells
+ * at (1.4×) BEFORE it fell to where the stop takes it out (0.85×) — not "did it double some time later".
+ *
+ * Each pattern keeps a Beta(alpha, beta) distribution: alpha counts wins, beta counts losses (both start at 1 =
+ * "no idea yet"). Every outcome counts twice: once for the pattern overall and once for the same pattern inside
+ * its strategy ("SOON · Dev holds >5%") — what predicts a new pair can be noise for a migrated coin. The evaluator
+ * uses the strategy's own odds once that strategy has enough outcomes. Our own trades count `ownBuyWeight`×.
  */
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
@@ -51,16 +55,21 @@ export function patternsOf(f: StoredFeatures, strategy: string | null): string[]
 /** Pseudo-pattern every labelled outcome counts towards → the overall win rate (the prior). */
 export const ALL_PATTERN = 'All labelled tokens';
 
+/** The same pattern, counted only inside one strategy. */
+export const strategyPattern = (strategy: string, pattern: string): string => `${strategy} · ${pattern}`;
+
 /**
  * Add one labelled outcome to every pattern it matched (plus the overall
  * pattern). `weight` lets our own trades count more (alpha/beta are floats).
  * Never throws.
  */
-export async function updateBeliefs(patterns: string[], win: boolean, weight = 1): Promise<void> {
+export async function updateBeliefs(patterns: string[], win: boolean, weight = 1, strategy: string | null = null): Promise<void> {
   const w = Number.isFinite(weight) && weight > 0 ? weight : 1;
+  const all = [...patterns, ALL_PATTERN];
+  const keys = strategy ? [...all, ...all.map((p) => strategyPattern(strategy, p))] : all;
   try {
     await prisma.$transaction(
-      [...patterns, ALL_PATTERN].map((pattern) =>
+      keys.map((pattern) =>
         prisma.beliefState.upsert({
           where: { pattern },
           update: { alpha: { increment: win ? w : 0 }, beta: { increment: win ? 0 : w }, observations: { increment: 1 } },

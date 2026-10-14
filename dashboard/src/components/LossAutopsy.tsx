@@ -14,6 +14,7 @@ interface Autopsy {
   overall: Rec & { avgWinPct: number; avgLossPct: number; neededWinRatePct: number | null; profitFactor: number | null };
   byStrategy: Array<Rec & { strategy: string }>;
   byExit: Array<{ reason: string; n: number; pnlSol: number; avgPct: number }>;
+  cards?: Array<{ strategy: string; n: number; avgPct: number; medianPct: number; sePct: number; withoutTop3Pct: number; recentPct: number; neverUpPct: number; gaveBackPct: number; verdict: 'profitable' | 'losing' | 'unproven'; why: string }>;
   losers: { n: number; neverUpPct: number; gaveBackPct: number; avgPeakMultiple: number };
   findings: string[];
   worst: Seg[];
@@ -56,6 +57,28 @@ export function LossAutopsy() {
             <Stat label="Losers that never went up" value={`${data.losers.neverUpPct}%`} sub="= bad entries" warn={data.losers.neverUpPct >= 50} />
             <Stat label="Losers that were up 15%+" value={`${data.losers.gaveBackPct}%`} sub="= gave profit back" warn={data.losers.gaveBackPct >= 30} />
           </div>
+          {!!data.cards?.length && (
+            <div>
+              <div className="mb-1 font-medium text-ink">Does each strategy deserve to run?</div>
+              <p className="mb-1 text-xs text-muted">Real trades only, % after every fee. "Profitable" needs 30+ trades, a positive average beyond the noise, still positive without its 3 best trades and in its newest 30%.</p>
+              <ul className="divide-y divide-line text-xs">
+                {data.cards.map((k) => (
+                  <li key={k.strategy} className="py-1.5">
+                    <div className="flex min-w-0 justify-between gap-2">
+                      <span className="min-w-0 truncate font-medium text-ink">{strat(k.strategy)}</span>
+                      <span className={`shrink-0 font-medium ${k.verdict === 'profitable' ? 'text-up' : k.verdict === 'losing' ? 'text-down' : 'text-muted'}`}>
+                        {k.verdict === 'profitable' ? 'Profitable' : k.verdict === 'losing' ? 'Losing' : 'Not proven yet'}
+                      </span>
+                    </div>
+                    <div className="tabular-nums text-ink-2">
+                      {k.n} trades · avg {k.avgPct}% · median {k.medianPct}% · without best 3 {k.withoutTop3Pct}% · newest 30% {k.recentPct}%
+                    </div>
+                    <div className="text-muted">{k.why}</div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {data.findings.length > 0 && (
             <ul className="list-disc space-y-1 pl-5 text-ink">
               {data.findings.map((f) => (

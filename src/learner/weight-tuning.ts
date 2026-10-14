@@ -20,6 +20,10 @@ export interface TuningSample {
   ownBuy?: boolean;
   /** How old the outcome is (hours) → recency decay. */
   ageHours?: number;
+  /** Strategy of the evaluation (holdout is also judged per strategy). */
+  strategy?: string | null;
+  /** Realised P&L % after every fee, when we really traded it (holdout P&L check). */
+  pnlPct?: number | null;
 }
 
 export interface TuningOptions {
@@ -140,12 +144,7 @@ export function auc(scores: number[], labels: boolean[]): number | null {
 
 /** AUC of a set of weights on held-out samples (missing features = neutral 0.5). */
 export function holdoutAuc(weights: Weights, holdout: TuningSample[]): number | null {
-  const scores = holdout.map((s) => {
-    const f = {} as FeatureVector;
-    for (const k of Object.keys(weights) as FeatureName[]) f[k] = s.features[k] ?? 0.5;
-    return scoreFeatures(f, weights).score;
-  });
-  return auc(scores, holdout.map((s) => s.win));
+  return auc(holdout.map((s) => scoreOf(weights, s)), holdout.map((s) => s.win));
 }
 
 export interface HoldoutVerdict {
@@ -154,18 +153,85 @@ export interface HoldoutVerdict {
   aucAfter: number | null;
   /** Why the check was skipped (too few held-out winners/losers). */
   skipped?: string;
+  /** Why the new weights were turned down (when the overall AUC alone isn't the reason). */
+  why?: string;
+  /** Per strategy (enough held-out winners + losers): AUC old → new. */
+  byStrategy?: Array<{ strategy: string; n: number; before: number; after: number }>;
+  /** Real trades in the holdout: average P&L % of the better-scored half, old weights vs new. */
+  tradePnl?: { n: number; before: number; after: number } | null;
 }
 
-/** Accept new weights only if they rank the held-out tokens at least as well as the old ones. */
-export function holdoutCheck(oldW: Weights, newW: Weights, holdout: TuningSample[], minPerClass: number): HoldoutVerdict {
+export interface HoldoutOptions {
+  /** New weights must beat the old AUC by at least this much (0 = ties pass). */
+  minAucGain?: number;
+  /** Too few held-out winners / losers → reject instead of accepting blindly. */
+  rejectWhenSkipped?: boolean;
+  /** Strategies with this many held-out winners AND losers are judged on their own… */
+  strategyMinPerClass?: number;
+  /** …and none may get worse by more than this AUC. */
+  maxStrategyDrop?: number;
+  /** With this many real trades in the holdout, the new weights' better-scored half must earn at least as much after costs. */
+  minTradeSamples?: number;
+}
+
+const scoreOf = (weights: Weights, s: TuningSample) => {
+  const f = {} as FeatureVector;
+  for (const k of Object.keys(weights) as FeatureName[]) f[k] = s.features[k] ?? 0.5;
+  return scoreFeatures(f, weights).score;
+};
+
+/** Average P&L % of the better-scored half of the real trades. */
+function topHalfPnl(weights: Weights, trades: TuningSample[]): number {
+  const ranked = trades.map((s) => ({ s: scoreOf(weights, s), p: s.pnlPct ?? 0 })).sort((a, b) => b.s - a.s);
+  const top = ranked.slice(0, Math.max(1, Math.floor(ranked.length / 2)));
+  return top.reduce((t, x) => t + x.p, 0) / top.length;
+}
+
+/**
+ * Accept new weights only if they rank the held-out (never trained on) tokens better than the old ones —
+ * overall by `minAucGain`, without hurting any strategy that has enough data, and, when real trades are in the
+ * holdout, without earning less on the trades the new weights would have picked. Defaults = the lenient old check.
+ */
+export function holdoutCheck(oldW: Weights, newW: Weights, holdout: TuningSample[], minPerClass: number, o: HoldoutOptions = {}): HoldoutVerdict {
   const pos = holdout.filter((s) => s.win).length;
   const neg = holdout.length - pos;
-  if (pos < minPerClass || neg < minPerClass) return { accepted: true, aucBefore: null, aucAfter: null, skipped: `holdout has ${pos} winners / ${neg} losers (need ${minPerClass}+ each)` };
+  if (pos < minPerClass || neg < minPerClass) {
+    return { accepted: !o.rejectWhenSkipped, aucBefore: null, aucAfter: null, skipped: `holdout has ${pos} winners / ${neg} losers (need ${minPerClass}+ each)` };
+  }
   const before = holdoutAuc(oldW, holdout);
   const after = holdoutAuc(newW, holdout);
   const r4 = (x: number | null) => (x === null ? null : Math.round(x * 10_000) / 10_000);
-  if (before === null || after === null) return { accepted: true, aucBefore: r4(before), aucAfter: r4(after), skipped: 'AUC undefined' };
-  return { accepted: after + 1e-9 >= before, aucBefore: r4(before), aucAfter: r4(after) };
+  if (before === null || after === null) return { accepted: !o.rejectWhenSkipped, aucBefore: r4(before), aucAfter: r4(after), skipped: 'AUC undefined' };
+  const v: HoldoutVerdict = { accepted: after + 1e-9 >= before + (o.minAucGain ?? 0), aucBefore: r4(before), aucAfter: r4(after) };
+  if (!v.accepted && after >= before) v.why = `better by only ${(after - before).toFixed(3)} AUC (need +${o.minAucGain})`;
+  if (o.strategyMinPerClass) {
+    const groups = new Map<string, TuningSample[]>();
+    for (const s of holdout) if (s.strategy) groups.set(s.strategy, [...(groups.get(s.strategy) ?? []), s]);
+    v.byStrategy = [];
+    for (const [strategy, g] of groups) {
+      const w = g.filter((s) => s.win).length;
+      if (w < o.strategyMinPerClass || g.length - w < o.strategyMinPerClass) continue;
+      const b = holdoutAuc(oldW, g);
+      const a = holdoutAuc(newW, g);
+      if (b === null || a === null) continue;
+      v.byStrategy.push({ strategy, n: g.length, before: r4(b)!, after: r4(a)! });
+      if (v.accepted && a < b - (o.maxStrategyDrop ?? 0)) {
+        v.accepted = false;
+        v.why = `${strategy} got worse (${b.toFixed(3)} → ${a.toFixed(3)} AUC)`;
+      }
+    }
+  }
+  const trades = holdout.filter((s) => typeof s.pnlPct === 'number' && Number.isFinite(s.pnlPct));
+  if (o.minTradeSamples && trades.length >= o.minTradeSamples) {
+    const tb = topHalfPnl(oldW, trades);
+    const ta = topHalfPnl(newW, trades);
+    v.tradePnl = { n: trades.length, before: Math.round(tb * 100) / 100, after: Math.round(ta * 100) / 100 };
+    if (v.accepted && ta < tb) {
+      v.accepted = false;
+      v.why = `on ${trades.length} real trades the new weights' picks would have earned less after costs (${tb.toFixed(1)}% → ${ta.toFixed(1)}%)`;
+    }
+  } else v.tradePnl = null;
+  return v;
 }
 
 /** Next firing of a `*\/N * * * *` cron after `now` (UTC). */

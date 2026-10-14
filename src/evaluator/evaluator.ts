@@ -49,7 +49,7 @@ import { currentRegime } from '../learner/regime-detector';
 import { keywordCheck, NEUTRAL_SOCIAL_FEATURES, SocialAnalyzer, socialsScore, twitterInfo } from './social-analyzer';
 import { analyzeMarket, withInsider, type PrevCheckpoint } from './market-analyzer';
 import { checkEntryRules, convictionFactor, decide, manipulationCheck, learnedOddsAdjustment, scoreFeatures, withOdds, type FeatureVector, type LearnedOdds, type ScoreResult } from './scorer';
-import { ALL_PATTERN, beliefCache, patternsOf, type StoredFeatures } from '../learner/bayesian-updater';
+import { ALL_PATTERN, beliefCache, patternsOf, strategyPattern, type StoredFeatures } from '../learner/bayesian-updater';
 import { DEFAULT_CONFIG } from '../config/default';
 import { NEUTRAL_WALLET_FEATURES, walletFeatures, type CreatorProfile, type WalletAnalyzer } from './wallet-analyzer';
 import type { CrowdMetrics, CrowdTracker } from '../scanner/crowd-tracker';
@@ -410,11 +410,15 @@ export class Evaluator {
 
     // Learned odds: how often coins with the same patterns went on to win (bounded ±points).
     const lc = cfg.learning ?? DEFAULT_CONFIG.learning;
+    // This strategy's own odds once it has enough outcomes (≥3× the per-pattern minimum), else all strategies together.
+    const pats = patternsOf({ market: market.raw as unknown as StoredFeatures['market'], socials: { twitter: token.twitter, website: token.website, telegram: token.telegram } }, STRATEGY.name);
+    const stratPrior = beliefCache().get(strategyPattern(STRATEGY.name, ALL_PATTERN));
+    const ownOdds = !!stratPrior && stratPrior.observations >= lc.oddsMinSamples * 3;
     const odds: LearnedOdds | null = lc.oddsEnabled
       ? learnedOddsAdjustment(
-          patternsOf({ market: market.raw as unknown as StoredFeatures['market'], socials: { twitter: token.twitter, website: token.website, telegram: token.telegram } }, STRATEGY.name),
+          ownOdds ? pats.map((x) => strategyPattern(STRATEGY.name, x)) : pats,
           beliefCache(),
-          beliefCache().get(ALL_PATTERN),
+          ownOdds ? stratPrior : beliefCache().get(ALL_PATTERN),
           { minSamples: lc.oddsMinSamples, priorStrength: lc.oddsPriorStrength, maxPoints: lc.oddsMaxPoints, pointsPerLogit: lc.oddsPointsPerLogit },
         )
       : null;

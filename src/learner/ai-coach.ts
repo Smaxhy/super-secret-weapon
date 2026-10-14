@@ -254,6 +254,7 @@ You get its recent closed trades: the measurable picture at entry (flattened fea
 "yourPastReviews" is your own memory: what you said and which rules you added in earlier reviews, with the average result of the trades before and AFTER each review. Learn from it — if results did not improve after an idea, say so and try a different angle instead of repeating it; if they improved, build on it. "otherLearners" is what the bot's statistical learners know right now: the win-probability model (whether it beats the score, and which features it weighs), rules the statistical search discovered, how the budget is shifted between strategies, the learned entry styles, and the recent change log. Do not re-propose rules that already exist there; use your judgement for patterns statistics can't see (behaviour, sequences, combinations).
 
 "exitsAfterSelling" follows every time-based exit (timer: timeStop = no follow-through, stall = no new high, stale = no movement, maxHold) for 30 minutes after the sell: ranPct = % of those coins that went +25% or more after we sold, medianEndX = where the typical coin ended vs our exit price. The bot's exit tuner already lengthens / shortens those timers on its own from this; mention it when a timer clearly sells too early or too late. Exit timers per strategy are in "editableSettings" when the owner asks for an exit change.
+"lossExitsAfter" does the same for every stop-loss and rug exit (kind = which exit): backAbovePct = % of coins that came back above our entry within 30 min (the exit was a false alarm / sold the bottom), diedPct = % that kept collapsing (the exit saved money), overshootPts = how far past the stop losses landed (late exits / bad fills). When most losses are stops and rug exits, use this to say whether the problem is the ENTRY (coins that really died → don't buy them) or the EXIT (coins that came back → exit too twitchy).
 
 Focus hardest on ENTRIES: when in a move does it buy — after a vertical spike, at the top of a green streak, on a pullback, into fading volume — and which entries worked. Also look for trends across trades (time of day, kinds of coins, crowd behaviour) and repeated spike patterns.
 
@@ -282,7 +283,7 @@ export class AiCoach {
   shadowSource: ((sinceMs: number) => Promise<ShadowResult[]>) | null = null;
   shadowReport: ((sinceMs: number) => Promise<ShadowReport>) | null = null;
   /** What coins did after time-based exits (exit-tuner.ts) — set in index.ts. */
-  exitSource: (() => { at: string; verdicts: Array<{ strategy: string; timer: string; n: number; ranPct: number; medianEndX: number; avgMaxAfterX: number; action: string }> } | null) | null = null;
+  exitSource: (() => { at: string; verdicts: Array<{ strategy: string; timer: string; n: number; ranPct: number; medianEndX: number; avgMaxAfterX: number; action: string }>; lossExits?: unknown[] } | null) | null = null;
   /** Best hours / days to trade (src/learner/timing.ts) — set in index.ts. */
   timingSource: (() => TimingProfile | null) | null = null;
 
@@ -596,6 +597,7 @@ export class AiCoach {
         yourPastReviews: past.map((r) => ({ at: r.at, insights: r.insights, rulesYouAdded: r.rulesAdded, resultsBefore: r.before, resultsAfter: realAfter(r.at) })),
         otherLearners: brain,
         exitsAfterSelling: this.exitSource?.()?.verdicts.slice(0, 12) ?? null,
+        lossExitsAfter: this.exitSource?.()?.lossExits?.slice(0, 12) ?? null,
         shadowTrades: shr && shr.total
           ? {
               note: 'pretend trades on coins the bot did NOT buy, followed with its own exits',
