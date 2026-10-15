@@ -69,6 +69,12 @@ describe('per-strategy funnel (v10.33)', () => {
     noteSkip('CURVE_SNIPE', 'liquidity 2 SOL < 5', T);
     const s2 = blockerSnapshot(T + 2000, { SOON: true });
     expect(s2.strategies.find((r) => r.strategy === 'SOON')!.topSkips[0]).toEqual({ reason: 'curve # outside #', count: 2 });
-    expect(s2.summary).toMatch(/waiting for a dip/);
+  });
+
+  it('says when buy signals are waiting for a dip instead of "none good enough"', async () => {
+    const { noteEvaluation } = await import('../src/lib/entry-blockers');
+    noteEvaluation('MIGRATION_MOMENTUM', { rulesOk: true, signal: true, outcome: 'dipWait' }, T);
+    noteSkip('MIGRATION_MOMENTUM', 'waiting for a dip', T);
+    expect(blockerSnapshot(T + 1000).summary).toMatch(/1 buy signal waiting for a dip/);
   });
 });
