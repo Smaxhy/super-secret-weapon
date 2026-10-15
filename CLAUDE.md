@@ -562,6 +562,9 @@ smart money → learning engine → ML → social). See README.md.
   ≥ `reboundAfterLoss.cooldownMin` 60 later, as a minimum-size learning trade (probe path, entryContext.explore); rug /
   open position → never. Swing watcher now also watches losing exits (cool-down 60 min) when reboundAfterLoss is on.
   Editable (Migrated coins). tests/reentry.test.ts.
+- **v10.23 (Oct 15): more trades** (owner: "5 trades in 6 hours is way too little"). Migration v20: `trading.quietHours`
+  off, `entry.confirmDelaySec` 15 + `confirm.maxDropPct` 6, RUNNER back on but small (`runner.sizeMultiplier` 0.5 → the
+  minimum size, allocation 0.1, max 2 open); allocation MIGRATION 0.4 / SOON 0.3 / KOL 0.2 / RUNNER 0.1.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

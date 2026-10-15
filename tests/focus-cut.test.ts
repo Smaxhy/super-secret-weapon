@@ -5,9 +5,10 @@ import { exitRulesFor } from '../src/executor/sell-manager';
 import { inQuietHours } from '../src/executor/trader';
 
 describe('v10.21 focus cut (owner CSV, 515 trades)', () => {
-  it('only SOON, migrated coins and KOL follow trade, and the budget adds up to 1', () => {
+  it('SOON, migrated coins, KOL follow and (small) RUNNER trade, and the budget adds up to 1', () => {
     const t = DEFAULT_CONFIG.trading;
-    expect(Object.entries(t.enabledStrategies).filter(([, on]) => on).map(([s]) => s).sort()).toEqual(['MIGRATION_MOMENTUM', 'SMART_MONEY_COPY', 'SOON']);
+    expect(Object.entries(t.enabledStrategies).filter(([, on]) => on).map(([s]) => s).sort()).toEqual(['MIGRATION_MOMENTUM', 'RUNNER', 'SMART_MONEY_COPY', 'SOON']);
+    expect(DEFAULT_CONFIG.trading.quietHours.enabled).toBe(false);
     expect(Object.values(t.allocation).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
   });
   it('night pause 00–04 UTC (and wraps past midnight when asked)', () => {
@@ -22,9 +23,9 @@ describe('v10.21 focus cut (owner CSV, 515 trades)', () => {
     expect(exitRulesFor('MIGRATION_MOMENTUM', r).takeProfitTiers.map((x) => x.multiple)).toEqual([1.2, 1.4, 5]);
     expect(exitRulesFor('SMART_MONEY_COPY', r).takeProfitTiers[0]).toEqual({ multiple: 1.4, sellPct: 40 });
   });
-  it('the buy wait is 25 s and the price must hold', () => {
-    expect(DEFAULT_CONFIG.entry.confirmDelaySec).toBe(25);
-    expect(DEFAULT_CONFIG.entry.confirm).toEqual({ maxDropPct: 4, maxPumpPct: 15, minBuyRatio: 1.1 });
+  it('the buy wait is 15 s and the price must hold (v10.23)', () => {
+    expect(DEFAULT_CONFIG.entry.confirmDelaySec).toBe(15);
+    expect(DEFAULT_CONFIG.entry.confirm).toEqual({ maxDropPct: 6, maxPumpPct: 15, minBuyRatio: 1.1 });
   });
   it('migration v19 pushes it into saved settings', () => {
     const m = MIGRATIONS.find((x) => x.version === 19)!;

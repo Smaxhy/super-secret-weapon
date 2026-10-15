@@ -296,6 +296,21 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['exit', ['byStrategy', 'MIGRATION_MOMENTUM', 'takeProfitTiers'], [{ multiple: 1.2, sellPct: 30 }, { multiple: 1.4, sellPct: 30 }, { multiple: 5, sellPct: 15 }]],
     ],
   },
+  {
+    version: 20,
+    note: 'v10.23 (owner: "5 trades in 6 hours is way too little"): night pause off, buy wait 15 s with ≤6% drop, RUNNER back on at the smallest size (10% budget, max 2 open)',
+    set: [
+      ['trading', ['quietHours', 'enabled'], false],
+      ['entry', ['confirmDelaySec'], 15],
+      ['entry', ['confirm', 'maxDropPct'], 6],
+      ['trading', ['enabledStrategies', 'RUNNER'], true],
+      ['trading', ['allocation', 'RUNNER'], 0.1],
+      ['trading', ['allocation', 'MIGRATION_MOMENTUM'], 0.4],
+      ['trading', ['allocation', 'SOON'], 0.3],
+      ['trading', ['maxOpenByStrategy', 'RUNNER'], 2],
+      ['runner', ['sizeMultiplier'], 0.5],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

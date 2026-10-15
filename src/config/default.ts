@@ -55,9 +55,10 @@ export const DEFAULT_CONFIG = {
      */
     allocation: {
       CURVE_SNIPE: 0,
-      MIGRATION_MOMENTUM: 0.45,
-      SOON: 0.35,
-      RUNNER: 0,
+      MIGRATION_MOMENTUM: 0.4,
+      SOON: 0.3,
+      // v10.23 (owner: "5 trades in 6 hours is way too little"): RUNNER back on, small (size ×0.5 → the minimum).
+      RUNNER: 0.1,
       // v8.9: KOL follow (kol.follow) — coins several KOLs / smart wallets bought.
       SMART_MONEY_COPY: 0.2,
       SWING: 0,
@@ -69,15 +70,16 @@ export const DEFAULT_CONFIG = {
       SMART_MONEY_COPY: true,
       CURVE_SNIPE: false,
       SWING: false,
-      RUNNER: false,
+      RUNNER: true,
     } satisfies Record<StrategyName, boolean>,
     /**
      * v10.21: no NEW buys between these UTC hours (00–04 UTC: 97 trades, 9% winners, −2.8 SOL). Open trades are still
      * managed; refused signals still become shadow trades, so the learners keep seeing those hours.
      */
-    quietHours: { enabled: true as boolean, fromUtc: 0, toUtc: 4 },
+    // v10.23 (owner: too few trades): off by default — it cut 4 of every 24 hours.
+    quietHours: { enabled: false as boolean, fromUtc: 0, toUtc: 4 },
     /** At most this many open positions per strategy. */
-    maxOpenByStrategy: { CURVE_SNIPE: 4, SOON: 4, MIGRATION_MOMENTUM: 6, SMART_MONEY_COPY: 3, SWING: 3, RUNNER: 4 } as Partial<Record<StrategyName, number>>,
+    maxOpenByStrategy: { CURVE_SNIPE: 4, SOON: 4, MIGRATION_MOMENTUM: 6, SMART_MONEY_COPY: 3, SWING: 3, RUNNER: 2 } as Partial<Record<StrategyName, number>>,
     /**
      * Strategy cool-off: once a strategy has `minTrades` closed trades among its last `lastN` and they
      * average worse than `maxAvgPnlPct` per trade, it takes no new entries for `pauseMinutes`
@@ -178,8 +180,9 @@ export const DEFAULT_CONFIG = {
      */
     // v10.21 (owner's CSV: 228 of 515 trades died within 60 s, −7.3 SOL = 70% of all losses, most never went up 2% —
     // bought the top of a spike): wait 25 s and the price must HOLD (≤4% lower, ≤15% higher, buyers ≥1.1× sellers).
-    confirmDelaySec: 25,
-    confirm: { maxDropPct: 4, maxPumpPct: 15, minBuyRatio: 1.1 },
+    // v10.23 (owner: "5 trades in 6 hours is way too little"): 15 s, ≤6% lower (still ≤15% higher, buyers ≥1.1×).
+    confirmDelaySec: 15,
+    confirm: { maxDropPct: 6, maxPumpPct: 15, minBuyRatio: 1.1 },
     /**
      * Fake volume / bundles / chasing (from the live trade log):
      *  - fake volume = wallets trading back and forth (wash trading, volume bots)
@@ -735,7 +738,8 @@ export const DEFAULT_CONFIG = {
    */
   runner: {
     scoreThresholdDelta: -20,
-    sizeMultiplier: 0.8,
+    // v10.23: back on after the cut, but small (×0.5 → the minimum size) until it proves itself.
+    sizeMultiplier: 0.5,
     scan: { enabled: true as boolean, everySec: 15, minOrganicBuyers5m: 18, minOrganicBuySol5m: 3, minBuySharePct: 55, minOrganicPct: 60, maxRun3mPct: 300, minMarketCapUsd: 8_000, cooldownMin: 4, maxChecksPerTick: 8, minCurvePct: 15, maxCurvePct: 92 },
   },
 
