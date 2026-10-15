@@ -51,7 +51,7 @@ import type { Redis } from 'ioredis';
 import { PublicKey } from '@solana/web3.js';
 import { decodeBondingCurveAccount } from '../lib/pumpfun';
 import { getConnection } from '../lib/solana';
-import { copySoldKey } from '../scanner/whale-tracker';
+import { copySoldKey, mirrorSoldKey } from '../scanner/whale-tracker';
 import { insiderDumpSignal } from '../evaluator/insider-cluster';
 import { coachFor } from '../learner/trade-coach';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
@@ -116,6 +116,9 @@ export interface ExitInput {
   nowMs: number;
   /** The wallet this copy trade followed has sold. */
   copyWalletSold: boolean;
+  /** A COPY wallet (owner's pick) sold this coin after we bought → sell everything at once (owner: "if he sells, sell
+   *  instantly"). The reason text, or null. Ignores every hold. */
+  mirrorSell?: string | null;
   /** 0-1 "this is turning" score from recent activity (see computeRisk). */
   risk: number;
   riskWhy: string;
@@ -572,6 +575,18 @@ export interface ExitDecision {
   };
 }
 
+/** The copied wallet's latest sell of this coin ({wallet, name, t}) → a reason when it came AFTER our buy (pure). */
+export function mirrorSellReason(raw: string | null, openedAtMs: number): string | null {
+  if (!raw) return null;
+  try {
+    const m = JSON.parse(raw) as { name?: string; t?: number };
+    if (typeof m.t !== 'number' || m.t <= openedAtMs) return null;
+    return `${m.name ?? 'the wallet we follow'} sold — sold with him`;
+  } catch {
+    return null;
+  }
+}
+
 export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDecision {
   // Peak from real trades only: a suspicious price can't raise it. Live mode: the highest
   // level the price actually HELD since the last check (settledHigh — spike prints don't
@@ -593,6 +608,7 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   const multiple = i.priceSol / i.entryPriceSol;
 
   if (i.migratedNoMarket) return all('MIGRATED', 'migrated, no PumpSwap pool found');
+  if (i.mirrorSell) return all('COPY_EXIT', i.mirrorSell);
 
   if (i.bundlePctEntry - i.bundlePctNow >= rules.rugExit.bundleDumpPct) {
     return all('RUG_DETECTED', `bundlers dumped ${(i.bundlePctEntry - i.bundlePctNow).toFixed(1)}% of supply`);
@@ -1154,6 +1170,7 @@ export class SellManager {
     }
     const copied = (entry as { copiedWallet?: string | null }).copiedWallet;
     const copyWalletSold = !!copied && (await this.redis.exists(copySoldKey(p.mint, copied))) === 1;
+    const mirrorSell = cfg.copy.mirrorSells !== false ? mirrorSellReason(await this.redis.get(mirrorSoldKey(p.mint)), p.openedAt.getTime()) : null;
     const insiderDump = await readInsiderDump(this.redis, p.mint);
     const guard = await this.rugGuard(p, view, crowdTrades, now);
     const ph = cfg.exit.potentialHold ?? DEFAULT_CONFIG.exit.potentialHold;
@@ -1209,6 +1226,7 @@ export class SellManager {
         top10PctNow: view.adopted ? 0 : m.top10HolderPct,
         nowMs: now,
         copyWalletSold,
+        mirrorSell,
         risk,
         riskWhy: why,
         openedAtMs: p.openedAt.getTime(),

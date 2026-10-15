@@ -82,6 +82,14 @@ export async function kolActivity(redis: Redis, mint: string, c: Pick<KolConfig,
   return { buyers, recentSellers, everBought: ever, dumping: recentSellers.length >= c.dumpMinKols && recentSellers.length * 2 >= ever };
 }
 
+/**
+ * KOLs still in, where a TRUSTED wallet (weight ≥ trustedMinWeight — the owner's top picks) counts as two:
+ * one trusted buy alone is enough to start a KOL-follow check (owner: "if these wallets buy something it's often good").
+ */
+export function effectiveKols(buyers: ReadonlyArray<{ weight: number }>, trustedMinWeight = Infinity): number {
+  return buyers.reduce((n, b) => n + (b.weight >= trustedMinWeight ? 2 : 1), 0);
+}
+
 /** Score points for KOL activity (pure). */
 export function kolPoints(a: KolActivity | null, c: Pick<KolConfig, 'pointsPerKol' | 'maxPoints' | 'dumpPenalty'>): { points: number; notes: string[] } {
   if (!a) return { points: 0, notes: [] };

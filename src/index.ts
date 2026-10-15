@@ -369,6 +369,8 @@ async function main(): Promise<void> {
   // Copy trading: watch the wallets you added on the dashboard.
   const whales = new WhaleTracker(redis, liveState, evaluator);
   whales.onAdopt = (ev) => registry.adopt(ev);
+  // The copied wallet sold a coin we hold → check our positions in it right now (mirror sell).
+  whales.onCopySold = (mint) => sellManager.onTrade(mint);
   // Several KOLs (Cupsey, Cented…) bought the same coin → check it now.
   whales.onKolCluster = (mint, kols) => {
     const why = `kols:${kols}`;

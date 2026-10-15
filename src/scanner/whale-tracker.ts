@@ -24,8 +24,8 @@ import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import type { Evaluator } from '../evaluator/evaluator';
 import type { LiveState } from './live-state';
-import { recordKolTrade, setKolDirectory } from './kol-signal';
-import { KNOWN_KOLS } from '../config/kol-wallets';
+import { effectiveKols, kolActivity, recordKolTrade, setKolDirectory } from './kol-signal';
+import { KNOWN_KOLS, OWNER_COPY_WALLETS, OWNER_PICKS, PICK_WEIGHT, TOP_PICK_WEIGHT } from '../config/kol-wallets';
 import { isValidPubkey } from '../lib/pumpfun';
 
 /** Add the starter KOL list once (a marker row remembers it, so KOLs you delete stay deleted). */
@@ -41,11 +41,36 @@ async function seedKnownKols(): Promise<void> {
   log.info({ kols: rows.map((k) => k.name) }, 'starter KOL wallets added (verify them on kolscan)');
 }
 
+/**
+ * The owner's wallet picks (Oct 15), added once: KOL picks (top ones weigh more → trusted) + the wallet to copy.
+ * Existing rows are kept but switched on and raised to the pick's weight / kind (an owner pick outranks a seed).
+ */
+async function seedOwnerWallets(): Promise<void> {
+  const MARK = '_ownerWallets1';
+  if (await prisma.botConfig.findUnique({ where: { key: MARK } })) return;
+  const rows = [
+    ...OWNER_PICKS.filter((p) => isValidPubkey(p.address)).map((p, i) => ({ address: p.address, kind: 'KOL', weight: p.top ? TOP_PICK_WEIGHT : PICK_WEIGHT, label: `${p.top ? 'Top pick' : 'Pick'} ${i + 1}` })),
+    ...OWNER_COPY_WALLETS.filter(isValidPubkey).map((a, i) => ({ address: a, kind: 'COPY', weight: 1, label: `Copy ${i + 1} (mirror sells)` })),
+  ];
+  for (const r of rows) {
+    const had = await prisma.trackedWallet.findUnique({ where: { address: r.address } });
+    if (had) {
+      await prisma.trackedWallet.update({ where: { address: r.address }, data: { active: true, kind: r.kind, weight: Math.max(had.weight, r.weight) } });
+    } else {
+      await prisma.trackedWallet.create({ data: { ...r, notes: "owner's pick (Oct 15)", source: 'MANUAL' } });
+    }
+  }
+  await prisma.botConfig.create({ data: { key: MARK, value: { version: 1, added: rows.length } } });
+  log.info({ wallets: rows.length }, "owner's wallet picks added");
+}
+
 const log = moduleLogger('whale-tracker');
 const RELOAD_MS = 30_000;
 const SOLD_FLAG_TTL = 24 * 3600;
 
 export const copySoldKey = (mint: string, wallet: string) => `copy:sold:${mint}:${wallet}`;
+/** Latest sell of this coin by a COPY wallet: {wallet, name, t} — positions opened before `t` mirror it. */
+export const mirrorSoldKey = (mint: string) => `copy:mirror:${mint}`;
 
 export class WhaleTracker {
   private wallets = new Map<string, { label: string | null; kind: string; weight: number }>();
@@ -56,6 +81,8 @@ export class WhaleTracker {
   onWalletsChanged: ((addresses: string[]) => void) | null = null;
   /** Called when a tracked wallet trades a token we should stream. */
   onWatchToken: ((mint: string) => void) | null = null;
+  /** A copied wallet sold this coin → check our positions in it right now. */
+  onCopySold: ((mint: string) => void) | null = null;
   /** Start tracking a token we never saw launch (a tracked wallet bought it). */
   onAdopt: ((ev: PumpTradeEvent) => Promise<void>) | null = null;
 
@@ -67,6 +94,7 @@ export class WhaleTracker {
 
   async start(): Promise<void> {
     await seedKnownKols().catch((err: Error) => log.warn({ err: err.message }, 'could not seed the starter KOL list'));
+    await seedOwnerWallets().catch((err: Error) => log.warn({ err: err.message }, "could not add the owner's wallet picks"));
     await this.reload();
     this.timer = setInterval(() => void this.reload(), RELOAD_MS);
   }
@@ -83,7 +111,7 @@ export class WhaleTracker {
     try {
       const rows = await prisma.trackedWallet.findMany({ where: { active: true }, select: { address: true, label: true, kind: true, weight: true } });
       const next = new Map(rows.map((r) => [r.address, { label: r.label, kind: r.kind, weight: r.weight }]));
-      setKolDirectory(new Map(rows.filter((r) => r.kind === 'KOL').map((r) => [r.address, { name: r.label ?? `${r.address.slice(0, 4)}…`, weight: r.weight }])));
+      setKolDirectory(new Map(rows.filter((r) => r.kind === 'KOL' || r.kind === 'COPY').map((r) => [r.address, { name: r.label ?? `${r.address.slice(0, 4)}…`, weight: r.weight }])));
       const changed = next.size !== this.wallets.size || [...next.keys()].some((k) => !this.wallets.has(k));
       this.wallets = next;
       if (changed) {
@@ -124,9 +152,11 @@ export class WhaleTracker {
     if (!kc?.enabled) return;
     const mint = curveMint ?? (pool ? (this.liveState.mintForPool(pool) ?? (pool.startsWith('amm:') ? pool.slice(4) : null)) : null);
     if (!mint) return;
-    const kols = await recordKolTrade(this.redis, mint, wallet, isBuy);
+    await recordKolTrade(this.redis, mint, wallet, isBuy);
     await prisma.trackedWallet.update({ where: { address: wallet }, data: { lastSeenAt: new Date(), tradeCount: { increment: 1 } } }).catch(() => undefined);
     if (!isBuy) return;
+    // KOLs still holding; a trusted wallet (owner's top picks) counts as two.
+    const kols = effectiveKols((await kolActivity(this.redis, mint, kc)).buyers, kc.trustedMinWeight ?? Infinity);
     const name = label ?? `${wallet.slice(0, 4)}…${wallet.slice(-4)}`;
     log.info({ wallet, mint, kols }, `⭐ KOL ${name} bought (${kols} KOL${kols === 1 ? '' : 's'} in this coin)`);
     if (!this.liveState.isTracked(mint) && curveTrade && this.onAdopt) await this.onAdopt(curveTrade);
@@ -150,6 +180,18 @@ export class WhaleTracker {
     }
     const sol = Number(lamports) / 1e9;
     const name = label ?? `${wallet.slice(0, 4)}…${wallet.slice(-4)}`;
+    if (!isBuy) {
+      // Mirror sells FIRST (owner: "if you're in a trade with him and he sells, sell instantly"): flag the coin, then
+      // wake the sell manager — every position we hold in it that opened before this sell is sold at once.
+      const c = getConfig().copy;
+      if (c.exitWhenWalletSells) await this.redis.set(copySoldKey(mint, wallet), '1', 'EX', SOLD_FLAG_TTL);
+      if (c.mirrorSells !== false) {
+        await this.redis.set(mirrorSoldKey(mint), JSON.stringify({ wallet, name, t: Date.now() }), 'EX', SOLD_FLAG_TTL);
+        this.onCopySold?.(mint);
+      }
+    }
+    // A copied wallet's buys / sells also count in the KOL signal (scoring, "KOLs dumping", KOL follow).
+    if (getConfig().kol?.enabled) await recordKolTrade(this.redis, mint, wallet, isBuy).catch(() => 0);
 
     await prisma.trackedWallet.update({ where: { address: wallet }, data: { lastSeenAt: new Date(), tradeCount: { increment: 1 } } }).catch(() => undefined);
 
@@ -169,7 +211,7 @@ export class WhaleTracker {
       await this.evaluator.scheduleCopy(mint, wallet);
     } else {
       log.info({ wallet, mint, sol }, `🐋 ${name} sold for ${sol.toFixed(2)} SOL`);
-      if (getConfig().copy.exitWhenWalletSells) await this.redis.set(copySoldKey(mint, wallet), '1', 'EX', SOLD_FLAG_TTL);
+      void recordEvent({ module: 'whale-tracker', type: 'wallet_sell', mint, message: `${name} sold ${sol.toFixed(3)} SOL — any position we hold in this coin is sold too`, data: { wallet, sol } });
     }
   }
 }

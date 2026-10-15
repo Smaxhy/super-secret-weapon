@@ -578,8 +578,18 @@ smart money → learning engine → ML → social). See README.md.
   card behind a "Calendar" button (open state remembered, `overview.calendar`); tapping a day → `/api/overview?day=YYYY-MM-DD&tz=`
   (`tradesOnDay`, whole history) so the profit numbers + chart show that day; "back to <range>" or a range tab clears it.
   useApi drops answers for a path that's no longer current (fast taps).
-- Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
-  (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
+- **v10.25 (Oct 15): owner's wallets + copy with instant mirror sells** (owner: "I need trades, the bot needs to read them
+  better; if these wallets buy something it's often good, especially the last 8; you're allowed to copy trade 4vw54…; if
+  you're in a trade with him and he sells, sell instantly"). `config/kol-wallets.ts` `OWNER_PICKS` (14 Solana KOL wallets,
+  5 "top" = weight 1.5; the owner's 0x… EVM addresses can't be tracked — left out) + `OWNER_COPY_WALLETS` (4vw54…, kind COPY),
+  seeded once (`seedOwnerWallets`, marker `_ownerWallets1`; existing rows switched on + raised). **Trusted** wallets
+  (weight ≥ `kol.trustedMinWeight` 1.5) count as two KOLs (`effectiveKols`) → one top-pick buy starts a KOL-follow check;
+  `features.kol.trusted` for the learners. COPY wallets' trades also count in the KOL signal. **Copy trades** (migration
+  v21): bar +0, size ×1, max 2, no min hold; `copy.skipDipWait` / `skipConfirm` → bought when he buys. **Mirror sell**
+  (`copy.mirrorSells`): a COPY wallet's sell → Redis `copy:mirror:<mint>` {wallet,name,t} (set before anything else) +
+  `whales.onCopySold` → `sellManager.onTrade(mint)`; decideExit `mirrorSell` (`mirrorSellReason`: only sells after our buy)
+  → COPY_EXIT 100% for ANY position in that coin, first check after "no market", ignores every hold. tests/owner-wallets.test.ts.
+- Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).
 - Owner's entry rules: min $12k volume, min $12k MC, min 1 SOL total fees paid (terminal-style), safety ≥ 55 (v9.6), score ≥ 70

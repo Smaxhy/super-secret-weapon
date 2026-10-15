@@ -477,6 +477,9 @@ export const DEFAULT_CONFIG = {
     dumpWindowMin: 5,
     dumpPenalty: 6,
     checkCooldownSec: 120,
+    /** A wallet with at least this weight is TRUSTED (owner's top picks, 1.5): it counts as two KOLs, so one trusted buy
+     *  starts a KOL-follow check on its own. */
+    trustedMinWeight: 1.5,
     /**
      * KOL follow (owner: "trade more alongside coins that a lot of KOLs buy"): when ≥ minKols KOLs /
      * discovered smart wallets bought a coin and are still holding, it is checked as its own trade
@@ -916,14 +919,20 @@ export const DEFAULT_CONFIG = {
      * Copy trades are heavily restricted (they underperformed): a STRICTER bar than
      * normal, half size, max `maxOpen` at a time, 5% of capital.
      */
-    scoreThresholdDelta: 5,
-    sizeMultiplier: 0.5,
-    maxOpen: 1,
-    /** Hold a copy trade at least this long: the copied wallet selling / momentum wobbles
-     *  don't shake us out early (the stop loss and rug exits still apply). */
-    minHoldSec: 120,
+    // v10.25 (owner picked the wallet to copy: "you're allowed to copy trade him"): normal bar + size, 2 at once.
+    scoreThresholdDelta: 0,
+    sizeMultiplier: 1,
+    maxOpen: 2,
+    /** Hold a copy trade at least this long before the normal exits (the mirror sell below ignores it). */
+    minHoldSec: 0,
     /** Sell our copy position when the wallet we copied sells. */
     exitWhenWalletSells: true,
+    /** Owner: "if you're in a trade with him and he sells, sell instantly" — ANY position we hold in a coin (whatever
+     *  strategy bought it) is sold at once when a COPY wallet sells that coin after we bought. */
+    mirrorSells: true as boolean,
+    /** A copy is bought when he buys: no dip wait (dip-only above $15k) and no 15 s confirmation for copy trades. */
+    skipDipWait: true as boolean,
+    skipConfirm: true as boolean,
     /** Re-check the token this many seconds after the wallet's buy. */
     checkpointsSec: [0, 30, 90, 180],
   },

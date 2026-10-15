@@ -311,6 +311,16 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['runner', ['sizeMultiplier'], 0.5],
     ],
   },
+  {
+    version: 21,
+    note: 'v10.25 (owner picked a wallet to copy + "if he sells, sell instantly"): copy trades at the normal bar and size, 2 at once, no minimum hold',
+    set: [
+      ['copy', ['scoreThresholdDelta'], 0],
+      ['copy', ['sizeMultiplier'], 1],
+      ['copy', ['maxOpen'], 2],
+      ['copy', ['minHoldSec'], 0],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

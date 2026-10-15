@@ -55,7 +55,7 @@ import { DEFAULT_CONFIG } from '../config/default';
 import { NEUTRAL_WALLET_FEATURES, walletFeatures, type CreatorProfile, type WalletAnalyzer } from './wallet-analyzer';
 import type { CrowdMetrics, CrowdTracker } from '../scanner/crowd-tracker';
 import { dexPoints, type DexScreener } from '../scanner/dexscreener';
-import { kolActivity, kolPoints } from '../scanner/kol-signal';
+import { effectiveKols, kolActivity, kolPoints } from '../scanner/kol-signal';
 import type { MarketLeaders } from '../scanner/market-leaders';
 import { analyzeChart } from './chart-reader';
 import { computeEarlyFlow, newPairCheck, type EarlyFlow } from './new-pair';
@@ -354,7 +354,8 @@ export class Evaluator {
     }
     // KOL follow (owner: "trade more alongside coins a lot of KOLs buy"): the KOLs must still be in;
     // the more of them, the easier the bar and the bigger the size.
-    const kolsIn = kolAct?.buyers.length ?? 0;
+    // A trusted wallet (owner's top picks) counts as two.
+    const kolsIn = kolAct ? effectiveKols(kolAct.buyers, kolCfg.trustedMinWeight ?? Infinity) : 0;
     let kolSize = 1;
     if (kolFollow) {
       if (kolsIn < kf.minKols) dexFails.push(`only ${kolsIn} KOL${kolsIn === 1 ? '' : 's'} still holding (need ${kf.minKols})`);
@@ -483,7 +484,7 @@ export class Evaluator {
         manipulation: manip,
         newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null,
         trending: trend && (trend.points || trend.fails.length) ? trend : null,
-        kol: kolAct ? { kols: kolAct.buyers.length, dumping: kolAct.dumping } : null,
+        kol: kolAct ? { kols: kolAct.buyers.length, trusted: kolAct.buyers.filter((b) => b.weight >= (kolCfg.trustedMinWeight ?? Infinity)).length, dumping: kolAct.dumping } : null,
         chart: chart ? { vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, pullbackPct: chart.pullbackPct } : null,
         swing,
         shape,
@@ -542,7 +543,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, market: market.raw, shape, tf, pa, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, trusted: kolAct.buyers.filter((b) => b.weight >= (kolCfg.trustedMinWeight ?? Infinity)).length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, copied: job.data.wallet ? 1 : 0, market: market.raw, shape, tf, pa, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },
@@ -568,13 +569,16 @@ export class Evaluator {
     // Don't buy the top: a stretched chart waits for a dip into the buy zone (the dip watcher
     // re-checks the coin when it dips and bounces — that re-check skips this and the confirmation).
     const dipEntry = job.data.dip === true;
+    // A copy trade buys when the copied wallet buys (owner: "you're allowed to copy trade him") — no dip waits.
+    const copyNow = STRATEGY.name === 'SMART_MONEY_COPY' && !!job.data.wallet && !kolFollow;
+    const noWaitCopy = copyNow && cfg.copy.skipDipWait !== false;
     // Fresh low-cap pairs (owner's rule: under ~$15k MC) are bought straight away — waiting for a
     // dip there mostly means missing the move.
     const noDipWait = market.raw.marketCapUsd !== null && market.raw.marketCapUsd < (chartCfg.dip.noWaitBelowMcUsd ?? 15_000);
     // Entry style the loss autopsy learned for this strategy (e.g. "its losers never went up → only buy after a
     // pullback", "chasing +50% in 3 min keeps losing"): don't buy now, wait for the dip — that changes HOW it enters.
     const style = entryStyleFor(STRATEGY.name);
-    const styleWhy = decision === 'BUY' && !dipEntry && !explore ? entryStyleBlock(style, shape) : null;
+    const styleWhy = decision === 'BUY' && !dipEntry && !explore && !noWaitCopy ? entryStyleBlock(style, shape) : null;
     if (styleWhy) {
       const high = chart?.recentHigh && chart.recentHigh > 0 ? chart.recentHigh : market.raw.priceSol / Math.max(0.01, 1 - (shape?.offHigh10m ?? 0) / 100);
       const zone = chart?.zone ?? pullbackZone(high, style?.minOffHighPct ?? 0);
@@ -584,7 +588,7 @@ export class Evaluator {
       } else reasons = [`learned entry rule: ${styleWhy}`];
       decision = 'SKIP';
     }
-    if (decision === 'BUY' && !dipEntry && !noDipWait && chart?.verdict === 'wait_dip' && chart.zone && chartCfg.dip.enabled && this.dips) {
+    if (decision === 'BUY' && !dipEntry && !noDipWait && !noWaitCopy && chart?.verdict === 'wait_dip' && chart.zone && chartCfg.dip.enabled && this.dips) {
       this.dips.add({ mint, symbol: token.symbol, strategy: STRATEGY.name, zone: chart.zone, signalPrice: market.raw.priceSol, high: chart.recentHigh, why: chart.summary, swing, wallet: job.data.wallet });
       decision = 'SKIP';
       reasons = [`waiting for a dip: ${chart.summary}`];
@@ -593,7 +597,7 @@ export class Evaluator {
     // (v10.16: with only the dip-wait switch on, the broad EXTENDED label alone no longer delays buys — it held back most
     // signals; a real chase = +40% in 60 s or 30% over the trend line.)
     const stretched = (paCfg.enabled || paCfg.dipWait?.enabled) && paRead && paRead.setup !== 'THIN' && ((paCfg.enabled && paRead.setup === 'EXTENDED') || paRead.change60Pct > paCfg.maxChange60Pct || paRead.extensionPct > paCfg.maxExtensionPct);
-    if (decision === 'BUY' && !dipEntry && !noDipWait && !explore && stretched && chartCfg.dip.enabled && this.dips && paRead) {
+    if (decision === 'BUY' && !dipEntry && !noDipWait && !explore && !noWaitCopy && stretched && chartCfg.dip.enabled && this.dips && paRead) {
       const high = paRead.athPriceSol > 0 ? paRead.athPriceSol : market.raw.priceSol;
       const why = `+${paRead.change60Pct.toFixed(0)}% in 60 s, ${paRead.extensionPct.toFixed(0)}% above its trend line`;
       this.dips.add({ mint, symbol: token.symbol, strategy: STRATEGY.name, zone: chart?.zone ?? pullbackZone(high, 10), signalPrice: market.raw.priceSol, high, why, swing, wallet: job.data.wallet });
@@ -603,7 +607,7 @@ export class Evaluator {
     // Owner's rule (v10.24): at/above $15k MC only buy a dip — wait for a pullback off the recent high + a bounce with
     // buyers (dip watcher); under $15k the signal is bought straight away. No dip in time = no buy.
     const dipOnly = chartCfg.dip.dipOnly ?? DEFAULT_CONFIG.chart.dip.dipOnly;
-    const dipOnlyHere = decision === 'BUY' && this.dips && chartCfg.dip.enabled && dipOnlyApplies({ enabled: dipOnly.enabled, mcUsd: market.raw.marketCapUsd, minMcUsd: chartCfg.dip.noWaitBelowMcUsd ?? 15_000, dipEntry, swing });
+    const dipOnlyHere = decision === 'BUY' && !noWaitCopy && this.dips && chartCfg.dip.enabled && dipOnlyApplies({ enabled: dipOnly.enabled, mcUsd: market.raw.marketCapUsd, minMcUsd: chartCfg.dip.noWaitBelowMcUsd ?? 15_000, dipEntry, swing });
     // …unless there's a crazy amount of real volume right now (owner) → buy straight away.
     const hotWhy = dipOnlyHere && this.crowd ? hotVolume(organicFlow(this.crowd.trades(mint), Date.now()), dipOnly.hotVolume) : null;
     if (hotWhy) reasons = [...reasons, `bought without waiting for a dip — ${hotWhy}`];
@@ -616,7 +620,7 @@ export class Evaluator {
       reasons = [`waiting for a dip (${why})`];
     }
     // Confirmation delay: re-check a BUY signal a few seconds later before any money moves.
-    if (decision === 'BUY' && !dipEntry) {
+    if (decision === 'BUY' && !dipEntry && !(copyNow && cfg.copy.skipConfirm !== false)) {
       // New pairs are bought on the spot: their absorption + live-demand checks ARE the confirmation.
       const confirmSec = STRATEGY.name === 'CURVE_SNIPE' ? (npCfg.confirmDelaySec ?? 0) : (cfg.entry.confirmDelaySec ?? 0);
       const pending = job.data.confirm;
