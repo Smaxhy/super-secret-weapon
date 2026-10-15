@@ -125,7 +125,7 @@ export function strategyMinimums(e: BotConfigShape['entry'], focus: BotConfigSha
     minLiquidityUsd: fr && 'minLiquidityUsd' in fr ? fr.minLiquidityUsd : 0,
     minActiveWallets5m: fr?.minActiveWallets5m ?? 0,
     /** v10.31: holder minimum per strategy from config (null = the strategy's built-in number). */
-    minHolders: (np && 'minHolders' in np && typeof np.minHolders === 'number' ? np.minHolders : null) ?? (fr && 'minHolders' in fr && typeof fr.minHolders === 'number' ? fr.minHolders : null),
+    minHolders: (np && 'minHolders' in np && typeof np.minHolders === 'number' ? np.minHolders : null) ?? (fr && 'minHolders' in fr && typeof fr.minHolders === 'number' ? fr.minHolders : null) ?? (e.minHoldersByStrategy as Partial<Record<string, number>> | undefined)?.[strategy] ?? null,
     curveRange: strategy === 'SOON' && focus ? { min: focus.soon.minCurvePct, max: focus.soon.maxCurvePct } : np ? { min: 0, max: np.maxCurvePct } : null,
     /** New pairs: age window (s) and the minimum SOL in the curve (≈ 1.6× the launch market cap). */
     ageSec: np ? { min: np.minAgeSec, max: np.maxAgeSec } : null,

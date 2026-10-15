@@ -89,18 +89,20 @@ describe('strategy cards: does each strategy deserve to run?', () => {
 });
 
 describe('migrated coins have their own safety minimum', () => {
-  it('40 for migrated coins, 45 for SOON (v10.31), the general 55 for everything else', async () => {
+  it('40 for migrated coins and SOON, the general 45 for everything else (v10.35)', async () => {
     const { strategyMinimums } = await import('../src/evaluator/scorer');
     const { DEFAULT_CONFIG } = await import('../src/config/default');
     expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'MIGRATION_MOMENTUM').minSafetyScore).toBe(40);
-    expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'CURVE_SNIPE').minSafetyScore).toBe(55);
-    expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'SOON').minSafetyScore).toBe(45);
+    expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'CURVE_SNIPE').minSafetyScore).toBe(45);
+    expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'SOON').minSafetyScore).toBe(40);
   });
-  it('v10.31 holder minimums: new pairs 8, SOON 35, others keep their strategy number', async () => {
+  it('v10.35 holder minimums: new pairs 5, SOON 20, runners 15, copies 5, others keep their strategy number', async () => {
     const { checkEntryRules, strategyMinimums } = await import('../src/evaluator/scorer');
     const { DEFAULT_CONFIG } = await import('../src/config/default');
-    expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'CURVE_SNIPE').minHolders).toBe(8);
-    expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'SOON').minHolders).toBe(35);
+    expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'CURVE_SNIPE').minHolders).toBe(5);
+    expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'SOON').minHolders).toBe(20);
+    expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'RUNNER').minHolders).toBe(15);
+    expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'SMART_MONEY_COPY').minHolders).toBe(5);
     expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'MIGRATION_MOMENTUM').minHolders).toBeNull();
     expect(typeof checkEntryRules).toBe('function');
   });

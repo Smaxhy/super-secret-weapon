@@ -98,12 +98,12 @@ describe('focus entry rules', () => {
     expect(rulesFor({ ...market, liquidityUsd: 1500 }, 'MIGRATION_MOMENTUM').join()).toContain('liquidity $1500 < $2000');
     expect(rulesFor(market, 'MIGRATION_MOMENTUM', { activeWallets5m: 5 }).join()).toContain('only 5 active wallets');
   });
-  it('Soon coins: curve 70%+, not complete', () => {
+  it('Soon coins: curve 50–95% (v10.35), not complete', () => {
     const soon = { ...market, complete: false, onAmm: false, bondingCurvePct: 82, totalFeesSol: 4, marketCapUsd: 30_000, volumeUsd: 40_000 };
     expect(rulesFor(soon, 'SOON')).toEqual([]);
-    expect(rulesFor({ ...soon, bondingCurvePct: 60 }, 'SOON').join()).toContain('curve 60.0% outside 70-90%');
-    // v5: the last stretch before graduation (where holders dump into it) is skipped.
-    expect(rulesFor({ ...soon, bondingCurvePct: 94 }, 'SOON').join()).toContain('curve 94.0% outside 70-90%');
+    expect(rulesFor({ ...soon, bondingCurvePct: 45 }, 'SOON').join()).toContain('curve 45.0% outside 50-95%');
+    // The last stretch before graduation (where holders dump into it) is still skipped.
+    expect(rulesFor({ ...soon, bondingCurvePct: 97 }, 'SOON').join()).toContain('curve 97.0% outside 50-95%');
     expect(rulesFor({ ...soon, complete: true }, 'SOON').join()).toContain('curve already complete');
   });
   it('new pairs (curve snipes) use their own zone instead of the $12k minimums', () => {
@@ -111,8 +111,8 @@ describe('focus entry rules', () => {
     const np = DEFAULT_CONFIG.focus.newPair;
     expect(m.minTotalFeesSol).toBe(np.minTotalFeesSol);
     expect(m.minMarketCapUsd).toBe(np.minMarketCapUsd);
-    expect(m.maxMarketCapUsd).toBe(15_000);
-    expect(m.ageSec).toEqual({ min: 45, max: 90 }); // v10.27: owner's new-pair filter ≤ 1.5 min
+    expect(m.maxMarketCapUsd).toBe(100_000); // v10.35: the owner's new-pair filter
+    expect(m.ageSec).toEqual({ min: 30, max: 90 }); // v10.27: owner's new-pair filter ≤ 1.5 min
     expect(m.minActiveWallets5m).toBe(0);
     // Other strategies keep their minimums (no max market cap).
     expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'SOON').maxMarketCapUsd).toBeNull();

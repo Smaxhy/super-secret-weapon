@@ -134,23 +134,26 @@ export const DEFAULT_CONFIG = {
     // v9.6 (owner: "it isn't trading enough"): 55 — soft insider flags (bursts, transfers, dev-slot sells) used to
     // stack under 70 on normal busy coins; hard fails (mint / freeze authority, bad extensions…) still block,
     // and the rug guard (dump risk, launch whale, staircase, holder dumps) covers the rest at entry.
-    minSafetyScore: 55,
-    minCombinedScore: 65, // v9.9 (owner: more trades) — autopsy + AI coach tighten it back where it loses
+    // v10.35 (owner: "lower the bot's older rules by a lot — the terminal filters are the main focus"): 45 / 55.
+    minSafetyScore: 45,
+    minCombinedScore: 55, // v9.9 (owner: more trades) — autopsy + AI coach tighten it back where it loses
     minHoldersCurveSnipe: 15,
     minHoldersMigration: 40,
-    maxDevHoldingPct: 10,
+    maxDevHoldingPct: 12,
+    /** v10.35: per-strategy holder minimums (else the strategy's built-in number; the owner's filters still apply). */
+    minHoldersByStrategy: { RUNNER: 15, SMART_MONEY_COPY: 5 } as Partial<Record<StrategyName, number>>,
     // ---- Anti-rug: hard limits, any one of them blocks a buy ----
     /** Bundled / sniper wallets (bought within ~1s of launch, dev excluded) may hold at most this % of supply. */
-    maxBundlePct: 18,
+    maxBundlePct: 25,
     /** Top 10 wallets combined may hold at most this % of supply. */
-    maxTop10Pct: 50,
+    maxTop10Pct: 60,
     /** No single wallet (dev excluded) may hold more than this % of supply. */
-    maxSingleHolderPct: 10,
+    maxSingleHolderPct: 12,
     /** Skip if the dev has already sold more than this share of what they bought (0-1). */
     maxDevSoldFraction: 0.9,
     requireNoMintAuthority: true,
     requireNoFreezeAuthority: true,
-    minLiquiditySol: 5,
+    minLiquiditySol: 1.5,
     /** Total traded volume (buys + sells) in USD. */
     minVolumeUsd: 12_000,
     minMarketCapUsd: 12_000,
@@ -169,9 +172,9 @@ export const DEFAULT_CONFIG = {
      */
     riskyEntry: {
       enabled: true,
-      maxBundlePct: 30,
-      maxTop10Pct: 65,
-      maxSingleHolderPct: 15,
+      maxBundlePct: 35,
+      maxTop10Pct: 70,
+      maxSingleHolderPct: 18,
       extraScore: 5,
       sizeMultiplier: 0.5,
     },
@@ -190,7 +193,7 @@ export const DEFAULT_CONFIG = {
     // v10.21 (owner's CSV: 228 of 515 trades died within 60 s, −7.3 SOL = 70% of all losses, most never went up 2% —
     // bought the top of a spike): wait 25 s and the price must HOLD (≤4% lower, ≤15% higher, buyers ≥1.1× sellers).
     // v10.23 (owner: "5 trades in 6 hours is way too little"): 15 s, ≤6% lower (still ≤15% higher, buyers ≥1.1×).
-    confirmDelaySec: 15,
+    confirmDelaySec: 8,
     confirm: { maxDropPct: 6, maxPumpPct: 15, minBuyRatio: 1.1 },
     /**
      * Fake volume / bundles / chasing (from the live trade log):
@@ -327,43 +330,43 @@ export const DEFAULT_CONFIG = {
      * only allowed coins 75%+ up the curve — right where holders dump into graduation).
      */
     newPair: {
-      minAgeSec: 45,
+      minAgeSec: 30,
       // v10.27: owner's new-pair filter = ≤ 1.5 min old
       maxAgeSec: 90,
       // v10.31: 15 holders was the top skip — a ≤ 90 s old coin rarely has them yet; the demand rules below
       // (≥10 real buyers in 60 s) are the real check. Owner's new-pair filter: ≥ 2 holders.
-      minHolders: 8,
-      minCurveSol: 8,
+      minHolders: 5,
+      minCurveSol: 3,
       maxCurvePct: 85,
-      minMarketCapUsd: 3_500,
-      maxMarketCapUsd: 15_000,
-      minTotalFeesSol: 0.25,
-      minVolumeUsd: 1_500,
+      minMarketCapUsd: 2_500,
+      maxMarketCapUsd: 100_000,
+      minTotalFeesSol: 0.05,
+      minVolumeUsd: 200,
       // absorption
       sniperWindowSec: 4,
       maxSniperHoldPct: 10,
       minSniperSoldPct: 50,
       maxDevSoldFraction: 0.05,
       maxDevHoldingPct: 10,
-      maxTop10Pct: 30,
+      maxTop10Pct: 40,
       maxTop10EarlyShare: 0.8,
-      minOfHighPct: 80,
+      minOfHighPct: 70,
       // organic demand (last 60 s) — v7: a little looser (owner: one trade an hour is too few to learn from;
       // the absorption rules above, which protect against the sniper dump, are unchanged)
-      minBuyers60s: 10,
-      minNewBuyers60s: 6,
-      minNetFlowSol60s: 1,
-      minBuyRatioSol: 1.2,
-      minBuyRatioCount: 1.3,
-      requireAcceleration: true as boolean,
-      minSizeCv: 0.5,
-      maxSameSizePct: 25,
-      minMedianBuySol: 0.05,
-      maxGapSec: 20,
-      maxBotVolumePct: 40,
+      minBuyers60s: 7,
+      minNewBuyers60s: 4,
+      minNetFlowSol60s: 0.5,
+      minBuyRatioSol: 1.1,
+      minBuyRatioCount: 1.1,
+      requireAcceleration: false as boolean,
+      minSizeCv: 0.3,
+      maxSameSizePct: 35,
+      minMedianBuySol: 0.03,
+      maxGapSec: 30,
+      maxBotVolumePct: 50,
       // trigger
-      nearHighPct: 7,
-      maxRun30sPct: 35,
+      nearHighPct: 12,
+      maxRun30sPct: 50,
       maxHolderDumpPct: 1,
       /** Fresh pairs are bought on the spot: the absorption + demand checks replace the 12 s confirmation. */
       confirmDelaySec: 0,
@@ -377,18 +380,18 @@ export const DEFAULT_CONFIG = {
      * it, so only the 70–90% part of the curve (≥ ~1.65× left to graduation), strict rules, normal bar.
      */
     soon: {
-      minCurvePct: 70,
-      maxCurvePct: 90,
+      minCurvePct: 50,
+      maxCurvePct: 95,
       /** Seconds after the coin first reaches `minCurvePct` at which it's checked. */
       checkpointsSec: [0, 20, 45, 90, 150, 240, 360, 600, 900],
-      minTotalFeesSol: 3,
+      minTotalFeesSol: 1,
       minMarketCapUsd: 12_000,
       minVolumeUsd: 12_000,
-      minActiveWallets5m: 25,
+      minActiveWallets5m: 10,
       // v10.31 (owner's Bot health: SOON "holders < 50" 99× and "safety < 55" 53× in an hour, 0 buys): 35 holders, safety 45
       // (soft insider flags stack on busy curve coins; hard fails + rug / bundle guard still block).
-      minHolders: 35,
-      minSafetyScore: 45,
+      minHolders: 20,
+      minSafetyScore: 40,
       scoreThresholdDelta: 0,
       sizeMultiplier: 1,
     },
@@ -398,12 +401,12 @@ export const DEFAULT_CONFIG = {
       /** Pool liquidity in USD (both sides, like trading terminals show it). */
       minLiquidityUsd: 2_000,
       /** v10.33: 12 = what the migrated scanner sends (≥ 12 real buyers); 15 bounced coins it had just sent. */
-      minActiveWallets5m: 12,
+      minActiveWallets5m: 8,
       /**
        * No entries in the first minutes after migration: pump.fun's BOOST buys ~17.6 SOL over the
        * first 5 min (mechanical, front-run by bots) and liquidity drains ~57% from minute 5 to 30.
        */
-      noEntryFirstSec: 330,
+      noEntryFirstSec: 180,
       /**
        * v10.20 (owner: "0 buy signals"; "MIGRATION: safety < 55" was the top migrated skip): a coin that graduated with
        * real trading collects soft insider flags (tokens moved by transfer, sells in the dev's slot, same-size bursts,

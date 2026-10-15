@@ -145,7 +145,7 @@ describe('new pairs: only after the snipers are absorbed, while real buyers keep
     expect(newPairCheck(fb, m(), NP).fails.join()).toMatch(/same size|uniform|organic buyers/);
     const slow = healthyLaunch({ slowing: true });
     const fs = computeEarlyFlow(slow.c.trades, slow.now, { balances: slow.c.balances(), creator: 'DEV', supplyRaw: 1_000_000_000_000_000n });
-    expect(newPairCheck(fs, m(), NP).fails.join()).toContain('slowing');
+    expect(newPairCheck(fs, m(), { ...NP, requireAcceleration: true }).fails.join()).toContain('slowing');
     const { c, now } = healthyLaunch();
     const f = computeEarlyFlow(c.trades, now, { balances: c.balances(), creator: 'DEV', supplyRaw: 1_000_000_000_000_000n });
     expect(newPairCheck(f, m({ devSoldFraction: 0.5 }), NP).fails.join()).toContain('dev sold');

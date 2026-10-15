@@ -657,6 +657,14 @@ smart money → learning engine → ML → social). See README.md.
   signal went to the dip-only wait and none filled in the hour; New pair 132→0 / Soon 93→0 fail rules). Migration v25:
   `chart.dip.dipOnly.minPullbackPct` 15 → 10, `chart.dip.waitMinutes` 10 → 15, `dipOnly.hotVolume` 30 buyers / 12 SOL (was
   40 / 20). Funnel rows now carry each strategy's own top 3 skip reasons (`topSkips`); summary mentions waiting signals.
+- **v10.35: terminal filters are the main gate** (owner: "lower the bot's older rules by a lot, the main focus = the
+  terminal filters"). Migration v26 (owner filters, rug guard v2, bundle guard, vamp guard, staircase, pressure, safety
+  HARD fails all unchanged): entry safety 55→45, score bar 65→55, dev ≤12%, bundlers ≤25%, top-10 ≤60%, one wallet ≤12%
+  (half-size caps 35/70/18), liquidity ≥1.5 SOL (was 5), confirmation 8 s (was 15), new `entry.minHoldersByStrategy`
+  {RUNNER 15, SMART_MONEY_COPY 5}; new pairs: age 30–90 s, ≥5 holders, ≥3 curve SOL, MC $2.5k–$100k, fees 0.05, vol $200,
+  top-10 ≤40%, ≥70% of high, demand 7 buyers / 4 new / +0.5 SOL / ratio 1.1 / no acceleration rule / CV 0.3 / same size 35%
+  / median 0.03 / gap 30 s / bots 50%, near high 12%, run30s 50%; SOON curve 50–95%, fees 1, active wallets 10, holders 20,
+  safety 40; migrated active wallets 8, BOOST wait 180 s (was 330). Logic tests pin the old limits (LEGACY_ENTRY).
  normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

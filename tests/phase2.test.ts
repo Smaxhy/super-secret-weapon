@@ -51,8 +51,12 @@ describe('scoring', () => {
   });
 });
 
+
+/** Pre-v10.35 limits: these tests check the rule logic, not today's defaults. */
+const LEGACY_ENTRY = { ...DEFAULT_CONFIG.entry, minSafetyScore: 55, maxDevHoldingPct: 10, maxBundlePct: 18, maxTop10Pct: 50, maxSingleHolderPct: 10, minLiquiditySol: 5, riskyEntry: { ...DEFAULT_CONFIG.entry.riskyEntry, maxBundlePct: 30, maxTop10Pct: 65, maxSingleHolderPct: 15 } };
+
 describe('entry rules', () => {
-  const base = { safetyScore: 100, safetyHardFail: false, market: goodMarket, strategy: STRATEGIES.CURVE_SNIPE, entry: DEFAULT_CONFIG.entry };
+  const base = { safetyScore: 100, safetyHardFail: false, market: goodMarket, strategy: STRATEGIES.CURVE_SNIPE, entry: LEGACY_ENTRY };
   it('passes a good token', () => expect(checkEntryRules(base)).toEqual([]));
   it('anti-rug limits: bundles, top 10, single wallet, dev dumping', () => {
     const fails = checkEntryRules({ ...base, market: { ...goodMarket, earlyBuyerPct: 20, top10HolderPct: 55, maxHolderPct: 12, devSoldFraction: 0.95 } });
