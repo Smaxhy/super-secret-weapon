@@ -47,7 +47,7 @@ export const STRATEGIES: Record<StrategyName, StrategyParams> = {
     name: 'MIGRATION_MOMENTUM',
     description: 'Buys tokens right after they complete the curve and migrate, riding post-migration momentum.',
     minHolders: 40,
-    entryWindowMinutes: { min: 0, max: 24 * 60 },
+    entryWindowMinutes: { min: 0, max: 7 * 24 * 60 }, // v10.31: trending coins older than a day count too (owner's migrated filter has no age limit)
     curveProgressRange: { min: 100, max: 100 },
     staleExitMinutes: 60,
     maxSlippageBps: 600,

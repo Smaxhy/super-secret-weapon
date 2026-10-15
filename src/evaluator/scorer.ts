@@ -124,6 +124,8 @@ export function strategyMinimums(e: BotConfigShape['entry'], focus: BotConfigSha
     minVolumeUsd: np?.minVolumeUsd ?? (fr && 'minVolumeUsd' in fr ? fr.minVolumeUsd : e.minVolumeUsd),
     minLiquidityUsd: fr && 'minLiquidityUsd' in fr ? fr.minLiquidityUsd : 0,
     minActiveWallets5m: fr?.minActiveWallets5m ?? 0,
+    /** v10.31: holder minimum per strategy from config (null = the strategy's built-in number). */
+    minHolders: (np && 'minHolders' in np && typeof np.minHolders === 'number' ? np.minHolders : null) ?? (fr && 'minHolders' in fr && typeof fr.minHolders === 'number' ? fr.minHolders : null),
     curveRange: strategy === 'SOON' && focus ? { min: focus.soon.minCurvePct, max: focus.soon.maxCurvePct } : np ? { min: 0, max: np.maxCurvePct } : null,
     /** New pairs: age window (s) and the minimum SOL in the curve (≈ 1.6× the launch market cap). */
     ageSec: np ? { min: np.minAgeSec, max: np.maxAgeSec } : null,
@@ -140,7 +142,8 @@ export function checkEntryRules(i: EntryCheckInput): string[] {
   const fails: string[] = [];
   if (i.safetyHardFail) fails.push('safety hard fail');
   if (i.safetyScore < mins.minSafetyScore) fails.push(`safety ${i.safetyScore} < ${mins.minSafetyScore}`);
-  if (m.holders < s.minHolders) fails.push(`holders ${m.holders} < ${s.minHolders}`);
+  const minHolders = mins.minHolders ?? s.minHolders;
+  if (m.holders < minHolders) fails.push(`holders ${m.holders} < ${minHolders}`);
   if (m.devHoldingPct > e.maxDevHoldingPct) fails.push(`dev holds ${m.devHoldingPct.toFixed(1)}% > ${e.maxDevHoldingPct}%`);
   // Anti-rug: concentrated supply means a few wallets can crash the price at will.
   if (m.earlyBuyerPct > e.maxBundlePct) fails.push(`bundlers hold ${m.earlyBuyerPct.toFixed(1)}% > ${e.maxBundlePct}%`);

@@ -330,6 +330,9 @@ export const DEFAULT_CONFIG = {
       minAgeSec: 45,
       // v10.27: owner's new-pair filter = ≤ 1.5 min old
       maxAgeSec: 90,
+      // v10.31: 15 holders was the top skip — a ≤ 90 s old coin rarely has them yet; the demand rules below
+      // (≥10 real buyers in 60 s) are the real check. Owner's new-pair filter: ≥ 2 holders.
+      minHolders: 8,
       minCurveSol: 8,
       maxCurvePct: 85,
       minMarketCapUsd: 3_500,
@@ -382,6 +385,10 @@ export const DEFAULT_CONFIG = {
       minMarketCapUsd: 12_000,
       minVolumeUsd: 12_000,
       minActiveWallets5m: 25,
+      // v10.31 (owner's Bot health: SOON "holders < 50" 99× and "safety < 55" 53× in an hour, 0 buys): 35 holders, safety 45
+      // (soft insider flags stack on busy curve coins; hard fails + rug / bundle guard still block).
+      minHolders: 35,
+      minSafetyScore: 45,
       scoreThresholdDelta: 0,
       sizeMultiplier: 1,
     },

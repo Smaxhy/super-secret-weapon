@@ -633,6 +633,12 @@ smart money → learning engine → ML → social). See README.md.
   hourly, `mood:fng`) → `features.mood` + AI section 'mood'. (3) **dip_analyser** TA strategy (RSI < 35 in 2 min + Klinger
   oscillator `klinger()` crossing its signal on a green candle) in the TA lab (proven only via the usual lab rules).
   tests/octobot-ideas.test.ts.
+- **v10.31: 0 buy signals again** (owner's Bot health: 1,568 checked / 0 signals in an hour; top skips CURVE_SNIPE holders < 15
+  ×240, MIGRATION "age outside entry window" ×146, SOON holders < 50 ×99, SOON safety < 55 ×53). Holder minimums now come
+  from config when set (`strategyMinimums().minHolders`, else the strategy's number): `focus.newPair.minHolders` 8 (coins
+  ≤ 90 s old rarely have 15; the demand rules need ≥ 10 real buyers anyway), `focus.soon.minHolders` 35 +
+  `focus.soon.minSafetyScore` 45; MIGRATION_MOMENTUM entry window 24 h → 7 days (old trending coins; owner's migrated
+  filter has no age limit). Editable ("Your filters"). The owner's filter gate itself is unchanged.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).
