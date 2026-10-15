@@ -647,6 +647,12 @@ smart money → learning engine → ML → social). See README.md.
   only CREATION/M1/M5/M15; `nextChained` schedules M15→H1→H6→H24 one at a time and only while `stillAlive` (graduated, or
   traded in the last 10 min with ≥ 10 holders). One-time `obs-chain-cleanup` removes the parked H1/H6/H24 jobs in the
   background (`removeParkedSnapshotJobs`, pages of 500). tests/snapshot-chain.test.ts. Next if still tight: 4 GB VPS.
+- **v10.33: per-strategy funnel** (owner: "lack of trades, I don't know if any strats are being implemented").
+  `entry-blockers.ts` `noteEvaluation` / `noteStage`: per strategy, last hour — checked → rulesOk → signal (score over the
+  bar) → dipWait / confirming / notConfirmed / heldBack / toTrader → refused / bought (+ dipGaveUp from the dip watcher).
+  `blockerSnapshot(now, enabledStrategies)` → `/api/system.trading.strategies` (switched-on strategies with no activity
+  listed with zeros) → Scanner → Bot health "Strategies" list with a one-word verdict each. Migration v24:
+  `focus.migrated.minActiveWallets5m` 15 → 12 (= the migrated scanner's ≥12 real buyers; 12–14 were sent then bounced).
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

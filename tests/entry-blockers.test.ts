@@ -25,7 +25,7 @@ describe('entry blockers ("why isn\'t it trading")', () => {
     s = blockerSnapshot(T + 7000);
     expect(s.summary).toMatch(/refused — mostly "CURVE_SNIPE: daily loss circuit breaker"/);
 
-    noteEntry(T + 8000);
+    noteEntry('CURVE_SNIPE', T + 8000);
     expect(blockerSnapshot(T + 9000).summary).toBe('1 buy in the last hour');
     // An hour later the old counts are gone.
     const later = blockerSnapshot(T + 62 * 60_000);
@@ -38,8 +38,31 @@ describe('entry blockers ("why isn\'t it trading")', () => {
     setLastEntryAt(T, T);
     expect(exploreMargin(ex, T + 30 * 60_000)).toBe(5);
     expect(exploreMargin(ex, T + 50 * 60_000)).toBe(10);
-    noteEntry(T + 50 * 60_000);
+    noteEntry(undefined, T + 50 * 60_000);
     expect(exploreMargin(ex, T + 51 * 60_000)).toBe(5);
     expect(exploreMargin({ scoreMargin: 5 }, T + 999 * 60_000)).toBe(5);
+  });
+});
+
+describe('per-strategy funnel (v10.33)', () => {
+  beforeEach(() => resetBlockers(T));
+
+  it('shows how far each strategy got, and lists switched-on strategies with no activity', async () => {
+    const { noteEvaluation, noteStage } = await import('../src/lib/entry-blockers');
+    noteEvaluation('SOON', { rulesOk: false, signal: false, outcome: 'none' }, T);
+    noteEvaluation('SOON', { rulesOk: true, signal: false, outcome: 'none' }, T);
+    noteEvaluation('SOON', { rulesOk: true, signal: true, outcome: 'dipWait' }, T);
+    noteStage('SOON', 'dipGaveUp', T);
+    noteEvaluation('MIGRATION_MOMENTUM', { rulesOk: true, signal: true, outcome: 'toTrader' }, T);
+    noteRefusal('MIGRATION_MOMENTUM', 'max open', T);
+    noteEvaluation('MIGRATION_MOMENTUM', { rulesOk: true, signal: true, outcome: 'toTrader' }, T);
+    noteEntry('MIGRATION_MOMENTUM', T);
+    const s = blockerSnapshot(T + 1000, { SOON: true, MIGRATION_MOMENTUM: true, RUNNER: true, SWING: false });
+    const by = Object.fromEntries(s.strategies.map((r) => [r.strategy, r]));
+    expect(s.strategies[0]!.strategy).toBe('MIGRATION_MOMENTUM');
+    expect(by.SOON).toMatchObject({ on: true, checked: 3, rulesOk: 2, signal: 1, dipWait: 1, dipGaveUp: 1, bought: 0 });
+    expect(by.MIGRATION_MOMENTUM).toMatchObject({ checked: 2, signal: 2, toTrader: 2, refused: 1, bought: 1 });
+    expect(by.RUNNER).toMatchObject({ on: true, checked: 0 });
+    expect(by.SWING).toBeUndefined();
   });
 });

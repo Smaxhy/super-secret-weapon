@@ -30,7 +30,7 @@ import { moodNow } from '../learner/market-mood';
 import type { ShadowKind, ShadowTrades } from '../learner/shadow-trades';
 import type { OutcomeTracker } from '../learner/outcome-tracker';
 import type { Brain } from '../learner/brain';
-import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
+import { exploreMargin, noteEvaluation, noteSignal, noteSkip } from '../lib/entry-blockers';
 import { Worker, type Job } from 'bullmq';
 import type { Redis } from 'ioredis';
 import type { Prisma } from '@prisma/client';
@@ -563,6 +563,9 @@ export class Evaluator {
       decision = 'BUY';
       reasons = [`learning trade: score ${result.score.toFixed(1)} vs bar ${threshold.toFixed(0)} (within ${exploreMargin(ex)}) — bought at ${ex.sizeMultiplier}× size`];
     }
+    // Funnel (Bot health → strategies): did it pass every rule, was it a buy signal before any wait?
+    const rulesOk = ruleFails.length === 0 && !token.safetyHardFail;
+    const signalled = decision === 'BUY';
     const store = decision !== 'SKIP' || final || result.score >= cfg.scoring.storeAboveScore;
 
     let evaluationId: string | null = null;
@@ -593,6 +596,7 @@ export class Evaluator {
 
     if (decision === 'REJECT') noteSkip(STRATEGY.name, ruleFails[0] ?? reasons[0] ?? 'rejected');
     if (decision === 'REJECT') {
+      noteEvaluation(STRATEGY.name, { rulesOk, signal: false, outcome: 'none' });
       this.stats.rejects++;
       await markDone();
       return;
@@ -668,6 +672,7 @@ export class Evaluator {
           { jobId: `${mint}-${STRATEGY.name}-confirm-${Math.floor(Date.now() / 60_000)}`, delay: confirmSec * 1000 },
         );
         log.info({ mint, symbol: token.symbol, score: result.score }, `⏱  BUY signal ${token.symbol} (${result.score.toFixed(1)}) — confirming in ${confirmSec}s`);
+        noteEvaluation(STRATEGY.name, { rulesOk, signal: signalled, outcome: 'confirming' });
         return; // the confirmation job carries on (incl. the end-of-schedule watchlist)
       }
       if (pending && pending.priceSol > 0) {
@@ -725,6 +730,12 @@ export class Evaluator {
       this.coinOutcomes?.record({ mint, symbol: token.symbol, strategy: STRATEGY.name, atMs: Date.now(), onAmm: market.raw.onAmm, marketCapSol: market.raw.marketCapSol ?? null, score: result.score, bar: threshold, why: ruleFails[0] ?? reasons[0] ?? 'skipped', flat: aiFlat });
     }
 
+    const r0 = reasons[0] ?? '';
+    noteEvaluation(STRATEGY.name, {
+      rulesOk,
+      signal: signalled,
+      outcome: decision === 'BUY' ? 'toTrader' : !signalled ? 'none' : r0.startsWith('waiting for a dip') ? 'dipWait' : r0.startsWith("didn't confirm") ? 'notConfirmed' : 'heldBack',
+    });
     if (decision === 'BUY') noteSignal();
     else noteSkip(STRATEGY.name, ruleFails[0] ?? (result.score < threshold ? 'score under the bar' : reasons[0] ?? 'skipped'));
     if (decision === 'BUY') {

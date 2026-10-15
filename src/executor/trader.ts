@@ -313,7 +313,7 @@ export class Trader {
       return p;
     });
     this.onEntered?.(req);
-    noteEntry();
+    noteEntry(req.strategy);
     return { entered: true, reason: 'entered', positionId: position.id };
   }
 

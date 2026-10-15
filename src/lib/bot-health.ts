@@ -14,6 +14,16 @@
 import type { Redis } from 'ioredis';
 import { eventLoopLagMs } from './process-guard';
 import { blockerSnapshot, type BlockerSnapshot } from './entry-blockers';
+import { getConfig } from '../config/runtime-config';
+
+/** Which strategies are switched on (Controls); null when the config isn't loaded (tests). */
+function enabledStrategies(): Record<string, boolean> | undefined {
+  try {
+    return { ...getConfig().trading.enabledStrategies };
+  } catch {
+    return undefined;
+  }
+}
 
 const K_RUNNING = 'bot:running';
 const K_LAST_EXIT = 'bot:lastExit';
@@ -90,7 +100,7 @@ export async function healthSnapshot(now = Date.now()): Promise<HealthSnapshot> 
     recentErrors: [],
     memory: { rssMb: Math.round(mem.rss / 1e6), heapMb: Math.round(mem.heapUsed / 1e6) },
     redisMemoryMb: null,
-    trading: blockerSnapshot(now),
+    trading: blockerSnapshot(now, enabledStrategies()),
   };
   if (!redisRef) return base;
   try {

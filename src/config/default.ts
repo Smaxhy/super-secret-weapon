@@ -397,7 +397,8 @@ export const DEFAULT_CONFIG = {
       minMarketCapUsd: 25_000,
       /** Pool liquidity in USD (both sides, like trading terminals show it). */
       minLiquidityUsd: 2_000,
-      minActiveWallets5m: 15,
+      /** v10.33: 12 = what the migrated scanner sends (≥ 12 real buyers); 15 bounced coins it had just sent. */
+      minActiveWallets5m: 12,
       /**
        * No entries in the first minutes after migration: pump.fun's BOOST buys ~17.6 SOL over the
        * first 5 min (mechanical, front-run by bots) and liquidity drains ~57% from minute 5 to 30.

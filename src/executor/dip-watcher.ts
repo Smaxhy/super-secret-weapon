@@ -16,6 +16,7 @@
 import { getConfig } from '../config/runtime-config';
 import type { StrategyName } from '../config/types';
 import type { Evaluator } from '../evaluator/evaluator';
+import { noteStage } from '../lib/entry-blockers';
 import { moduleLogger } from '../lib/logger';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
 import type { OrganicFlow } from '../scanner/migrated-scanner';
@@ -185,6 +186,7 @@ export class DipWatcher {
     this.watches.delete(`${w.mint}:${w.strategy}`);
     if (d.action === 'drop') {
       log.info({ mint: w.mint, why: d.why }, `✋ ${w.symbol}: stopped waiting for a dip — ${d.why}`);
+      noteStage(w.strategy, 'dipGaveUp');
       return;
     }
     log.info({ mint: w.mint, why: d.why }, `🎯 ${w.symbol}: dip entry — ${d.why}`);

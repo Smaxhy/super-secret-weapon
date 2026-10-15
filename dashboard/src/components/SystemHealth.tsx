@@ -3,7 +3,7 @@
  * the newest code? Banner (Overview) + full panel (Scanner page).
  */
 import { useApi } from '../hooks/useApi';
-import { duration } from '../lib/format';
+import { duration, STRATEGY_LABEL } from '../lib/format';
 import { Icon } from './Icon';
 import { Card } from './ui';
 
@@ -25,8 +25,26 @@ interface SystemData {
     lastHour: { evaluated: number; buySignals: number; entries: number };
     topSkips: Array<{ reason: string; count: number }>;
     topRefusals: Array<{ reason: string; count: number }>;
+    /** v10.33: per-strategy funnel (older bots don't send it). */
+    strategies?: StrategyFunnel[];
     summary: string;
   };
+}
+
+interface StrategyFunnel {
+  strategy: string;
+  on: boolean | null;
+  checked: number;
+  rulesOk: number;
+  signal: number;
+  dipWait: number;
+  confirming: number;
+  notConfirmed: number;
+  heldBack: number;
+  toTrader: number;
+  refused: number;
+  bought: number;
+  dipGaveUp: number;
 }
 
 /** Commit the website was built from (GitHub Actions sets GITHUB_SHA). */
@@ -130,10 +148,57 @@ function WhyNoTrades({ t }: { t: NonNullable<SystemData['trading']> }) {
         {t.summary}. Checked {t.lastHour.evaluated}, buy signals {t.lastHour.buySignals}, bought {t.lastHour.entries}
         {t.lastEntryAt ? ` · last buy ${duration(t.minutesSinceEntry * 60)} ago` : ''}.
       </p>
+      {t.strategies && t.strategies.length > 0 && <StrategyFunnels rows={t.strategies} />}
       <div className="mt-2 grid gap-3 sm:grid-cols-2">
         {list('Why coins were skipped', t.topSkips)}
         {list('Why buy signals were refused', t.topRefusals)}
       </div>
+    </div>
+  );
+}
+
+/** One line per strategy: is it running and how far its coins got (checked → passed rules → buy signal → bought). */
+function StrategyFunnels({ rows }: { rows: StrategyFunnel[] }) {
+  const verdict = (r: StrategyFunnel): { text: string; tone: string } => {
+    if (r.on === false) return { text: 'switched off', tone: 'text-muted' };
+    if (r.bought > 0) return { text: 'buying', tone: 'text-up' };
+    if (r.checked === 0) return { text: 'no coins found', tone: 'text-warning' };
+    if (r.rulesOk === 0) return { text: 'every coin fails a rule', tone: 'text-warning' };
+    if (r.signal === 0) return { text: 'score under the bar', tone: 'text-warning' };
+    if (r.refused > 0) return { text: 'signals refused', tone: 'text-warning' };
+    if (r.dipWait + r.confirming > 0) return { text: 'waiting for entries', tone: 'text-ink-2' };
+    return { text: 'signals held back', tone: 'text-warning' };
+  };
+  const held = (r: StrategyFunnel) => {
+    const parts: string[] = [];
+    if (r.dipWait) parts.push(`${r.dipWait} dip wait${r.dipGaveUp ? ` (${r.dipGaveUp} gave up)` : ''}`);
+    if (r.confirming) parts.push(`${r.confirming} confirming`);
+    if (r.notConfirmed) parts.push(`${r.notConfirmed} didn't confirm`);
+    if (r.heldBack) parts.push(`${r.heldBack} held back`);
+    if (r.refused) parts.push(`${r.refused} refused`);
+    return parts.join(' · ');
+  };
+  return (
+    <div className="mt-3">
+      <div className="mb-1 text-xs text-muted">Strategies — checked → passed rules → buy signal → bought</div>
+      <ul className="divide-y divide-line text-xs">
+        {rows.map((r) => {
+          const v = verdict(r);
+          const h = held(r);
+          return (
+            <li key={r.strategy} className="py-1.5">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="font-medium text-ink">{STRATEGY_LABEL[r.strategy] ?? r.strategy}</span>
+                <span className={v.tone}>{v.text}</span>
+              </div>
+              <div className="tabular-nums text-ink-2">
+                {r.checked} → {r.rulesOk} → {r.signal} → <span className={r.bought ? 'text-up' : ''}>{r.bought}</span>
+              </div>
+              {h && <div className="text-muted">{h}</div>}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

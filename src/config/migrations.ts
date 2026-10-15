@@ -348,6 +348,11 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['kol', ['follow', 'sizeMultiplier3'], 1],
     ],
   },
+  {
+    version: 24,
+    note: 'v10.33: migrated coins need 12 active wallets (5 min), the same as the migrated scanner sends — 12–14 were sent and then bounced',
+    set: [['focus', ['migrated', 'minActiveWallets5m'], 12]],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

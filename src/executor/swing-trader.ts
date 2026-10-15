@@ -17,7 +17,7 @@ import { timeframeFail, timeframes } from '../evaluator/timeframes';
 import { priceShape } from '../evaluator/price-shape';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { timingNow } from '../learner/timing';
-import { exploreMargin, noteSignal, noteSkip } from '../lib/entry-blockers';
+import { exploreMargin, noteEvaluation, noteSignal, noteSkip } from '../lib/entry-blockers';
 import type { Prisma } from '@prisma/client';
 import type { Redis } from 'ioredis';
 import { DEFAULT_CONFIG } from '../config/default';
@@ -237,6 +237,7 @@ export class SwingTrader {
     if (explore) decision = 'BUY';
     const why = verdict.fails[0] ?? (decision === 'BUY' ? setup.why : `score ${score} < ${verdict.threshold}`);
     coin.last = { at: now, score, decision: explore ? 'LEARN' : decision, why };
+    noteEvaluation('SWING', { rulesOk: !verdict.fails.length, signal: decision === 'BUY', outcome: decision === 'BUY' ? 'toTrader' : 'none' }, now);
     if (decision === 'BUY') noteSignal(now);
     else noteSkip('SWING', verdict.fails[0] ?? 'score under the bar', now);
 
