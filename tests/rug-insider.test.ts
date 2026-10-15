@@ -70,9 +70,6 @@ async function seedToken(r: MiniRedis, mint: string, creator: string, balances: 
   if (early.length) await r.sadd(`tok:${mint}:early`, ...early);
 }
 
-/** Pre-v10.35 limits: these tests check the rule logic, not today's defaults. */
-const LEGACY_ENTRY = { ...DEFAULT_CONFIG.entry, minSafetyScore: 55, maxDevHoldingPct: 10, maxBundlePct: 18, maxTop10Pct: 50, maxSingleHolderPct: 10, minLiquiditySol: 5, riskyEntry: { ...DEFAULT_CONFIG.entry.riskyEntry, maxBundlePct: 30, maxTop10Pct: 65, maxSingleHolderPct: 15 } };
-
 describe('on-stream insider signals', () => {
   it('finds wallets buying near-identical sizes in a burst', () => {
     const buys = [
@@ -184,7 +181,7 @@ describe('funding graph', () => {
     expect(s.effectiveMaxHolderPct).toBeCloseTo(12);
     expect(members.sort()).toEqual(['c1', 'c2', 'e1', 'h1', 'h2']);
 
-    const r = insiderRuleFails(s, LEGACY_ENTRY);
+    const r = insiderRuleFails(s, DEFAULT_CONFIG.entry);
     expect(r.fails).toEqual([
       'dev holds 14.0% > 10% (incl. 2 hidden wallets)',
       'bundlers hold 24.0% > 18% (insider cluster)',
@@ -221,7 +218,7 @@ describe('funding graph', () => {
     expect(calls).toBe(6); // 3 wallets × 2 calls
     expect(res!.summary.hiddenDevWallets).toEqual([hidden]);
     expect(res!.summary.effectiveDevPct).toBeCloseTo(12);
-    expect(insiderRuleFails(res!.summary, LEGACY_ENTRY).hard).toHaveLength(1);
+    expect(insiderRuleFails(res!.summary, DEFAULT_CONFIG.entry).hard).toHaveLength(1);
     // Again: lock + cache → no new RPC calls, same answer.
     const again = await analyzeInsiders(asRedis(r), mint, { funding: 'rpc', rpc, cfg });
     expect(calls).toBe(6);

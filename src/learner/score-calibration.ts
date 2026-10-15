@@ -86,7 +86,18 @@ export function calibrationAdjust(cal: Calibration | null, strategy: string, sco
 let current: Calibration | null = null;
 let timer: NodeJS.Timeout | null = null;
 
+/** The table itself (for the dashboard), whether or not it's used. */
+export function calibrationTable(): Calibration | null {
+  return current;
+}
+
 export function calibration(): Calibration | null {
+  // v10.39: off unless entry.autoAdjust.calibration (still computed + shown; it just doesn't move the score / size).
+  try {
+    if (getConfig().entry.autoAdjust?.calibration === false) return null;
+  } catch {
+    /* config not loaded (tests) */
+  }
   return current;
 }
 

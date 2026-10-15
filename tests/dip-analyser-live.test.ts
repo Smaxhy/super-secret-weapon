@@ -42,11 +42,10 @@ describe('v10.36: the dip analyser trades live', () => {
     expect(dipSignalOk(w, 88, 10, c)).toMatch(/blow-off/);
   });
 
-  it('defaults + migration v27: new pairs at the minimum size, dip analyser live', () => {
+  it('defaults + migration v27: new pairs at the minimum size (dip analyser test-only again since v10.39)', () => {
     expect(DEFAULT_CONFIG.trading.minSizeStrategies).toEqual(['CURVE_SNIPE']);
-    expect(DEFAULT_CONFIG.ta.forceLive).toEqual(['dip_analyser']);
-    expect(DEFAULT_CONFIG.ta.dipEntrySignals).toEqual(['dip_analyser']);
     const m = MIGRATIONS.find((x) => x.version === 27)!;
+    expect(DEFAULT_CONFIG.ta.forceLive).toEqual([]); // v10.39: the lab has to prove it first
     expect(m.set.map((s) => s[1].join('.'))).toEqual(['minSizeStrategies', 'forceLive', 'forceLiveEdgePct', 'dipEntrySignals']);
   });
 });
@@ -59,5 +58,18 @@ describe('v10.37: a switched-on strategy always has a budget', () => {
     expect(allocationShare(undefined, undefined)).toBe(0);
     expect(DEFAULT_CONFIG.trading.allocation.SWING).toBe(0.1);
     expect(MIGRATIONS.find((x) => x.version === 28)!.set.map((s) => s[1].join('.'))).toEqual(['allocation.SWING', 'allocation.SMART_MONEY_COPY']);
+  });
+});
+
+describe('v10.39: back to the tighter rules, fewer nudgers', () => {
+  it('pre-v10.35 rules, coach / calibration / timing nudges off, chart buy rules off (migration v29)', () => {
+    expect(DEFAULT_CONFIG.entry.minCombinedScore).toBe(65);
+    expect(DEFAULT_CONFIG.entry.maxTop10Pct).toBe(50);
+    expect(DEFAULT_CONFIG.focus.newPair.minAgeSec).toBe(45);
+    expect(DEFAULT_CONFIG.focus.migrated.noEntryFirstSec).toBe(330);
+    expect(DEFAULT_CONFIG.entry.autoAdjust).toEqual({ coach: false, calibration: false });
+    expect(DEFAULT_CONFIG.timing.enabled).toBe(false);
+    const keys = MIGRATIONS.find((x) => x.version === 29)!.set.map((s) => `${s[0]}.${s[1].join('.')}`);
+    expect(keys).toEqual(expect.arrayContaining(['entry.minCombinedScore', 'entry.autoAdjust', 'entry.priceAction.enabled', 'ta.forceLive', 'timing.enabled', 'focus.migrated.noEntryFirstSec']));
   });
 });

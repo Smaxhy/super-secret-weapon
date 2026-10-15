@@ -678,6 +678,17 @@ smart money → learning engine → ML → social). See README.md.
 - **v10.38: lab-triggered evaluations capped** (owner: "the app loads very slow" after v10.35–v10.37; the API runs in the bot
   process, so a busy event loop slows the dashboard). `ta.maxTriggerChecksPerMin` 12 (TaLab `checkBudget`): the forced-live
   dip analyser could ask for a full evaluation on many of the 150 lab coins every 15 s. Ask for diagnose.sh if still slow.
+- **v10.39: honest-review cleanup, then FREEZE** (owner asked for an honest answer; agreed the v10.35 loosening and the forced
+  dip analyser were mistakes and the bar had too many nudgers). Migration v29: every v10.35 value back to v25 (score bar 65,
+  safety 55, top-10 50 / bundles 18 / one wallet 10 / dev 10, liquidity 5 SOL, confirmation 15 s, new pairs 45–90 s / 8 SOL /
+  $3.5k–$15k + the old demand rules, SOON 70–90% / 25 wallets / 35 holders / safety 45, migrated 12 wallets / BOOST 330 s;
+  `entry.minHoldersByStrategy` {}), `ta.forceLive` / `dipEntrySignals` [] (lab tests it; v10.36 code stays), and
+  `entry.autoAdjust` {coach false, calibration false} (`coachFor` → NEUTRAL, `calibration()` → null; both still computed —
+  `calibrationTable()` for the dashboard) + `timing.enabled` false + `entry.priceAction.enabled` false (it had been switched
+  on on the VPS). Kept (evidence-gated): owner filters, rug / bundle / vamp guards, loss autopsy, allocator, win + tree model,
+  AI rules (forward-tested), proven TA, entry style, exit lab / exit tuner; v10.33 funnel, v10.34 dip tweaks, v10.36 new
+  pairs at min size, v10.37 budget fix, v10.38 cap. NEXT: owner agreed to freeze 5–7 days / 200–300 trades, then judge each
+  strategy on Performance → Mistakes and switch losers off (don't tweak). 4 GB VPS recommended.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

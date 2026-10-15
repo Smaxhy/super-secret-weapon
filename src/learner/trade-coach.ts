@@ -26,6 +26,7 @@
  */
 import type { Redis } from 'ioredis';
 import type { StrategyName } from '../config/types';
+import { getConfig } from '../config/runtime-config';
 import { bus, type BusEvent } from '../lib/bus';
 import { recordEvent } from '../lib/bot-events';
 import { moduleLogger } from '../lib/logger';
@@ -195,6 +196,13 @@ export function computeCoachState(strategy: StrategyName, reviewsNewestFirst: re
 let cache = new Map<string, CoachState>();
 
 export function coachFor(strategy: StrategyName): CoachState {
+  // v10.39: the coach still reviews every trade (lessons on the History page) but no longer moves the bar / size / exits
+  // unless entry.autoAdjust.coach is on.
+  try {
+    if (getConfig().entry.autoAdjust?.coach === false) return NEUTRAL(strategy);
+  } catch {
+    /* config not loaded (tests) */
+  }
   return cache.get(strategy) ?? NEUTRAL(strategy);
 }
 

@@ -23,8 +23,8 @@ describe('v10.21 focus cut (owner CSV, 515 trades)', () => {
     expect(exitRulesFor('MIGRATION_MOMENTUM', r).takeProfitTiers.map((x) => x.multiple)).toEqual([1.2, 1.4, 5]);
     expect(exitRulesFor('SMART_MONEY_COPY', r).takeProfitTiers[0]).toEqual({ multiple: 1.4, sellPct: 40 });
   });
-  it('the buy wait is 8 s (v10.35) and the price must hold', () => {
-    expect(DEFAULT_CONFIG.entry.confirmDelaySec).toBe(8);
+  it('the buy wait is 15 s and the price must hold (v10.23)', () => {
+    expect(DEFAULT_CONFIG.entry.confirmDelaySec).toBe(15);
     expect(DEFAULT_CONFIG.entry.confirm).toEqual({ maxDropPct: 6, maxPumpPct: 15, minBuyRatio: 1.1 });
   });
   it('migration v19 pushes it into saved settings', () => {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../src/config/default';
 import { buildProfile, timingVerdict, type DayCounts } from '../src/learner/timing';
 
-const C = DEFAULT_CONFIG.timing;
+const C = { ...DEFAULT_CONFIG.timing, enabled: true }; // v10.39: off by default — the logic is still tested
 // 5 days (Mon 2026-10-05 … Fri 2026-10-09): 14–16 UTC busy (600 trades/min), 03–05 UTC quiet (100), rest 300.
 const days = ['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09'].map((date) => {
   const counts: DayCounts = {};
