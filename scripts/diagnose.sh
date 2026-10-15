@@ -15,6 +15,10 @@ free -m
 docker stats --no-stream --format '{{.Name}}  cpu {{.CPUPerc}}  mem {{.MemUsage}}' 2>/dev/null
 df -h / | tail -1
 docker compose exec -T redis redis-cli info memory 2>/dev/null | grep -E '^used_memory_human|^maxmemory_human'
+echo "-- Redis keys per prefix (what fills the memory) --"
+docker compose exec -T redis sh -c "redis-cli --scan --count 1000 | cut -d: -f1 | sort | uniq -c | sort -rn | head -15" 2>/dev/null
+echo "-- Biggest Redis keys --"
+docker compose exec -T redis redis-cli --memkeys 2>/dev/null | grep -E 'Biggest|found' | head -12
 line "health"
 curl -s -m 5 http://127.0.0.1:8080/api/health; echo
 line "last updates"

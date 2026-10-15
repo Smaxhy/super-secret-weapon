@@ -149,7 +149,10 @@ export function checkEntryRules(i: EntryCheckInput): string[] {
   if (m.earlyBuyerPct > e.maxBundlePct) fails.push(`bundlers hold ${m.earlyBuyerPct.toFixed(1)}% > ${e.maxBundlePct}%`);
   if (m.top10HolderPct > e.maxTop10Pct) fails.push(`top 10 hold ${m.top10HolderPct.toFixed(1)}% > ${e.maxTop10Pct}%`);
   if (m.maxHolderPct > e.maxSingleHolderPct) fails.push(`one wallet holds ${m.maxHolderPct.toFixed(1)}% > ${e.maxSingleHolderPct}%`);
-  if (m.devSoldFraction > e.maxDevSoldFraction) fails.push(`dev sold ${(m.devSoldFraction * 100).toFixed(0)}% of their bag`);
+  // v10.31: on a migrated coin a dev who has completely sold out (holds < 1%) can't dump on us any more — that's the
+  // normal pump.fun pattern after graduation, not a rug signal. On the curve (or a dev still holding a bag) it still blocks.
+  const devGone = m.complete && m.devHoldingPct < 1;
+  if (m.devSoldFraction > e.maxDevSoldFraction && !devGone) fails.push(`dev sold ${(m.devSoldFraction * 100).toFixed(0)}% of their bag`);
   if (m.liquiditySol < e.minLiquiditySol) fails.push(`liquidity ${m.liquiditySol.toFixed(2)} SOL < ${e.minLiquiditySol}`);
   if (e.minAgeSec && m.ageSec < e.minAgeSec) fails.push(`too young (${m.ageSec}s < ${e.minAgeSec}s)`);
   const ageMin = m.ageSec / 60;

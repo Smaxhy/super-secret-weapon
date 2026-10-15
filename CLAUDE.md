@@ -639,6 +639,9 @@ smart money → learning engine → ML → social). See README.md.
   ≤ 90 s old rarely have 15; the demand rules need ≥ 10 real buyers anyway), `focus.soon.minHolders` 35 +
   `focus.soon.minSafetyScore` 45; MIGRATION_MOMENTUM entry window 24 h → 7 days (old trending coins; owner's migrated
   filter has no age limit). Editable ("Your filters"). The owner's filter gate itself is unchanged.
+  Then (Bot health: MIGRATION "dev sold X% of their bag" ×85): on a MIGRATED coin a dev who fully sold out (holds < 1%)
+  no longer fails `maxDevSoldFraction` (normal after graduation; can't dump on us). Curve coins / devs still holding: unchanged.
+  diagnose.sh now prints Redis keys per prefix + biggest keys (Redis was 691 MB of its 1 GB noeviction cap, 3 crashes/24 h).
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

@@ -84,6 +84,13 @@ const rulesFor = (m: MarketRaw, strategy: keyof typeof STRATEGIES, crowd: { acti
   checkEntryRules({ safetyScore: 90, safetyHardFail: false, market: m, strategy: STRATEGIES[strategy], entry, focus: DEFAULT_CONFIG.focus, crowd });
 
 describe('focus entry rules', () => {
+  it('v10.31: a migrated coin whose dev fully sold out is fine; a dev still holding a bag / a curve coin still blocks', () => {
+    const real = (m: MarketRaw, st: keyof typeof STRATEGIES) =>
+      checkEntryRules({ safetyScore: 90, safetyHardFail: false, market: m, strategy: STRATEGIES[st], entry: DEFAULT_CONFIG.entry, focus: DEFAULT_CONFIG.focus, crowd: { activeWallets5m: 60 } }).join();
+    expect(real({ ...market, devSoldFraction: 1, devHoldingPct: 0 }, 'MIGRATION_MOMENTUM')).not.toContain('dev sold');
+    expect(real({ ...market, devSoldFraction: 0.95, devHoldingPct: 3 }, 'MIGRATION_MOMENTUM')).toContain('dev sold');
+    expect(real({ ...market, complete: false, onAmm: false, bondingCurvePct: 80, devSoldFraction: 1, devHoldingPct: 0 }, 'SOON')).toContain('dev sold');
+  });
   it('migrated coins need 9 SOL fees, $25k MC, $2k liquidity and active wallets', () => {
     expect(rulesFor(market, 'MIGRATION_MOMENTUM')).toEqual([]);
     expect(rulesFor({ ...market, totalFeesSol: 8 }, 'MIGRATION_MOMENTUM').join()).toContain('fees 8.00 SOL < 9');
