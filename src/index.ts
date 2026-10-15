@@ -99,6 +99,11 @@ async function main(): Promise<void> {
   await oneTimeUpgrade('stats-reset-oct13', async () => {
     await resetPaperStats(15);
   });
+  // Owner (Oct 15): "reset the PnLs as well" — fresh headline numbers again from 15 SOL (nothing deleted; the daily
+  // calendar keeps every day).
+  await oneTimeUpgrade('stats-reset-oct15', async () => {
+    await resetPaperStats(15);
+  });
   // v5 strategy: the trade coach's lessons came from the old setup (late-curve buys, 1.15x trails) —
   // they'd shrink sizes and raise the bar for the new one. Start its lessons fresh, once.
   await oneTimeUpgrade('v5-strategy', async () => {

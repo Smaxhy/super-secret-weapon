@@ -111,3 +111,57 @@ export function summarise(trades: ClosedTrade[], startingBalanceSol: number): Pe
     byExitReason,
   };
 }
+
+export interface CalendarDay {
+  /** YYYY-MM-DD in the viewer's time zone. */
+  day: string;
+  pnlSol: number;
+  trades: number;
+  wins: number;
+  winRate: number | null;
+  /** Average % per trade (P&L ÷ size). */
+  avgPct: number | null;
+  bestPct: number | null;
+  worstPct: number | null;
+  /** SOL put into that day's trades. */
+  volumeSol: number;
+  byStrategy: Array<{ strategy: string; trades: number; pnlSol: number }>;
+}
+
+/**
+ * Daily P&L calendar: every closed trade counts on the day it CLOSED, in the viewer's time zone
+ * (`tzOffsetMin` = JS getTimezoneOffset(): minutes to ADD to local time to get UTC). Each day starts at 0.
+ */
+export function dailyCalendar(trades: readonly ClosedTrade[], tzOffsetMin = 0): CalendarDay[] {
+  const days = new Map<string, ClosedTrade[]>();
+  for (const t of trades) {
+    const key = new Date(t.closedAt.getTime() - tzOffsetMin * 60_000).toISOString().slice(0, 10);
+    days.set(key, [...(days.get(key) ?? []), t]);
+  }
+  const r1 = (x: number) => Math.round(x * 10) / 10;
+  return [...days.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([day, ts]) => {
+      const pcts = ts.filter((t) => t.sizeSol > 0).map((t) => (t.pnlSol / t.sizeSol) * 100);
+      const wins = ts.filter((t) => t.pnlSol > 0).length;
+      const strat = new Map<string, { trades: number; pnlSol: number }>();
+      for (const t of ts) {
+        const s = strat.get(t.strategy) ?? { trades: 0, pnlSol: 0 };
+        s.trades++;
+        s.pnlSol += t.pnlSol;
+        strat.set(t.strategy, s);
+      }
+      return {
+        day,
+        pnlSol: r4(ts.reduce((a, t) => a + t.pnlSol, 0)),
+        trades: ts.length,
+        wins,
+        winRate: ts.length ? Math.round((wins / ts.length) * 1000) / 1000 : null,
+        avgPct: pcts.length ? r1(pcts.reduce((a, b) => a + b, 0) / pcts.length) : null,
+        bestPct: pcts.length ? r1(Math.max(...pcts)) : null,
+        worstPct: pcts.length ? r1(Math.min(...pcts)) : null,
+        volumeSol: r4(ts.reduce((a, t) => a + t.sizeSol, 0)),
+        byStrategy: [...strat.entries()].map(([strategy, s]) => ({ strategy, trades: s.trades, pnlSol: r4(s.pnlSol) })).sort((a, b) => b.pnlSol - a.pnlSol),
+      };
+    });
+}

@@ -4,6 +4,7 @@ import { ResetPaperDialog } from '../components/ResetPaper';
 import { AddFundsDialog } from '../components/AddFunds';
 import { HealthBanner } from '../components/SystemHealth';
 import { PnlChart } from '../components/Charts';
+import { PnlCalendar } from '../components/PnlCalendar';
 import { Icon } from '../components/Icon';
 import { StatusBadge } from '../components/StatusBadge';
 import { McChange } from '../components/McCompare';
@@ -122,6 +123,7 @@ export function Overview() {
       )}
 
       <Stack className="mt-4">
+        <PnlCalendar />
         <OpenPreview />
         <div className="grid gap-4 lg:grid-cols-2">
           <Card title="Latest trades" action={<Link to="/history" className="font-medium text-accent">See all</Link>}>

@@ -18,6 +18,7 @@ import type { StrategyName } from '../config/types';
 import type { Evaluator } from '../evaluator/evaluator';
 import { moduleLogger } from '../lib/logger';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
+import type { OrganicFlow } from '../scanner/migrated-scanner';
 
 const log = moduleLogger('dip-watcher');
 
@@ -101,6 +102,14 @@ export function dipDecision(w: DipWatch, price: number, buyRatio1m: number | nul
  */
 export function dipOnlyApplies(o: { enabled: boolean; mcUsd: number | null; minMcUsd: number; dipEntry: boolean; swing: boolean }): boolean {
   return o.enabled && !o.dipEntry && !o.swing && o.mcUsd !== null && o.mcUsd >= o.minMcUsd;
+}
+
+export interface HotVolumeConfig { enabled: boolean; minBuyers: number; minBuySol: number; minBuySharePct: number; minOrganicPct: number }
+/** "Crazy volume" = the 5-min organic flow clears every bar → the dip-only rule steps aside. Returns why, or null. */
+export function hotVolume(flow: OrganicFlow | null, c: HotVolumeConfig | undefined): string | null {
+  if (!c?.enabled || !flow) return null;
+  if (flow.buyers < c.minBuyers || flow.buySol < c.minBuySol || flow.buySharePct < c.minBuySharePct || flow.organicPct < c.minOrganicPct) return null;
+  return `huge real volume: ${flow.buyers} buyers, ${flow.buySol} SOL bought in 5 min (${flow.buySharePct}% buys)`;
 }
 
 /** The high a dip-only entry measures its pullback from: the recent high, never below the current price. */

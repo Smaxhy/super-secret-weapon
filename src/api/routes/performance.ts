@@ -4,7 +4,7 @@ import { env } from '../../config/env';
 import { getConfig } from '../../config/runtime-config';
 import { realisedPnlToday } from '../../executor/trader';
 import { prisma } from '../../lib/prisma';
-import { summarise, type ClosedTrade } from '../performance-calc';
+import { dailyCalendar, summarise, type ClosedTrade } from '../performance-calc';
 import type { ApiDeps } from '../deps';
 
 /** Fresh-stats marker (paper.statsSince): headline numbers only count trades closed after it. */
@@ -14,8 +14,8 @@ function statsSince(): Date | null {
   return d && !Number.isNaN(d.getTime()) ? d : null;
 }
 
-async function closedTrades(mode: 'PAPER' | 'LIVE'): Promise<ClosedTrade[]> {
-  const since = mode === 'PAPER' ? statsSince() : null;
+async function closedTrades(mode: 'PAPER' | 'LIVE', allHistory = false): Promise<ClosedTrade[]> {
+  const since = mode === 'PAPER' && !allHistory ? statsSince() : null;
   const rows = await prisma.position.findMany({ where: { status: 'CLOSED', mode, ...(since ? { closedAt: { gte: since } } : {}) }, include: { token: { select: { symbol: true } } } });
   return rows.map((p) => ({
     id: p.id,
@@ -52,6 +52,17 @@ export async function performanceRoutes(app: FastifyInstance, deps: ApiDeps): Pr
     const start = p.startingBalanceSol;
     // Drawdown / % use everything put in (start + top-ups).
     return { mode, startingBalanceSol: start, addedSol: p.addedSol ?? 0, ...summarise(await closedTrades(mode), start + (p.addedSol ?? 0)) };
+  });
+
+  /**
+   * Daily P&L calendar (owner: "daily PnL resets like a calendar so you can see how it does each day"). Every day starts
+   * at 0; the whole history is shown (the stats reset only moves the headline numbers). `tz` = getTimezoneOffset().
+   */
+  app.get<{ Querystring: { tz?: string } }>('/api/pnl-calendar', async (req) => {
+    const tz = Math.max(-840, Math.min(840, Math.round(Number(req.query.tz) || 0)));
+    const mode = deps.executor.mode;
+    const days = dailyCalendar(await closedTrades(mode, true), tz);
+    return { mode, tz, statsSince: mode === 'PAPER' ? getConfig().paper.statsSince ?? null : null, days };
   });
 
   app.get<{ Querystring: { range?: string } }>('/api/overview', async (req) => {
