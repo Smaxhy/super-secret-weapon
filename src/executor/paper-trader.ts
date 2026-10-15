@@ -85,7 +85,7 @@ export class PaperExecutor implements Executor {
       solAmount: req.solAmount,
       tokenAmountRaw: filled,
       priceSol: req.solAmount / (Number(filled) / 10 ** PUMP_TOKEN_DECIMALS),
-      feeSol: p.txFeeSol,
+      feeSol: p.buyTxFeeSol ?? p.txFeeSol,
     };
   }
 

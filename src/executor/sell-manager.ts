@@ -490,7 +490,7 @@ export function spikeRisePct(trades: ReadonlyArray<{ t: number; sol: number; px:
 /** Cost of selling now in % of the position: pool fee + assumed slippage + buy & sell tx fees. Pure. */
 export function exitCostPctFor(paper: BotConfigShape['paper'], onAmm: boolean, sizeLeftSol: number, marketCapSol: number | null = null): number {
   const fee = poolFeeBps(paper, onAmm, marketCapSol) / 100;
-  return fee + paper.slippagePct + (sizeLeftSol > 0 ? ((paper.txFeeSol * 2) / sizeLeftSol) * 100 : 0);
+  return fee + paper.slippagePct + (sizeLeftSol > 0 ? (((paper.buyTxFeeSol ?? paper.txFeeSol) + paper.txFeeSol) / sizeLeftSol) * 100 : 0);
 }
 
 export { settledHigh } from '../lib/settled-price';
@@ -705,9 +705,20 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   // % fees (curve fee, slippage, price impact). The fixed per-sell tx fee is taken off separately.
   const valueOf = (pct: number) => ((i.sizeSol * pct) / 100) * multiple * (1 - rules.initials.feeBufferPct / 100);
   let proceeds = i.proceedsSol;
+  // Every sale pays a fixed tx fee (owner's real terminal: 0.006 SOL): no slice smaller than minSaleFeeMultiple fees,
+  // and no leftover too small to be worth its own sale.
+  const minSale = (rules.minSaleFeeMultiple ?? 0) * i.txFeeSol;
+  const feeAware = (want: number): number => {
+    let pct = Math.min(want, remaining);
+    const perPct = valueOf(1);
+    if (minSale <= 0 || !(perPct > 0)) return pct;
+    if (perPct * pct < minSale) pct = Math.min(remaining, Math.ceil((minSale / perPct) * 100) / 100);
+    if (perPct * (remaining - pct) < minSale) pct = remaining;
+    return pct;
+  };
   for (const tier of rules.takeProfitTiers) {
     if (multiple >= tier.multiple && !state.tpTiersHit.includes(tier.multiple) && remaining > 0) {
-      const pct = Math.min(tier.sellPct, remaining);
+      const pct = feeAware(tier.sellPct);
       sells.push({ pct, reason: 'TAKE_PROFIT', detail: `${tier.multiple}x tier` });
       state.tpTiersHit.push(tier.multiple);
       remaining -= pct;

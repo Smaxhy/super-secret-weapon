@@ -191,7 +191,8 @@ describe('take initials + runner', () => {
       }
       return received - costSol;
     };
-    for (const size of [0.025, 0.05, 0.1, 0.2]) {
+    // v10.28: real sell fees are 0.006 SOL per sale — sizes from the bot's minimum (0.1 SOL) up.
+    for (const size of [0.1, 0.2, 0.5]) {
       expect(simulate(size, [2.05])).toBeGreaterThanOrEqual(0); // tier + initials in the same tick
       expect(simulate(size, [1.32, 2.05])).toBeGreaterThanOrEqual(0); // tier first, initials later
     }

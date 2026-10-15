@@ -498,10 +498,11 @@ export const DEFAULT_CONFIG = {
     follow: {
       enabled: true as boolean,
       minKols: 2,
-      barDelta2: -6,
-      barDelta3: -10,
+      // v10.28 (owner: "don't blindly copy KOLs!"): KOLs buying only TRIGGERS the check — no easier bar, no bigger size.
+      barDelta2: 0,
+      barDelta3: 0,
       sizeMultiplier2: 1,
-      sizeMultiplier3: 1.3,
+      sizeMultiplier3: 1,
       maxOpen: 3,
       checkpointsSec: [0, 30, 90, 180] as number[],
     },
@@ -952,9 +953,10 @@ export const DEFAULT_CONFIG = {
     /** Owner: "if you're in a trade with him and he sells, sell instantly" — ANY position we hold in a coin (whatever
      *  strategy bought it) is sold at once when a COPY wallet sells that coin after we bought. */
     mirrorSells: true as boolean,
-    /** A copy is bought when he buys: no dip wait (dip-only above $15k) and no 15 s confirmation for copy trades. */
-    skipDipWait: true as boolean,
-    skipConfirm: true as boolean,
+    /** v10.28 (owner: "don't blindly copy KOLs!"): a copy waits for a good entry like every other buy — dip-only above
+     *  $15k, the 15 s confirmation and the buyers-vs-sellers check all apply. true = buy the moment he buys. */
+    skipDipWait: false as boolean,
+    skipConfirm: false as boolean,
     /** Re-check the token this many seconds after the wallet's buy. */
     checkpointsSec: [0, 30, 90, 180],
   },
@@ -983,6 +985,10 @@ export const DEFAULT_CONFIG = {
   },
 
   exit: {
+    /** v10.28 — real sell fee is 0.006 SOL per sale (owner's terminal): a take-profit slice must be worth ≥ this many
+     *  sell fees, else it sells a bigger slice; and if what would be left is worth less than that, it sells all of it
+     *  (one fee instead of two). 0 = off. Mostly matters for 0.1–0.2 SOL trades. */
+    minSaleFeeMultiple: 8,
     /**
      * Tiered take-profit: sell `sellPct` of the ORIGINAL position at `multiple`x.
      * v5 (research): the old exits banked +3% wins against −16% losses (needs 84% winners).
@@ -1300,8 +1306,11 @@ export const DEFAULT_CONFIG = {
      */
     latencyMinMs: 150,
     latencyMaxMs: 500,
-    /** Network + priority fee + Jito tip per transaction (realistic for fast Pump.fun fills). */
-    txFeeSol: 0.0015,
+    /** v10.28 — the owner's real terminal settings (priority fee + tip per transaction):
+     *  SELL 0.001 prio + 0.005 tip = 0.006 SOL (every sale, also each partial take-profit); BUY 0.0001 + 0.001 = 0.0011 SOL.
+     *  (Their 20% slippage is the tolerance, not the cost — fills still pay the real price impact + slippagePct.) */
+    txFeeSol: 0.006,
+    buyTxFeeSol: 0.0011,
     /** PumpSwap pool fee (LP + protocol + creator), basis points per side, when tiered fees are off. */
     ammFeeBps: 30,
     /**

@@ -423,10 +423,10 @@ export class Evaluator {
     );
     ruleFails = [...ruleFails, ...owner.fails];
     // Buyers vs sellers right now (owner: "know whether buyers or sellers are getting high"): sellers in control → not now.
-    // A copy buys when the copied wallet buys, so it's exempt.
+    // Copies too (owner: "don't blindly copy KOLs") — unless copies are set to buy the moment he buys.
     const prCfg = cfg.entry.pressure ?? DEFAULT_CONFIG.entry.pressure;
     const pressure = this.crowd ? flowPressure(this.crowd.trades(mint), Date.now(), prCfg) : null;
-    const prWhy = STRATEGY.name === 'SMART_MONEY_COPY' && job.data.wallet && !kolFollow ? null : pressureFail(pressure, prCfg);
+    const prWhy = STRATEGY.name === 'SMART_MONEY_COPY' && job.data.wallet && !kolFollow && cfg.copy.skipDipWait === true ? null : pressureFail(pressure, prCfg);
     if (prWhy) ruleFails = [...ruleFails, prWhy];
 
     // Learned odds: how often coins with the same patterns went on to win (bounded ±points).

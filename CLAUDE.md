@@ -608,6 +608,14 @@ smart money → learning engine → ML → social). See README.md.
   riskyEntry caps → allowed at full size (note in the buy explanation). Migration v22: CURVE_SNIPE back on (0.15), MIG 0.35 /
   SOON 0.25 / RUNNER 0.05 / KOL 0.2; newPair.maxAgeSec 90; soon MC + volume $12k. Editable group "Your filters".
   trade.padre's X feed: no public API (would mean scraping with the owner's login) — not built. tests/owner-filters.test.ts.
+- **v10.28 (Oct 15): real fees + KOLs never blind** (owner's terminal: BUY 0.0001 prio + 0.001 tip, SELL 0.001 + 0.005, 20%
+  slippage tolerance; "don't blindly copy KOLs!"). `paper.txFeeSol` = per SELL 0.006 (was 0.0015 for both), new
+  `paper.buyTxFeeSol` 0.0011 (paper-trader buy fill, virtual-book cost, `exitCostPctFor`). 20% is a tolerance, not a cost —
+  strategy maxSlippageBps guards stay. **Fee-aware take-profits** (`exit.minSaleFeeMultiple` 8, decideExit `feeAware`): a
+  tier slice must be worth ≥ 8 sell fees (0.048 SOL) else it sells more; a leftover worth less than that goes with it.
+  KOL follow: no bar discount / no bigger size (barDelta 0, size ×1) — KOLs only TRIGGER a check. Copies: `copy.skipDipWait`
+  / `skipConfirm` false → dip-only, confirmation and the pressure check apply to copies too (mirror sells unchanged).
+  Migration v23. phase2 initials test now uses sizes 0.1–0.5 SOL (0.025 can't pay 0.006 fees).
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

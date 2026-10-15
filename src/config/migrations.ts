@@ -335,6 +335,19 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['focus', ['soon', 'minVolumeUsd'], 12_000],
     ],
   },
+  {
+    version: 23,
+    note: "v10.28: paper fees = the owner's terminal (sell 0.001 prio + 0.005 tip, buy 0.0001 + 0.001); KOL buys never shortcut the rules",
+    set: [
+      ['paper', ['txFeeSol'], 0.006],
+      ['paper', ['buyTxFeeSol'], 0.0011],
+      ['copy', ['skipDipWait'], false],
+      ['copy', ['skipConfirm'], false],
+      ['kol', ['follow', 'barDelta2'], 0],
+      ['kol', ['follow', 'barDelta3'], 0],
+      ['kol', ['follow', 'sizeMultiplier3'], 1],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

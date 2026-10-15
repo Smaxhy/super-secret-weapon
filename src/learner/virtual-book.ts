@@ -103,7 +103,7 @@ export class VirtualBook {
     this.open.set(o.key, {
       ...o,
       sizeSol,
-      costSol: sizeSol + p.txFeeSol,
+      costSol: sizeSol + (p.buyTxFeeSol ?? p.txFeeSol),
       tokens,
       entryPriceSol: entry,
       openedAt: now,
