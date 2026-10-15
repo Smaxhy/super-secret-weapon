@@ -8,6 +8,15 @@ Owner has some coding knowledge; explain simply, keep chat short, spend effort o
 Original master plan: 9 phases (scanner → scoring/paper → dashboard → live execution → controls →
 smart money → learning engine → ML → social). See README.md.
 
+## ⛔ FREEZE (owner's order, Oct 15 2026 — v10.39 is the frozen version)
+**Do NOT push ANY change — no new features, no rule / setting / default tweaks, no tuning, no refactors — unless something
+is BROKEN** (crash, bug, wrong numbers, bot not trading because of a fault, dashboard error). Owner: "don't accept ANY
+updates unless something is broken, no new features or changes." Every push redeploys + restarts the bot, which also
+breaks the freeze. If the owner asks for a new feature or a tweak during the freeze, remind them of this rule and ask them
+to confirm they want to end the freeze first. Freeze goal: 5–7 days / 200–300 trades on one fixed setup, then judge each
+strategy on Performance → Mistakes ("Does each strategy deserve to run?") and switch losers OFF (don't tweak).
+Diagnosing (reading code, explaining Bot health, diagnose.sh output) is always fine — it changes nothing.
+
 ## Where things run
 - **Branch:** `claude/festive-albattani-6aufe6` (all work goes here; the VPS and GitHub Pages follow it).
 - **VPS:** Vultr, Ubuntu 24.04, `ssh root@209.250.254.34` (SSH key from the owner's Windows PC).
