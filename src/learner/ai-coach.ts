@@ -531,8 +531,12 @@ export class AiCoach {
     }
   }
 
-  /** Ask Claude to review the latest trades (when there are new ones and budget left). */
-  async review(force = false, deepAsked = false, forTips = false): Promise<{ ran: boolean; why: string }> {
+  /**
+   * Ask Claude to review the latest trades (when there are new ones and budget left). `ownerAsked` = the owner pressed
+   * Run (or a deep review) on the dashboard; tips and owner runs go through even over the daily budget (owner, Oct 15:
+   * "allow the brain commands to go regardless, even if it's over the daily budget") — only the automatic reviews stop.
+   */
+  async review(force = false, deepAsked = false, forTips = false, ownerAsked = false): Promise<{ ran: boolean; why: string }> {
     const c = this.cfg();
     if (!c.enabled) return { ran: false, why: 'AI coach is off' };
     if (!this.client) return { ran: false, why: 'no ANTHROPIC_API_KEY on the server' };
@@ -540,10 +544,17 @@ export class AiCoach {
     this.running = true;
     try {
       const spent = await this.spentToday();
-      if (spent >= this.budgetUsd) return { ran: false, why: `daily AI budget used ($${spent.toFixed(2)} of $${this.budgetUsd})` };
-      const trades = await this.loadTrades();
       const tips = await this.tips();
       const newTips = tips.filter((t) => t.status === 'new');
+      const overBudget = spent >= this.budgetUsd;
+      // Over budget: automatic reviews stop, but the owner's tips / Run button still go (a pending tip turns an automatic
+      // review into a cheap tip review).
+      if (overBudget && !ownerAsked && !forTips) {
+        if (!newTips.length) return { ran: false, why: `daily AI budget used ($${spent.toFixed(2)} of $${this.budgetUsd})` };
+        forTips = true;
+      }
+      if (overBudget) log.info({ spent, budget: this.budgetUsd }, 'AI review over the daily budget — your tip / run request goes through anyway');
+      const trades = await this.loadTrades();
       if (forTips && !newTips.length) return { ran: false, why: 'no new tips' };
       const last = JSON.parse((await this.redis.get(K.last)) ?? 'null') as { at: string; newestClosedMs: number } | null;
       const newest = trades[0]?.closedAtMs ?? 0;

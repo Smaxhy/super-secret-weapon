@@ -589,6 +589,10 @@ smart money → learning engine → ML → social). See README.md.
   (`copy.mirrorSells`): a COPY wallet's sell → Redis `copy:mirror:<mint>` {wallet,name,t} (set before anything else) +
   `whales.onCopySold` → `sellManager.onTrade(mint)`; decideExit `mirrorSell` (`mirrorSellReason`: only sells after our buy)
   → COPY_EXIT 100% for ANY position in that coin, first check after "no market", ignores every hold. tests/owner-wallets.test.ts.
+- **v10.26: owner's brain commands ignore the daily AI budget** (owner: "allow the brain commands to go regardless, tips etc,
+  even if it's over the daily budget"). `aiCoach.review(force, deep, forTips, ownerAsked)`: over budget only the AUTOMATIC
+  reviews stop; tips (`reviewTips`) and the dashboard Run / deep buttons (`/api/ai-coach/run` → ownerAsked) always go; a pending
+  tip turns an over-budget automatic review into a tip review. tests/ai-budget-owner.test.ts.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

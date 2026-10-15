@@ -94,7 +94,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       reply.header('Cache-Control', 'no-store');
       return deps.aiCoach ? deps.aiCoach.snapshot() : null;
     });
-    secured.post<{ Body: { deep?: boolean } | null }>('/api/ai-coach/run', async (req) => (deps.aiCoach ? deps.aiCoach.review(true, req.body?.deep === true) : { ran: false, why: 'AI coach not running' }));
+    secured.post<{ Body: { deep?: boolean } | null }>('/api/ai-coach/run', async (req) => (deps.aiCoach ? deps.aiCoach.review(true, req.body?.deep === true, false, true) : { ran: false, why: 'AI coach not running' }));
     // Tips to the brain: the owner talks to it; the AI coach turns each tip into live rules / setting changes and answers.
     secured.get('/api/brain/tips', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
