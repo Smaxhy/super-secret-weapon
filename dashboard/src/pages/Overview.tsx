@@ -31,7 +31,28 @@ export function Overview() {
       return 'all';
     }
   });
-  const o = useApi<OverviewData>(`/api/overview?range=${range}`, 15_000, ['trade', 'token']);
+  // Calendar (open/closed remembered per device); a picked day replaces the timeframe for the chart + numbers.
+  const [calOpen, setCalOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('overview.calendar') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [day, setDay] = useState<string | null>(null);
+  const toggleCal = () => {
+    const next = !calOpen;
+    setCalOpen(next);
+    if (!next) setDay(null);
+    try {
+      localStorage.setItem('overview.calendar', next ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  };
+  const tz = new Date().getTimezoneOffset();
+  const o = useApi<OverviewData>(day ? `/api/overview?day=${day}&tz=${tz}` : `/api/overview?range=${range}`, 15_000, ['trade', 'token']);
+  const dayLabel = day ? new Date(`${day}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }) : null;
   const trades = useApi<TradeRowData[]>('/api/trades?limit=5', 30_000, ['trade']);
   const feed = useApi<Detection[]>('/api/detections?limit=6', 15_000, ['token', 'safety', 'evaluation']);
 
@@ -73,17 +94,41 @@ export function Overview() {
             </div>
             <div className="mt-5 border-t border-line pt-4">
               <div className="mb-2 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-ink">Profit over time</h2>
-                <Link to="/performance" className="text-sm font-medium text-accent">
-                  All charts
-                </Link>
+                <h2 className="text-sm font-semibold text-ink">{dayLabel ? `Profit on ${dayLabel}` : 'Profit over time'}</h2>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={toggleCal}
+                    aria-expanded={calOpen}
+                    className={`whitespace-nowrap rounded-lg border px-2.5 py-1 text-sm font-medium ${calOpen ? 'border-accent text-accent' : 'border-line text-ink-2'}`}
+                  >
+                    {calOpen ? 'Close calendar' : 'Calendar'}
+                  </button>
+                  <Link to="/performance" className="text-sm font-medium text-accent">
+                    All charts
+                  </Link>
+                </div>
               </div>
+              {calOpen && (
+                <div className="mb-3">
+                  <PnlCalendar picked={day} onPick={setDay} />
+                </div>
+              )}
+              {day && (
+                <div className="mb-3 flex items-center gap-2 text-sm">
+                  <span className="rounded-full bg-accent/10 px-3 py-1 font-medium text-accent">Showing {dayLabel}</span>
+                  <button type="button" onClick={() => setDay(null)} className="text-ink-2 underline">
+                    back to {RANGES.find((r) => r.key === range)?.label ?? 'All'}
+                  </button>
+                </div>
+              )}
               <Tabs
                 className="mb-3 sm:max-w-md"
                 label="Timeframe"
                 tabs={RANGES}
-                value={range as Range}
+                value={(day ? '' : range) as Range}
                 onChange={(k) => {
+                  setDay(null);
                   setRange(k);
                   try {
                     localStorage.setItem('overview.range', k);
@@ -115,7 +160,7 @@ export function Overview() {
               {(d.window?.cumulative ?? d.cumulative).length ? (
                 <PnlChart points={d.window?.cumulative ?? d.cumulative} height={210} />
               ) : (
-                <Empty>{range === 'all' ? 'No closed trades yet. The chart fills in as the bot paper trades.' : 'No closed trades in this timeframe.'}</Empty>
+                <Empty>{day ? 'No closed trades on this day.' : range === 'all' ? 'No closed trades yet. The chart fills in as the bot paper trades.' : 'No closed trades in this timeframe.'}</Empty>
               )}
             </div>
           </section>
@@ -123,7 +168,6 @@ export function Overview() {
       )}
 
       <Stack className="mt-4">
-        <PnlCalendar />
         <OpenPreview />
         <div className="grid gap-4 lg:grid-cols-2">
           <Card title="Latest trades" action={<Link to="/history" className="font-medium text-accent">See all</Link>}>

@@ -4,7 +4,7 @@ import { env } from '../../config/env';
 import { getConfig } from '../../config/runtime-config';
 import { realisedPnlToday } from '../../executor/trader';
 import { prisma } from '../../lib/prisma';
-import { dailyCalendar, summarise, type ClosedTrade } from '../performance-calc';
+import { dailyCalendar, summarise, tradesOnDay, type ClosedTrade } from '../performance-calc';
 import type { ApiDeps } from '../deps';
 
 /** Fresh-stats marker (paper.statsSince): headline numbers only count trades closed after it. */
@@ -65,7 +65,7 @@ export async function performanceRoutes(app: FastifyInstance, deps: ApiDeps): Pr
     return { mode, tz, statsSince: mode === 'PAPER' ? getConfig().paper.statsSince ?? null : null, days };
   });
 
-  app.get<{ Querystring: { range?: string } }>('/api/overview', async (req) => {
+  app.get<{ Querystring: { range?: string; day?: string; tz?: string } }>('/api/overview', async (req) => {
     const cfg = getConfig();
     const mode = deps.executor.mode;
     const dayStart = new Date();
@@ -80,8 +80,12 @@ export async function performanceRoutes(app: FastifyInstance, deps: ApiDeps): Pr
     const s = summarise(closed, cfg.paper.startingBalanceSol + (cfg.paper.addedSol ?? 0));
     // Timeframe picker on the Overview (1 h / 6 h / 24 h / 7 d / all): numbers + curve for that window only.
     const RANGES: Record<string, number> = { '1h': 3_600_000, '6h': 6 * 3_600_000, '24h': 86_400_000, '7d': 7 * 86_400_000 };
-    const range = req.query.range && RANGES[req.query.range] ? req.query.range : 'all';
-    const inWin = range === 'all' ? closed : closed.filter((t) => t.closedAt.getTime() >= Date.now() - RANGES[range]!);
+    // Calendar day (YYYY-MM-DD in the viewer's zone, tz = getTimezoneOffset()): that day's trades only, whole history.
+    const day = req.query.day && /^\d{4}-\d{2}-\d{2}$/.test(req.query.day) ? req.query.day : null;
+    const range = day ? `day:${day}` : req.query.range && RANGES[req.query.range] ? req.query.range : 'all';
+    const inWin = day
+      ? tradesOnDay(await closedTrades(mode, true), day, Number(req.query.tz) || 0)
+      : range === 'all' ? closed : closed.filter((t) => t.closedAt.getTime() >= Date.now() - RANGES[range]!);
     const w = range === 'all' ? s : summarise(inWin, cfg.paper.startingBalanceSol + (cfg.paper.addedSol ?? 0));
     const pcts = inWin.filter((t) => t.sizeSol > 0).map((t) => (t.pnlSol / t.sizeSol) * 100);
     const ls = deps.listenerStats();

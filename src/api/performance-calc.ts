@@ -128,6 +128,15 @@ export interface CalendarDay {
   byStrategy: Array<{ strategy: string; trades: number; pnlSol: number }>;
 }
 
+/** Local calendar day of a close (YYYY-MM-DD); `tzOffsetMin` = JS getTimezoneOffset(). */
+export const localDay = (d: Date, tzOffsetMin = 0): string => new Date(d.getTime() - tzOffsetMin * 60_000).toISOString().slice(0, 10);
+
+/** The trades that closed on `day` in the viewer's zone (the calendar's "show me that day"). */
+export function tradesOnDay(trades: readonly ClosedTrade[], day: string, tzOffsetMin = 0): ClosedTrade[] {
+  const tz = Math.max(-840, Math.min(840, Math.round(tzOffsetMin)));
+  return trades.filter((t) => localDay(t.closedAt, tz) === day);
+}
+
 /**
  * Daily P&L calendar: every closed trade counts on the day it CLOSED, in the viewer's time zone
  * (`tzOffsetMin` = JS getTimezoneOffset(): minutes to ADD to local time to get UTC). Each day starts at 0.
@@ -135,7 +144,7 @@ export interface CalendarDay {
 export function dailyCalendar(trades: readonly ClosedTrade[], tzOffsetMin = 0): CalendarDay[] {
   const days = new Map<string, ClosedTrade[]>();
   for (const t of trades) {
-    const key = new Date(t.closedAt.getTime() - tzOffsetMin * 60_000).toISOString().slice(0, 10);
+    const key = localDay(t.closedAt, tzOffsetMin);
     days.set(key, [...(days.get(key) ?? []), t]);
   }
   const r1 = (x: number) => Math.round(x * 10) / 10;

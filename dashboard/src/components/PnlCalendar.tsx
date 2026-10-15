@@ -1,8 +1,8 @@
-/** Overview: daily P&L calendar — every day starts at 0, tap a day for its numbers. */
+/** Overview profit card: daily P&L calendar — every day starts at 0; tapping a day shows that day's chart above it. */
 import { useMemo, useState } from 'react';
 import { useApi } from '../hooks/useApi';
 import { STRATEGY_LABEL } from '../lib/format';
-import { Card, Pnl } from './ui';
+import { Pnl } from './ui';
 
 interface Day {
   day: string;
@@ -21,16 +21,14 @@ interface Calendar { mode: string; statsSince: string | null; days: Day[] }
 const WEEK = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 const pad = (n: number) => String(n).padStart(2, '0');
 const keyOf = (y: number, m: number, d: number) => `${y}-${pad(m + 1)}-${pad(d)}`;
-const pct = (n: number | null) => (n === null ? '—' : `${n > 0 ? '+' : ''}${n}%`);
 const short = (v: number) => `${v > 0 ? '+' : ''}${Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2)}`;
 
-export function PnlCalendar() {
+export function PnlCalendar({ picked, onPick }: { picked: string | null; onPick: (day: string | null) => void }) {
   const tz = new Date().getTimezoneOffset();
   const { data, error } = useApi<Calendar>(`/api/pnl-calendar?tz=${tz}`, 60_000, ['trade']);
   const now = new Date();
   const today = keyOf(now.getFullYear(), now.getMonth(), now.getDate());
-  const [month, setMonth] = useState({ y: now.getFullYear(), m: now.getMonth() });
-  const [picked, setPicked] = useState<string>(today);
+  const [month, setMonth] = useState(() => (picked ? { y: Number(picked.slice(0, 4)), m: Number(picked.slice(5, 7)) - 1 } : { y: now.getFullYear(), m: now.getMonth() }));
 
   const byDay = useMemo(() => new Map((data?.days ?? []).map((d) => [d.day, d])), [data]);
   const first = new Date(month.y, month.m, 1);
@@ -43,28 +41,23 @@ export function PnlCalendar() {
   const monthPnl = inMonth.reduce((a, d) => a + d.pnlSol, 0);
   const green = inMonth.filter((d) => d.pnlSol > 0).length;
   const red = inMonth.filter((d) => d.pnlSol < 0).length;
-  const sel = byDay.get(picked);
+  const sel = picked ? byDay.get(picked) : undefined;
   const isThisMonth = month.y === now.getFullYear() && month.m === now.getMonth();
   const step = (k: number) => setMonth(({ y, m }) => ({ y: m + k < 0 ? y - 1 : m + k > 11 ? y + 1 : y, m: (m + k + 12) % 12 }));
   const max = Math.max(0.0001, ...inMonth.map((d) => Math.abs(d.pnlSol)));
 
   return (
-    <Card
-      title="Daily profit"
-      subtitle="Every day starts at 0 — tap a day"
-      action={
-        <div className="flex items-center gap-1">
-          <button type="button" aria-label="Previous month" onClick={() => step(-1)} className="rounded-md px-2 py-1 text-ink-2 hover:bg-surface-2">‹</button>
-          <span className="min-w-[6.5rem] text-center text-sm font-medium text-ink">{first.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}</span>
-          <button type="button" aria-label="Next month" disabled={isThisMonth} onClick={() => step(1)} className="rounded-md px-2 py-1 text-ink-2 hover:bg-surface-2 disabled:opacity-30">›</button>
-        </div>
-      }
-    >
+    <div className="rounded-xl border border-line bg-surface-2/40 p-3">
       {error && <p className="text-sm text-down">{error}</p>}
-      <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
-        <span className="text-muted">This month</span>
-        <Pnl value={monthPnl} className="font-semibold" />
-        <span className="text-xs text-ink-2 tabular-nums">{green} green · {red} red day{red === 1 ? '' : 's'}</span>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <button type="button" aria-label="Previous month" onClick={() => step(-1)} className="rounded-md px-3 py-1 text-lg leading-none text-ink-2 hover:bg-surface-2">‹</button>
+        <div className="text-center">
+          <div className="text-sm font-semibold text-ink">{first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</div>
+          <div className="text-xs text-ink-2 tabular-nums">
+            <Pnl value={monthPnl} /> · {green} green · {red} red
+          </div>
+        </div>
+        <button type="button" aria-label="Next month" disabled={isThisMonth} onClick={() => step(1)} className="rounded-md px-3 py-1 text-lg leading-none text-ink-2 hover:bg-surface-2 disabled:opacity-30">›</button>
       </div>
       <div className="grid grid-cols-7 gap-1 text-center">
         {WEEK.map((w) => (
@@ -76,13 +69,16 @@ export function PnlCalendar() {
           const v = byDay.get(k);
           const a = v ? 0.12 + 0.38 * Math.min(1, Math.abs(v.pnlSol) / max) : 0;
           const bg = v && v.pnlSol > 0 ? `rgba(34,197,94,${a})` : v && v.pnlSol < 0 ? `rgba(239,68,68,${a})` : undefined;
+          const future = k > today;
           return (
             <button
               key={k}
               type="button"
-              onClick={() => setPicked(k)}
+              disabled={future}
+              aria-pressed={picked === k}
+              onClick={() => onPick(picked === k ? null : k)}
               style={bg ? { backgroundColor: bg } : undefined}
-              className={`flex aspect-square min-h-[2.6rem] flex-col items-center justify-center rounded-md border text-[11px] leading-tight ${picked === k ? 'border-accent' : 'border-line'} ${k === today ? 'font-semibold' : ''} ${k > today ? 'opacity-40' : ''}`}
+              className={`flex min-h-[2.75rem] flex-col items-center justify-center rounded-md border text-[11px] leading-tight ${picked === k ? 'border-2 border-accent' : 'border-line'} ${k === today ? 'font-semibold' : ''} ${future ? 'opacity-30' : ''}`}
             >
               <span className="text-ink-2">{d}</span>
               {v && <span className={`tabular-nums ${v.pnlSol > 0 ? 'text-up' : v.pnlSol < 0 ? 'text-down' : 'text-ink-2'}`}>{short(v.pnlSol)}</span>}
@@ -90,27 +86,27 @@ export function PnlCalendar() {
           );
         })}
       </div>
-      <div className="mt-3 rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm">
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="font-medium text-ink">{new Date(`${picked}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })}</span>
-          {sel ? <Pnl value={sel.pnlSol} className="font-semibold" /> : <span className="text-muted">no closed trades</span>}
+      {picked && (
+        <div className="mt-3 text-sm">
+          {sel ? (
+            <>
+              <p className="text-xs text-ink-2 tabular-nums">
+                {sel.trades} trade{sel.trades === 1 ? '' : 's'} · {sel.volumeSol.toFixed(2)} SOL traded
+              </p>
+              <ul className="mt-1 space-y-0.5 text-xs">
+                {sel.byStrategy.map((s) => (
+                  <li key={s.strategy} className="flex justify-between gap-2">
+                    <span className="text-ink-2">{STRATEGY_LABEL[s.strategy] ?? s.strategy} · {s.trades}</span>
+                    <Pnl value={s.pnlSol} />
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p className="text-xs text-muted">No closed trades on this day.</p>
+          )}
         </div>
-        {sel && (
-          <>
-            <p className="mt-1 text-xs text-ink-2 tabular-nums">
-              {sel.trades} trade{sel.trades === 1 ? '' : 's'} · {sel.wins} won ({sel.winRate === null ? '—' : `${Math.round(sel.winRate * 100)}%`}) · avg {pct(sel.avgPct)} · best {pct(sel.bestPct)} · worst {pct(sel.worstPct)} · {sel.volumeSol.toFixed(2)} SOL traded
-            </p>
-            <ul className="mt-2 space-y-0.5 text-xs">
-              {sel.byStrategy.map((s) => (
-                <li key={s.strategy} className="flex justify-between gap-2">
-                  <span className="text-ink-2">{STRATEGY_LABEL[s.strategy] ?? s.strategy} · {s.trades}</span>
-                  <Pnl value={s.pnlSol} />
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-      </div>
-    </Card>
+      )}
+    </div>
   );
 }

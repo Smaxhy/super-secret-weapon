@@ -574,7 +574,10 @@ smart money → learning engine → ML → social). See README.md.
   the 5-min `organicFlow` → bought straight away (`hotVolume`). **PnL reset again** (oneTimeUpgrade `stats-reset-oct15`, 15
   SOL, nothing deleted) + **daily P&L calendar**: GET `/api/pnl-calendar?tz=<getTimezoneOffset>` (`dailyCalendar` in
   performance-calc.ts, whole history, by close day in the viewer's zone) → Overview card "Daily profit"
-  (`components/PnlCalendar.tsx`: month grid, green/red days, tap → trades / win rate / avg / best / worst / per strategy).
+  (`components/PnlCalendar.tsx`: month grid, green/red days, per-strategy split). The calendar lives INSIDE the Overview profit
+  card behind a "Calendar" button (open state remembered, `overview.calendar`); tapping a day → `/api/overview?day=YYYY-MM-DD&tz=`
+  (`tradesOnDay`, whole history) so the profit numbers + chart show that day; "back to <range>" or a range tab clears it.
+  useApi drops answers for a path that's no longer current (fast taps).
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate

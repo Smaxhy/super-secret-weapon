@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../src/config/default';
 import { dipOnlyApplies, dipOnlyHigh, hotVolume } from '../src/executor/dip-watcher';
-import { dailyCalendar, type ClosedTrade } from '../src/api/performance-calc';
+import { dailyCalendar, tradesOnDay, type ClosedTrade } from '../src/api/performance-calc';
 import { pullbackZone } from '../src/learner/entry-style';
 
 const base = { enabled: true, minMcUsd: 15_000, dipEntry: false, swing: false };
@@ -66,5 +66,10 @@ describe('daily P&L calendar', () => {
     expect(dailyCalendar([t('2026-10-15T01:00:00Z', 0.1)], 240)[0]!.day).toBe('2026-10-14');
     // 22:00 UTC on the 14th = 00:00 on the 15th in Amsterdam summer time (offset −120).
     expect(dailyCalendar([t('2026-10-14T22:00:00Z', 0.1)], -120)[0]!.day).toBe('2026-10-15');
+  });
+  it('picks one day for the chart (tap a day)', () => {
+    const all = [t('2026-10-14T10:00:00Z', 0.2), t('2026-10-15T01:00:00Z', -0.1), t('2026-10-15T09:00:00Z', 0.3)];
+    expect(tradesOnDay(all, '2026-10-15').map((x) => x.pnlSol)).toEqual([-0.1, 0.3]);
+    expect(tradesOnDay(all, '2026-10-14', 240).map((x) => x.pnlSol)).toEqual([0.2, -0.1]);
   });
 });

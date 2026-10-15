@@ -16,11 +16,15 @@ export function useApi<T>(path: string | null, refreshMs = 0, liveOn: Array<BotE
   const [loading, setLoading] = useState(true);
   const alive = useRef(true);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Path the screen wants now: a slow answer for an older path (e.g. a day tapped before) is dropped.
+  const current = useRef(path);
+  current.current = path;
 
   const load = useCallback(async () => {
     if (!path) return;
     try {
       const d = await api<T>(path);
+      if (current.current !== path) return;
       if (alive.current) {
         setData(d);
         setError(null);
