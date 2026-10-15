@@ -36,6 +36,11 @@ export const DEFAULT_CONFIG = {
      * size needs score ≥ minScore, MC ≥ minMarketCapUsd, not a learning / probe trade, no risk half-size, and the
      * strategy isn't losing (allocator ×≥1). Still limited by the strategy budget, balance and coin liquidity.
      */
+    /** v10.30 — buy in two steps (src/executor/scale-in.ts): firstPct now, the rest only when the coin holds ≥ +minRisePct
+     *  above the entry with buyers ≥ minBuySharePct of the last 30 s (between minWaitSec and windowSec, ≤ +maxRisePct);
+     *  a drop of cancelDropPct, a rug signal or no follow-through cancels it. Learning trades / legs under the minimum
+     *  size buy everything at once. */
+    scaleIn: { enabled: true as boolean, firstPct: 50, minWaitSec: 20, windowSec: 180, minRisePct: 2, maxRisePct: 30, cancelDropPct: 6, minBuySharePct: 55 },
     highConviction: {
       enabled: true, minScore: 80, minMarketCapUsd: 50_000, sizeSol: 1, maxPctOfCapital: 12,
       /** v10.13: every trade that ISN'T a big strong-setup trade is capped here (SOL), whatever the size settings say. */

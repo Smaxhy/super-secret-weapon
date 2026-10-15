@@ -12,7 +12,7 @@
 import type { Candle } from '../chart-reader';
 import type { CrowdTrade } from '../../scanner/crowd-tracker';
 import { candlesFromTrades } from '../timeframes';
-import { atr, bollinger, cvd, emaSeries, fibLevels, heikinAshi, lastImpulse, macd, obv, rsiSeries, sma, stochRsi, supertrend, swings, vwapBands } from './indicators';
+import { atr, bollinger, cvd, emaSeries, fibLevels, heikinAshi, klinger, lastImpulse, macd, obv, rsiSeries, sma, stochRsi, supertrend, swings, vwapBands } from './indicators';
 
 export type TaFamily = 'fibonacci' | 'trend' | 'momentum' | 'mean-reversion' | 'breakout' | 'structure' | 'volume' | 'pattern';
 
@@ -499,6 +499,24 @@ export const TA_STRATEGIES: TaStrategy[] = [
     },
   },
   // ---------------- Volume / order flow ----------------
+  {
+    // v10.30, from OctoBot's "dip analyser": a real dip (RSI low) only counts once VOLUME confirms the turn.
+    id: 'dip_analyser',
+    name: 'Dip analyser (RSI dip + Klinger volume turn)',
+    family: 'momentum',
+    summary: 'RSI dropped under 35 in the last 2 minutes and the Klinger volume oscillator just crossed above its signal line on a green candle — the dip is being bought with real volume, not just a pause.',
+    minCandles: 60,
+    check({ c15 }) {
+      const cl = c15.map((x) => x.c);
+      const r = rsiSeries(cl, 14);
+      const i = cl.length - 1;
+      const dipped = Math.min(...r.slice(Math.max(0, i - 8), i + 1).filter(Number.isFinite));
+      const k = klinger(c15);
+      const crossed = k.ko[i - 1]! <= k.signal[i - 1]! && k.ko[i]! > k.signal[i]!;
+      if (!(dipped < 35 && crossed && green(last(c15)!) && r[i]! > dipped + 3)) return null;
+      return { id: 'dip_analyser', strength: clamp01((35 - dipped) / 15 + 0.35), why: `RSI dipped to ${dipped.toFixed(0)} and the Klinger volume oscillator turned up`, stop: minL(c15.slice(-10)) * 0.97 };
+    },
+  },
   {
     id: 'cvd_divergence',
     name: 'CVD bullish divergence (absorption)',

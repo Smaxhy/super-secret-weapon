@@ -142,6 +142,32 @@ export function cvd(c: readonly Candle[]): number[] {
   return out;
 }
 
+/**
+ * Klinger volume oscillator (Stephen Klinger): volume force from the trend of (high+low+close)/3 and the high–low range;
+ * KO = EMA(fast) − EMA(slow) of it, `signal` = EMA(signalN) of KO. KO crossing above its signal = volume turning bullish.
+ */
+export function klinger(c: readonly Candle[], fast = 34, slow = 55, signalN = 13): { ko: number[]; signal: number[] } {
+  const vf: number[] = [];
+  let prevTrend = 0;
+  let cm = 0;
+  let prevDm = 0;
+  for (let i = 0; i < c.length; i++) {
+    const x = c[i]!;
+    const hlc = (x.h + x.l + x.c) / 3;
+    const prevHlc = i > 0 ? (c[i - 1]!.h + c[i - 1]!.l + c[i - 1]!.c) / 3 : hlc;
+    const trend = hlc > prevHlc ? 1 : hlc < prevHlc ? -1 : prevTrend || 1;
+    const dm = x.h - x.l;
+    cm = i > 0 && trend === prevTrend ? cm + dm : prevDm + dm;
+    vf.push(cm > 0 ? x.v * Math.abs(2 * (dm / cm - 1)) * trend * 100 : 0);
+    prevTrend = trend;
+    prevDm = dm;
+  }
+  const f = emaSeries(vf, fast);
+  const s = emaSeries(vf, slow);
+  const ko = f.map((v, i) => v - s[i]!);
+  return { ko, signal: emaSeries(ko, signalN) };
+}
+
 /** Supertrend (ATR `n`, multiplier `m`): direction +1 (bullish) / −1 (bearish) per candle and the line. */
 export function supertrend(c: readonly Candle[], n = 10, m = 3): { dir: number[]; line: number[] } {
   const a = atr(c, n);

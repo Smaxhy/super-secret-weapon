@@ -27,6 +27,7 @@ import { currentHourFactor, currentRegime } from '../learner/regime-detector';
 import { timingNow } from '../learner/timing';
 import type { MarketRaw } from '../evaluator/market-analyzer';
 import type { Executor } from './types';
+import { scaleInPlan } from './scale-in';
 
 import { getSolUsd } from '../lib/sol-price';
 
@@ -258,7 +259,9 @@ export class Trader {
       return refuse(`rug screen: ${rug}`);
     }
 
-    const fill = await this.executor.buy({ mint: req.mint, solAmount: round4(size), maxSlippageBps: req.maxSlippageBps, expectedPriceSol: req.market.priceSol });
+    // Buy in two steps: part now, the rest only when the coin proves itself (sell manager → addLeg).
+    const plan = scaleInPlan(size, cfg.trading.minPositionSol, cfg.trading.scaleIn ?? DEFAULT_CONFIG.trading.scaleIn, probe || req.explore === true);
+    const fill = await this.executor.buy({ mint: req.mint, solAmount: round4(plan ? plan.firstSol : size), maxSlippageBps: req.maxSlippageBps, expectedPriceSol: req.market.priceSol });
     const explanation = req.explain?.(size) ?? null;
     const context = { score: req.score, market: req.market, features: req.features, balanceBefore: balance, explanation };
     if (!fill.ok) {
@@ -291,6 +294,8 @@ export class Trader {
             probe,
             // Counted into each sell's cost basis so P&L includes the buy's gas/tip.
             buyFeeSol: fill.feeSol,
+            // Two-step buy: the second half waits for the coin to prove itself (null = bought in one go).
+            scaleIn: plan ? { plannedSol: round4(size), pendingSol: plan.laterSol, maxSlippageBps: req.maxSlippageBps, status: 'pending' } : null,
             explanation,
             top10HolderPct: req.market.top10HolderPct,
             holders: req.market.holders,
@@ -310,6 +315,52 @@ export class Trader {
     this.onEntered?.(req);
     noteEntry();
     return { entered: true, reason: 'entered', positionId: position.id };
+  }
+
+  /**
+   * Second half of a two-step buy (the sell manager decided the coin proved itself, or that it never will).
+   * add = buy `pendingSol` more and fold it into the position (new average entry, size, tokens, buy fees);
+   * cancel = record why the rest was never bought. Only ever runs once per position.
+   */
+  async scaleInLeg(positionId: string, action: 'add' | 'cancel', why: string, priceSol: number): Promise<boolean> {
+    const p = await prisma.position.findUnique({ where: { id: positionId }, include: { token: { select: { symbol: true } } } });
+    const ctx = (p?.entryContext ?? {}) as Record<string, unknown> & { scaleIn?: { pendingSol: number; maxSlippageBps?: number; status: string } | null; buyFeeSol?: number };
+    const si = ctx.scaleIn;
+    if (!p || p.status !== 'OPEN' || !si || si.status !== 'pending') return false;
+    const done = async (status: string, extra: Record<string, unknown> = {}) =>
+      prisma.position.update({ where: { id: p.id }, data: { entryContext: { ...ctx, scaleIn: { ...si, status, why, at: new Date().toISOString(), ...extra } } as never } });
+    if (action === 'cancel') {
+      await done('cancelled');
+      return true;
+    }
+    const balance = await this.executor.getBalanceSol();
+    const sol = Math.min(si.pendingSol, round4(balance - getConfig().paper.txFeeSol * 4 - 0.01));
+    if (sol < getConfig().trading.minPositionSol / 2) {
+      await done('cancelled', { why: `not adding: balance ${balance.toFixed(3)} SOL` });
+      return true;
+    }
+    const fill = await this.executor.buy({ mint: p.mint, solAmount: sol, maxSlippageBps: si.maxSlippageBps ?? 1_000, expectedPriceSol: priceSol });
+    if (!fill.ok) {
+      await done('cancelled', { why: `second half failed: ${fill.error}` });
+      return true;
+    }
+    const tokens = p.tokenAmountRaw + fill.tokenAmountRaw;
+    const sizeSol = p.sizeSol + fill.solAmount;
+    await prisma.$transaction(async (tx) => {
+      await tx.position.update({
+        where: { id: p.id },
+        data: {
+          sizeSol,
+          tokenAmountRaw: tokens,
+          entryPriceSol: sizeSol / (Number(tokens) / 1e6),
+          peakPriceSol: Math.max(p.peakPriceSol, fill.priceSol),
+          entryContext: { ...ctx, buyFeeSol: Number(ctx.buyFeeSol ?? 0) + fill.feeSol, scaleIn: { ...si, status: 'added', why, addedSol: fill.solAmount, addPriceSol: fill.priceSol, at: new Date().toISOString() } } as never,
+        },
+      });
+      await logTrade({ positionId: p.id, mint: p.mint, symbol: p.token.symbol, side: 'BUY', mode: p.mode, strategy: p.strategy, fill, reason: `second half: ${why}`, context: { scaleIn: true } }, tx);
+    });
+    log.info({ mint: p.mint, sol: fill.solAmount }, `➕ ${p.token.symbol}: added the second half — ${why}`);
+    return true;
   }
 }
 

@@ -9,6 +9,7 @@
  *
  * Shutdown (Ctrl+C or `docker stop`) runs in reverse so nothing is lost.
  */
+import { startMarketMood } from './learner/market-mood';
 import { startApi } from './api/server';
 import { env, redactUrl, rpcEndpoints } from './config/env';
 import { bus } from './lib/bus';
@@ -364,6 +365,10 @@ async function main(): Promise<void> {
     .catch(() => undefined);
   // Exits react to every trade on a coin we hold (not just the 1s tick); real trade highs count as peaks.
   sellManager.crowd = crowd;
+  // Market mood (SOL's own trend + Fear & Greed) — stored on every evaluation for the learners; changes no trade.
+  startMarketMood(redis);
+  // Two-step buys: the second half is bought (or cancelled) by the trader when the sell manager says so.
+  sellManager.scaleIn = (id, action, why, px) => trader.scaleInLeg(id, action, why, px);
   registry.onTradeApplied.push((mint) => sellManager.onTrade(mint));
   registry.startSafetyWorker();
   // Copy trading: watch the wallets you added on the dashboard.

@@ -623,6 +623,16 @@ smart money → learning engine → ML → social). See README.md.
   safety-checker reads the real bps (`getTransferFeeConfig`) → `transfer_fee` HARD fail when > 0; a 0% fee extension is no
   longer penalised. tests/quote-and-fees.test.ts. Zip reviews (Oct 15): solana-trading-bot-v3 + solana-copy-sniper-mev-bot =
   key-stealing malware (fake npm registry / install-script package) — never use; OctoBot + Chainstack's bot = legit.
+- **v10.30: three OctoBot ideas** (owner approved). (1) **Two-step buys** (`src/executor/scale-in.ts`, `trading.scaleIn`
+  {firstPct 50, minWaitSec 20, windowSec 180, minRisePct 2, maxRisePct 30, cancelDropPct 6, minBuySharePct 55}): trader buys
+  `scaleInPlan` firstSol (whole size when a leg < minPositionSol or learning/probe) → entryContext.scaleIn {plannedSol,
+  pendingSol, status pending}; sell manager `manage()` asks `scaleInVerdict` every check (danger = mirror sell / insider /
+  holder dump / cascade; any sale = too late) → `sellManager.scaleIn` → `trader.scaleInLeg` (add: second BUY trade, new
+  average entry, size, tokens, buyFeeSol; status added/cancelled + why). (2) **Market mood** (`src/learner/market-mood.ts`,
+  DATA ONLY): SOL/USD sampled every 5 min (Redis `mood:sol`, 26 h) → `solChange1h/4h/24hPct`, Fear & Greed (alternative.me,
+  hourly, `mood:fng`) → `features.mood` + AI section 'mood'. (3) **dip_analyser** TA strategy (RSI < 35 in 2 min + Klinger
+  oscillator `klinger()` crossing its signal on a green candle) in the TA lab (proven only via the usual lab rules).
+  tests/octobot-ideas.test.ts.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

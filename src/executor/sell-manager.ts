@@ -52,6 +52,8 @@ import { PublicKey } from '@solana/web3.js';
 import { decodeBondingCurveAccount } from '../lib/pumpfun';
 import { getConnection } from '../lib/solana';
 import { copySoldKey, mirrorSoldKey } from '../scanner/whale-tracker';
+import { scaleInVerdict } from './scale-in';
+import { flowPressure } from '../evaluator/owner-filters';
 import { insiderDumpSignal } from '../evaluator/insider-cluster';
 import { coachFor } from '../learner/trade-coach';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
@@ -910,6 +912,8 @@ export class SellManager {
   private readonly trail = new Map<string, { breachSinceMs: number | null; breachTicks: number; volatilityPct: number | null; peakAtMs?: number }>();
   /** Live per-trade log (set in index.ts): real trade prices between checks, so spikes register. */
   crowd: CrowdTracker | null = null;
+  /** Two-step buys: the trader adds (or cancels) the second half (set in index.ts). */
+  scaleIn: ((positionId: string, action: 'add' | 'cancel', why: string, priceSol: number) => Promise<boolean>) | null = null;
   /** Coins we hold (refreshed every tick) — trades on these trigger an immediate check. */
   private readonly openMints = new Set<string>();
   /** Do we hold this coin right now? */
@@ -1184,6 +1188,21 @@ export class SellManager {
     const mirrorSell = cfg.copy.mirrorSells !== false ? mirrorSellReason(await this.redis.get(mirrorSoldKey(p.mint)), p.openedAt.getTime()) : null;
     const insiderDump = await readInsiderDump(this.redis, p.mint);
     const guard = await this.rugGuard(p, view, crowdTrades, now);
+    // Two-step buy: add the second half once the coin proves itself, or cancel it (rug signal, drop, no follow-through).
+    const siPending = ((p.entryContext as { scaleIn?: { status?: string } | null } | null)?.scaleIn?.status ?? null) === 'pending';
+    if (siPending && this.scaleIn) {
+      const pr = flowPressure(crowdTrades, now, { windowSec: 30, prevWindowSec: 60 });
+      const danger = mirrorSell ?? (insiderDump?.hit ? insiderDump.detail : null) ?? (guard.holderDump?.hit ? guard.holderDump.detail : null) ?? (guard.cascade?.hit ? guard.cascade.detail : null);
+      const v = scaleInVerdict(
+        { nowMs: now, openedAtMs: p.openedAt.getTime(), entryPriceSol: p.entryPriceSol, priceSol: m.priceSol, buySharePct: pr?.buySharePct ?? null, danger, alreadySelling: p.remainingPct < 100 || ((p.tpTiersHit as number[] | null) ?? []).length > 0 },
+        cfg.trading.scaleIn ?? DEFAULT_CONFIG.trading.scaleIn,
+      );
+      if (v.action !== 'wait') {
+        await this.scaleIn(p.id, v.action, v.why, m.priceSol).catch((err: Error) => log.warn({ err: err.message }, 'scale-in failed'));
+        // Size / entry changed — the exits look again on the next check with the new numbers.
+        if (v.action === 'add') return;
+      }
+    }
     const ph = cfg.exit.potentialHold ?? DEFAULT_CONFIG.exit.potentialHold;
     let potential: { hit: boolean; why: string; extraMin: number } | null = null;
     if (ph.enabled && !guard.holderDump && !guard.cascade && !insiderDump?.hit) {
