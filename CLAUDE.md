@@ -665,7 +665,17 @@ smart money → learning engine → ML → social). See README.md.
   top-10 ≤40%, ≥70% of high, demand 7 buyers / 4 new / +0.5 SOL / ratio 1.1 / no acceleration rule / CV 0.3 / same size 35%
   / median 0.03 / gap 30 s / bots 50%, near high 12%, run30s 50%; SOON curve 50–95%, fees 1, active wallets 10, holders 20,
   safety 40; migrated active wallets 8, BOOST wait 180 s (was 330). Logic tests pin the old limits (LEGACY_ENTRY).
- normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
+- **v10.36: new pairs at the minimum size + dip analyser LIVE** (owner). `trading.minSizeStrategies` ['CURVE_SNIPE'] (trader caps
+  size at `minPositionSol`). `ta.forceLive` ['dip_analyser'] → `withForcedLive` (ta-lab.ts): every timeframe live with
+  `forceLiveEdgePct` 10 (= full 3 points), `forced: true`, off once the lab proves it LOSES (≥ minTrades, mean + 2 SE < random).
+  Lab triggers an evaluation when it fires; `ta.dipEntrySignals`: a fire on a coin the DipWatcher waits on → `onDipSignal` →
+  dip entry (`dipSignalOk`: ≥ `chart.dip.signalMinOffHighPct` 5% under the high, not broken down, not a blow-off). Strategies
+  page badge "live (your choice)". Migration v27. tests/dip-analyser-live.test.ts.
+- **v10.37: switched-on strategies always have a budget** (owner's funnel: Swing 34 signals → 34 refused "size below minimum";
+  the owner had switched SWING on, allocation still 0). `trading.minAllocationWhenOn` 0.05 (`allocationShare`), allocation
+  SWING 0.1 / SMART_MONEY_COPY 0.1 (was 0.2; no KOL signals passed). Migration v28. Note: Migration's top skip "only X% to
+  resistance" = `entry.priceAction.enabled` is ON on the VPS (owner or a brain tip) — left as is, owner told.
+- Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).
 - Owner's entry rules: min $12k volume, min $12k MC, min 1 SOL total fees paid (terminal-style), safety ≥ 55 (v9.6), score ≥ 70

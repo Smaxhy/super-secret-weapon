@@ -66,9 +66,13 @@ export const DEFAULT_CONFIG = {
       // v10.23 (owner: "5 trades in 6 hours is way too little"): RUNNER back on, small (size ×0.5 → the minimum).
       RUNNER: 0.05,
       // v8.9: KOL follow (kol.follow) — coins several KOLs / smart wallets bought.
-      SMART_MONEY_COPY: 0.2,
-      SWING: 0,
+      // v10.37: 0.1 (was 0.2 — no KOL buy signals passed; its 10% went to SWING)
+      SMART_MONEY_COPY: 0.1,
+      // v10.37: 0.1 (the owner switched swings back on, but a 0 budget refused every swing buy as "below minimum").
+      SWING: 0.1,
     } satisfies Record<StrategyName, number>,
+    /** v10.37: a switched-on strategy whose allocation is 0 still gets this share (it would otherwise refuse every buy). */
+    minAllocationWhenOn: 0.05,
     /** v10.21: RUNNER, SWING and new pairs (CURVE_SNIPE) off — they lost clearly (Controls → Rules can switch them back on). */
     enabledStrategies: {
       MIGRATION_MOMENTUM: true,

@@ -420,6 +420,14 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['ta', ['dipEntrySignals'], ['dip_analyser']],
     ],
   },
+  {
+    version: 28,
+    note: 'v10.37 (Bot health: SWING switched on but 34 buy signals refused "size below minimum" — its allocation was still 0): SWING gets 10%, KOL follow 20% → 10%',
+    set: [
+      ['trading', ['allocation', 'SWING'], 0.1],
+      ['trading', ['allocation', 'SMART_MONEY_COPY'], 0.1],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

@@ -108,6 +108,11 @@ export function isHighConviction(hc: { enabled: boolean; minScore: number; minMa
   return !hc.minMarketCapUsd || (mcUsd !== null && mcUsd >= hc.minMarketCapUsd);
 }
 
+/** Pure (v10.37): a switched-on strategy's budget share — never 0 (a 0 share refused every buy as "below minimum"). */
+export function allocationShare(alloc: number | undefined, minWhenOn: number | undefined): number {
+  return Math.max(alloc ?? 0, minWhenOn ?? 0);
+}
+
 export class Trader {
   private lock: Promise<unknown> = Promise.resolve();
   private breakerTrippedDay: string | null = null;
@@ -209,7 +214,7 @@ export class Trader {
 
     const strategyOpen = open.filter((p) => p.strategy === req.strategy).reduce((s, p) => s + (p.sizeSol * p.remainingPct) / 100, 0);
     // The allocator shifts budget toward strategies that are proven to make money (×0.5–1.6, 1 until it knows).
-    const budget = capital * cfg.trading.allocation[req.strategy] * (this.allocFactor?.(req.strategy) ?? 1) - strategyOpen;
+    const budget = capital * allocationShare(cfg.trading.allocation[req.strategy], cfg.trading.minAllocationWhenOn) * (this.allocFactor?.(req.strategy) ?? 1) - strategyOpen;
     const reserve = cfg.paper.txFeeSol * 4 + 0.01; // keep enough to pay for the exits
     // Market mood scales position size (e.g. ×1.2 when hot, ×0.5 when rug-heavy).
     // …and by time of day: hours that historically produce more winners get bigger size.

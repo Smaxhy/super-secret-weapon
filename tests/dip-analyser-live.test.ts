@@ -50,3 +50,14 @@ describe('v10.36: the dip analyser trades live', () => {
     expect(m.set.map((s) => s[1].join('.'))).toEqual(['minSizeStrategies', 'forceLive', 'forceLiveEdgePct', 'dipEntrySignals']);
   });
 });
+
+describe('v10.37: a switched-on strategy always has a budget', () => {
+  it('0 allocation → the minimum share; SWING defaults to 10% (migration v28)', async () => {
+    const { allocationShare } = await import('../src/executor/trader');
+    expect(allocationShare(0, 0.05)).toBe(0.05);
+    expect(allocationShare(0.35, 0.05)).toBe(0.35);
+    expect(allocationShare(undefined, undefined)).toBe(0);
+    expect(DEFAULT_CONFIG.trading.allocation.SWING).toBe(0.1);
+    expect(MIGRATIONS.find((x) => x.version === 28)!.set.map((s) => s[1].join('.'))).toEqual(['allocation.SWING', 'allocation.SMART_MONEY_COPY']);
+  });
+});
