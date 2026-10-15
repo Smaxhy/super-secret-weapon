@@ -25,6 +25,7 @@ import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { timingNow } from '../learner/timing';
 import { entryStyleBlock, entryStyleFor, pullbackZone } from '../learner/entry-style';
 import { dipOnlyApplies, dipOnlyHigh, hotVolume } from '../executor/dip-watcher';
+import { flowPressure, ownerFilterFails, pressureFail } from './owner-filters';
 import type { ShadowKind, ShadowTrades } from '../learner/shadow-trades';
 import type { OutcomeTracker } from '../learner/outcome-tracker';
 import type { Brain } from '../learner/brain';
@@ -410,6 +411,24 @@ export class Evaluator {
       ruleFails = rules().filter((f) => !lateJoin || !partialLedger(f));
     }
 
+    // The owner's own terminal filters (migrated / soon / new pair): EVERY buy must match its stage's set.
+    const ofCfg = cfg.ownerFilters ?? DEFAULT_CONFIG.ownerFilters;
+    const owner = ownerFilterFails(
+      {
+        complete: market.raw.complete, onAmm: market.raw.onAmm, ageSec: market.raw.ageSec, marketCapUsd: market.raw.marketCapUsd, volumeUsd: market.raw.volumeUsd,
+        liquidityUsd: market.raw.liquidityUsd ?? null, holders: market.raw.holders, totalFeesSol: market.raw.totalFeesSol, supplyStandard: market.raw.supplyStandard,
+        name: token.name, symbol: token.symbol, lateJoin, narrative: token.metadataFetchedAt ? narrativeScore : null,
+      },
+      ofCfg,
+    );
+    ruleFails = [...ruleFails, ...owner.fails];
+    // Buyers vs sellers right now (owner: "know whether buyers or sellers are getting high"): sellers in control → not now.
+    // A copy buys when the copied wallet buys, so it's exempt.
+    const prCfg = cfg.entry.pressure ?? DEFAULT_CONFIG.entry.pressure;
+    const pressure = this.crowd ? flowPressure(this.crowd.trades(mint), Date.now(), prCfg) : null;
+    const prWhy = STRATEGY.name === 'SMART_MONEY_COPY' && job.data.wallet && !kolFollow ? null : pressureFail(pressure, prCfg);
+    if (prWhy) ruleFails = [...ruleFails, prWhy];
+
     // Learned odds: how often coins with the same patterns went on to win (bounded ±points).
     const lc = cfg.learning ?? DEFAULT_CONFIG.learning;
     // This strategy's own odds once it has enough outcomes (≥3× the per-pattern minimum), else all strategies together.
@@ -491,6 +510,7 @@ export class Evaluator {
         tf,
         pa,
         x: xv?.features ?? null,
+        pressure: pressure ? { buySharePct: pressure.buySharePct, prevBuySharePct: pressure.prevBuySharePct, buySol: pressure.buySol, sellSol: pressure.sellSol } : null,
       },
       { score: result.score, kols: kolsIn, mcUsd: market.raw.marketCapUsd ?? null, ageMin: market.raw.ageSec / 60, hourUtc: new Date().getUTCHours(), dowUtc: new Date().getUTCDay() },
     );
@@ -505,6 +525,18 @@ export class Evaluator {
     const modelSize = wm?.points ? Math.max(0.7, Math.min(1.3, 1 + (wm.p - wm.baseRate) * 2)) : 1;
     const modelNote = wm?.points ? `win model: ${Math.round(wm.p * 100)}% chance to win vs ${Math.round(wm.baseRate * 100)}% usual → bar ${wm.points > 0 ? '−' : '+'}${Math.abs(wm.points)}${modelSize !== 1 ? `, size ×${modelSize.toFixed(2)}` : ''}` : null;
 
+    // Many KOLs still in (owner: "okay if top holders are a bit high when a lot of KOLs are buying"): concentration limits
+    // up to the higher-risk caps don't block. Every other rule (rug, bundle, pressure, dip entry…) still applies.
+    const relax = kolCfg.concentrationRelax ?? DEFAULT_CONFIG.kol.concentrationRelax;
+    const reCaps = cfg.entry.riskyEntry;
+    let kolRelaxNote: string | null = null;
+    if (
+      relax.enabled && kolsIn >= relax.minKols && ruleFails.length > 0 && ruleFails.every(isSoft) &&
+      (market.raw.effectiveBundlePct ?? market.raw.earlyBuyerPct) <= reCaps.maxBundlePct && market.raw.top10HolderPct <= reCaps.maxTop10Pct && (market.raw.effectiveMaxHolderPct ?? market.raw.maxHolderPct) <= reCaps.maxSingleHolderPct
+    ) {
+      kolRelaxNote = `${ruleFails.join(', ')} — allowed: ${kolAct?.buyers.length ?? 0} KOLs still holding`;
+      ruleFails = [];
+    }
     let { decision, reasons } = decide(result.score, threshold, ruleFails, token.safetyHardFail);
 
     // "Still worth a shot": only soft concentration limits broken, within looser caps,
@@ -543,7 +575,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, trusted: kolAct.buyers.filter((b) => b.weight >= (kolCfg.trustedMinWeight ?? Infinity)).length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, copied: job.data.wallet ? 1 : 0, market: market.raw, shape, tf, pa, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, trusted: kolAct.buyers.filter((b) => b.weight >= (kolCfg.trustedMinWeight ?? Infinity)).length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, copied: job.data.wallet ? 1 : 0, owner: { profile: owner.profile, fails: owner.fails }, pressure, market: market.raw, shape, tf, pa, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },
@@ -723,7 +755,7 @@ export class Evaluator {
         swing,
         explore,
         explain: (sizeSol) =>
-          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, chartNote: chart ? `${chart.summary}${dipEntry ? ` — bought the dip: ${job.data.dipWhy ?? ''}` : ''}` : null, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: explore ? `learning trade ×${ex.sizeMultiplier} (score just under the bar)` : conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...(explore ? [`LEARNING TRADE: score ${result.score.toFixed(1)} is just under the bar ${threshold.toFixed(0)} — bought small so the bot learns whether these near-misses pay`] : []), ...(newPair?.notes ?? []), ...taBonus.notes.map((n) => `chart setup: ${n}`), ...(trend?.notes ?? []), ...aiVerdict.notes, ...(modelNote ? [modelNote] : []), ...(xv?.notes ?? []).map((n) => `X: ${n}`), ...kolBonus.notes, ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
+          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, chartNote: chart ? `${chart.summary}${dipEntry ? ` — bought the dip: ${job.data.dipWhy ?? ''}` : ''}` : null, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: explore ? `learning trade ×${ex.sizeMultiplier} (score just under the bar)` : conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...(explore ? [`LEARNING TRADE: score ${result.score.toFixed(1)} is just under the bar ${threshold.toFixed(0)} — bought small so the bot learns whether these near-misses pay`] : []), ...(newPair?.notes ?? []), ...taBonus.notes.map((n) => `chart setup: ${n}`), ...(trend?.notes ?? []), ...aiVerdict.notes, ...(modelNote ? [modelNote] : []), ...(xv?.notes ?? []).map((n) => `X: ${n}`), ...kolBonus.notes, ...(kolRelaxNote ? [`top holders high but KOLs in: ${kolRelaxNote}`] : []), ...(pressure ? [`buyers ${pressure.buySharePct}% of the last ${prCfg.windowSec}s${pressure.prevBuySharePct !== null ? ` (was ${pressure.prevBuySharePct}%)` : ''}`] : []), ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
       });
       if (!res.entered && !/^(already traded|still holding)/.test(res.reason)) shadowOf('refused', res.reason);
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.

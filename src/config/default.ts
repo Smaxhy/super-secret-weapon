@@ -54,11 +54,12 @@ export const DEFAULT_CONFIG = {
      * trade vs RUNNER −10.7%, SWING −10%, new pairs −12%): the budget goes to the three that are close to break-even.
      */
     allocation: {
-      CURVE_SNIPE: 0,
-      MIGRATION_MOMENTUM: 0.4,
-      SOON: 0.3,
+      // v10.27: new pairs back on under the owner's new-pair filter (≤ 1.5 min old, ≤ $100k MC, no Mayhem / bad words).
+      CURVE_SNIPE: 0.15,
+      MIGRATION_MOMENTUM: 0.35,
+      SOON: 0.25,
       // v10.23 (owner: "5 trades in 6 hours is way too little"): RUNNER back on, small (size ×0.5 → the minimum).
-      RUNNER: 0.1,
+      RUNNER: 0.05,
       // v8.9: KOL follow (kol.follow) — coins several KOLs / smart wallets bought.
       SMART_MONEY_COPY: 0.2,
       SWING: 0,
@@ -68,7 +69,7 @@ export const DEFAULT_CONFIG = {
       MIGRATION_MOMENTUM: true,
       SOON: true,
       SMART_MONEY_COPY: true,
-      CURVE_SNIPE: false,
+      CURVE_SNIPE: true,
       SWING: false,
       RUNNER: true,
     } satisfies Record<StrategyName, boolean>,
@@ -171,6 +172,9 @@ export const DEFAULT_CONFIG = {
     },
     /** Only buy tokens that link an X account / post / community in their metadata. */
     requireTwitter: false,
+    /** Owner: "know whether buyers or sellers are getting high" — sellers own more than maxSellSharePct of the SOL traded
+     *  in the last windowSec → not now (checked again at the next checkpoint). Copies are exempt. */
+    pressure: { enabled: true as boolean, windowSec: 30, prevWindowSec: 60, maxSellSharePct: 55, minTrades: 4 },
     /** Never buy a coin younger than this (the first seconds are bots and bundles). */
     minAgeSec: 15,
     /**
@@ -319,7 +323,8 @@ export const DEFAULT_CONFIG = {
      */
     newPair: {
       minAgeSec: 45,
-      maxAgeSec: 720,
+      // v10.27: owner's new-pair filter = ≤ 1.5 min old
+      maxAgeSec: 90,
       minCurveSol: 8,
       maxCurvePct: 85,
       minMarketCapUsd: 3_500,
@@ -369,8 +374,8 @@ export const DEFAULT_CONFIG = {
       /** Seconds after the coin first reaches `minCurvePct` at which it's checked. */
       checkpointsSec: [0, 20, 45, 90, 150, 240, 360, 600, 900],
       minTotalFeesSol: 3,
-      minMarketCapUsd: 0,
-      minVolumeUsd: 10_000,
+      minMarketCapUsd: 12_000,
+      minVolumeUsd: 12_000,
       minActiveWallets5m: 25,
       scoreThresholdDelta: 0,
       sizeMultiplier: 1,
@@ -480,6 +485,10 @@ export const DEFAULT_CONFIG = {
     /** A wallet with at least this weight is TRUSTED (owner's top picks, 1.5): it counts as two KOLs, so one trusted buy
      *  starts a KOL-follow check on its own. */
     trustedMinWeight: 1.5,
+    /** Owner: "it's okay if top holders are a bit high when a lot of KOLs are buying at good entries": with ≥ minKols
+     *  (trusted count double) still holding, top-10 / one-wallet / bundler limits up to the higher-risk caps
+     *  (entry.riskyEntry) don't block and don't halve the size. Every rug / bundle / dip-entry check still applies. */
+    concentrationRelax: { enabled: true as boolean, minKols: 3 },
     /**
      * KOL follow (owner: "trade more alongside coins that a lot of KOLs buy"): when ≥ minKols KOLs /
      * discovered smart wallets bought a coin and are still holding, it is checked as its own trade
@@ -691,6 +700,19 @@ export const DEFAULT_CONFIG = {
    * organic buying, ≥2 KOLs still holding, on a trending list — get two pretend trades (moonshot exits vs normal
    * exits). `live` stays false (no paper money) until the results prove it.
    */
+  /**
+   * v10.27 — the owner's own terminal filters (src/evaluator/owner-filters.ts): EVERY buy must match the set for the
+   * coin's stage ("ONLY buy coins with these things, not below — they'd be a rug"). Ages in minutes.
+   */
+  ownerFilters: {
+    enabled: true as boolean,
+    migrated: { minMarketCapUsd: 25_000, minHolders: 50, minLiquidityUsd: 2_000, minTotalFeesSol: 9 },
+    soon: { maxAgeMin: 70, minVolumeUsd: 12_000, minMarketCapUsd: 12_000, minTotalFeesSol: 1 },
+    newPair: { maxAgeMin: 1.5, minVolumeUsd: 200, maxMarketCapUsd: 100_000, minHolders: 2, excludeKeywords: ['test', 'fuck'] as string[], hideMayhem: true as boolean },
+    /** Narrative 0–1 (0.5 neutral): below this the story is weak (copycat / junk description) → no buy. 0 = off. */
+    minNarrative: 0.35,
+  },
+
   moonshot: {
     enabled: true as boolean,
     live: false as boolean,

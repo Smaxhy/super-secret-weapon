@@ -5,9 +5,9 @@ import { exitRulesFor } from '../src/executor/sell-manager';
 import { inQuietHours } from '../src/executor/trader';
 
 describe('v10.21 focus cut (owner CSV, 515 trades)', () => {
-  it('SOON, migrated coins, KOL follow and (small) RUNNER trade, and the budget adds up to 1', () => {
+  it('SOON, migrated coins, KOL follow, (small) RUNNER and — since v10.27 — new pairs trade; the budget adds up to 1', () => {
     const t = DEFAULT_CONFIG.trading;
-    expect(Object.entries(t.enabledStrategies).filter(([, on]) => on).map(([s]) => s).sort()).toEqual(['MIGRATION_MOMENTUM', 'RUNNER', 'SMART_MONEY_COPY', 'SOON']);
+    expect(Object.entries(t.enabledStrategies).filter(([, on]) => on).map(([s]) => s).sort()).toEqual(['CURVE_SNIPE', 'MIGRATION_MOMENTUM', 'RUNNER', 'SMART_MONEY_COPY', 'SOON']);
     expect(DEFAULT_CONFIG.trading.quietHours.enabled).toBe(false);
     expect(Object.values(t.allocation).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
   });

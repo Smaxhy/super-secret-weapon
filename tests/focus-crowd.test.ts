@@ -105,7 +105,7 @@ describe('focus entry rules', () => {
     expect(m.minTotalFeesSol).toBe(np.minTotalFeesSol);
     expect(m.minMarketCapUsd).toBe(np.minMarketCapUsd);
     expect(m.maxMarketCapUsd).toBe(15_000);
-    expect(m.ageSec).toEqual({ min: 45, max: 720 });
+    expect(m.ageSec).toEqual({ min: 45, max: 90 }); // v10.27: owner's new-pair filter ≤ 1.5 min
     expect(m.minActiveWallets5m).toBe(0);
     // Other strategies keep their minimums (no max market cap).
     expect(strategyMinimums(DEFAULT_CONFIG.entry, DEFAULT_CONFIG.focus, 'SOON').maxMarketCapUsd).toBeNull();

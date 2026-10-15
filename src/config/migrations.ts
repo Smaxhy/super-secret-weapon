@@ -321,6 +321,20 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['copy', ['minHoldSec'], 0],
     ],
   },
+  {
+    version: 22,
+    note: "v10.27 (owner's terminal filters: migrated / soon / new pair): new pairs back on (≤ 1.5 min old), SOON needs $12k MC + $12k volume",
+    set: [
+      ['trading', ['enabledStrategies', 'CURVE_SNIPE'], true],
+      ['trading', ['allocation', 'CURVE_SNIPE'], 0.15],
+      ['trading', ['allocation', 'MIGRATION_MOMENTUM'], 0.35],
+      ['trading', ['allocation', 'SOON'], 0.25],
+      ['trading', ['allocation', 'RUNNER'], 0.05],
+      ['focus', ['newPair', 'maxAgeSec'], 90],
+      ['focus', ['soon', 'minMarketCapUsd'], 12_000],
+      ['focus', ['soon', 'minVolumeUsd'], 12_000],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

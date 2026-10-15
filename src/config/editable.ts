@@ -16,6 +16,26 @@ export interface EditableSetting {
 const S = (group: string, key: string, label: string, min: number, max: number, unit?: string, step?: number, help?: string): EditableSetting => ({ group, key, label, min, max, unit, step, help });
 
 export const EDITABLE: EditableSetting[] = [
+  // ---- The owner's own terminal filters (v10.27): every buy must match its stage's set ----
+  S('Your filters', 'ownerFilters.enabled', 'Only buy coins that match your filters: on (1) / off (0)', 0, 1, undefined, 1),
+  S('Your filters', 'ownerFilters.migrated.minMarketCapUsd', 'Migrated: min market cap', 0, 10_000_000, '$', 1000),
+  S('Your filters', 'ownerFilters.migrated.minHolders', 'Migrated: min holders', 0, 5000, undefined, 1),
+  S('Your filters', 'ownerFilters.migrated.minLiquidityUsd', 'Migrated: min liquidity', 0, 5_000_000, '$', 500),
+  S('Your filters', 'ownerFilters.migrated.minTotalFeesSol', 'Migrated: min total fees', 0, 1000, 'SOL', 0.5),
+  S('Your filters', 'ownerFilters.soon.maxAgeMin', 'Soon: max coin age', 1, 1440, 'min', 1),
+  S('Your filters', 'ownerFilters.soon.minVolumeUsd', 'Soon: min volume', 0, 10_000_000, '$', 1000),
+  S('Your filters', 'ownerFilters.soon.minMarketCapUsd', 'Soon: min market cap', 0, 10_000_000, '$', 1000),
+  S('Your filters', 'ownerFilters.soon.minTotalFeesSol', 'Soon: min total fees', 0, 1000, 'SOL', 0.5),
+  S('Your filters', 'ownerFilters.newPair.maxAgeMin', 'New pair: max coin age', 0.5, 60, 'min', 0.5),
+  S('Your filters', 'ownerFilters.newPair.minVolumeUsd', 'New pair: min volume', 0, 1_000_000, '$', 100),
+  S('Your filters', 'ownerFilters.newPair.maxMarketCapUsd', 'New pair: max market cap', 1000, 10_000_000, '$', 1000),
+  S('Your filters', 'ownerFilters.newPair.minHolders', 'New pair: min holders', 0, 1000, undefined, 1),
+  S('Your filters', 'ownerFilters.newPair.hideMayhem', 'New pair: hide Mayhem coins (1) / allow (0)', 0, 1, undefined, 1),
+  S('Your filters', 'ownerFilters.minNarrative', 'Min narrative score (0.5 = neutral, 0 = off)', 0, 1, undefined, 0.05),
+  S('Your filters', 'entry.pressure.enabled', 'Skip when sellers are in control: on (1) / off (0)', 0, 1, undefined, 1),
+  S('Your filters', 'entry.pressure.maxSellSharePct', 'Sellers in control = more than … of the last 30 s', 40, 90, '%', 1),
+  S('Your filters', 'kol.concentrationRelax.enabled', 'Allow high top holders when many KOLs are in: on (1) / off (0)', 0, 1, undefined, 1),
+  S('Your filters', 'kol.concentrationRelax.minKols', 'KOLs needed (top picks count double)', 2, 20, undefined, 1),
   // ---- Migrated coins (PumpSwap) ----
   S('Migrated coins', 'trading.enabledStrategies.MIGRATION_MOMENTUM', 'On (1) / off (0)', 0, 1, undefined, 1),
   S('Migrated coins', 'focus.migrated.minMarketCapUsd', 'Min market cap', 0, 10_000_000, '$', 1000),
@@ -237,5 +257,5 @@ export function checkEdit(key: string, raw: unknown): { ok: true; setting: Edita
   const n = Number(raw);
   if (!Number.isFinite(n)) return { ok: false, error: 'Not a number' };
   if (n < setting.min || n > setting.max) return { ok: false, error: `${setting.label}: must be ${setting.min}–${setting.max}` };
-  return { ok: true, setting, value: key.startsWith('trading.enabledStrategies.') || key.endsWith('.enabled') ? n >= 1 : n };
+  return { ok: true, setting, value: key.startsWith('trading.enabledStrategies.') || key.endsWith('.enabled') || key.endsWith('.hideMayhem') ? n >= 1 : n };
 }

@@ -6,7 +6,7 @@ describe('editable controls', () => {
   it('every editable setting exists in the defaults with the right type', () => {
     const missing = EDITABLE.filter((e) => {
       const v = getPath(DEFAULT_CONFIG, e.key);
-      return e.key.startsWith('trading.enabledStrategies.') || e.key.endsWith('.enabled') ? typeof v !== 'boolean' : typeof v !== 'number';
+      return e.key.startsWith('trading.enabledStrategies.') || e.key.endsWith('.enabled') || e.key.endsWith('.hideMayhem') ? typeof v !== 'boolean' : typeof v !== 'number';
     }).map((e) => e.key);
     expect(missing).toEqual([]);
   });

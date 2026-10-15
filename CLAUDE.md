@@ -593,6 +593,21 @@ smart money → learning engine → ML → social). See README.md.
   even if it's over the daily budget"). `aiCoach.review(force, deep, forTips, ownerAsked)`: over budget only the AUTOMATIC
   reviews stop; tips (`reviewTips`) and the dashboard Run / deep buttons (`/api/ai-coach/run` → ownerAsked) always go; a pending
   tip turns an over-budget automatic review into a tip review. tests/ai-budget-owner.test.ts.
+- **v10.27 (Oct 15): the owner's terminal filters gate EVERY buy** (owner: "ONLY buy coins with these things, not below —
+  they'd be a rug; find better entries, know whether buyers or sellers are getting high, decent narrative; top holders a bit
+  high is okay if a lot of KOLs are buying at good entries"). `src/evaluator/owner-filters.ts` + config `ownerFilters`:
+  `ownerProfile` (migrated = complete/onAmm; curve ≤ newPair.maxAgeMin → new pair; else soon) → `ownerFilterFails`:
+  migrated MC ≥$25k / ≥50 holders / liq ≥$2k / ≥9 SOL fees; soon ≤70 min / vol ≥$12k / MC ≥$12k / ≥1 SOL fees; new pair
+  ≤1.5 min / vol ≥$200 / MC ≤$100k / ≥2 holders / no Mayhem / no "test"/"fuck" (whole words, the terminal's "test, fuck"
+  string split); late-joined coins skip holders/fees/volume (partial ledger). Ages: the terminal key says "seconds" but
+  70 / 1.5 read as MINUTES (1.5 s impossible) — editable. `minNarrative` 0.35 (narrative 0–1, 0.5 neutral; unknown passes).
+  Rule fails in the evaluator for every strategy (after the fee re-estimate), incl. KOL follow / copies / runners /
+  learning trades. **Pressure** (`entry.pressure`): `flowPressure` (buyers' SOL share last 30 s vs the 60 s before, dust
+  ignored) → sellers > 55% with ≥4 trades → "sellers in control" rule fail (copies exempt); `features.pressure` + AI section.
+  **KOL relax** (`kol.concentrationRelax` minKols 3, trusted count double): only soft concentration fails within the
+  riskyEntry caps → allowed at full size (note in the buy explanation). Migration v22: CURVE_SNIPE back on (0.15), MIG 0.35 /
+  SOON 0.25 / RUNNER 0.05 / KOL 0.2; newPair.maxAgeSec 90; soon MC + volume $12k. Editable group "Your filters".
+  trade.padre's X feed: no public API (would mean scraping with the owner's login) — not built. tests/owner-filters.test.ts.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).
