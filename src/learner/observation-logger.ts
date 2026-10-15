@@ -51,17 +51,61 @@ function round(n: number, dp: number): number {
   return Math.round(n * f) / f;
 }
 
+/** Worth another snapshot: graduated, or traded in the last 10 min with ≥ 10 holders. Pure. */
+export function stillAlive(v: Pick<LiveTokenView, 'complete' | 'lastTradeAtMs' | 'balances'>, now: number): boolean {
+  if (v.complete) return true;
+  return v.lastTradeAtMs !== null && now - v.lastTradeAtMs <= 10 * 60_000 && v.balances.size >= 10;
+}
+
+/** Snapshots scheduled one after the other, only while the coin is alive. */
+const CHAINED = new Set<SnapshotInterval>(['H1', 'H6', 'H24']);
+/** The snapshot to schedule after `interval` (M15 → H1 → H6 → H24), or null. Pure. */
+export function nextChained(interval: SnapshotInterval): { interval: SnapshotInterval; delayMs: number } | null {
+  const order: SnapshotInterval[] = ['M15', 'H1', 'H6', 'H24'];
+  const i = order.indexOf(interval);
+  const n = i >= 0 && i < order.length - 1 ? order[i + 1]! : null;
+  return n ? (SNAPSHOT_SCHEDULE.find((x) => x.interval === n) ?? null) : null;
+}
+
+/**
+ * One-time cleanup (v10.32): remove the long-delayed 1 h / 6 h / 24 h snapshot jobs queued under the old schedule (tens of
+ * thousands, mostly for dead coins). Runs in the background in pages so the bot keeps working; returns how many it removed.
+ */
+export async function removeParkedSnapshotJobs(pageSize = 500): Promise<number> {
+  let removed = 0;
+  for (let start = 0; ; ) {
+    const jobs = await observationQueue.getJobs(['delayed'], start, start + pageSize - 1, true);
+    if (!jobs.length) break;
+    let here = 0;
+    for (const j of jobs) {
+      if (j && CHAINED.has(j.data.interval)) {
+        await j.remove().catch(() => undefined);
+        here++;
+      }
+    }
+    removed += here;
+    // Removed jobs shift the list: only move on past the ones that stayed.
+    start += jobs.length - here;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return removed;
+}
+
 export class ObservationLogger {
   private worker: Worker<ObservationJob> | null = null;
   snapshotsWritten = 0;
 
   constructor(private readonly liveState: LiveState) {}
 
-  /** Queue all 7 snapshots for a new token. Job ids make this safe to call twice. */
+  /**
+   * Queue the early snapshots (creation … 15 min) for a new token. The 1 h / 6 h / 24 h ones are chained: each is only
+   * scheduled when the previous snapshot finds the coin still alive (v10.32 — 25–40k launches a day each parked three
+   * long delayed jobs in Redis for ~24 h, ≈ 66k keys, almost all for coins that died in minutes). Job ids keep it idempotent.
+   */
   async scheduleFor(mint: string, createdAtMs: number): Promise<void> {
     const now = Date.now();
     await observationQueue.addBulk(
-      SNAPSHOT_SCHEDULE.map(({ interval, delayMs }) => ({
+      SNAPSHOT_SCHEDULE.filter((x) => !CHAINED.has(x.interval)).map(({ interval, delayMs }) => ({
         name: interval,
         data: { mint, interval },
         opts: {
@@ -121,5 +165,11 @@ export class ObservationLogger {
 
     // Last snapshot done → free the Redis memory for this token.
     if (interval === 'H24') await this.liveState.forget(mint);
+    // Still alive (traded recently, or graduated)? → schedule the next long snapshot; dead coins get no more.
+    const next = nextChained(interval);
+    if (next && stillAlive(view, Date.now())) {
+      const delay = Math.max(0, view.createdAtMs + next.delayMs - Date.now());
+      await observationQueue.add(next.interval, { mint, interval: next.interval }, { jobId: `${mint}-${next.interval}`, delay });
+    }
   }
 }

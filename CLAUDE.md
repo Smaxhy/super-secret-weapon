@@ -642,6 +642,11 @@ smart money → learning engine → ML → social). See README.md.
   Then (Bot health: MIGRATION "dev sold X% of their bag" ×85): on a MIGRATED coin a dev who fully sold out (holds < 1%)
   no longer fails `maxDevSoldFraction` (normal after graduation; can't dump on us). Curve coins / devs still holding: unchanged.
   diagnose.sh now prints Redis keys per prefix + biggest keys (Redis was 691 MB of its 1 GB noeviction cap, 3 crashes/24 h).
+- **v10.32: Redis diet** (owner's diagnose: Redis 660 MB / 1 GB, RAM 107 MB free + 1.7 GB swap, lag 541 ms; 66k `bull:*`
+  keys). Every launch (25–40k/day) parked 3 long delayed observation jobs (H1/H6/H24) for ~24 h. Now `scheduleFor` queues
+  only CREATION/M1/M5/M15; `nextChained` schedules M15→H1→H6→H24 one at a time and only while `stillAlive` (graduated, or
+  traded in the last 10 min with ≥ 10 holders). One-time `obs-chain-cleanup` removes the parked H1/H6/H24 jobs in the
+  background (`removeParkedSnapshotJobs`, pages of 500). tests/snapshot-chain.test.ts. Next if still tight: 4 GB VPS.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

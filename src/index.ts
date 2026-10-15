@@ -57,7 +57,7 @@ import { SwingWatcher } from './executor/swing-watcher';
 import { SwingTrader } from './executor/swing-trader';
 import { SwingUniverse } from './scanner/swing-universe';
 import { VampGuard } from './evaluator/vamp-guard';
-import { ObservationLogger } from './learner/observation-logger';
+import { ObservationLogger, removeParkedSnapshotJobs } from './learner/observation-logger';
 import { requestAdjustment, scheduleDailyAdjuster } from './learner/daily-adjuster';
 import { startBeliefCache, stopBeliefCache } from './learner/bayesian-updater';
 import { OutcomeLabeler } from './learner/outcome-labeler';
@@ -99,6 +99,12 @@ async function main(): Promise<void> {
   // Owner (Oct 13): "reset the PnL, not the trades or data — start from 15 SOL again" (once; nothing deleted).
   await oneTimeUpgrade('stats-reset-oct13', async () => {
     await resetPaperStats(15);
+  });
+  // v10.32: drop the tens of thousands of parked 1 h / 6 h / 24 h snapshot jobs (Redis was near its 1 GB cap). Background.
+  await oneTimeUpgrade('obs-chain-cleanup', async () => {
+    void removeParkedSnapshotJobs()
+      .then((n) => log.info({ removed: n }, 'parked snapshot jobs removed'))
+      .catch((err: Error) => log.warn({ err: err.message }, 'snapshot job cleanup failed'));
   });
   // Owner (Oct 15): "reset the PnLs as well" — fresh headline numbers again from 15 SOL (nothing deleted; the daily
   // calendar keeps every day).
