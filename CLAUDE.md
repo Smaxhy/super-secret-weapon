@@ -616,6 +616,13 @@ smart money → learning engine → ML → social). See README.md.
   KOL follow: no bar discount / no bigger size (barDelta 0, size ×1) — KOLs only TRIGGER a check. Copies: `copy.skipDipWait`
   / `skipConfirm` false → dip-only, confirmation and the pressure check apply to copies too (mirror sells unchanged).
   Migration v23. phase2 initials test now uses sizes 0.1–0.5 SOL (0.025 can't pay 0.006 fees).
+- **v10.29: non-SOL curves + transfer-fee coins** (from Chainstack's pumpfun-bonkfun-bot protocol notes). pump.fun now pairs
+  coins with USDC / other tokens: `decodeCreate` reads is_mayhem_mode / is_cashback_enabled / quote_mint; `isSolQuote`
+  (all-zeros or WSOL = SOL) — token-registry `onCreate` does NOT follow non-SOL coins (their amounts aren't lamports →
+  price/MC/fills would be wrong; `stats.nonSolSkipped`). "Reward" coins (Token-2022 transfer fee 1–3% on every buy AND sell):
+  safety-checker reads the real bps (`getTransferFeeConfig`) → `transfer_fee` HARD fail when > 0; a 0% fee extension is no
+  longer penalised. tests/quote-and-fees.test.ts. Zip reviews (Oct 15): solana-trading-bot-v3 + solana-copy-sniper-mev-bot =
+  key-stealing malware (fake npm registry / install-script package) — never use; OctoBot + Chainstack's bot = legit.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

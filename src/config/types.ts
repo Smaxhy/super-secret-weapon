@@ -42,6 +42,10 @@ export interface PumpCreateEvent {
   tokenTotalSupply: bigint;
   /** SPL Token or Token-2022 program that owns the mint (newer launches only). */
   tokenProgram?: string;
+  /** Newer create events: Mayhem mode, and the quote asset the curve trades against (all-zeros / WSOL = SOL;
+   *  anything else = USDC or another token — amounts are then NOT lamports). */
+  isMayhemMode?: boolean;
+  quoteMint?: string;
 }
 
 /** Emitted on every buy or sell against a bonding curve. */

@@ -23,7 +23,7 @@ import type { SafetyChecker } from '../evaluator/safety-checker';
 import type { ObservationLogger } from '../learner/observation-logger';
 import type { Evaluator } from '../evaluator/evaluator';
 import { ADOPTED_CREATOR, type LiveState } from './live-state';
-import { curvePriceSol } from '../lib/pumpfun';
+import { curvePriceSol, isSolQuote } from '../lib/pumpfun';
 import { bondingCurveAddress, checkPoolEvent } from '../lib/pump-pda';
 import type { InsiderTracker } from '../evaluator/insider-cluster';
 import type { CrowdTracker } from './crowd-tracker';
@@ -33,7 +33,7 @@ const log = moduleLogger('token-registry');
 
 export class TokenRegistry {
   private safetyWorker: Worker<SafetyJob> | null = null;
-  readonly stats = { created: 0, createErrors: 0, completed: 0, tradeErrors: 0, latencyMsAvg: 0 };
+  readonly stats: { created: number; createErrors: number; completed: number; tradeErrors: number; latencyMsAvg: number; nonSolSkipped?: number } = { created: 0, createErrors: 0, completed: 0, tradeErrors: 0, latencyMsAvg: 0, nonSolSkipped: 0 };
   /** Smart-money discovery: every trade's realised profit per wallet (set in index.ts). */
   pnl: WalletPnl | null = null;
   /** Called with the mint after every trade is applied to the live state (exits react instantly). */
@@ -111,6 +111,13 @@ export class TokenRegistry {
   private async onCreate(ev: PumpCreateEvent, envelope: PumpEventEnvelope): Promise<void> {
     // Already tracking it (duplicate notification / fallback fetch raced the logs).
     if (this.liveState.isTracked(ev.mint)) return;
+    // Coins paired with USDC / another token (not SOL): every amount in their events is in that token's units, so the
+    // SOL maths (price, market cap, fills) would be wrong by orders of magnitude → not followed at all.
+    if (!isSolQuote(ev.quoteMint)) {
+      this.stats.nonSolSkipped = (this.stats.nonSolSkipped ?? 0) + 1;
+      if (this.stats.nonSolSkipped % 50 === 1) log.info({ mint: ev.mint, quoteMint: ev.quoteMint, skipped: this.stats.nonSolSkipped }, 'skipping a coin that is not paired with SOL');
+      return;
+    }
     const detectedAt = Date.now();
     const createdAtMs = ev.timestamp > 0 ? ev.timestamp * 1000 : detectedAt;
     try {

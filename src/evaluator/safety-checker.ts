@@ -22,7 +22,7 @@
  * Score = 100 minus penalties. Any hard-fail item forces `hardFail = true`,
  * which the scorer treats as an automatic reject no matter the score.
  */
-import { ExtensionType, getExtensionTypes, unpackMint } from '@solana/spl-token';
+import { ExtensionType, getExtensionTypes, getTransferFeeConfig, unpackMint } from '@solana/spl-token';
 import { PublicKey } from '@solana/web3.js';
 import type { Redis } from 'ioredis';
 import { SAFETY_PENALTIES as P } from '../config/default';
@@ -59,6 +59,8 @@ export interface SafetyInputs {
   decimals: number;
   supply: bigint;
   extensions: string[];
+  /** Token-2022 transfer fee charged on EVERY transfer (buy and sell), in basis points; 0 / unknown = none. */
+  transferFeeBps?: number;
   name: string;
   symbol: string;
   uri: string;
@@ -96,7 +98,11 @@ export function evaluateSafety(i: SafetyInputs): SafetyReport {
   const hardExt = i.extensions.filter((e) => HARD_FAIL_EXTENSIONS.has(e));
   add('dangerous_extensions', 'No dangerous Token-2022 extensions', hardExt.length > 0, P.dangerousExtension, hardExt.length ? `Found: ${hardExt.join(', ')}` : 'None', true);
 
-  const warnExt = i.extensions.filter((e) => WARN_EXTENSIONS.has(e));
+  // "Reward" coins charge a real 1–3% Token-2022 transfer fee on the buy AND the sell → skipped outright (it eats the whole
+  // edge). A fee extension set to 0% costs nothing and is ignored.
+  const feeBps = i.transferFeeBps ?? 0;
+  add('transfer_fee', 'No transfer fee on buys / sells', feeBps > 0, P.transferFee, feeBps > 0 ? `${(feeBps / 100).toFixed(2)}% taken on every buy and sell` : 'None', true);
+  const warnExt = i.extensions.filter((e) => WARN_EXTENSIONS.has(e) && !(e === 'TransferFeeConfig' && i.transferFeeBps !== undefined));
   add('risky_extensions', 'No fee / unusual extensions', warnExt.length > 0, P.transferFee, warnExt.length ? `Found: ${warnExt.join(', ')}` : 'None');
 
   const supplyOk = i.supply === PUMP_DEFAULT_TOTAL_SUPPLY && i.decimals === PUMP_TOKEN_DECIMALS;
@@ -203,6 +209,7 @@ export class SafetyChecker {
     let decimals = -1;
     let supply = 0n;
     let extensions: string[] = [];
+    let transferFeeBps: number | undefined;
     if (owner === TOKEN_PROGRAM_ID || owner === TOKEN_2022_PROGRAM_ID) {
       const parsed = unpackMint(mintKey, info, info.owner);
       mintAuthority = parsed.mintAuthority?.toBase58() ?? null;
@@ -210,6 +217,8 @@ export class SafetyChecker {
       decimals = parsed.decimals;
       supply = parsed.supply;
       extensions = getExtensionTypes(parsed.tlvData).map((t) => ExtensionType[t] ?? `Unknown(${t})`);
+      const tf = getTransferFeeConfig(parsed);
+      if (tf) transferFeeBps = Math.max(tf.olderTransferFee.transferFeeBasisPoints, tf.newerTransferFee.transferFeeBasisPoints);
     }
 
     // Dev's holding right now ≈ their launch buy, since this runs seconds after creation.
@@ -229,6 +238,7 @@ export class SafetyChecker {
       decimals,
       supply,
       extensions,
+      transferFeeBps,
       name: token.name,
       symbol: token.symbol,
       uri: token.uri,

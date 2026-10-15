@@ -148,6 +148,11 @@ export class BorshReader {
 
 // ---------------------------------------------------------------------------
 // Event decoders
+
+/** The curve trades against SOL (default pubkey = all zeros, or wrapped SOL). Unknown = assume SOL (older events). */
+export function isSolQuote(quoteMint: string | undefined): boolean {
+  return !quoteMint || quoteMint === '11111111111111111111111111111111' || quoteMint === 'So11111111111111111111111111111111111111112';
+}
 // ---------------------------------------------------------------------------
 
 function decodeCreate(r: BorshReader): PumpCreateEvent {
@@ -166,8 +171,14 @@ function decodeCreate(r: BorshReader): PumpCreateEvent {
   const realTokenReserves = hasReserves ? r.u64() : PUMP_DEFAULT_INITIAL_REAL_TOKEN_RESERVES;
   const tokenTotalSupply = hasReserves ? r.u64() : PUMP_DEFAULT_TOTAL_SUPPLY;
   const tokenProgram = r.remaining >= 32 ? r.pubkey() : undefined;
+  // Newer program versions: is_mayhem_mode (bool), is_cashback_enabled (bool), quote_mint (pubkey), …
+  const isMayhemMode = r.remaining >= 1 ? r.bool() : undefined;
+  if (r.remaining >= 1) r.bool(); // is_cashback_enabled
+  const quoteMint = r.remaining >= 32 ? r.pubkey() : undefined;
   return {
     kind: 'create',
+    ...(isMayhemMode !== undefined ? { isMayhemMode } : {}),
+    ...(quoteMint !== undefined ? { quoteMint } : {}),
     name,
     symbol,
     uri,
