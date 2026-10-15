@@ -183,6 +183,8 @@ export class TaLab {
   private readonly book: VirtualBook;
   private readonly lastFire = new Map<string, number>();
   private readonly lastCheckReq = new Map<string, number>();
+  /** v10.38: evaluations the lab asked for this minute (capped — each one runs the full buy pipeline). */
+  private checkBudget = { minute: 0, used: 0 };
   private proven = new Map<string, ProvenStrategy>();
   private timer: NodeJS.Timeout | null = null;
   private stepTimer: NodeJS.Timeout | null = null;
@@ -271,7 +273,10 @@ export class TaLab {
         // Proven strategies firing → the real evaluator checks this coin now (all its rules still apply).
         const provenHits = sigs.filter((s) => this.proven.has(s.id));
         // (bigger coins are the swing trader's — it checks its coins every few seconds and counts proven hits itself)
-        if (c.triggerChecks && this.evaluator && strategy !== 'SWING' && provenHits.length && now - (this.lastCheckReq.get(mint) ?? 0) >= 60_000) {
+        const minute = Math.floor(now / 60_000);
+        if (this.checkBudget.minute !== minute) this.checkBudget = { minute, used: 0 };
+        if (c.triggerChecks && this.evaluator && strategy !== 'SWING' && provenHits.length && now - (this.lastCheckReq.get(mint) ?? 0) >= 60_000 && this.checkBudget.used < (c.maxTriggerChecksPerMin ?? 12)) {
+          this.checkBudget.used++;
           this.lastCheckReq.set(mint, now);
           void this.evaluator.checkNow(mint, strategy, `ta:${provenHits.map((s) => s.id).join('+')}`, { bucketSec: 30 }).catch(() => undefined);
         }

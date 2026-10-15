@@ -895,6 +895,8 @@ export const DEFAULT_CONFIG = {
     /** v10.36 (owner: "make the dip analyser run live"): live on every timeframe before the lab proves it (switched off
      *  automatically once the lab proves it LOSES: ≥ minTrades and mean + 2 SE under random). Points as a +X% edge. */
     forceLive: ['dip_analyser'] as string[],
+    /** v10.38 (owner: "the app loads very slow"): at most this many lab-triggered evaluations a minute. */
+    maxTriggerChecksPerMin: 12,
     forceLiveEdgePct: 10,
     /** Signals that count as the dip + bounce for a coin waiting for a dip (dip watcher). */
     dipEntrySignals: ['dip_analyser'] as string[],

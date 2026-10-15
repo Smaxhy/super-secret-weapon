@@ -675,6 +675,9 @@ smart money → learning engine → ML → social). See README.md.
   the owner had switched SWING on, allocation still 0). `trading.minAllocationWhenOn` 0.05 (`allocationShare`), allocation
   SWING 0.1 / SMART_MONEY_COPY 0.1 (was 0.2; no KOL signals passed). Migration v28. Note: Migration's top skip "only X% to
   resistance" = `entry.priceAction.enabled` is ON on the VPS (owner or a brain tip) — left as is, owner told.
+- **v10.38: lab-triggered evaluations capped** (owner: "the app loads very slow" after v10.35–v10.37; the API runs in the bot
+  process, so a busy event loop slows the dashboard). `ta.maxTriggerChecksPerMin` 12 (TaLab `checkBudget`): the forced-live
+  dip analyser could ask for a full evaluation on many of the 150 lab coins every 15 s. Ask for diagnose.sh if still slow.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).
