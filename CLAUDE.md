@@ -698,6 +698,9 @@ Diagnosing (reading code, explaining Bot health, diagnose.sh output) is always f
   AI rules (forward-tested), proven TA, entry style, exit lab / exit tuner; v10.33 funnel, v10.34 dip tweaks, v10.36 new
   pairs at min size, v10.37 budget fix, v10.38 cap. NEXT: owner agreed to freeze 5–7 days / 200–300 trades, then judge each
   strategy on Performance → Mistakes and switch losers off (don't tweak). 4 GB VPS recommended.
+- **Oct 15 outage (freeze):** Bot health showed 0 coins checked for an hour (Redis 600 MB, quiet hours off). Owner away from
+  the PC → restarted via a notes-only push (auto-update rebuilds on any new commit). Cause not yet known — ask for Scanner
+  "trades per minute" + `docker compose logs --since 30m bot | grep -iE "error|feed_restart|socket|pumpportal|stalled"`.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).
