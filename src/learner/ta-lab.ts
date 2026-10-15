@@ -61,6 +61,37 @@ export interface ProvenStrategy {
   avgPnlPct: number;
   /** Average P&L per trade above the random baseline, points. */
   edgePct: number;
+  /** Live because the owner switched it on (`ta.forceLive`), not because the lab proved it. */
+  forced?: boolean;
+}
+
+/** Strategy id without its timeframe suffix ("dip_analyser@5s" → "dip_analyser"). */
+export const baseTaId = (id: string): string => id.split('@')[0]!;
+
+/**
+ * Pure (v10.36, owner: "make the dip analyser run live"): strategies in `forceLive` trade live on every timeframe even
+ * before the lab proves them — UNLESS the lab has proven they lose: ≥ minTrades results and even mean + 2 SE is under
+ * the random baseline. Proven ones keep their earned edge.
+ */
+export function withForcedLive(
+  proven: Map<string, ProvenStrategy>,
+  ids: readonly string[],
+  stats: readonly LabStats[],
+  baseline: LabStats | null,
+  c: { forceLive?: readonly string[]; forceLiveEdgePct?: number; minTrades: number },
+): Map<string, ProvenStrategy> {
+  const force = new Set(c.forceLive ?? []);
+  if (!force.size) return proven;
+  const base = baseline && baseline.n >= 20 ? baseline.avgPnlPct : 0;
+  const byId = new Map(stats.map((s) => [s.id, s]));
+  const out = new Map(proven);
+  for (const id of ids) {
+    if (!force.has(baseTaId(id)) || out.has(id)) continue;
+    const s = byId.get(id);
+    if (s && s.n >= c.minTrades && s.avgPnlPct + 2 * s.sePct < base) continue; // proven to lose → off
+    out.set(id, { id, n: s?.n ?? 0, avgPnlPct: s?.avgPnlPct ?? 0, edgePct: c.forceLiveEdgePct ?? 10, forced: true });
+  }
+  return out;
 }
 
 /** Standard normal upper-tail probability (Abramowitz–Stegun 26.2.17; |error| < 1e-7). */
@@ -143,7 +174,7 @@ export function taPoints(fired: readonly TaSignal[], proven: ReadonlyMap<string,
     if (!p) continue;
     // Full points at a +10%/trade edge over random, less for a smaller edge.
     points += c.pointsPerSignal * Math.min(1, p.edgePct / 10) * (0.5 + 0.5 * s.strength);
-    notes.push(`${taName(s.id) ?? s.id} (lab: +${p.edgePct}%/trade vs random over ${p.n} tests)`);
+    notes.push(p.forced ? `${taName(s.id) ?? s.id} (live by your choice — lab so far: ${p.n} tests, ${p.avgPnlPct >= 0 ? '+' : ''}${p.avgPnlPct}%/trade)` : `${taName(s.id) ?? s.id} (lab: +${p.edgePct}%/trade vs random over ${p.n} tests)`);
   }
   return { points: Math.round(Math.min(c.maxPoints, points) * 10) / 10, notes };
 }
@@ -160,6 +191,8 @@ export class TaLab {
   readonly stats = { ticks: 0, coinsLooked: 0, signals: 0, opened: 0, lastTickMs: 0 };
   /** Set in index.ts: proven strategies firing ask the evaluator to check the coin now. */
   evaluator: Evaluator | null = null;
+  /** Set in index.ts: a dip signal (`ta.dipEntrySignals`) on a coin waiting for a dip can trigger the dip entry. */
+  dips: { onDipSignal(mint: string, why: string, now?: number): boolean } | null = null;
 
   constructor(
     private readonly redis: Redis,
@@ -228,6 +261,11 @@ export class TaLab {
         const sigs = runStrategiesTf(raw, trades, price, now, meta ? Math.max(0, now / 1000 - meta.createdSec) : null, ids, { creator: meta?.creator ?? null });
         const pool: TaSignal[] = [...sigs];
         if (baselinePick(mint, tick, c.baselineOneIn)) pool.push({ id: BASELINE_ID, strength: 0, why: 'random entry (baseline)' });
+        // A dip signal (dip analyser: RSI dip + Klinger volume turn) on a coin that's waiting for a dip = the dip entry.
+        if (this.dips && c.dipEntrySignals?.length) {
+          const dipSig = sigs.find((s) => c.dipEntrySignals!.includes(baseTaId(s.id)));
+          if (dipSig) this.dips.onDipSignal(mint, `${taName(dipSig.id) ?? dipSig.id}: ${dipSig.why}`, now);
+        }
         const strategy = await this.open(mint, pool, price, solUsd, now);
         if (!strategy) continue;
         // Proven strategies firing → the real evaluator checks this coin now (all its rules still apply).
@@ -320,7 +358,7 @@ export class TaLab {
   async refreshProven(): Promise<void> {
     try {
       const { stats, baseline } = await this.allStats();
-      const next = provenStrategies(stats, baseline, this.cfg());
+      const next = withForcedLive(provenStrategies(stats, baseline, this.cfg()), labIds(this.cfg()), stats, baseline, this.cfg());
       const added = [...next.keys()].filter((k) => !this.proven.has(k));
       const dropped = [...this.proven.keys()].filter((k) => !next.has(k));
       this.proven = next;
@@ -333,7 +371,7 @@ export class TaLab {
   /** Dashboard: every strategy with its live record vs the random baseline. */
   async report(): Promise<{
     baseline: LabStats | null;
-    strategies: Array<LabStats & { family: string; summary: string; proven: boolean; edgePct: number | null; curve: LabStats; amm: LabStats; big: LabStats }>;
+    strategies: Array<LabStats & { family: string; summary: string; proven: boolean; forcedLive: boolean; edgePct: number | null; curve: LabStats; amm: LabStats; big: LabStats }>;
     open: number;
     stats: TaLab['stats'];
     minTrades: number;
@@ -343,7 +381,7 @@ export class TaLab {
     const strategies = stats.map((s) => {
       const def = TA_BY_ID.get(splitTaId(s.id).base) ?? EXTERNAL_BY_ID.get(s.id);
       const ph = byPhase.get(s.id)!;
-      return { ...s, family: def?.family ?? '', summary: def?.summary ?? '', proven: this.proven.has(s.id), edgePct: baseline && baseline.n >= 20 && s.n ? Math.round((s.avgPnlPct - baseline.avgPnlPct) * 10) / 10 : null, curve: ph.curve, amm: ph.amm, big: ph.big };
+      return { ...s, family: def?.family ?? '', summary: def?.summary ?? '', proven: this.proven.has(s.id) && !this.proven.get(s.id)!.forced, forcedLive: this.proven.get(s.id)?.forced === true, edgePct: baseline && baseline.n >= 20 && s.n ? Math.round((s.avgPnlPct - baseline.avgPnlPct) * 10) / 10 : null, curve: ph.curve, amm: ph.amm, big: ph.big };
     });
     strategies.sort((a, b) => Number(b.proven) - Number(a.proven) || b.lowerPct - a.lowerPct);
     const c = this.cfg();

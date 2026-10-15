@@ -232,7 +232,9 @@ export class Trader {
     // Stacked multipliers (coach × conviction × regime × hour…) can shrink a buy under the minimum
     // and silently stop every entry → the minimum size, if the budget allows it.
     if (size < cfg.trading.minPositionSol && Math.min(cap, budget, balance - reserve) >= cfg.trading.minPositionSol) size = cfg.trading.minPositionSol;
-    if (probe) size = Math.min(size, cfg.trading.minPositionSol);
+    // Probes and the strategies the owner keeps at the minimum size (new pairs) never go bigger than the minimum.
+    const minOnly = (cfg.trading.minSizeStrategies as readonly string[] | undefined)?.includes(req.strategy) === true;
+    if (probe || minOnly) size = Math.min(size, cfg.trading.minPositionSol);
     // Thin coins: a big position can't get out near the stop (the price gaps through it) → keep our size a small slice
     // of the liquidity; too thin even for the minimum → no buy.
     const maxLiqPct = cfg.trading.maxPositionPctOfLiquidity ?? 0;

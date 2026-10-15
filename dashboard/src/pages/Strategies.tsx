@@ -24,6 +24,8 @@ interface Row extends Stats {
   family: string;
   summary: string;
   proven: boolean;
+  /** v10.36: live by the owner's choice, not proven yet (older bots don't send it). */
+  forcedLive?: boolean;
   edgePct: number | null;
   curve: Stats;
   amm: Stats;
@@ -53,6 +55,7 @@ const signed = (x: number) => `${x > 0 ? '+' : ''}${x.toFixed(1)}%`;
 const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink-2');
 
 function Status({ r, minTrades }: { r: Row; minTrades: number }) {
+  if (r.forcedLive) return <span className="rounded bg-warning/15 px-1.5 py-0.5 text-xs font-semibold text-warning">live (your choice) — not proven yet</span>;
   if (r.proven) return <span className="rounded bg-up/15 px-1.5 py-0.5 text-xs font-semibold text-up">proven — used in buys</span>;
   if (r.n < minTrades) return <span className="rounded bg-line px-1.5 py-0.5 text-xs text-ink-2">testing {r.n}/{minTrades}</span>;
   return <span className="rounded bg-down/10 px-1.5 py-0.5 text-xs text-down">no edge (yet)</span>;

@@ -277,6 +277,7 @@ async function main(): Promise<void> {
   // the proven ones get a say in real buys.
   const taLab = new TaLab(redis, crowd, liveState);
   taLab.evaluator = evaluator;
+  taLab.dips = dips;
   evaluator.ta = taLab;
   registry.onTradeApplied.push((mint) => taLab.onTrade(mint));
   taLab.start();

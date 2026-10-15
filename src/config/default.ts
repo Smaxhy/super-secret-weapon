@@ -84,6 +84,9 @@ export const DEFAULT_CONFIG = {
      */
     // v10.23 (owner: too few trades): off by default — it cut 4 of every 24 hours.
     quietHours: { enabled: false as boolean, fromUtc: 0, toUtc: 4 },
+    /** v10.36 (owner): these strategies always trade the minimum size (`minPositionSol`) — new pairs collect data
+     *  without a bad run eating the balance. Remove one to give it normal sizing again. */
+    minSizeStrategies: ['CURVE_SNIPE'] as StrategyName[],
     /** At most this many open positions per strategy. */
     maxOpenByStrategy: { CURVE_SNIPE: 4, SOON: 4, MIGRATION_MOMENTUM: 6, SMART_MONEY_COPY: 3, SWING: 3, RUNNER: 2 } as Partial<Record<StrategyName, number>>,
     /**
@@ -545,6 +548,8 @@ export const DEFAULT_CONFIG = {
     buyDip: { minPullbackPct: 8, minBouncePct: 2 },
     buyDipPoints: 4,
     dip: { enabled: true as boolean, noWaitBelowMcUsd: 15_000, minPullbackPct: 10, zoneTopMaxPct: 15, maxPullbackPct: 40, bounceConfirmPct: 3, minBuyRatio: 1.1, waitMinutes: 15, runAwayPct: 100, breakdownPct: 7, maxAboveZonePct: 8, blowOff: { enabled: true as boolean, runPct: 100, minDipPct: 35, holdSec: 45, dropRunPct: 500 },
+      /** v10.36: a dip signal (ta.dipEntrySignals) only counts as the entry this far (%) under the high. */
+      signalMinOffHighPct: 5,
       /** v10.24 (owner: "buy dip only if it's above 15k MC, under 15k you're allowed to top blast"): every BUY on a coin
        *  at/above `noWaitBelowMcUsd` waits for a pullback ≥ minPullbackPct off the recent high + a bounce (dip watcher). */
       dipOnly: {
@@ -883,6 +888,12 @@ export const DEFAULT_CONFIG = {
     disabled: [] as string[],
     /** Candle timeframes every strategy is tested on (owner: "add timeframes"): '15s' | '5s' | '1m'. */
     timeframes: ['15s', '5s', '1m'] as string[],
+    /** v10.36 (owner: "make the dip analyser run live"): live on every timeframe before the lab proves it (switched off
+     *  automatically once the lab proves it LOSES: ≥ minTrades and mean + 2 SE under random). Points as a +X% edge. */
+    forceLive: ['dip_analyser'] as string[],
+    forceLiveEdgePct: 10,
+    /** Signals that count as the dip + bounce for a coin waiting for a dip (dip watcher). */
+    dipEntrySignals: ['dip_analyser'] as string[],
   },
 
   /**

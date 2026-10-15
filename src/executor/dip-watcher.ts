@@ -119,6 +119,23 @@ export function dipOnlyHigh(price: number, recentHigh: number | null | undefined
   return Math.max(price, recentHigh && recentHigh > 0 ? recentHigh : 0, fromShape);
 }
 
+/** Pure: why a dip signal can't be the entry for this watch (null = it can). */
+export function dipSignalOk(
+  w: Pick<DipWatch, 'high' | 'zone'>,
+  price: number,
+  runLowPx: number | null,
+  c: { breakdownPct: number; signalMinOffHighPct?: number; blowOff?: { enabled: boolean; dropRunPct: number } },
+): string | null {
+  if (!(price > 0) || !(w.high > 0)) return 'no price';
+  const off = (1 - price / w.high) * 100;
+  const minOff = c.signalMinOffHighPct ?? 5;
+  if (off < minOff) return `only ${off.toFixed(0)}% under the high (needs ${minOff}%)`;
+  if (price < w.zone.lo * (1 - c.breakdownPct / 100)) return 'broke down below the buy zone';
+  const runPct = runLowPx && runLowPx > 0 ? (w.high / runLowPx - 1) * 100 : 0;
+  if (c.blowOff?.enabled && c.blowOff.dropRunPct > 0 && runPct >= c.blowOff.dropRunPct) return `blow-off top (+${Math.round(runPct)}% in 15 min)`;
+  return null;
+}
+
 export class DipWatcher {
   private readonly watches = new Map<string, DipWatch>();
   private readonly lastCheck = new Map<string, number>();
@@ -152,6 +169,37 @@ export class DipWatcher {
   watching(mint: string): boolean {
     for (const w of this.watches.values()) if (w.mint === mint) return true;
     return false;
+  }
+
+  /**
+   * v10.36: a live dip signal (the dip analyser: RSI dipped, then the Klinger volume oscillator turned up on a green
+   * candle) on a coin that's waiting for a dip counts as the dip + bounce — if the price really is under the high
+   * (≥ `signalMinOffHighPct`), hasn't broken down under the buy zone and the run wasn't a blow-off top.
+   */
+  onDipSignal(mint: string, why: string, now = Date.now()): boolean {
+    const trades = this.crowd.trades(mint);
+    const last = trades[trades.length - 1];
+    if (!last) return false;
+    const price = last.pp && last.pp > 0 ? last.pp : last.px;
+    const c = getConfig().chart.dip;
+    let runLow: number | null = null;
+    for (const x of trades) if (now - x.t <= 15 * 60_000) { const p = x.pp && x.pp > 0 ? x.pp : x.px; if (p > 0 && (runLow === null || p < runLow)) runLow = p; }
+    let fired = false;
+    for (const w of [...this.watches.values()]) {
+      if (w.mint !== mint) continue;
+      const verdict = dipSignalOk(w, price, runLow, c);
+      if (verdict) {
+        log.info({ mint, why: verdict }, `· ${w.symbol}: dip signal ignored — ${verdict}`);
+        continue;
+      }
+      this.watches.delete(`${w.mint}:${w.strategy}`);
+      const off = (1 - price / w.high) * 100;
+      const msg = `${off.toFixed(0)}% under the high — ${why}`;
+      log.info({ mint, why: msg }, `🎯 ${w.symbol}: dip entry from a dip signal — ${msg}`);
+      void this.evaluator.checkNow(w.mint, w.strategy, msg, { dip: true, swing: w.swing, wallet: w.wallet }).catch((err: Error) => log.warn({ mint, err: err.message }, 'dip re-check failed'));
+      fired = true;
+    }
+    return fired;
   }
 
   list(): DipWatch[] {

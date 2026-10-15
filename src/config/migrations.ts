@@ -410,6 +410,16 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['focus', ['migrated', 'noEntryFirstSec'], 180],
     ],
   },
+  {
+    version: 27,
+    note: 'v10.36 (owner): new pairs always trade the minimum size; the dip analyser trades live (bonus points, checks, and dip entries for coins waiting for a dip)',
+    set: [
+      ['trading', ['minSizeStrategies'], ['CURVE_SNIPE']],
+      ['ta', ['forceLive'], ['dip_analyser']],
+      ['ta', ['forceLiveEdgePct'], 10],
+      ['ta', ['dipEntrySignals'], ['dip_analyser']],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */
