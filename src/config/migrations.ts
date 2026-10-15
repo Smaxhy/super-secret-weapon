@@ -353,6 +353,16 @@ export const MIGRATIONS: ConfigMigration[] = [
     note: 'v10.33: migrated coins need 12 active wallets (5 min), the same as the migrated scanner sends — 12–14 were sent and then bounced',
     set: [['focus', ['migrated', 'minActiveWallets5m'], 12]],
   },
+  {
+    version: 25,
+    note: 'v10.34 (Bot health: every Migration / KOL / Runner buy signal sat in a dip wait that never filled): dip-only waits for 10% off the high (was 15), 15 min (was 10); huge volume = 30 real buyers / 12 SOL in 5 min (was 40 / 20)',
+    set: [
+      ['chart', ['dip', 'dipOnly', 'minPullbackPct'], 10],
+      ['chart', ['dip', 'waitMinutes'], 15],
+      ['chart', ['dip', 'dipOnly', 'hotVolume', 'minBuyers'], 30],
+      ['chart', ['dip', 'dipOnly', 'hotVolume', 'minBuySol'], 12],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

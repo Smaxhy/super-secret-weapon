@@ -64,5 +64,11 @@ describe('per-strategy funnel (v10.33)', () => {
     expect(by.MIGRATION_MOMENTUM).toMatchObject({ checked: 2, signal: 2, toTrader: 2, refused: 1, bought: 1 });
     expect(by.RUNNER).toMatchObject({ on: true, checked: 0 });
     expect(by.SWING).toBeUndefined();
+    noteSkip('SOON', 'curve 64% outside 70-90%', T);
+    noteSkip('SOON', 'curve 61% outside 70-90%', T);
+    noteSkip('CURVE_SNIPE', 'liquidity 2 SOL < 5', T);
+    const s2 = blockerSnapshot(T + 2000, { SOON: true });
+    expect(s2.strategies.find((r) => r.strategy === 'SOON')!.topSkips[0]).toEqual({ reason: 'curve # outside #', count: 2 });
+    expect(s2.summary).toMatch(/waiting for a dip/);
   });
 });

@@ -45,6 +45,8 @@ interface StrategyFunnel {
   refused: number;
   bought: number;
   dipGaveUp: number;
+  /** Its own top skip reasons (newer bots). */
+  topSkips?: Array<{ reason: string; count: number }>;
 }
 
 /** Commit the website was built from (GitHub Actions sets GITHUB_SHA). */
@@ -195,6 +197,9 @@ function StrategyFunnels({ rows }: { rows: StrategyFunnel[] }) {
                 {r.checked} → {r.rulesOk} → {r.signal} → <span className={r.bought ? 'text-up' : ''}>{r.bought}</span>
               </div>
               {h && <div className="text-muted">{h}</div>}
+              {r.topSkips && r.topSkips.length > 0 && r.rulesOk < r.checked && (
+                <div className="truncate text-muted">skipped: {r.topSkips.map((x) => `${x.reason} ×${x.count}`).join(' · ')}</div>
+              )}
             </li>
           );
         })}

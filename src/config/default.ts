@@ -451,7 +451,7 @@ export const DEFAULT_CONFIG = {
        */
       reboundAfterLoss: { enabled: true as boolean, cooldownMin: 60 },
       watchMinutes: 120,
-      minPullbackPct: 15,
+      minPullbackPct: 10,
       maxPullbackPct: 45,
       bounceConfirmPct: 4,
       /** Buy SOL ÷ sell SOL over the last 2 minutes. */
@@ -541,15 +541,15 @@ export const DEFAULT_CONFIG = {
     maxRun2mPct: 35,
     buyDip: { minPullbackPct: 8, minBouncePct: 2 },
     buyDipPoints: 4,
-    dip: { enabled: true as boolean, noWaitBelowMcUsd: 15_000, minPullbackPct: 10, zoneTopMaxPct: 15, maxPullbackPct: 40, bounceConfirmPct: 3, minBuyRatio: 1.1, waitMinutes: 10, runAwayPct: 100, breakdownPct: 7, maxAboveZonePct: 8, blowOff: { enabled: true as boolean, runPct: 100, minDipPct: 35, holdSec: 45, dropRunPct: 500 },
+    dip: { enabled: true as boolean, noWaitBelowMcUsd: 15_000, minPullbackPct: 10, zoneTopMaxPct: 15, maxPullbackPct: 40, bounceConfirmPct: 3, minBuyRatio: 1.1, waitMinutes: 15, runAwayPct: 100, breakdownPct: 7, maxAboveZonePct: 8, blowOff: { enabled: true as boolean, runPct: 100, minDipPct: 35, holdSec: 45, dropRunPct: 500 },
       /** v10.24 (owner: "buy dip only if it's above 15k MC, under 15k you're allowed to top blast"): every BUY on a coin
        *  at/above `noWaitBelowMcUsd` waits for a pullback ≥ minPullbackPct off the recent high + a bounce (dip watcher). */
       dipOnly: {
         enabled: true as boolean,
-        minPullbackPct: 15,
+        minPullbackPct: 10,
         /** Owner: "…unless there's a crazy amount of volume" → buy straight away when the last 5 min of REAL buying
          *  (bots, churners, dust removed) is this strong. */
-        hotVolume: { enabled: true as boolean, minBuyers: 40, minBuySol: 20, minBuySharePct: 60, minOrganicPct: 60 },
+        hotVolume: { enabled: true as boolean, minBuyers: 30, minBuySol: 12, minBuySharePct: 60, minOrganicPct: 60 },
       } },
     smartSell: { enabled: true as boolean, minMultiple: 1.6, blowOffSellPct: 50, divergenceSellPct: 30 },
   },

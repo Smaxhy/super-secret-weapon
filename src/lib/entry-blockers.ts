@@ -133,7 +133,7 @@ export interface BlockerSnapshot {
   topSkips: Array<{ reason: string; count: number }>;
   topRefusals: Array<{ reason: string; count: number }>;
   /** Per strategy, last hour (busiest first; switched-on strategies with no activity are listed with zeros). */
-  strategies: Array<{ strategy: string; on: boolean | null } & Funnel>;
+  strategies: Array<{ strategy: string; on: boolean | null; topSkips: Array<{ reason: string; count: number }> } & Funnel>;
   /** One line for the dashboard. */
   summary: string;
 }
@@ -160,11 +160,17 @@ export function blockerSnapshot(now = Date.now(), enabled?: Readonly<Record<stri
   }
   const top = (x: Map<string, number>, n: number) => [...x].sort((a, b) => b[1] - a[1]).slice(0, n).map(([reason, count]) => ({ reason, count }));
   const topSkips = top(skip, 8);
+  // Each strategy's own top 3 skip reasons (the overall list is dominated by the busiest strategy).
+  const topFor = (strategy: string) =>
+    top(new Map([...skip].filter(([k]) => k.startsWith(`${strategy}: `)).map(([k, v]) => [k.slice(strategy.length + 2), v])), 3);
+  let dipWaits = 0;
+  for (const f of funnel.values()) dipWaits += f.dipWait + f.confirming;
   const topRefusals = top(refuse, 6);
   const mins = Math.round(minutesSinceEntry(now));
   let summary: string;
   if (entries > 0) summary = `${entries} buy${entries === 1 ? '' : 's'} in the last hour`;
   else if (evaluated === 0) summary = `No coins checked in the last hour — the trade stream is probably down (see Scanner)`;
+  else if (dipWaits > 0 && signals === 0) summary = `${dipWaits} buy signal${dipWaits === 1 ? '' : 's'} waiting for a dip / confirmation, none filled yet — ${evaluated} coins checked`;
   else if (signals > 0 && topRefusals[0]) summary = `${signals} buy signal${signals === 1 ? '' : 's'} refused — mostly "${topRefusals[0].reason}"`;
   else summary = `${evaluated} coins checked, none good enough — mostly "${topSkips[0]?.reason ?? 'score under the bar'}"`;
   return {
@@ -174,7 +180,7 @@ export function blockerSnapshot(now = Date.now(), enabled?: Readonly<Record<stri
     topSkips,
     topRefusals,
     strategies: [...new Set([...funnel.keys(), ...Object.entries(enabled ?? {}).filter(([, on]) => on).map(([k]) => k)])]
-      .map((strategy) => ({ strategy, on: enabled ? enabled[strategy] ?? null : null, ...(funnel.get(strategy) ?? emptyFunnel()) }))
+      .map((strategy) => ({ strategy, on: enabled ? enabled[strategy] ?? null : null, ...(funnel.get(strategy) ?? emptyFunnel()), topSkips: topFor(strategy) }))
       .sort((a, b) => b.bought - a.bought || b.signal - a.signal || b.checked - a.checked),
     summary,
   };

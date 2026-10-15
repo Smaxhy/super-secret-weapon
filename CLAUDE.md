@@ -653,7 +653,11 @@ smart money → learning engine → ML → social). See README.md.
   `blockerSnapshot(now, enabledStrategies)` → `/api/system.trading.strategies` (switched-on strategies with no activity
   listed with zeros) → Scanner → Bot health "Strategies" list with a one-word verdict each. Migration v24:
   `focus.migrated.minActiveWallets5m` 15 → 12 (= the migrated scanner's ≥12 real buyers; 12–14 were sent then bounced).
-- Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
+- **v10.34: dip waits that never filled** (owner's funnel: Migration 79→2→2→0, KOL 17→3→2→0, Runner 11→1→1→0 — every
+  signal went to the dip-only wait and none filled in the hour; New pair 132→0 / Soon 93→0 fail rules). Migration v25:
+  `chart.dip.dipOnly.minPullbackPct` 15 → 10, `chart.dip.waitMinutes` 10 → 15, `dipOnly.hotVolume` 30 buyers / 12 SOL (was
+  40 / 20). Funnel rows now carry each strategy's own top 3 skip reasons (`topSkips`); summary mentions waiting signals.
+ normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).
 - Owner's entry rules: min $12k volume, min $12k MC, min 1 SOL total fees paid (terminal-style), safety ≥ 55 (v9.6), score ≥ 70
