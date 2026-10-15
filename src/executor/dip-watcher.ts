@@ -95,6 +95,20 @@ export function dipDecision(w: DipWatch, price: number, buyRatio1m: number | nul
   return { action: 'wait', why: w.lowest === null ? 'waiting for the dip' : 'in the zone, waiting for the bounce' };
 }
 
+/**
+ * Owner's rule (v10.24): coins at/above `minMcUsd` are only bought on a dip + bounce; under it (or MC unknown)
+ * the signal is bought straight away. Dip re-checks and swing-watcher re-entries are already dip entries.
+ */
+export function dipOnlyApplies(o: { enabled: boolean; mcUsd: number | null; minMcUsd: number; dipEntry: boolean; swing: boolean }): boolean {
+  return o.enabled && !o.dipEntry && !o.swing && o.mcUsd !== null && o.mcUsd >= o.minMcUsd;
+}
+
+/** The high a dip-only entry measures its pullback from: the recent high, never below the current price. */
+export function dipOnlyHigh(price: number, recentHigh: number | null | undefined, offHigh10mPct: number | null | undefined): number {
+  const fromShape = offHigh10mPct && offHigh10mPct > 0 ? price / Math.max(0.01, 1 - offHigh10mPct / 100) : 0;
+  return Math.max(price, recentHigh && recentHigh > 0 ? recentHigh : 0, fromShape);
+}
+
 export class DipWatcher {
   private readonly watches = new Map<string, DipWatch>();
   private readonly lastCheck = new Map<string, number>();

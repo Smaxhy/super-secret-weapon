@@ -24,6 +24,7 @@ import { aiRuleVerdict, flattenFeatures } from '../learner/ai-coach';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
 import { timingNow } from '../learner/timing';
 import { entryStyleBlock, entryStyleFor, pullbackZone } from '../learner/entry-style';
+import { dipOnlyApplies, dipOnlyHigh } from '../executor/dip-watcher';
 import type { ShadowKind, ShadowTrades } from '../learner/shadow-trades';
 import type { OutcomeTracker } from '../learner/outcome-tracker';
 import type { Brain } from '../learner/brain';
@@ -598,6 +599,17 @@ export class Evaluator {
       this.dips.add({ mint, symbol: token.symbol, strategy: STRATEGY.name, zone: chart?.zone ?? pullbackZone(high, 10), signalPrice: market.raw.priceSol, high, why, swing, wallet: job.data.wallet });
       decision = 'SKIP';
       reasons = [`waiting for a dip (stretched): ${why}`];
+    }
+    // Owner's rule (v10.24): at/above $15k MC only buy a dip — wait for a pullback off the recent high + a bounce with
+    // buyers (dip watcher); under $15k the signal is bought straight away. No dip in time = no buy.
+    const dipOnly = chartCfg.dip.dipOnly ?? DEFAULT_CONFIG.chart.dip.dipOnly;
+    if (decision === 'BUY' && this.dips && chartCfg.dip.enabled && dipOnlyApplies({ enabled: dipOnly.enabled, mcUsd: market.raw.marketCapUsd, minMcUsd: chartCfg.dip.noWaitBelowMcUsd ?? 15_000, dipEntry, swing })) {
+      const high = dipOnlyHigh(market.raw.priceSol, chart?.recentHigh, shape?.offHigh10m);
+      const zone = pullbackZone(high, dipOnly.minPullbackPct);
+      const why = `dip-only above $${((chartCfg.dip.noWaitBelowMcUsd ?? 15_000) / 1000).toFixed(0)}k MC — waiting for ${dipOnly.minPullbackPct}%+ off the high and a bounce`;
+      this.dips.add({ mint, symbol: token.symbol, strategy: STRATEGY.name, zone, signalPrice: market.raw.priceSol, high, why, swing, wallet: job.data.wallet });
+      decision = 'SKIP';
+      reasons = [`waiting for a dip (${why})`];
     }
     // Confirmation delay: re-check a BUY signal a few seconds later before any money moves.
     if (decision === 'BUY' && !dipEntry) {

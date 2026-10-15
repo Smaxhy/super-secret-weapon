@@ -565,6 +565,11 @@ smart money → learning engine → ML → social). See README.md.
 - **v10.23 (Oct 15): more trades** (owner: "5 trades in 6 hours is way too little"). Migration v20: `trading.quietHours`
   off, `entry.confirmDelaySec` 15 + `confirm.maxDropPct` 6, RUNNER back on but small (`runner.sizeMultiplier` 0.5 → the
   minimum size, allocation 0.1, max 2 open); allocation MIGRATION 0.4 / SOON 0.3 / KOL 0.2 / RUNNER 0.1.
+- **v10.24 (Oct 15): dip-only above $15k MC** (owner: "buy dip only if it's above 15k MC, under 15k you're allowed to top
+  blast"). `chart.dip.dipOnly` {enabled, minPullbackPct 15}: every BUY (incl. learning trades) on a coin with MC ≥
+  `chart.dip.noWaitBelowMcUsd` (15k) → DipWatcher with `pullbackZone(recent high, 15)` (15–35% off the high) + bounce, no dip in
+  `waitMinutes` → no buy. Under $15k / MC unknown → bought straight away. Exempt: dip re-checks, swing-watcher re-entries.
+  `dipOnlyApplies` / `dipOnlyHigh` (dip-watcher.ts). Editable (Trade size & risk). tests/dip-only.test.ts.
 - Copy trades (OFF by default since v5): bar +5 (stricter), size ×0.5, max 1 open, 120s minimum hold
   (copied wallet selling / risk / resistance / stale exits ignored; stop loss + rug exits still fire).
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
