@@ -169,6 +169,12 @@ async function main(): Promise<void> {
   // AI coach: Claude reads the trades for behaviour patterns → rules that must prove themselves first.
   const aiCoach = new AiCoach(redis, () => getConfig().aiCoach ?? DEFAULT_CONFIG.aiCoach);
   aiCoach.start();
+  // v10.40 (owner): the brain made "avoid coins under 9 SOL fees" for EVERY coin — the owner meant only ≥ $50k MC. The
+  // fee rule is now in code (entry.feesByMarketCap); the tip behind that rule is removed so it can't keep blocking.
+  await oneTimeUpgrade('fee-rule-by-mc', async () => {
+    const ids = await aiCoach.removeFeeTips();
+    log.info({ tips: ids }, 'owner fee tips replaced by the market-cap fee rule');
+  });
   // Loss autopsy: what keeps going wrong → the kinds of trades that keep losing are blocked.
   const autopsy = new LossAutopsy(redis, () => getConfig().autopsy ?? DEFAULT_CONFIG.autopsy);
   autopsy.start();

@@ -19,6 +19,9 @@ export const EDITABLE: EditableSetting[] = [
   // ---- The owner's own terminal filters (v10.27): every buy must match its stage's set ----
   S('Your filters', 'ownerFilters.enabled', 'Only buy coins that match your filters: on (1) / off (0)', 0, 1, undefined, 1),
   S('Your filters', 'ownerFilters.migrated.minMarketCapUsd', 'Migrated: min market cap', 0, 10_000_000, '$', 1000),
+  S('Your filters', 'entry.feesByMarketCap.mcUsd', 'Fees rule: market cap that splits the two minimums', 1_000, 10_000_000, '$', 1_000),
+  S('Your filters', 'entry.feesByMarketCap.aboveSol', 'Fees rule: min total fees at or above that MC', 0, 1000, 'SOL', 0.5),
+  S('Your filters', 'entry.feesByMarketCap.belowSol', 'Fees rule: min total fees under that MC', 0, 1000, 'SOL', 0.5),
   S('Your filters', 'ownerFilters.migrated.minHolders', 'Migrated: min holders', 0, 5000, undefined, 1),
   S('Your filters', 'ownerFilters.migrated.minLiquidityUsd', 'Migrated: min liquidity', 0, 5_000_000, '$', 500),
   S('Your filters', 'ownerFilters.migrated.minTotalFeesSol', 'Migrated: min total fees', 0, 1000, 'SOL', 0.5),

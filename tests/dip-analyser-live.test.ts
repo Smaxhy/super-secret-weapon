@@ -73,3 +73,18 @@ describe('v10.39: back to the tighter rules, fewer nudgers', () => {
     expect(keys).toEqual(expect.arrayContaining(['entry.minCombinedScore', 'entry.autoAdjust', 'entry.priceAction.enabled', 'ta.forceLive', 'timing.enabled', 'focus.migrated.noEntryFirstSec']));
   });
 });
+
+describe('v10.40: total fees by market cap (owner)', () => {
+  it('≥ $50k → 9 SOL, under → 3 SOL, MC unknown → old minimum; the brain\'s blanket fee tip is found for removal', async () => {
+    const { feeMinimum } = await import('../src/evaluator/scorer');
+    const { feeRuleTipIds } = await import('../src/learner/ai-coach');
+    const c = DEFAULT_CONFIG.entry.feesByMarketCap;
+    expect(feeMinimum(c, 60_000)).toBe(9);
+    expect(feeMinimum(c, 50_000)).toBe(9);
+    expect(feeMinimum(c, 30_000)).toBe(3);
+    expect(feeMinimum(c, null)).toBeNull();
+    expect(feeMinimum({ ...c, enabled: false }, 30_000)).toBeNull();
+    const rule = (o: object) => ({ id: 'r', title: '', why: '', strategy: null, action: 'avoid', conditions: [{ feature: 'market.totalFeesSol', op: 'lt', value: 9 }], createdAt: '', status: 'live', statusWhy: '', backtest: null, forward: null, source: 'owner', tipId: 't1', ...o });
+    expect(feeRuleTipIds([rule({}), rule({ tipId: 't2', conditions: [{ feature: 'crowd.buyers', op: 'lt', value: 9 }] }), rule({ tipId: 't3', source: 'ai' })] as never)).toEqual(['t1']);
+  });
+});

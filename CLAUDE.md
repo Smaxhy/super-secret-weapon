@@ -701,6 +701,11 @@ Diagnosing (reading code, explaining Bot health, diagnose.sh output) is always f
 - **Oct 15 outage (freeze):** Bot health showed 0 coins checked for an hour (Redis 600 MB, quiet hours off). Owner away from
   the PC → restarted via a notes-only push (auto-update rebuilds on any new commit). Cause not yet known — ask for Scanner
   "trades per minute" + `docker compose logs --since 30m bot | grep -iE "error|feed_restart|socket|pumpportal|stalled"`.
+- **v10.40 (owner's last fix of the freeze): total fees by market cap** — the brain had turned the owner's tip into "avoid
+  < 9 SOL fees" for EVERY coin; the owner meant ≥ $50k MC only. `entry.feesByMarketCap` {enabled, mcUsd 50k, aboveSol 9,
+  belowSol 3} (`scorer.feeMinimum`) replaces every fee minimum in `checkEntryRules` (MC unknown → old per-strategy one) and the
+  owner-filter fee minimums are zeroed while it's on. One-time `fee-rule-by-mc` → `aiCoach.removeFeeTips()` (`feeRuleTipIds`:
+  owner avoid rules on a fee feature) removes that tip + retires its rule. Editable (Your filters). Migration v30.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

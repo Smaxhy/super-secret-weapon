@@ -109,7 +109,7 @@ describe('fake volume, bundles, chasing', () => {
       volumeSpikeRatio: 1, retention: 0.8, complete: false, onAmm: false, totalFeesSol: 2, volumeUsd: 15_000, marketCapUsd: 15_000, liquidityUsd: 3000,
     };
     const run = (mm: MarketRaw, crowd: { activeWallets5m: number; fakeVolumePct?: number; trades5m?: number } | null) =>
-      checkEntryRules({ safetyScore: 90, safetyHardFail: false, market: mm, strategy: STRATEGIES.CURVE_SNIPE, entry: DEFAULT_CONFIG.entry, crowd });
+      checkEntryRules({ safetyScore: 90, safetyHardFail: false, market: mm, strategy: STRATEGIES.CURVE_SNIPE, entry: { ...DEFAULT_CONFIG.entry, feesByMarketCap: { ...DEFAULT_CONFIG.entry.feesByMarketCap, enabled: false } }, crowd });
     expect(run(m, { activeWallets5m: 40, fakeVolumePct: 10, trades5m: 50 })).toEqual([]);
     expect(run(m, { activeWallets5m: 40, fakeVolumePct: 40, trades5m: 50 }).join()).toContain('organic volume $9000 < $12000');
     expect(run({ ...m, ageSec: 8 }, null).join()).toContain('too young');

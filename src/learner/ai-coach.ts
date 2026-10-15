@@ -66,6 +66,12 @@ export interface AiRule {
   tipId?: string;
 }
 
+/** Pure (v10.40): tips behind owner rules that avoid coins on a total-fees threshold. */
+export function feeRuleTipIds(rules: readonly AiRule[]): string[] {
+  const ids = rules.filter((r) => r.source === 'owner' && r.tipId && r.status !== 'retired' && r.action === 'avoid' && r.conditions.some((c) => /fee/i.test(c.feature))).map((r) => r.tipId!);
+  return [...new Set(ids)];
+}
+
 /** A tip the owner gave the brain ("talk to it") — the AI turns it into rules / setting changes and answers. */
 export interface OwnerTip {
   id: string;
@@ -437,6 +443,13 @@ export class AiCoach {
     await p.exec();
     await this.refreshRules();
     return true;
+  }
+
+  /** v10.40: remove the owner's tips whose rules are "avoid when total fees < X" (replaced by the market-cap fee rule). */
+  async removeFeeTips(): Promise<string[]> {
+    const ids = feeRuleTipIds(await this.rules());
+    for (const id of ids) await this.removeTip(id);
+    return ids;
   }
 
   private tipRetry: NodeJS.Timeout | null = null;

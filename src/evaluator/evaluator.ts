@@ -413,7 +413,9 @@ export class Evaluator {
     }
 
     // The owner's own terminal filters (migrated / soon / new pair): EVERY buy must match its stage's set.
-    const ofCfg = cfg.ownerFilters ?? DEFAULT_CONFIG.ownerFilters;
+    const ofBase = cfg.ownerFilters ?? DEFAULT_CONFIG.ownerFilters;
+    // v10.40: the market-cap fee rule (entry.feesByMarketCap, checked in the entry rules) replaces the per-stage fee minimums.
+    const ofCfg = cfg.entry.feesByMarketCap?.enabled && market.raw.marketCapUsd !== null ? { ...ofBase, migrated: { ...ofBase.migrated, minTotalFeesSol: 0 }, soon: { ...ofBase.soon, minTotalFeesSol: 0 } } : ofBase;
     const owner = ownerFilterFails(
       {
         complete: market.raw.complete, onAmm: market.raw.onAmm, ageSec: market.raw.ageSec, marketCapUsd: market.raw.marketCapUsd, volumeUsd: market.raw.volumeUsd,

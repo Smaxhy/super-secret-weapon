@@ -111,6 +111,12 @@ export function manipulationCheck(c: ManipulationInput | null | undefined, lim: 
   return out;
 }
 
+/** v10.40 (owner): total-fees minimum by market cap (≥ $50k → 9 SOL, under → 3 SOL); null = off or MC unknown. */
+export function feeMinimum(c: { enabled: boolean; mcUsd: number; aboveSol: number; belowSol: number } | undefined, mcUsd: number | null): number | null {
+  if (!c?.enabled || mcUsd === null) return null;
+  return mcUsd >= c.mcUsd ? c.aboveSol : c.belowSol;
+}
+
 /** The entry minimums that apply to this strategy (focus rules override the general ones). */
 export function strategyMinimums(e: BotConfigShape['entry'], focus: BotConfigShape['focus'] | undefined, strategy: string) {
   const np = strategy === 'CURVE_SNIPE' ? focus?.newPair : undefined;
@@ -180,7 +186,8 @@ export function checkEntryRules(i: EntryCheckInput): string[] {
   }
   if (i.social?.blockedKeyword) fails.push(`blocked keyword "${i.social.blockedKeyword}"`);
   if (e.requireTwitter && !i.social?.hasTwitter) fails.push(i.social ? 'no X link' : 'socials not checked yet');
-  if (m.totalFeesSol < mins.minTotalFeesSol) fails.push(`fees ${m.totalFeesSol.toFixed(2)} SOL < ${mins.minTotalFeesSol}`);
+  const minFees = feeMinimum(e.feesByMarketCap, m.marketCapUsd) ?? mins.minTotalFeesSol;
+  if (m.totalFeesSol < minFees) fails.push(`fees ${m.totalFeesSol.toFixed(2)} SOL < ${minFees}`);
   // Fail closed: without a SOL price we can't verify the USD minimums.
   if (m.volumeUsd === null || m.marketCapUsd === null) fails.push('SOL/USD price unknown');
   else {

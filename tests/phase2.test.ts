@@ -52,7 +52,7 @@ describe('scoring', () => {
 });
 
 describe('entry rules', () => {
-  const base = { safetyScore: 100, safetyHardFail: false, market: goodMarket, strategy: STRATEGIES.CURVE_SNIPE, entry: DEFAULT_CONFIG.entry };
+  const base = { safetyScore: 100, safetyHardFail: false, market: goodMarket, strategy: STRATEGIES.CURVE_SNIPE, entry: { ...DEFAULT_CONFIG.entry, feesByMarketCap: { ...DEFAULT_CONFIG.entry.feesByMarketCap, enabled: false } } };
   it('passes a good token', () => expect(checkEntryRules(base)).toEqual([]));
   it('anti-rug limits: bundles, top 10, single wallet, dev dumping', () => {
     const fails = checkEntryRules({ ...base, market: { ...goodMarket, earlyBuyerPct: 20, top10HolderPct: 55, maxHolderPct: 12, devSoldFraction: 0.95 } });

@@ -39,10 +39,10 @@ describe('keywords', () => {
 
 describe('social entry rules', () => {
   const market = { ageSec: 120, holders: 70, uniqueWallets: 80, buys: 120, sells: 30, buySellRatio: 4, volumeSol: 40, liquiditySol: 12, bondingCurvePct: 25, curveVelocity: 5, priceSol: 5e-8, marketCapSol: 50, devHoldingPct: 2, devSoldFraction: 0, top10HolderPct: 14, earlyBuyerPct: 1, maxHolderPct: 3, volumeSpikeRatio: 1, retention: 0.875, complete: false, onAmm: false, totalFeesSol: 1.2, volumeUsd: 15_000, marketCapUsd: 13_000 };
-  const base = { safetyScore: 100, safetyHardFail: false, market, strategy: STRATEGIES.CURVE_SNIPE, entry: DEFAULT_CONFIG.entry };
+  const base = { safetyScore: 100, safetyHardFail: false, market, strategy: STRATEGIES.CURVE_SNIPE, entry: { ...DEFAULT_CONFIG.entry, feesByMarketCap: { ...DEFAULT_CONFIG.entry.feesByMarketCap, enabled: false } } };
   it('blocks a blocked keyword', () => expect(checkEntryRules({ ...base, social: { hasTwitter: true, blockedKeyword: 'rug' } })).toEqual(['blocked keyword "rug"']));
   it('requireTwitter needs an X link', () => {
-    const entry = { ...DEFAULT_CONFIG.entry, requireTwitter: true };
+    const entry = { ...{ ...DEFAULT_CONFIG.entry, feesByMarketCap: { ...DEFAULT_CONFIG.entry.feesByMarketCap, enabled: false } }, requireTwitter: true };
     expect(checkEntryRules({ ...base, entry, social: { hasTwitter: false, blockedKeyword: null } })).toEqual(['no X link']);
     expect(checkEntryRules({ ...base, entry, social: { hasTwitter: true, blockedKeyword: null } })).toEqual([]);
   });

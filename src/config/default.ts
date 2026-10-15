@@ -173,6 +173,12 @@ export const DEFAULT_CONFIG = {
     /** Total fees traders have paid on the token, in SOL (a proxy for real activity). */
     minTotalFeesSol: 1,
     /**
+     * v10.40 (owner, last fix of the freeze): the total-fees minimum by market cap, for EVERY coin and strategy — it
+     * replaces every other fee minimum (strategy / focus / owner-filter ones). MC ≥ mcUsd → aboveSol, under → belowSol.
+     * MC unknown → the old per-strategy minimum. Late-joined coins skip it (their fee total is partial).
+     */
+    feesByMarketCap: { enabled: true as boolean, mcUsd: 50_000, aboveSol: 9, belowSol: 3 },
+    /**
      * Total fees paid also includes priority fees + tips, which the live stream
      * doesn't show. Until a token's transactions are sampled, assume this much
      * per trade (SOL). Typical Pump.fun trades pay ~0.001-0.005.
