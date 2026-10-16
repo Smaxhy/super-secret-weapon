@@ -486,6 +486,11 @@ export const MIGRATIONS: ConfigMigration[] = [
     note: 'v10.40 (owner, last fix): total fees by market cap for every coin — MC ≥ $50k needs 9 SOL, under $50k 3 SOL',
     set: [['entry', ['feesByMarketCap'], { enabled: true, mcUsd: 50_000, aboveSol: 9, belowSol: 3 }]],
   },
+  {
+    version: 31,
+    note: "v10.41 (owner): sell fee 0.002 SOL (0.001 priority + 0.001 tip; the 0.005 tip was ~2.5% of every 0.2 SOL sale)",
+    set: [['paper', ['txFeeSol'], 0.002]],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

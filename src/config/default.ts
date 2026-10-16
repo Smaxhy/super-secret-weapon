@@ -1356,7 +1356,7 @@ export const DEFAULT_CONFIG = {
     /** v10.28 — the owner's real terminal settings (priority fee + tip per transaction):
      *  SELL 0.001 prio + 0.005 tip = 0.006 SOL (every sale, also each partial take-profit); BUY 0.0001 + 0.001 = 0.0011 SOL.
      *  (Their 20% slippage is the tolerance, not the cost — fills still pay the real price impact + slippagePct.) */
-    txFeeSol: 0.006,
+    txFeeSol: 0.002, // v10.41 (owner): sell = 0.001 prio + 0.001 tip (was 0.005 tip)
     buyTxFeeSol: 0.0011,
     /** PumpSwap pool fee (LP + protocol + creator), basis points per side, when tiered fees are off. */
     ammFeeBps: 30,

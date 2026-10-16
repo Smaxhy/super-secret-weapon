@@ -68,7 +68,7 @@ describe('fee-aware take-profits (real sell fee 0.006 SOL per sale)', () => {
       entryPriceSol: 1, peakPriceSol: x, remainingPct: 100, tpTiersHit: [], trailingActive: false, refPriceSol: 1, lastMoveAtMs: NOW,
       staleMinutes: 120, priceSol: x, migratedNoMarket: false, bundlePctEntry: 0, bundlePctNow: 0, devHoldingPctEntry: 0, devHoldingPctNow: 0,
       top10PctEntry: 0, top10PctNow: 0, nowMs: NOW, copyWalletSold: false, risk: 0, riskWhy: '', openedAtMs: NOW - 60_000, maxHoldMinutes: 720,
-      resistance: { hit: false, level: 0, touches: 0 }, sizeSol, costSol: sizeSol + 0.0011, proceedsSol: 0, volatilityPct: null, txFeeSol: DEFAULT_CONFIG.paper.txFeeSol, strategy: 'SOON',
+      resistance: { hit: false, level: 0, touches: 0 }, sizeSol, costSol: sizeSol + 0.0011, proceedsSol: 0, volatilityPct: null, txFeeSol: 0.006, // the fee-aware logic, tested at the old 0.006 fee strategy: 'SOON',
     };
     return decideExit(input, { ...ex, takeProfitTiers: tiers }).sells.filter((s) => s.reason === 'TAKE_PROFIT').map((s) => s.pct);
   };
