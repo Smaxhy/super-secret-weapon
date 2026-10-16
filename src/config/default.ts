@@ -1290,7 +1290,7 @@ export const DEFAULT_CONFIG = {
        * past the stop like a rug". For the first `minHoldSec` the normal stop, the hard limit, the early risk cut and the
        * time / stale stops wait; only a fall past `holdDisasterPct` (after fees) or a rug signal sells. 0 = off.
        */
-      minHoldSec: 300,
+      minHoldSec: 0, // v10.43 (owner, CSV): the 5-min hold let stops run to −25…−40%; normal stop from the start
       holdDisasterPct: 35,
     },
     rugExit: {

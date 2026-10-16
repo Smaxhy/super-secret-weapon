@@ -49,7 +49,8 @@ describe('price-action exits (owner big update, ported)', () => {
 });
 
 describe('5-minute hold before the stop (owner, Oct 12)', () => {
-  const R0 = DEFAULT_CONFIG.exit;
+  // the hold logic (off by default since v10.43), tested with the old 5-minute setting
+  const R0 = { ...DEFAULT_CONFIG.exit, stopLoss: { ...DEFAULT_CONFIG.exit.stopLoss, minHoldSec: 300 } };
   it('holds through a −18% dip in the first 5 minutes, sells it after', () => {
     expect(decideExit(base({ peakPriceSol: 1, priceSol: 0.82, openedAtMs: now - 60_000 }), R0).sells).toEqual([]);
     const after = decideExit(base({ peakPriceSol: 1, priceSol: 0.78, openedAtMs: now - 6 * 60_000 }), R0);

@@ -491,6 +491,11 @@ export const MIGRATIONS: ConfigMigration[] = [
     note: "v10.41 (owner): sell fee 0.002 SOL (0.001 priority + 0.001 tip; the 0.005 tip was ~2.5% of every 0.2 SOL sale)",
     set: [['paper', ['txFeeSol'], 0.002]],
   },
+  {
+    version: 32,
+    note: 'v10.43 (owner CSV since the freeze: stop losses averaged −21%, many −25…−40% inside the 5-minute hold): no minimum hold — the normal stop works from the start',
+    set: [['exit', ['stopLoss', 'minHoldSec'], 0]],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */
