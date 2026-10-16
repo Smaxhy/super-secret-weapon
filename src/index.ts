@@ -171,6 +171,11 @@ async function main(): Promise<void> {
   aiCoach.start();
   // v10.40 (owner): the brain made "avoid coins under 9 SOL fees" for EVERY coin — the owner meant only ≥ $50k MC. The
   // fee rule is now in code (entry.feesByMarketCap); the tip behind that rule is removed so it can't keep blocking.
+  // v10.42 (owner): no more instant copies / mirror sells of 4vw54… — it's a normal (trusted) KOL buy signal like the others.
+  await oneTimeUpgrade('copy-wallet-to-kol', async () => {
+    const { OWNER_COPY_WALLETS } = await import('./config/kol-wallets');
+    await prisma.trackedWallet.updateMany({ where: { address: { in: OWNER_COPY_WALLETS } }, data: { kind: 'KOL', weight: 1.5 } });
+  });
   await oneTimeUpgrade('fee-rule-by-mc', async () => {
     const ids = await aiCoach.removeFeeTips();
     log.info({ tips: ids }, 'owner fee tips replaced by the market-cap fee rule');

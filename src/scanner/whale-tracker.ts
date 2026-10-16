@@ -50,7 +50,7 @@ async function seedOwnerWallets(): Promise<void> {
   if (await prisma.botConfig.findUnique({ where: { key: MARK } })) return;
   const rows = [
     ...OWNER_PICKS.filter((p) => isValidPubkey(p.address)).map((p, i) => ({ address: p.address, kind: 'KOL', weight: p.top ? TOP_PICK_WEIGHT : PICK_WEIGHT, label: `${p.top ? 'Top pick' : 'Pick'} ${i + 1}` })),
-    ...OWNER_COPY_WALLETS.filter(isValidPubkey).map((a, i) => ({ address: a, kind: 'COPY', weight: 1, label: `Copy ${i + 1} (mirror sells)` })),
+    ...OWNER_COPY_WALLETS.filter(isValidPubkey).map((a, i) => ({ address: a, kind: 'KOL', weight: 1.5, label: `Owner pick ${i + 1}` })),
   ];
   for (const r of rows) {
     const had = await prisma.trackedWallet.findUnique({ where: { address: r.address } });
