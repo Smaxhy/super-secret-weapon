@@ -46,6 +46,9 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
     env_file: .env
+    volumes:
+      # Obsidian vault notes (OBSIDIAN_VAULT_PATH=/vault in .env) land in /root/bot/obsidian on the host.
+      - ./obsidian:/vault
     environment:
       # Inside Docker the services talk by name, not localhost.
       DATABASE_URL: postgresql://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-solbot}?schema=public

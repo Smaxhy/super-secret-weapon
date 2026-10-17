@@ -36,3 +36,6 @@ dump.rdb
 
 # Auto-update bookkeeping (VPS)
 .deployed-sha
+
+# Obsidian vault notes written by the bot on the VPS (docker-compose volume)
+obsidian/
