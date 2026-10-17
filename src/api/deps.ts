@@ -19,6 +19,7 @@ import type { ShadowTrades } from '../learner/shadow-trades';
 import type { MoonshotLab } from '../learner/moonshot';
 import type { Brain } from '../learner/brain';
 import type { AiCoach } from '../learner/ai-coach';
+import type { TapeRecorder } from '../learner/tape-recorder';
 
 export interface ApiDeps {
   liveState: LiveState;
@@ -41,6 +42,8 @@ export interface ApiDeps {
   shadow?: ShadowTrades | null;
   moonshot?: MoonshotLab | null;
   brain?: Brain | null;
+  /** v11.5: the tape recorder (replay engine recording). */
+  tape?: TapeRecorder | null;
 }
 
 /** Classify a token for the live feed colour code. */

@@ -842,6 +842,12 @@ export const DEFAULT_CONFIG = {
    * `weight` (real trade 1, shadow 0.5). Thousands of examples a day instead of a handful. No AI, no RPC.
    */
   outcomes: { enabled: true as boolean, watchMin: 45, cooldownMin: 20, maxPending: 4000, maxPerTick: 120, keep: 6000, weight: 0.5 },
+  /**
+   * v11.5: record every trade on every followed coin (curve + PumpSwap) to Postgres `TradeTape` — the replay engine's
+   * recording of the market (`npm run replay`, Performance → Tests → Replay). Batched writes, pruned hourly.
+   * `maxPerMin`: above it trades are dropped (disk guard; ~250 bytes a row before compression).
+   */
+  tape: { enabled: true as boolean, retentionDays: 5, flushSec: 2, maxBatch: 5000, maxPerMin: 40_000 },
 
   /**
    * Shadow trades (src/learner/shadow-trades.ts; owner: "speed up the learning"): coins the bot didn't buy

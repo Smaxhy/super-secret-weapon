@@ -460,6 +460,31 @@ model TokenTape {
   @@index([updatedAt])
 }
 
+/// v11.5: every trade on every followed coin (curve + PumpSwap), kept `tape.retentionDays` — the replay engine's
+/// recording of the market (learner/tape-recorder.ts writes it, learner/replay.ts reads it). Composite key so
+/// TimescaleDB can partition on `t`.
+model TradeTape {
+  id       BigInt   @default(autoincrement())
+  mint     String
+  t        DateTime @db.Timestamptz(3)
+  slot     Int?
+  wallet   String
+  buy      Boolean
+  sol      Float
+  tokens   Float?
+  /// Execution price (SOL per whole token, from the trade's own amounts)
+  px       Float
+  /// Pool price right after the trade (what the next seller gets)
+  pp       Float?
+  amm      Boolean
+  /// Bonding-curve % after a curve trade (null on PumpSwap)
+  curvePct Float?
+
+  @@id([id, t])
+  @@index([mint, t])
+  @@index([t])
+}
+
 model RegimeSnapshot {
   id        String       @id @default(uuid())
   regime    MarketRegime

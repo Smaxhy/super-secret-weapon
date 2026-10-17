@@ -25,6 +25,14 @@ export function getConfig(): BotConfigShape {
   return current;
 }
 
+/**
+ * Replay / tests only: patch the in-memory config (deep-merged over what's loaded). The running bot never calls
+ * this — its config comes from the database (refreshConfig) and would overwrite the patch anyway.
+ */
+export function overrideConfig(patch: Record<string, unknown>): void {
+  current = deepMerge(current, patch) as BotConfigShape;
+}
+
 export function getWeights(): { weights: Weights; version: number | null } {
   return { weights, version: weightsVersion };
 }

@@ -744,6 +744,28 @@ Diagnosing (reading code, explaining Bot health, diagnose.sh output) is always f
     config, `OBSIDIAN_VAULT_PATH` in .env only): daily trade journal notes.
   - All new rules editable (Controls → Rules: Momentum gate / Entry quality / Edge gate / Early bail / Trade size &
     risk). Tests: momentum-gate, entry-quality, rugcheck, edge-gate, early-bail, adaptive-stop-mc-age (80 files / 702).
+- **v11.5 (Oct 17): tape recorder + replay engine** (owner: "I need to know in minutes, not wait weeks and guess").
+  `src/learner/tape-recorder.ts` (`tape` config, on): every applied trade on every followed coin (curve + PumpSwap incl.
+  adopted; hooked in TokenRegistry next to the crowd tracker) → Postgres `TradeTape` (mint, t, slot, wallet, buy, sol,
+  tokens, px, pp, amm, curvePct; composite id+t key; Timescale hypertable 6 h chunks, compressed after 12 h, dropped
+  after 6 days; the recorder also prunes to `retentionDays` 5 hourly). Batched `createMany` every 2 s / 5,000 rows off
+  the event loop, `maxPerMin` 40k disk guard, nothing in Redis. Bot health shows "Tape: N trades/min, X days on disk".
+  **Replay** (`src/learner/replay.ts`, pure engine; `replay-cli.ts` streams the tape in 5-min slices: `npm run replay --
+  --from 2026-10-17 --to 2026-10-18 [--policy live|sniper] [--set key=value]`; on the VPS `docker compose exec bot node
+  dist/learner/replay-cli.js …`): per coin it rebuilds the crowd log, candles, MC (price × 1B × SOL/USD), volume,
+  holders (wallets still net long), fees (1% of volume), curve % / migration, then at the live checkpoints (new pair
+  45…720 s, SOON on crossing 70% + its checkpoints, migrated every 15 s after the BOOST wait) runs the owner filters,
+  strategy minimums, new-pair demand, migrated organic scan, staircase, momentum gate, entry quality, pressure and the
+  score bar (tape score from the scorer's tape-computable features — or the bot's STORED Evaluation score + safety
+  verdict when it checked that coin within ±2 min), and every exit through VirtualBook/decideExit with paper costs.
+  NOT replayed (neutral): RPC safety / holder / dev / bundle guards, socials, KOLs, RugCheck, trending, the dip wait,
+  the confirmation wait, learning trades, chart-reading exits → optimistic on rugs, pessimistic on dip timing; compare
+  policies on the same days. Policies: `live`; `sniper` placeholder (1 SOL size, tiers 1.5x/2.5x/5x 25/25/20, trail
+  25% from 1.5x, stop 12%, score ≥ bar+8) — piece 3 replaces it. `overrideConfig()` (runtime-config) patches the in-
+  memory config in the replay process / tests only. Results: Redis `replay:last`, `replay:res:<id>`, `replay:ids` (20).
+  API GET/POST `/api/replay` (`replay-runner.ts` spawns the CLI as a CHILD PROCESS so the bot never slows); dashboard
+  Performance → Tests → "Replay" card (dates, rules, Run, headline + by strategy / exit / skip reasons / best-worst,
+  recent runs). tests/tape-replay.test.ts (synthetic runner vs bleeder tape).
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

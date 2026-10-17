@@ -11,6 +11,7 @@
  *   bot:errors     last 20 serious errors
  * `healthSnapshot()` adds memory, Redis memory and event-loop lag for /api/health.
  */
+import type { TapeStats } from '../learner/tape-recorder';
 import type { Redis } from 'ioredis';
 import { eventLoopLagMs } from './process-guard';
 import { blockerSnapshot, type BlockerSnapshot } from './entry-blockers';
@@ -84,6 +85,14 @@ export interface HealthSnapshot {
   redisMemoryMb: number | null;
   /** Why it is (not) buying right now. */
   trading: BlockerSnapshot;
+  /** v11.5: the tape recorder (trades recorded per minute, days on disk). */
+  tape?: TapeStats | null;
+}
+
+let tapeSource: (() => TapeStats) | null = null;
+/** index.ts: where the Bot health panel reads the tape recorder's stats from. */
+export function setTapeStatsSource(fn: (() => TapeStats) | null): void {
+  tapeSource = fn;
 }
 
 export async function healthSnapshot(now = Date.now()): Promise<HealthSnapshot> {
@@ -101,6 +110,7 @@ export async function healthSnapshot(now = Date.now()): Promise<HealthSnapshot> 
     memory: { rssMb: Math.round(mem.rss / 1e6), heapMb: Math.round(mem.heapUsed / 1e6) },
     redisMemoryMb: null,
     trading: blockerSnapshot(now, enabledStrategies()),
+    tape: tapeSource?.() ?? null,
   };
   if (!redisRef) return base;
   try {

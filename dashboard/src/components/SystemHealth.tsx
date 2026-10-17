@@ -19,6 +19,8 @@ interface SystemData {
   recentErrors: Array<{ at: string; message: string }>;
   memory: { rssMb: number; heapMb: number };
   redisMemoryMb: number | null;
+  /** v11.5: the tape recorder (replay engine recording). */
+  tape?: { enabled: boolean; perMin: number; buffered: number; written: number; dropped: number; failed: number; daysOnDisk: number | null; rowsOnDisk: number | null } | null;
   trading?: {
     lastEntryAt: string | null;
     minutesSinceEntry: number;
@@ -107,6 +109,11 @@ export function SystemPanel() {
             <Stat label="Lag" value={data.eventLoopLagMs !== null ? `${data.eventLoopLagMs} ms` : '—'} warn={(data.eventLoopLagMs ?? 0) > 1000} />
             <Stat label="Bot version" value={data.version} warn={botBehind(upd)} sub={botBehind(upd) ? `newest ${upd!.last!.remote}` : versionMismatch(data.version) ? `up to date (site ${SITE_VERSION})` : 'up to date'} />
           </div>
+          {data.tape && (
+            <p className={`mt-3 text-xs ${data.tape.enabled ? (data.tape.failed > 0 && data.tape.written === 0 ? 'text-down' : 'text-muted') : 'text-muted'}`}>
+              Tape: {data.tape.enabled ? `${data.tape.perMin.toLocaleString()} trades/min recorded, ${data.tape.daysOnDisk ?? 0} days on disk${data.tape.rowsOnDisk ? ` (~${(data.tape.rowsOnDisk / 1e6).toFixed(1)}M rows)` : ''}${data.tape.dropped ? `, ${data.tape.dropped.toLocaleString()} dropped` : ''}${data.tape.failed ? `, ${data.tape.failed.toLocaleString()} failed writes` : ''}` : 'off'}
+            </p>
+          )}
           {data.lastExit && (
             <p className={`mt-3 break-words text-sm ${crashed(data.lastExit.reason) ? 'text-down' : 'text-ink-2'}`}>
               Last stop ({new Date(data.lastExit.at).toLocaleString()}): {data.lastExit.reason}

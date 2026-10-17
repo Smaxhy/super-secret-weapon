@@ -15,6 +15,7 @@
  * Disabled (with a warning) unless DASHBOARD_PASSWORD and JWT_SECRET are set.
  */
 import { runBacktest } from '../learner/backtester';
+import { replayStatus, startReplay } from '../learner/replay-runner';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import websocket from '@fastify/websocket';
@@ -122,6 +123,16 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       btRunning ??= runBacktest(days).then((report) => (bt = { at: Date.now(), days, report })).finally(() => (btRunning = null));
       await btRunning;
       return bt?.report ?? null;
+    });
+    // v11.5 replay: the bot's rules over the recorded market, in a child process (the event loop stays free).
+    secured.get('/api/replay', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return replayStatus();
+    });
+    secured.post<{ Body: { from?: string; to?: string; policy?: string; set?: Record<string, unknown> | string[] } }>('/api/replay', async (req, reply) => {
+      const r = startReplay(req.body ?? {});
+      reply.code(r.ok ? 202 : 409);
+      return r;
     });
     // Update button: ask the VPS updater to pull + rebuild now (force = rebuild even without new code).
     secured.get('/api/update', async (_req, reply) => {

@@ -44,6 +44,29 @@ const STATEMENTS: Array<{ name: string; sql: string }> = [
     name: 'retention policy',
     sql: `SELECT add_retention_policy('"TokenSnapshot"', INTERVAL '30 days', if_not_exists => TRUE)`,
   },
+  // v11.5 trade tape (the replay engine's recording): 6-hour chunks, compressed after 12 h, dropped after 6 days
+  // (tape-recorder.ts also prunes by `tape.retentionDays` so plain Postgres stays bounded too).
+  {
+    name: 'tape hypertable',
+    sql: `SELECT create_hypertable('"TradeTape"', 't',
+            chunk_time_interval => INTERVAL '6 hours',
+            if_not_exists => TRUE, migrate_data => TRUE, create_default_indexes => FALSE)`,
+  },
+  {
+    name: 'tape compression settings',
+    sql: `ALTER TABLE "TradeTape" SET (
+            timescaledb.compress,
+            timescaledb.compress_segmentby = 'mint',
+            timescaledb.compress_orderby = 't DESC, id DESC')`,
+  },
+  {
+    name: 'tape compression policy',
+    sql: `SELECT add_compression_policy('"TradeTape"', INTERVAL '12 hours', if_not_exists => TRUE)`,
+  },
+  {
+    name: 'tape retention policy',
+    sql: `SELECT add_retention_policy('"TradeTape"', INTERVAL '6 days', if_not_exists => TRUE)`,
+  },
   {
     name: 'token_daily_outcomes',
     sql: `CREATE MATERIALIZED VIEW IF NOT EXISTS token_daily_outcomes

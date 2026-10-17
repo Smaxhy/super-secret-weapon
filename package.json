@@ -26,6 +26,7 @@
     "db:studio": "prisma studio",
     "check:rpc": "tsx scripts/check-rpc.ts",
     "backtest": "tsx scripts/backtest.ts",
+    "replay": "tsx src/learner/replay-cli.ts",
     "docker:up": "docker compose up -d postgres redis",
     "docker:down": "docker compose down"
   },

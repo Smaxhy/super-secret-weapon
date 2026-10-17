@@ -25,6 +25,7 @@ import { MoonshotLab } from './learner/moonshot';
 import { OutcomeTracker } from './learner/outcome-tracker';
 import { ExitTuner } from './learner/exit-tuner';
 import { TapeArchiver } from './learner/tape-archiver';
+import { TapeRecorder } from './learner/tape-recorder';
 import { Brain } from './learner/brain';
 import { startPushNotifier } from './lib/push';
 import { LossAutopsy } from './learner/loss-autopsy';
@@ -65,7 +66,7 @@ import { OutcomeLabeler } from './learner/outcome-labeler';
 import { startRegimeDetector } from './learner/regime-detector';
 import { logger } from './lib/logger';
 import { installProcessGuards } from './lib/process-guard';
-import { recordError, recordExit, recordStart } from './lib/bot-health';
+import { recordError, recordExit, recordStart, setTapeStatsSource } from './lib/bot-health';
 import { prisma } from './lib/prisma';
 import { setLastEntryAt } from './lib/entry-blockers';
 import { closeQueues } from './lib/queues';
@@ -229,6 +230,11 @@ async function main(): Promise<void> {
 
   const insiders = new InsiderTracker(redis);
   const registry = new TokenRegistry(liveState, observations, safety, evaluator, insiders, crowd);
+  // v11.5: every trade on every followed coin → Postgres TradeTape (the replay engine's recording).
+  const tapeRecorder = new TapeRecorder();
+  tapeRecorder.start();
+  registry.tape = tapeRecorder;
+  setTapeStatsSource(() => tapeRecorder.snapshot());
   // DexScreener: trending coins + DEX paid. A tracked coin that starts trending is checked right away.
   const dex = new DexScreener();
   evaluator.dex = dex;
@@ -603,7 +609,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, moonshot }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, moonshot, tape: tapeRecorder }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -688,6 +694,7 @@ async function main(): Promise<void> {
       brain.stop();
       stopPush();
       obsidian.stop();
+      await tapeRecorder.stop();
       taLab.stop();
       trendFeeds.stop();
       trending.stop();

@@ -27,6 +27,7 @@ import { curvePriceSol, isSolQuote } from '../lib/pumpfun';
 import { bondingCurveAddress, checkPoolEvent } from '../lib/pump-pda';
 import type { InsiderTracker } from '../evaluator/insider-cluster';
 import type { CrowdTracker } from './crowd-tracker';
+import type { TapeRecorder } from '../learner/tape-recorder';
 import type { WalletPnl } from '../learner/wallet-pnl';
 
 const log = moduleLogger('token-registry');
@@ -38,6 +39,8 @@ export class TokenRegistry {
   pnl: WalletPnl | null = null;
   /** Called with the mint after every trade is applied to the live state (exits react instantly). */
   readonly onTradeApplied: Array<(mint: string) => void> = [];
+  /** v11.5: the tape recorder (set in index.ts) — every applied trade, curve and PumpSwap, is recorded. */
+  tape: TapeRecorder | null = null;
 
   constructor(
     private readonly liveState: LiveState,
@@ -68,6 +71,7 @@ export class TokenRegistry {
             if (!this.liveState.isTracked(event.mint)) return;
           }
           this.crowd?.onCurveTrade(event, envelope.slot);
+          this.tape?.onCurveTrade(event, envelope.slot);
           for (const f of this.onTradeApplied) f(event.mint);
           if (this.pnl) {
             const meta = this.liveState.meta(event.mint);
@@ -93,6 +97,7 @@ export class TokenRegistry {
         this.liveState.onAmmTrade(event).then((mint) => {
           if (!mint) return;
           this.crowd?.onAmmTrade(mint, event, envelope.slot);
+          this.tape?.onAmmTrade(mint, event, envelope.slot);
           for (const f of this.onTradeApplied) f(mint);
           if (this.pnl) {
             const meta = this.liveState.meta(mint);
