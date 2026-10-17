@@ -275,6 +275,23 @@ export const EDITABLE: EditableSetting[] = [
   S('Early bail', 'exit.earlyBail.maxSec', 'Only within this many seconds after the buy', 15, 180, 's', 5),
   S('Early bail', 'exit.earlyBail.minPeakMultiple', 'Trade counts as dead only if it never reached this multiple', 1.0, 1.1, 'x', 0.005),
   S('Early bail', 'exit.earlyBail.maxBuyRatio', 'Buy/sell SOL ratio must be at or under this (sellers winning)', 0.3, 1.5, 'x', 0.05),
+  S('Wallet engine', 'wallets.enabled', 'Track every wallet\'s record from the trade stream: on (1) / off (0)', 0, 1, undefined, 1),
+  S('Wallet engine', 'wallets.minSells', 'Sells a wallet needs before it counts as proven / losing', 3, 50, undefined, 1),
+  S('Wallet engine', 'wallets.provenWinRate', 'Proven wallet: win rate at least', 0.4, 0.9, '0–1', 0.05),
+  S('Wallet engine', 'wallets.provenPf', 'Proven wallet: profit factor at least', 1, 5, 'x', 0.1),
+  S('Wallet engine', 'wallets.dumperDropPct', 'A big sell followed by this % drop within 60 s counts as a dump', 5, 60, '%', 1),
+  S('Wallet engine', 'wallets.dumperMinEvents', 'Dumps before a wallet is a known dumper', 1, 10, undefined, 1),
+  S('Wallet engine', 'wallets.entry.enabled', 'Judge who is buying before every buy: on (1) / off (0)', 0, 1, undefined, 1),
+  S('Wallet engine', 'wallets.entry.points', 'Max points when proven wallets lead the buying', 0, 25, 'pts', 1),
+  S('Wallet engine', 'wallets.entry.minProvenSolPct', 'Proven wallets\' share of the buying for points', 5, 80, '%', 5),
+  S('Wallet engine', 'wallets.entry.dumperHoldPct', 'No buy while a known dumper holds at least this % of supply', 0.5, 10, '%', 0.5),
+  S('Wallet engine', 'wallets.entry.maxDumperSolPct', 'No buy when known dumpers are at least this % of the buying', 5, 80, '%', 5),
+  S('Wallet engine', 'wallets.entry.loserSolPct', 'Points off when losing wallets are at least this % of the buying', 10, 90, '%', 5),
+  S('Wallet engine', 'exit.holderClock.enabled', 'Sell before the big holders\' usual hold time runs out: on (1) / off (0)', 0, 1, undefined, 1),
+  S('Wallet engine', 'exit.holderClock.minHolderPct', 'Watch holders with at least this % of supply', 0.5, 10, '%', 0.5),
+  S('Wallet engine', 'exit.holderClock.expiryShare', 'Sell once this share of the watched supply is past its usual hold', 0.3, 1, '0–1', 0.05),
+  S('Wallet engine', 'exit.holderClock.sellPct', 'Sell this much of what\'s left', 10, 100, '%', 5),
+  S('Wallet engine', 'exit.holderClock.minMultiple', 'Only at or above this multiple', 1, 3, 'x', 0.05),
 ];
 
 /** Pure: read a dotted path from an object. */

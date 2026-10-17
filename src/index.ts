@@ -47,6 +47,7 @@ import { CrowdTracker } from './scanner/crowd-tracker';
 import { DexScreener } from './scanner/dexscreener';
 import { MarketLeaders } from './scanner/market-leaders';
 import { WalletPnl } from './learner/wallet-pnl';
+import { WalletBook } from './learner/wallet-book';
 import { DipWatcher } from './executor/dip-watcher';
 import { StrategyLab } from './learner/strategy-lab';
 import { NewPairWatcher } from './scanner/new-pair-watcher';
@@ -66,7 +67,7 @@ import { OutcomeLabeler } from './learner/outcome-labeler';
 import { startRegimeDetector } from './learner/regime-detector';
 import { logger } from './lib/logger';
 import { installProcessGuards } from './lib/process-guard';
-import { recordError, recordExit, recordStart, setTapeStatsSource } from './lib/bot-health';
+import { recordError, recordExit, recordStart, setTapeStatsSource, setWalletBookStatsSource } from './lib/bot-health';
 import { prisma } from './lib/prisma';
 import { setLastEntryAt } from './lib/entry-blockers';
 import { closeQueues } from './lib/queues';
@@ -259,6 +260,14 @@ async function main(): Promise<void> {
   const walletPnl = new WalletPnl(redis);
   registry.pnl = walletPnl;
   walletPnl.start();
+  // v11.6: the wallet book — every wallet's record from the same trades (who is buying at entry, holder clock at exit).
+  const walletBook = new WalletBook(redis);
+  await walletBook.load();
+  walletBook.start();
+  registry.book = walletBook;
+  evaluator.walletBook = walletBook;
+  sellManager.walletBook = walletBook;
+  setWalletBookStatsSource(() => walletBook.stats());
   // Don't buy the top: stretched charts wait here for a dip + bounce.
   const dips = new DipWatcher(crowd, evaluator);
   evaluator.dips = dips;
@@ -352,6 +361,7 @@ async function main(): Promise<void> {
   const runningCoins = new RunningCoins(liveState, registry, trending, dex);
   runningCoins.start();
   const swingTrader = new SwingTrader(redis, liveState, crowd, swingUniverse, trader, outcomes);
+  swingTrader.walletBook = walletBook;
   swingTrader.ta = taLab;
   swingTrader.trending = trending;
   swingTrader.start();
@@ -609,7 +619,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, moonshot, tape: tapeRecorder }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, moonshot, tape: tapeRecorder, walletBook }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -687,6 +697,7 @@ async function main(): Promise<void> {
       dex.stop();
       leaders.stop();
       walletPnl.stop();
+      await walletBook.stop();
       dips.stop();
       lab.stop();
       shadow.stop();

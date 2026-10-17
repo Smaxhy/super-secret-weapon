@@ -28,6 +28,7 @@ import { bondingCurveAddress, checkPoolEvent } from '../lib/pump-pda';
 import type { InsiderTracker } from '../evaluator/insider-cluster';
 import type { CrowdTracker } from './crowd-tracker';
 import type { TapeRecorder } from '../learner/tape-recorder';
+import type { WalletBook } from '../learner/wallet-book';
 import type { WalletPnl } from '../learner/wallet-pnl';
 
 const log = moduleLogger('token-registry');
@@ -41,6 +42,8 @@ export class TokenRegistry {
   readonly onTradeApplied: Array<(mint: string) => void> = [];
   /** v11.5: the tape recorder (set in index.ts) — every applied trade, curve and PumpSwap, is recorded. */
   tape: TapeRecorder | null = null;
+  /** v11.6: the wallet book (set in index.ts) — every wallet's record, from the same trades. */
+  book: WalletBook | null = null;
 
   constructor(
     private readonly liveState: LiveState,
@@ -72,6 +75,11 @@ export class TokenRegistry {
           }
           this.crowd?.onCurveTrade(event, envelope.slot);
           this.tape?.onCurveTrade(event, envelope.slot);
+          if (this.book) {
+            const sol = Number(event.solAmount) / 1e9;
+            const tokens = Number(event.tokenAmount) / 1e6;
+            this.book.onTrade({ mint: event.mint, wallet: event.user, isBuy: event.isBuy, sol, tokens, t: Date.now(), price: tokens > 0 ? sol / tokens : 0, creator: this.liveState.meta(event.mint)?.creator ?? null });
+          }
           for (const f of this.onTradeApplied) f(event.mint);
           if (this.pnl) {
             const meta = this.liveState.meta(event.mint);
@@ -98,6 +106,11 @@ export class TokenRegistry {
           if (!mint) return;
           this.crowd?.onAmmTrade(mint, event, envelope.slot);
           this.tape?.onAmmTrade(mint, event, envelope.slot);
+          if (this.book) {
+            const sol = Number(event.quoteAmount) / 1e9;
+            const tokens = Number(event.baseAmount) / 1e6;
+            this.book.onTrade({ mint, wallet: event.user, isBuy: event.isBuy, sol, tokens, t: Date.now(), price: tokens > 0 ? sol / tokens : 0, creator: this.liveState.meta(mint)?.creator ?? null });
+          }
           for (const f of this.onTradeApplied) f(mint);
           if (this.pnl) {
             const meta = this.liveState.meta(mint);

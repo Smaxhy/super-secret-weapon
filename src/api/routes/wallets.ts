@@ -49,6 +49,22 @@ export async function walletsRoutes(app: FastifyInstance, deps?: ApiDeps): Promi
     return rows.map((r) => ({ ...r, label: known.get(r.wallet)?.label ?? null, tracked: known.get(r.wallet)?.active ?? false }));
   });
 
+  /** v11.6 wallet engine: counts + the most proven wallets and the worst known dumpers (from the trade stream alone). */
+  app.get('/api/wallet-book', async () => {
+    const b = deps?.walletBook;
+    if (!b) return null;
+    const row = (x: { wallet: string; rec: { pnl: number; n: number; w: number; hold: number; dumps: number; coins: number } }) => ({
+      wallet: x.wallet,
+      pnlSol: Math.round(x.rec.pnl * 100) / 100,
+      sells: Math.round(x.rec.n),
+      winRate: x.rec.n > 0 ? x.rec.w / x.rec.n : 0,
+      holdMin: x.rec.hold > 0 ? Math.round(x.rec.hold / 60) : null,
+      dumps: Math.round(x.rec.dumps),
+      coins: x.rec.coins,
+    });
+    return { stats: b.stats(), proven: b.top('proven', 10).map(row), dumpers: b.top('dumper', 10).map(row) };
+  });
+
   /** Wallet analyzer (Solscan): trading patterns + copy simulation. ?pages=1–10 (100 swaps each), ?refresh=1. */
   app.get<{ Params: { address: string }; Querystring: { pages?: string; refresh?: string } }>('/api/wallets/:address/report', async (req, reply) => {
     const { address } = req.params;

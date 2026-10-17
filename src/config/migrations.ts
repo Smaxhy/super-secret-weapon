@@ -551,6 +551,12 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['adaptiveStop', ['ageBands'], [{ maxAgeMin: 2, factor: 1.2 }]],
     ],
   },
+  {
+    version: 37,
+    note: 'v11.6: wallet engine (who is buying → points / no buy) + holder clock exit (sell before the big holders usually do)',
+    // (`wallets` is a new section: never saved before → it takes the defaults; only the saved `exit` row needs the clock pushed in)
+    set: [['exit', ['holderClock'], { enabled: true, minHolderPct: 1.5, expiryShare: 0.8, tightenTrailFactor: 0.6, sellPct: 40, minMultiple: 1.1 }]],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */
@@ -599,6 +605,11 @@ export function applyMigration(rows: Record<string, unknown>, m: ConfigMigration
   for (const [section, path, value] of m.set) {
     const base = changed[section] ?? rows[section];
     if (!base || typeof base !== 'object' || Array.isArray(base)) continue;
+    // Empty path = the whole section (a saved row would otherwise keep its stale values).
+    if (path.length === 0) {
+      changed[section] = structuredClone(value);
+      continue;
+    }
     const copy = structuredClone(base) as Record<string, unknown>;
     let node = copy;
     for (const k of path.slice(0, -1)) {

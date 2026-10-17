@@ -11,7 +11,7 @@
  * demand + absorption (new-pair.ts), staircase charts, the momentum gate, entry quality, buyer/seller pressure, the
  * score bar (a tape score from the scorer's tape-computable features; where the bot really evaluated the coin within
  * ±2 min its stored score + safety verdict are used instead) and every exit through VirtualBook → decideExit with
- * paper costs (early bail, time stops, tiers, trail, spike sell, no-life, dead coin, max hold).
+ * paper costs (time stops, tiers, trail, spike sell, dead coin, max hold; early bail + no-life need live buy/sell flow and do NOT fire in a replay).
  *
  * NOT replayed (neutral): RPC-only safety checks (mint / freeze authority, holder lists, dev wallet, bundle guard,
  * funding graph, rugger memory), socials / narrative / X, KOL + copy wallets, RugCheck, trending lists, the dip
@@ -32,6 +32,9 @@ import { candlesFromTrades } from '../evaluator/timeframes';
 import type { CrowdTracker, CrowdTrade } from '../scanner/crowd-tracker';
 import { organicFlow, type OrganicFlow } from '../scanner/migrated-scanner';
 import { VirtualBook, type VirtualResult } from './virtual-book';
+import { crowdQuality } from '../evaluator/crowd-quality';
+import { watchedHolders } from '../executor/holder-clock';
+import { walletBookConfig, type WalletBook } from './wallet-book';
 
 export interface TapeRow {
   mint: string;
@@ -95,6 +98,8 @@ export interface ReplayOptions {
   solUsd: number;
   from: number;
   to: number;
+  /** v11.6: the wallet book fed from the tape (seeded from the live book when available) — crowd quality + holder clock. */
+  book?: WalletBook | null;
 }
 
 export interface ReplayTrade {
@@ -187,6 +192,8 @@ export function sniperPolicy(): ReplayPolicy {
 
 export function policyByName(name: string): ReplayPolicy {
   if (name === 'sniper') return sniperPolicy();
+  // live rules + the wallet engine on (with `wallets.enabled` saved as true, `live` is the same; `--set wallets.enabled=false` shows the difference)
+  if (name === 'wallets') return { name: 'wallets', overrides: { wallets: { enabled: true, entry: { enabled: true } }, exit: { holderClock: { enabled: true } } } };
   return { name: 'live' };
 }
 
@@ -215,6 +222,12 @@ export class Replay {
         this.openBy.set(r.strategy, Math.max(0, (this.openBy.get(r.strategy) ?? 0) - 1));
       },
       () => getConfig().trading.maxConcurrentPositions,
+      (mint, openedAt, _now) => {
+        const hc = getConfig().exit.holderClock;
+        const wb = this.o.book;
+        if (!wb || !hc?.enabled) return null;
+        return watchedHolders(this.coins.get(mint)?.trades ?? [], openedAt, (w) => wb.get(w), walletBookConfig(), hc);
+      },
     );
     this.sizeSol = getConfig().trading.maxPositionSol;
   }
@@ -225,6 +238,7 @@ export class Replay {
       if (!(r.px > 0) || r.t < this.o.from || r.t > this.o.to) continue;
       this.rows++;
       this.lastT = Math.max(this.lastT, r.t);
+      this.o.book?.onTrade({ mint: r.mint, wallet: r.w, isBuy: r.buy, sol: r.sol, tokens: r.tok, t: r.t, price: r.pp && r.pp > 0 ? r.pp : r.px, creator: this.o.tokens.get(r.mint)?.creator ?? null });
       const coin = this.coin(r.mint, r.t);
       const ct: CrowdTrade = { t: r.t, w: r.w, buy: r.buy, sol: r.sol, tok: r.tok, px: r.px, ...(r.pp && r.pp > 0 ? { pp: r.pp } : {}), ...(r.s ? { s: r.s } : {}) };
       coin.trades.push(ct);
@@ -252,6 +266,7 @@ export class Replay {
       this.maybeEvaluate(coin, r.t);
       if (r.t - this.lastSweep >= 60_000) {
         this.lastSweep = r.t;
+        this.o.book?.decay(r.t);
         for (const [m, c] of this.coins) if (r.t - c.lastT > 2 * KEEP_MS && !this.book.has(m)) this.coins.delete(m);
       }
     }
@@ -448,6 +463,12 @@ export class Replay {
       const pf = pressureFail(flowPressure(trades, t, pr), pr);
       if (pf) fails.push(pf);
     }
+    // v11.6 wallet engine: who is buying (no funder lookups in the replay).
+    const wbCfg = cfg.wallets ?? DEFAULT_CONFIG.wallets;
+    const cqCfg = wbCfg.entry ?? DEFAULT_CONFIG.wallets.entry;
+    const wb = this.o.book;
+    const cq = wb && wbCfg.enabled && cqCfg.enabled ? crowdQuality({ trades, now: t }, (w) => wb.get(w), () => null, wbCfg, cqCfg) : null;
+    if (cq?.fails.length) fails.push(...cq.fails);
 
     const ev = this.storedEval(coin.mint, t);
     let score: number;
@@ -459,6 +480,7 @@ export class Replay {
       if (!flow) flow = organicFlow(trades, t);
       score = this.tapeScore(coin, trades, t, flow, active5m, holders) + (eq.verdict === 'boost' ? eq.points : 0);
     }
+    score += cq?.points ?? 0;
 
     const ctx: EntryContext = { mint: coin.mint, symbol: tok?.symbol ?? '', strategy, now: t, trades, priceSol: price, mcUsd, ageSec, flow, shape, score, threshold, fails };
     const extra = this.o.policy.entry?.(ctx);

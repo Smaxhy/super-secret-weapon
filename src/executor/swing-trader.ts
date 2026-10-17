@@ -46,6 +46,8 @@ import type { SwingCoin, SwingUniverse } from '../scanner/swing-universe';
 import type { TrendingHub } from '../scanner/trending-hub';
 import type { Trader } from './trader';
 import type { VampGuard } from '../evaluator/vamp-guard';
+import { crowdQuality } from '../evaluator/crowd-quality';
+import type { WalletBook } from '../learner/wallet-book';
 import { exitRulesFor } from './sell-manager';
 
 const log = moduleLogger('swing-trader');
@@ -93,6 +95,8 @@ export class SwingTrader {
   trending: TrendingHub | null = null;
   /** Copycat ("vamp") guard — set in index.ts. */
   vamp: VampGuard | null = null;
+  /** v11.6: every wallet's record (set in index.ts) — who is buying this coin. */
+  walletBook: WalletBook | null = null;
   /** Holder lookup (RPC); replaceable in tests. */
   holders: (mint: string, pool: string | null) => Promise<number | null> = topHoldersPct;
 
@@ -183,6 +187,14 @@ export class SwingTrader {
       coin.last = { at: now, score: 0, decision: 'SKIP', why: tfWhy };
       return null;
     }
+    // v11.6 wallet engine: who is buying (dump crew inside → no swing; proven wallets → points).
+    const wbCfg = cfg.wallets ?? DEFAULT_CONFIG.wallets;
+    const cqCfg = wbCfg.entry ?? DEFAULT_CONFIG.wallets.entry;
+    const cq = wbCfg.enabled && cqCfg.enabled && this.walletBook ? crowdQuality({ trades, now }, (w) => this.walletBook!.get(w), () => null, wbCfg, cqCfg) : null;
+    if (cq?.fails.length) {
+      coin.last = { at: now, score: 0, decision: 'SKIP', why: cq.fails[0]! };
+      return null;
+    }
     const m = deriveMetrics(view);
     const liveMc = sol && view.ammTrades > 0 && m.priceSol > 0 ? m.marketCapSol * sol : null;
     const liveLiq = sol && view.ammTrades > 0 ? 2 * m.liquiditySol * sol : null;
@@ -229,7 +241,7 @@ export class SwingTrader {
     this.stats.decisions++;
     // Calibration: how this strategy's score band has REALLY done lately.
     const cal = calibrationAdjust(calibration(), 'SWING', verdict.score);
-    const score = Math.round(Math.max(0, Math.min(100, verdict.score + cal.points)) * 10) / 10;
+    const score = Math.round(Math.max(0, Math.min(100, verdict.score + cal.points + (cq?.points ?? 0))) * 10) / 10;
     let decision: 'BUY' | 'SKIP' = !verdict.fails.length && score >= verdict.threshold ? 'BUY' : 'SKIP';
     // Learning trade: passes every rule, just short on score → small size (config explore).
     const ex = cfg.explore ?? DEFAULT_CONFIG.explore;

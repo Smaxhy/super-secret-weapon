@@ -766,6 +766,30 @@ Diagnosing (reading code, explaining Bot health, diagnose.sh output) is always f
   API GET/POST `/api/replay` (`replay-runner.ts` spawns the CLI as a CHILD PROCESS so the bot never slows); dashboard
   Performance → Tests → "Replay" card (dates, rules, Run, headline + by strategy / exit / skip reasons / best-worst,
   recent runs). tests/tape-replay.test.ts (synthetic runner vs bleeder tape).
+- **v11.6 (Oct 17): wallet engine** (owner: "buy on WHO is in the coin, sell before the big holders' usual hold time runs
+  out"; zero new RPC / API calls — everything from the trade stream). `src/learner/wallet-book.ts` (`wallets` config):
+  every wallet's record in memory (≤120k, LRU by last seen) — sells with a cost basis, wins, realised SOL, gross wins /
+  losses (PF), usual hold (first buy → first sell per coin, EWMA), ≥80%-of-bag sells, dump events (a sell ≥2% of supply
+  or ≥10% of the coin's 5-min volume followed by a ≥20% drop within 60 s), "dumped on" (bought ≤60 s before someone's
+  dump), repeat-size buys (bots). Snipers (first 15 s) and creators get no cost basis (like wallet-pnl). Persisted to
+  Redis HASH `wbook` (compact JSON per wallet, ~200 B; `wbook:meta` decay day) every minute + at stop, loaded at start;
+  counts halve every 10 days. `classify` → proven (≥6 sells, WR ≥55%, PF ≥1.3) / dumper (≥3 dumps) / loser (WR <35%) /
+  bot (≥60% repeat sizes) / unknown. Fed from token-registry (curve + PumpSwap) and by the replay from tape rows
+  (`--policy wallets`; the replay seeds from the live `wbook` and never writes back). Bot health: "Wallet book: N wallets,
+  P proven, D dumpers"; GET `/api/wallet-book`; Wallets → Smart money → card "Wallet engine" (top proven / worst dumpers).
+  - **Crowd quality at entry** (`src/evaluator/crowd-quality.ts`, `wallets.entry`, evaluator after the pressure check +
+    swing trader + replay): last 5 min of buying (dust excluded) by wallet class → proven ≥20% of the buy SOL with ≥3
+    proven buyers → +8…+12 points (12 at 40%); losers ≥40% → −6; **rule fails**: a known dumper still holding ≥2% of the
+    supply ("dump crew inside"), dumpers ≥25% of the buying; `crewPct` = buyers sharing one funder, from the funding-graph
+    cache `wfund:<wallet>` only (evaluator mget, ≤40 wallets; never RPC). `features.wallets` on every evaluation (AI /
+    rule search section `wallets`), note "crowd: …" in the buy explanation.
+  - **Holder clock exit** (`src/executor/holder-clock.ts`, `exit.holderClock`, decideExit via `ExitInput.holders` —
+    sell manager ≤ once per 2 s per position, VirtualBook `holdersFor`, replay): watched holders = wallets that held ≥1.5%
+    of supply while we hold (bag at open + bought since, from the crowd log); expected sell = first buy + usual hold;
+    holders ≥80% of the watched supply past it AND ≥1.1x → sell 40% of what's left once (`HOLDER_CLOCK_MARKER` −7, counts
+    as banked) and the trail × 0.6 (the trail's own 0.75–1.3 clamp still applies); a known dumper selling ≥50% of its bag
+    while we hold → RUG_DETECTED. Editable (Controls → Rules → Wallet engine). Migration v37 (holder clock into the saved
+    `exit` row). tests/wallet-engine.test.ts.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

@@ -20,6 +20,7 @@ import type { MoonshotLab } from '../learner/moonshot';
 import type { Brain } from '../learner/brain';
 import type { AiCoach } from '../learner/ai-coach';
 import type { TapeRecorder } from '../learner/tape-recorder';
+import type { WalletBook } from '../learner/wallet-book';
 
 export interface ApiDeps {
   liveState: LiveState;
@@ -44,6 +45,8 @@ export interface ApiDeps {
   brain?: Brain | null;
   /** v11.5: the tape recorder (replay engine recording). */
   tape?: TapeRecorder | null;
+  /** v11.6: the wallet book (Wallets page card). */
+  walletBook?: WalletBook | null;
 }
 
 /** Classify a token for the live feed colour code. */

@@ -601,6 +601,33 @@ export const DEFAULT_CONFIG = {
   },
 
   /**
+   * Wallet engine (v11.6, learner/wallet-book.ts): every wallet's track record from the trade stream alone — realised
+   * P&L, usual hold time, dump events. `entry` (evaluator/crowd-quality.ts): WHO is buying → points / no buy.
+   */
+  wallets: {
+    enabled: true as boolean,
+    minSells: 6,
+    provenWinRate: 0.55,
+    provenPf: 1.3,
+    dumperDropPct: 20,
+    dumperMinEvents: 3,
+    maxWallets: 120_000,
+    halfLifeDays: 10,
+    entry: {
+      enabled: true as boolean,
+      points: 12,
+      minProvenSolPct: 20,
+      minProvenCount: 3,
+      fullPointsProvenSolPct: 40,
+      dumperHoldPct: 2,
+      maxDumperSolPct: 25,
+      loserSolPct: 40,
+      loserPoints: 6,
+      fails: true as boolean,
+    },
+  },
+
+  /**
    * "What's working now": every `everyMin` the top coins (DexScreener trending + our biggest-volume
    * tracked coins of the last hour) are read; words shared by ≥ `minLeaders` of them become hot
    * narratives (like X hot keywords) for `narrative` scoring.
@@ -1183,6 +1210,12 @@ export const DEFAULT_CONFIG = {
     spikeSell: { enabled: true as boolean, risePct: 12, windowSec: 90, sellPct: 50, minMultiple: 1.04 },
     /** v11: Early bail — exit dead-on-arrival trades before the 5-min hold expires. */
     earlyBail: { enabled: true as boolean, maxSec: 45, minPeakMultiple: 1.02, maxBuyRatio: 1.0 },
+    /**
+     * Holder clock (v11.6, executor/holder-clock.ts): the big holders we saw buy each have a usual hold time (wallet
+     * book); once ≥ expiryShare of that watched supply is past it and we're ≥ minMultiple → sell sellPct of what's
+     * left (once) and tighten the trail. A known dumper selling half its bag while we hold → rug exit.
+     */
+    holderClock: { enabled: true as boolean, minHolderPct: 1.5, expiryShare: 0.8, tightenTrailFactor: 0.6, sellPct: 40, minMultiple: 1.1 },
     /** After reaching `afterMultiple`, sell everything if it falls back to `floorMultiple` (before initials are out). */
     protectProfit: { afterMultiple: 1.2, floorMultiple: 1.03 },
     /**

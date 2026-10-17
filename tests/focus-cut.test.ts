@@ -36,3 +36,13 @@ describe('v10.21 focus cut (owner CSV, 515 trades)', () => {
     expect((out.exit!.byStrategy as Record<string, { takeProfitTiers?: unknown[] }>).SOON!.takeProfitTiers).toHaveLength(3);
   });
 });
+
+describe('applyMigration with an empty path (whole section)', () => {
+  it('replaces the saved section instead of writing a key named "undefined"', () => {
+    const m = { version: 999, note: 't', set: [['momentumGate', [], { enabled: true, maxRun1mPct: 18 }] as ['momentumGate', string[], unknown]] };
+    const out = applyMigration({ momentumGate: { enabled: false, maxRun1mPct: 25, stale: 1 } }, m) as Record<string, Record<string, unknown>>;
+    expect(out.momentumGate).toEqual({ enabled: true, maxRun1mPct: 18 });
+    expect('undefined' in out.momentumGate!).toBe(false);
+    expect(applyMigration({}, m)).toEqual({});
+  });
+});

@@ -1,6 +1,7 @@
 /** Wallets: COPY wallets (copied one by one) and KOLs (Cupsey, Cented… — "how many KOLs are in" signal). */
 import { useState, type FormEvent } from 'react';
 import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl, Stack, Tabs, useTab } from '../components/ui';
+import { WalletEngine } from '../components/WalletEngine';
 import { useApi } from '../hooks/useApi';
 import { WalletAnalyzer } from '../components/WalletAnalyzer';
 import { api } from '../lib/api';
@@ -253,7 +254,12 @@ export function Wallets() {
       <PageHeader title="Wallets & KOLs" subtitle="Several KOLs buying one coin = checked at once and scored higher; KOLs dumping = no buy / take profit." />
       <Tabs tabs={TABS} value={tab} onChange={setTab} sticky label="Wallet sections" />
       {tab === 'kols' && <KolBoard />}
-      {tab === 'smart' && <SmartMoney />}
+      {tab === 'smart' && (
+        <Stack>
+          <SmartMoney />
+          <WalletEngine />
+        </Stack>
+      )}
       {tab === 'analyze' && <WalletAnalyzer />}
       {tab === 'mine' && (
       <Stack>

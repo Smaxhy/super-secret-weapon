@@ -12,6 +12,7 @@ import type { BotConfigShape } from '../config/default';
 import { getConfig } from '../config/runtime-config';
 import type { StrategyName } from '../config/types';
 import { decideExit, exitCostPctFor, exitRulesFor, spikeRisePct, trailRules, type ExitInput } from '../executor/sell-manager';
+import type { WatchedHolder } from '../executor/holder-clock';
 import { poolFeeBps } from '../lib/pumpfun';
 import { settledHigh } from '../lib/settled-price';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
@@ -62,6 +63,8 @@ interface VPos extends VirtualOpen {
   breachTicks: number;
   lastCheck: number;
   peakAtMs: number;
+  holdersAt?: number;
+  holders?: WatchedHolder[] | null;
 }
 
 const priceOfLast = (crowd: CrowdTracker, mint: string): number => {
@@ -80,6 +83,8 @@ export class VirtualBook {
     private readonly rulesFor: (tag: Record<string, unknown>, live: ExitRules) => ExitRules | null,
     private readonly onClose: (r: VirtualResult) => void,
     private readonly maxOpen: () => number,
+    /** v11.6 holder clock: the watched holders of a coin for a position opened at `openedAtMs` (null = no wallet book). */
+    private readonly holdersFor: ((mint: string, openedAtMs: number, now: number) => WatchedHolder[] | null) | null = null,
   ) {}
 
   get size(): number {
@@ -199,6 +204,7 @@ export class VirtualBook {
       peakAtMs: vp.peakAtMs,
       migratedAgoSec: null,
       spikeRisePct: rules.spikeSell?.enabled ? spikeRisePct(trades, price, Math.max(vp.openedAt, now - rules.spikeSell.windowSec * 1000)) : null,
+      holders: this.holdersOf(vp, now),
     };
     const d = decideExit(input, rules);
     vp.peakPriceSol = d.state.peakPriceSol;
@@ -221,6 +227,14 @@ export class VirtualBook {
         return;
       }
     }
+  }
+
+  private holdersOf(vp: VPos, now: number): WatchedHolder[] | null {
+    if (!this.holdersFor) return null;
+    if (vp.holdersAt !== undefined && now - vp.holdersAt < 2_000) return vp.holders ?? null;
+    vp.holdersAt = now;
+    vp.holders = this.holdersFor(vp.mint, vp.openedAt, now);
+    return vp.holders;
   }
 
   /** Close everything still open at its last price (backtests: the tape ended). */

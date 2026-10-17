@@ -21,6 +21,8 @@ interface SystemData {
   redisMemoryMb: number | null;
   /** v11.5: the tape recorder (replay engine recording). */
   tape?: { enabled: boolean; perMin: number; buffered: number; written: number; dropped: number; failed: number; daysOnDisk: number | null; rowsOnDisk: number | null } | null;
+  /** v11.6: the wallet book. */
+  walletBook?: { enabled: boolean; wallets: number; proven: number; dumpers: number; losers: number; bots: number } | null;
   trading?: {
     lastEntryAt: string | null;
     minutesSinceEntry: number;
@@ -112,6 +114,11 @@ export function SystemPanel() {
           {data.tape && (
             <p className={`mt-3 text-xs ${data.tape.enabled ? (data.tape.failed > 0 && data.tape.written === 0 ? 'text-down' : 'text-muted') : 'text-muted'}`}>
               Tape: {data.tape.enabled ? `${data.tape.perMin.toLocaleString()} trades/min recorded, ${data.tape.daysOnDisk ?? 0} days on disk${data.tape.rowsOnDisk ? ` (~${(data.tape.rowsOnDisk / 1e6).toFixed(1)}M rows)` : ''}${data.tape.dropped ? `, ${data.tape.dropped.toLocaleString()} dropped` : ''}${data.tape.failed ? `, ${data.tape.failed.toLocaleString()} failed writes` : ''}` : 'off'}
+            </p>
+          )}
+          {data.walletBook && (
+            <p className="mt-1 text-xs text-muted">
+              Wallet book: {data.walletBook.enabled ? `${data.walletBook.wallets.toLocaleString()} wallets, ${data.walletBook.proven} proven, ${data.walletBook.dumpers} known dumpers` : 'off'}
             </p>
           )}
           {data.lastExit && (
