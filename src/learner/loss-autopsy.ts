@@ -280,12 +280,40 @@ export function setAutopsyTunes(t: readonly StrategyTune[]): void {
   tuneCache = new Map(t.map((x) => [x.strategy, x]));
 }
 
+export interface StrategyEdgeStats { strategy?: string; winRate: number; avgWinPct: number; avgLossPct: number; n: number; }
+let edgeStatsCache = new Map<string, StrategyEdgeStats>();
+export function strategyEdgeStatsFor(strategy: string): StrategyEdgeStats | null {
+  return edgeStatsCache.get(strategy) ?? null;
+}
+export function setStrategyEdgeStats(trades: readonly ClosedTrade[]): void {
+  edgeStatsCache = new Map();
+  for (const s of [...new Set(trades.map((t) => t.strategy))]) {
+    const ts = trades.filter((t) => t.strategy === s);
+    if (!ts.length) continue;
+    const wins = ts.filter((t) => t.pnlPct > 0);
+    const losses = ts.filter((t) => t.pnlPct <= 0);
+    edgeStatsCache.set(s, {
+      strategy: s,
+      winRate: wins.length / ts.length,
+      avgWinPct: wins.length ? wins.reduce((a, t) => a + t.pnlPct, 0) / wins.length : 0,
+      avgLossPct: losses.length ? Math.abs(losses.reduce((a, t) => a + t.pnlPct, 0) / losses.length) : 0,
+      n: ts.length,
+    });
+  }
+}
+
+function restoreEdgeStats(stats?: StrategyEdgeStats[]): void {
+  edgeStatsCache = new Map();
+  if (stats) for (const s of stats) if (s.strategy) edgeStatsCache.set(s.strategy, s);
+}
+
 export interface Autopsy {
   at: string;
   /** How each strategy now ENTERS (entry-style.ts) — wait for pullbacks, no chasing. */
   entryStyles?: EntryStyle[];
   mode?: 'small' | 'block';
   tuning: StrategyTune[];
+  edgeStats?: StrategyEdgeStats[];
   trades: number;
   overall: Record_ & { avgWinPct: number; avgLossPct: number; neededWinRatePct: number | null; profitFactor: number | null };
   byStrategy: Array<Record_ & { strategy: string }>;
@@ -386,10 +414,13 @@ export function runAutopsy(realTrades: readonly ClosedTrade[], c: AutopsyConfig,
   for (const k of cards) if (k.verdict !== 'unproven') findings.push(`${k.verdict === 'losing' ? 'LOSING' : 'PROFITABLE'} strategy ${k.strategy}: ${k.why}.`);
   findings.push(...scoreInversions(trades, c.minTrades));
 
+  setStrategyEdgeStats(pool);
+  const edgeStats = [...edgeStatsCache.values()].map((v, i) => ({ ...v, strategy: [...edgeStatsCache.keys()][i]! }));
   return {
     at: new Date(now).toISOString(),
     mode: c.blockMode ?? 'small',
     tuning,
+    edgeStats,
     entryStyles: styles,
     trades: trades.length,
     overall: { ...all, avgWinPct: r1(avgWin), avgLossPct: r1(avgLoss), neededWinRatePct: needed, profitFactor: grossL > 0 ? Math.round((grossW / grossL) * 100) / 100 : null },
@@ -466,6 +497,7 @@ export class LossAutopsy {
         this.last = JSON.parse(raw) as Autopsy;
         setAutopsyTunes(this.last.tuning ?? []);
         setEntryStyles(this.last.entryStyles ?? []);
+        restoreEdgeStats(this.last.edgeStats);
       }
     } catch {
       /* fresh start */
@@ -529,6 +561,7 @@ export class LossAutopsy {
       this.last = a;
       setAutopsyTunes(a.tuning);
       setEntryStyles(a.entryStyles ?? []);
+      restoreEdgeStats(a.edgeStats);
       await this.redis.set(LAST, JSON.stringify(a), 'EX', 7 * 86_400);
       if (a.blocked.length) log.info({ blocked: a.blocked.map((b) => `${b.strategy} ${b.band}`) }, `🔬 autopsy: ${a.trades} trades, ${a.blocked.length} losing bands blocked`);
       return a;

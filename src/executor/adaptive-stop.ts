@@ -20,6 +20,10 @@ export interface AdaptiveStopConfig {
   highRiskFactor: number;
   /** RugCheck score above which to tighten. */
   highRiskScoreThreshold: number;
+  /** MC-based multiplier bands: wider stops for tiny volatile coins, tighter for liquid ones. */
+  mcBands: readonly { maxMcUsd: number; factor: number }[];
+  /** Age-based multiplier: wider stops for very fresh coins. */
+  ageBands: readonly { maxAgeMin: number; factor: number }[];
 }
 
 export const DEFAULT_ADAPTIVE_STOP: AdaptiveStopConfig = {
@@ -29,6 +33,14 @@ export const DEFAULT_ADAPTIVE_STOP: AdaptiveStopConfig = {
   boostFactor: 1.15,
   highRiskFactor: 0.8,
   highRiskScoreThreshold: 300,
+  mcBands: [
+    { maxMcUsd: 10_000, factor: 1.3 },
+    { maxMcUsd: 50_000, factor: 1.1 },
+    { maxMcUsd: 200_000, factor: 1.0 },
+  ],
+  ageBands: [
+    { maxAgeMin: 2, factor: 1.2 },
+  ],
 };
 
 export interface EntrySignals {
@@ -68,4 +80,27 @@ export function adaptiveStopMultiplier(
   }
 
   return Math.max(0.5, Math.min(1.3, factor));
+}
+
+/** MC/age-aware stop multiplier — wider for tiny/fresh coins, tighter for big/old ones. */
+export function mcAgeStopMultiplier(
+  mcUsd: number | null,
+  ageMin: number | null,
+  cfg: Pick<AdaptiveStopConfig, 'mcBands' | 'ageBands'>,
+): number {
+  let factor = 1;
+
+  if (mcUsd != null && cfg.mcBands?.length) {
+    const band = cfg.mcBands.find((b) => mcUsd <= b.maxMcUsd);
+    if (band) factor *= band.factor;
+    // Above all bands = large liquid coin → tighter
+    if (!band) factor *= 0.85;
+  }
+
+  if (ageMin != null && cfg.ageBands?.length) {
+    const band = cfg.ageBands.find((b) => ageMin <= b.maxAgeMin);
+    if (band) factor *= band.factor;
+  }
+
+  return Math.max(0.5, Math.min(1.8, factor));
 }

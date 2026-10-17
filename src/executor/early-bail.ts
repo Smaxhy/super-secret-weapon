@@ -40,7 +40,9 @@ export function earlyBailReason(input: EarlyBailInput, cfg: EarlyBailConfig): st
   if (input.heldSec > cfg.maxSec) return null; // normal time stops handle it
   if (input.peakMultiple >= cfg.minPeakMultiple) return null; // showed some life
   if (input.multiple >= 1) return null; // still above entry
-  if (input.buyRatio !== null && input.buyRatio > cfg.maxBuyRatio) return null; // buyers still trying
+  // No flow data (replays, virtual trades) = no evidence sellers are in control — a flat trade is not a dead one.
+  if (input.buyRatio === null) return null;
+  if (input.buyRatio > cfg.maxBuyRatio) return null; // buyers still trying
 
   return `dead on arrival: ${input.heldSec}s in, peak ${((input.peakMultiple - 1) * 100).toFixed(1)}%, sellers in control (ratio ${input.buyRatio?.toFixed(2) ?? '?'}) — cutting losses at ${((input.multiple - 1) * 100).toFixed(1)}%`;
 }

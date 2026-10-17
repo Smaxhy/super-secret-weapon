@@ -53,6 +53,7 @@ import { decodeBondingCurveAccount } from '../lib/pumpfun';
 import { getConnection } from '../lib/solana';
 import { copySoldKey, mirrorSoldKey } from '../scanner/whale-tracker';
 import { scaleInVerdict } from './scale-in';
+import { earlyBailReason, DEFAULT_EARLY_BAIL, type EarlyBailConfig } from './early-bail';
 import { flowPressure } from '../evaluator/owner-filters';
 import { insiderDumpSignal } from '../evaluator/insider-cluster';
 import { coachFor } from '../learner/trade-coach';
@@ -200,6 +201,10 @@ export interface ExitInput {
   recentTradeCount?: number;
   /** Number of unique buyers in the last 60 seconds (v11). */
   recentBuyerCount?: number;
+  /** Buy SOL volume in the last 60 seconds (v11.2 no-life exit). */
+  recentBuySol?: number;
+  /** Sell SOL volume in the last 60 seconds (v11.2 no-life exit). */
+  recentSellSol?: number;
 }
 
 /** Marker stored in `tpTiersHit` once initials are out (real tiers are all > 1). */
@@ -678,6 +683,21 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   if (!holding && !potential && multiple <= rules.riskExit.cutLossBelowMultiple && i.risk >= rules.riskExit.threshold) {
     return all('STOP_LOSS', `early exit at ${((multiple - 1) * 100).toFixed(0)}%: ${i.riskWhy}`);
   }
+  // Early bail (v11.3): dead-on-arrival trades — never went above 1.02x, sellers winning, within 45s.
+  // Fires even during the min-hold window (these are clearly bad entries, not bounce candidates).
+  const ebCfg: EarlyBailConfig = { ...DEFAULT_EARLY_BAIL, ...(rules as Record<string, unknown>).earlyBail as Partial<EarlyBailConfig> | undefined };
+  if (ebCfg.enabled) {
+    const totalRecent = (i.recentBuySol ?? 0) + (i.recentSellSol ?? 0);
+    const buyRatio = totalRecent > 0 ? (i.recentBuySol ?? 0) / (i.recentSellSol || 0.001) : null;
+    const eb = earlyBailReason({
+      heldSec: (i.nowMs - i.openedAtMs) / 1000,
+      peakMultiple: state.peakPriceSol / i.entryPriceSol,
+      multiple,
+      buyRatio,
+    }, ebCfg);
+    if (eb) return all('STALE', eb);
+  }
+
   // Time stops — a fresh-coin trade that works, works fast (only before any profit was taken):
   //  no follow-through: held N minutes, never got going and not above entry → out at a small loss;
   //  stall: no new high for N minutes while still below the first take-profit → out.
@@ -706,6 +726,20 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   const deadCoinMinHeldMs = 120_000;
   if (heldMinNow >= deadCoinMinHeldMs / 60_000 && (i.recentTradeCount ?? Infinity) <= 2 && (i.recentBuyerCount ?? Infinity) === 0 && (state.peakPriceSol / i.entryPriceSol) < 1.02 && multiple < 1) {
     return all('STALE', `dead coin: ${i.recentTradeCount ?? 0} trades, 0 buyers in 60s, never above 1.02x — cutting losses`);
+  }
+
+  // No-life exit (v11.2): held ≥3 minutes, never pumped above 1.03x, currently losing,
+  // and sellers are winning (buy share < 45% in the last 60s). The coin has activity but
+  // no upward momentum — a slow bleeder. Fires even during the 5-min hold.
+  const noLifeMinHeldMs = 180_000;
+  if (heldMinNow >= noLifeMinHeldMs / 60_000 && (state.peakPriceSol / i.entryPriceSol) < 1.03 && multiple < 0.97
+    && (i.recentBuyerCount ?? Infinity) > 0 && (i.recentTradeCount ?? 0) >= 3) {
+    const recentBuySol = i.recentBuySol ?? 0;
+    const recentSellSol = i.recentSellSol ?? 0;
+    const totalSol = recentBuySol + recentSellSol;
+    if (totalSol > 0 && recentBuySol / totalSol < 0.45) {
+      return all('STALE', `no life: ${heldMinNow.toFixed(1)} min, best ${(state.peakPriceSol / i.entryPriceSol).toFixed(2)}x, sellers ${((recentSellSol / totalSol) * 100).toFixed(0)}% — cutting losses at ${multiple.toFixed(2)}x`);
+    }
   }
 
   const sells: ExitDecision['sells'] = [];
@@ -1307,6 +1341,8 @@ export class SellManager {
         adaptiveStopFactor: Number((p.entryContext as { adaptiveStopFactor?: number } | null)?.adaptiveStopFactor ?? 1),
         recentTradeCount: crowdTrades.filter((t) => t.t >= now - 60_000).length,
         recentBuyerCount: new Set(crowdTrades.filter((t) => t.t >= now - 60_000 && t.buy).map((t) => t.w)).size,
+        recentBuySol: crowdTrades.filter((t) => t.t >= now - 60_000 && t.buy).reduce((s, t) => s + t.sol, 0),
+        recentSellSol: crowdTrades.filter((t) => t.t >= now - 60_000 && !t.buy).reduce((s, t) => s + t.sol, 0),
       },
       ex,
     );

@@ -21,7 +21,7 @@ import { timeframeFail, timeframes } from './timeframes';
 import { paFeatures, priceActionFor } from './price-action';
 import { poolFeeBps } from '../lib/pumpfun';
 import { aiRuleVerdict, flattenFeatures } from '../learner/ai-coach';
-import { autopsyTuneFor } from '../learner/loss-autopsy';
+import { autopsyTuneFor, strategyEdgeStatsFor } from '../learner/loss-autopsy';
 import { timingNow } from '../learner/timing';
 import { entryStyleBlock, entryStyleFor, pullbackZone } from '../learner/entry-style';
 import { dipOnlyApplies, dipOnlyHigh, hotVolume } from '../executor/dip-watcher';
@@ -74,7 +74,8 @@ import type { StrategyName } from '../config/types';
 import { momentumGateFails, type MomentumGateConfig } from './momentum-gate';
 import { entryQuality, DEFAULT_ENTRY_QUALITY } from './entry-quality';
 import { fetchRugCheck, rugCheckVerdict, type RugCheckVerdict } from '../integrations/rugcheck';
-import { adaptiveStopMultiplier, DEFAULT_ADAPTIVE_STOP } from '../executor/adaptive-stop';
+import { adaptiveStopMultiplier, mcAgeStopMultiplier, DEFAULT_ADAPTIVE_STOP } from '../executor/adaptive-stop';
+import { edgeGateVerdict, DEFAULT_EDGE_GATE } from './edge-gate';
 
 const log = moduleLogger('evaluator');
 
@@ -561,6 +562,12 @@ export class Evaluator {
       kolRelaxNote = `${ruleFails.join(', ')} — allowed: ${kolAct?.buyers.length ?? 0} KOLs still holding`;
       ruleFails = [];
     }
+    const egCfg = cfg.entry.edgeGate ?? DEFAULT_EDGE_GATE;
+    if (egCfg.enabled) {
+      const eg = edgeGateVerdict(strategyEdgeStatsFor(STRATEGY.name), result.score - threshold, egCfg);
+      if (!eg.pass) dexFails.push(`edge gate: ${eg.reason}`);
+    }
+
     let { decision, reasons } = decide(result.score, threshold, ruleFails, token.safetyHardFail);
 
     // "Still worth a shot": only soft concentration limits broken, within looser caps,
@@ -778,7 +785,8 @@ export class Evaluator {
       });
       const copyMult = kolFollow ? kolSize : STRATEGY.name === 'SMART_MONEY_COPY' ? (cfg.copy.sizeMultiplier ?? 0.5) : 1;
       const asCfg = cfg.adaptiveStop ?? DEFAULT_ADAPTIVE_STOP;
-      const asf = adaptiveStopMultiplier({ entryQualityVerdict: eq.verdict, rugCheckScore: rc.score ?? null, score: result.score, threshold }, asCfg);
+      const asf = adaptiveStopMultiplier({ entryQualityVerdict: eq.verdict, rugCheckScore: rc.score ?? null, score: result.score, threshold }, asCfg)
+        * mcAgeStopMultiplier(market.raw.marketCapUsd ?? null, market.raw.ageSec != null ? market.raw.ageSec / 60 : null, asCfg);
       const res = await this.trader.tryEnter({
         mint,
         symbol: token.symbol,

@@ -265,6 +265,14 @@ export const EDITABLE: EditableSetting[] = [
   S('Trade size & risk', 'trading.maxConcurrentPositions', 'Max trades open at once', 1, 100, undefined, 1),
   S('Trade size & risk', 'exit.stopLoss.minPct', 'Stop loss from', 5, 30, '%', 1),
   S('Trade size & risk', 'exit.stopLoss.maxPct', 'Stop loss up to', 5, 40, '%', 1),
+  S('Edge gate', 'entry.edgeGate.enabled', 'Refuse trades whose expected edge after costs is negative: on (1) / off (0)', 0, 1, undefined, 1),
+  S('Edge gate', 'entry.edgeGate.minEdgePct', 'Minimum expected edge after costs', 0, 20, '%', 0.5),
+  S('Edge gate', 'entry.edgeGate.costPct', 'Assumed round-trip cost (fees + slippage both ways)', 2, 15, '%', 0.5),
+  S('Edge gate', 'entry.edgeGate.minTrades', 'Trades a strategy needs before the gate judges it', 10, 200, undefined, 5),
+  S('Early bail', 'exit.earlyBail.enabled', 'Cut dead-on-arrival trades (no new high, sellers in control) in the first seconds: on (1) / off (0)', 0, 1, undefined, 1),
+  S('Early bail', 'exit.earlyBail.maxSec', 'Only within this many seconds after the buy', 15, 180, 's', 5),
+  S('Early bail', 'exit.earlyBail.minPeakMultiple', 'Trade counts as dead only if it never reached this multiple', 1.0, 1.1, 'x', 0.005),
+  S('Early bail', 'exit.earlyBail.maxBuyRatio', 'Buy/sell SOL ratio must be at or under this (sellers winning)', 0.3, 1.5, 'x', 0.05),
 ];
 
 /** Pure: read a dotted path from an object. */

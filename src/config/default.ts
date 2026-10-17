@@ -223,6 +223,8 @@ export const DEFAULT_CONFIG = {
      * Over the max → no buy. Below it, points come off the score.
      */
     manipulation: { maxFakeVolumePct: 50, maxBundledBuyPct: 30, maxTop3VolumePct: 65, chasePct: 40 },
+    /** v11: Edge gate — reject trades where the strategy's expected value (after costs) is below minEdgePct. */
+    edgeGate: { enabled: true as boolean, minEdgePct: 2, costPct: 7, minTrades: 30 },
   },
 
   /**
@@ -863,14 +865,14 @@ export const DEFAULT_CONFIG = {
   rugCheck: { enabled: true as boolean, maxScore: 500, blockDanger: true as boolean, blockMintAuthority: true as boolean, blockFreezeAuthority: true as boolean, maxCallsPerDay: 500 },
 
   /** v11: momentum gate — blocks buying at the peak (69% of losers never went above 1.05x). Uses priceShape data. */
-  momentumGate: { enabled: true as boolean, maxRun1mPct: 25, maxRun3mPct: 40, minOffHighPct: 3, minBuyShare2m: 0.45, maxLastCandlePct: 20, skipForExplore: true as boolean, skipForDipEntry: true as boolean },
+  momentumGate: { enabled: true as boolean, maxRun1mPct: 18, maxRun3mPct: 30, minOffHighPct: 6, minBuyShare2m: 0.52, maxLastCandlePct: 15, skipForExplore: true as boolean, skipForDipEntry: true as boolean },
 
   /** v11: Obsidian vault sync — writes trades, strategies, performance as Markdown files (set OBSIDIAN_VAULT_PATH on the VPS). */
   obsidian: { enabled: false as boolean, vaultPath: '' },
   /** v11: Real-time trade-level entry quality — blocks dumps, seller floods, retraced spikes; boosts clean bounces. */
   entryQuality: { enabled: true as boolean, maxDrop15sPct: 5, maxSellBuyRatio30s: 2.0, spikeRetracePct: 20, bounceBoostPct: 4, minBuyers30s: 3, minVolRatio: 0.3 },
   /** v11: Adaptive stop loss — tightens stops on weak entries (caution quality, high RugCheck, low score margin), widens on strong ones. */
-  adaptiveStop: { enabled: true as boolean, cautionFactor: 0.75, weakMomentumFactor: 0.85, boostFactor: 1.15, highRiskFactor: 0.8, highRiskScoreThreshold: 300 },
+  adaptiveStop: { enabled: true as boolean, cautionFactor: 0.75, weakMomentumFactor: 0.85, boostFactor: 1.15, highRiskFactor: 0.8, highRiskScoreThreshold: 300, mcBands: [{ maxMcUsd: 10_000, factor: 1.3 }, { maxMcUsd: 50_000, factor: 1.1 }, { maxMcUsd: 200_000, factor: 1.0 }], ageBands: [{ maxAgeMin: 2, factor: 1.2 }] },
 
   /**
    * Chart strategies (src/evaluator/ta/strategies.ts) + their live lab (src/learner/ta-lab.ts).
@@ -1173,6 +1175,8 @@ export const DEFAULT_CONFIG = {
      * left, once per position. Off by default; on for SWING (exit.byStrategy).
      */
     spikeSell: { enabled: true as boolean, risePct: 12, windowSec: 90, sellPct: 50, minMultiple: 1.04 },
+    /** v11: Early bail — exit dead-on-arrival trades before the 5-min hold expires. */
+    earlyBail: { enabled: true as boolean, maxSec: 45, minPeakMultiple: 1.02, maxBuyRatio: 1.0 },
     /** After reaching `afterMultiple`, sell everything if it falls back to `floorMultiple` (before initials are out). */
     protectProfit: { afterMultiple: 1.2, floorMultiple: 1.03 },
     /**
