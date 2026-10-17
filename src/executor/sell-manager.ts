@@ -66,6 +66,8 @@ import { analyzeChart } from '../evaluator/chart-reader';
 import type { Executor } from './types';
 import { holderDump, sellCascade, topHolders, type Holder, type RuggerMemory } from './rug-watch';
 import { holderClock, watchedHolders, type WatchedHolder } from './holder-clock';
+import { holderGrowth, holderGrowthVerdict, type HolderGrowthConfig, type HolderGrowthState } from './holder-growth';
+import type { DeployerBook } from '../learner/deployer-book';
 import { walletBookConfig, type WalletBook } from '../learner/wallet-book';
 import { organicFlow } from '../scanner/migrated-scanner';
 
@@ -211,6 +213,8 @@ export interface ExitInput {
   recentSellSol?: number;
   /** v11.6 holder clock: the big holders we saw buy, their usual hold time and whether they are known dumpers. */
   holders?: WatchedHolder[] | null;
+  /** v11.10 holder growth: new unique buyers per minute vs the settled peak since entry (executor/holder-growth.ts). */
+  holderGrowth?: HolderGrowthState | null;
 }
 
 /** Marker stored in `tpTiersHit` once initials are out (real tiers are all > 1). */
@@ -226,6 +230,8 @@ export const SPIKE_MARKER = -5;
 export const FADE_MARKER = -6;
 /** Marker: sold into the holder clock (the big holders' usual hold time ran out), once per position. */
 export const HOLDER_CLOCK_MARKER = -7;
+/** Marker: sold into the holder-growth collapse (new buyers stopped arriving), once per position. */
+export const HOLDER_GROWTH_MARKER = -8;
 
 /** The slice of the chart read (price-action.ts) the exit rules use. */
 export type ExitChart = Pick<PriceAction, 'strength' | 'buyVolShare60' | 'netFlowSol60' | 'change60Pct' | 'lastSwingLow' | 'largestSellSol60' | 'trades60'>;
@@ -598,7 +604,7 @@ export function holdLongerNow(i: {
 }): boolean {
   const hl = (i.rules as Partial<ExitRules>).holdLonger;
   if (!hl?.enabled || i.marketCapUsd === null || i.marketCapUsd < hl.minMarketCapUsd || i.heldMs >= hl.maxHours * 3600_000) return false;
-  const banked = i.tpTiersHit.some((t) => t === INITIALS_MARKER || t === SPIKE_MARKER || t === FADE_MARKER || t === HOLDER_CLOCK_MARKER || t > 1);
+  const banked = i.tpTiersHit.some((t) => t === INITIALS_MARKER || t === SPIKE_MARKER || t === FADE_MARKER || t === HOLDER_CLOCK_MARKER || t === HOLDER_GROWTH_MARKER || t > 1);
   const up = !!i.chart && i.chart.verdict !== 'avoid' && (i.chart.trend === 'up' || (i.chart.trend === 'range' && i.chart.higherLows));
   return banked && up && i.risk < i.rules.riskExit.threshold;
 }
@@ -834,6 +840,16 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
     remaining -= pct;
     proceeds += valueOf(pct) - i.txFeeSol;
   }
+  // v11.10 holder growth: new buyers stopped arriving and sellers took over → bank part of it (once), tighten the trail.
+  const hg = (rules as Partial<ExitRules>).holderGrowth as HolderGrowthConfig | undefined;
+  const hgv = hg?.enabled && i.holderGrowth ? holderGrowthVerdict(i.holderGrowth, i.nowMs, multiple, state.tpTiersHit.includes(HOLDER_GROWTH_MARKER), hg) : null;
+  if (hg && hgv?.action === 'sell' && remaining > 0) {
+    const pct = Math.round(remaining * (hg.sellPct / 100) * 100) / 100;
+    sells.push({ pct, reason: 'TAKE_PROFIT', detail: hgv.detail });
+    state.tpTiersHit.push(HOLDER_GROWTH_MARKER);
+    remaining -= pct;
+    proceeds += valueOf(pct) - i.txFeeSol;
+  }
 
   // Sell into strength, not after the dump: a blow-off top (vertical run on a volume climax that is
   // being rejected) or a new high on weaker momentum → take a chunk off the table (once each).
@@ -884,7 +900,7 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   // under the stop for N checks and N seconds — or straight away if it gapped far below.
   const lvl = remaining > 0
     ? trailingStopLevel(
-        { entryPriceSol: i.entryPriceSol, peakPriceSol: state.peakPriceSol, trailingActive: state.trailingActive, initialsOut, volatilityPct: i.volatilityPct, sizeSol: i.sizeSol, costSol: i.costSol, remainingPct: remaining, txFeeSol: i.txFeeSol, trailFactor: (i.trailFactor ?? 1) * strengthTrailFactor(i.chart, rules) * (hc?.enabled && state.tpTiersHit.includes(HOLDER_CLOCK_MARKER) ? hc.tightenTrailFactor : 1) },
+        { entryPriceSol: i.entryPriceSol, peakPriceSol: state.peakPriceSol, trailingActive: state.trailingActive, initialsOut, volatilityPct: i.volatilityPct, sizeSol: i.sizeSol, costSol: i.costSol, remainingPct: remaining, txFeeSol: i.txFeeSol, trailFactor: (i.trailFactor ?? 1) * strengthTrailFactor(i.chart, rules) * (hc?.enabled && state.tpTiersHit.includes(HOLDER_CLOCK_MARKER) ? hc.tightenTrailFactor : 1) * (hg?.enabled && state.tpTiersHit.includes(HOLDER_GROWTH_MARKER) ? hg.tightenTrailFactor : 1) },
         rules,
       )
     : null;
@@ -1022,7 +1038,10 @@ export class SellManager {
 
   /** v11.6: the wallet book (set in index.ts) — the holder clock reads hold times / dumpers from it. */
   walletBook: WalletBook | null = null;
+  /** v11.10: the deployer book (set in index.ts) — a rug on one of its coins marks the creator. */
+  deployers: DeployerBook | null = null;
   private readonly holdersCache = new Map<string, { at: number; holders: WatchedHolder[] | null }>();
+  private readonly growthCache = new Map<string, { at: number; state: HolderGrowthState | null }>();
 
   constructor(
     private readonly executor: Executor,
@@ -1040,6 +1059,18 @@ export class SellManager {
     this.holdersCache.set(p.id, { at: now, holders });
     if (this.holdersCache.size > 500) for (const [k, v] of this.holdersCache) if (now - v.at > 60_000) this.holdersCache.delete(k);
     return holders;
+  }
+
+  /** v11.10 holder growth: the arrival rate of new buyers for a position (≤ once per 2 s; the state carries "below since"). */
+  private growthFor(p: Position, trades: readonly CrowdTrade[], now: number): HolderGrowthState | null {
+    const hg = getConfig().exit.holderGrowth;
+    if (!hg?.enabled || !trades.length) return null;
+    const c = this.growthCache.get(p.id);
+    if (c && now - c.at < 2_000) return c.state;
+    const state = holderGrowth(trades, p.openedAt.getTime(), now, c?.state ?? null, hg);
+    this.growthCache.set(p.id, { at: now, state });
+    if (this.growthCache.size > 500) for (const [k, v] of this.growthCache) if (now - v.at > 60_000) this.growthCache.delete(k);
+    return state;
   }
 
   /**
@@ -1403,6 +1434,7 @@ export class SellManager {
         recentBuySol: crowdTrades.filter((t) => t.t >= now - 60_000 && t.buy).reduce((s, t) => s + t.sol, 0),
         recentSellSol: crowdTrades.filter((t) => t.t >= now - 60_000 && !t.buy).reduce((s, t) => s + t.sol, 0),
         holders: this.holdersFor(p, crowdTrades, now),
+        holderGrowth: this.growthFor(p, crowdTrades, now),
       },
       ex,
     );
@@ -1412,6 +1444,7 @@ export class SellManager {
       const g = cfg.antiRug?.rugGuard ?? DEFAULT_CONFIG.antiRug.rugGuard;
       const who = [...guard.dumpers, ...(view.adopted ? [] : [view.creator])];
       void this.ruggers.record(who, g.ruggerMemoryDays, now).catch(() => undefined);
+      if (!view.adopted) this.deployers?.onRug(view.creator, now);
     }
     const s = decision.state;
     this.trail.set(p.id, { breachSinceMs: s.breachSinceMs, breachTicks: s.breachTicks, volatilityPct, peakAtMs: s.peakAtMs });

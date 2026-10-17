@@ -11,12 +11,14 @@
  */
 import { createHash } from 'crypto';
 import type { WalletRec, WalletClass } from '../learner/wallet-book';
+import { launchTiming, type DeployerClass, type DeployerRec } from '../learner/deployer-book';
 
 export const DIRS = {
   inbox: '00 Inbox',
   trades: '10 Trades',
   coins: '20 Coins',
   wallets: '30 Wallets',
+  deployers: '35 Deployers',
   strategies: '40 Strategies',
   daily: '50 Daily',
   brain: '90 Brain',
@@ -40,6 +42,7 @@ export const link = (p: string, label?: string): string => `[[${p}${label ? `|${
 export const coinLink = (symbol: string | null | undefined, mint: string): string => link(`${DIRS.coins}/${coinFile(symbol, mint)}`, symbol || mintShort(mint));
 export const walletLink = (w: string, cls?: string): string => link(`${DIRS.wallets}/${walletFile(w)}`, `${walletShort(w)}…${cls ? ` (${cls})` : ''}`);
 export const strategyLink = (s: string): string => link(`${DIRS.strategies}/${sanitize(s)}`, s);
+export const deployerLink = (c: string, cls?: string | null): string => link(`${DIRS.deployers}/${walletFile(c)}`, `${walletShort(c)}…${cls ? ` (${cls})` : ''}`);
 export const dayLink = (day: string): string => link(`${DIRS.daily}/${day}`, day);
 export const diaryLink = (day: string): string => link(`${DIRS.diary}/${day}`, `diary ${day}`);
 
@@ -82,11 +85,15 @@ export interface CoinState {
   trades: string[];
   days: string[];
   updatedMs: number;
+  /** v11.10 deployer history */
+  creator?: string | null;
+  deployerClass?: string | null;
+  deployerNote?: string | null;
 }
 
 export function coinNote(c: CoinState): Note {
   const sym = c.symbol || mintShort(c.mint);
-  const tags = ['coin', ...c.strategies.map((s) => s.toLowerCase()), ...(c.dumpCrew ? ['dumpcrew'] : []), ...(c.provenCrowd ? ['proven-crowd'] : []), c.verdict];
+  const tags = ['coin', ...c.strategies.map((s) => s.toLowerCase()), ...(c.dumpCrew ? ['dumpcrew'] : []), ...(c.provenCrowd ? ['proven-crowd'] : []), ...(c.deployerClass ? [`dev-${c.deployerClass}`] : []), c.verdict];
   const wallets = c.wallets.slice(0, 15);
   const body = [
     `# ${sym}${c.name && c.name !== sym ? ` — ${c.name}` : ''}`,
@@ -99,6 +106,7 @@ export function coinNote(c: CoinState): Note {
     '',
     `## Links`,
     `- Strategy: ${c.strategies.map(strategyLink).join(', ') || '—'}`,
+    ...(c.creator && c.deployerClass && c.deployerClass !== 'new' ? [`- Deployer: ${deployerLink(c.creator, c.deployerClass)}${c.deployerNote ? ` — ${c.deployerNote}` : ''}`] : []),
     `- Days: ${c.days.map(dayLink).join(', ') || '—'}`,
     ...(c.trades.length ? [`- Trades:`, ...c.trades.map((t) => `  - ${link(t)}`)] : [`- Trades: none`]),
     ...(wallets.length ? [`- Notable wallets:`, ...wallets.map((w) => `  - ${walletLink(w.wallet, w.cls)}`)] : [`- Notable wallets: none seen`]),
@@ -110,7 +118,7 @@ export function coinNote(c: CoinState): Note {
     path: `${DIRS.coins}/${coinFile(c.symbol, c.mint)}.md`,
     content: fm({
       type: 'coin', mint: c.mint, symbol: sym, name: c.name, strategy_seen: c.strategies, first_seen: new Date(c.firstSeenMs).toISOString(),
-      mc_usd: c.mcUsd, migrated: c.migrated, verdict: c.verdict, score: c.score, dump_crew: c.dumpCrew, proven_crowd: c.provenCrowd,
+      mc_usd: c.mcUsd, migrated: c.migrated, verdict: c.verdict, score: c.score, dump_crew: c.dumpCrew, proven_crowd: c.provenCrowd, deployer_class: c.deployerClass ?? null,
       wallets: wallets.length, trades: c.trades.length, updated: new Date(c.updatedMs).toISOString(), tags,
     }) + body,
   };
@@ -168,6 +176,68 @@ export function walletNote(w: WalletState): Note {
       last_seen: new Date(w.lastSeenMs).toISOString(), tags: ['wallet', w.cls],
     }) + body,
   };
+}
+
+// ───────────────────────────── deployers (v11.10) ─────────────────────────────
+export interface DeployerState {
+  creator: string;
+  cls: DeployerClass;
+  rec: DeployerRec | null;
+  /** coin note paths (no .md), newest last, ≤ 30 */
+  coins: string[];
+  lastSeenMs: number;
+  writtenMs: number;
+}
+
+export function deployerNote(d: DeployerState, now = Date.now()): Note {
+  const r = d.rec;
+  const launches = Math.round(r?.l ?? 0);
+  const graduated = Math.round(r?.g ?? 0);
+  const df = r && r.l > 0 ? Math.round((r.df / r.l) * 100) : 0;
+  const timing = launchTiming(r, null, now);
+  const peak = r && r.mcs.length ? Math.max(...r.mcs) : null;
+  const words = [
+    d.cls === 'proven' ? 'A creator with a real record: at least one of its coins graduated and it has not rugged. Its coins get points.' : '',
+    d.cls === 'serial' ? 'A serial launcher: launches coin after coin, none graduate, most die within half an hour. Its coins are refused.' : '',
+    d.cls === 'rugger' ? 'A creator whose coin rugged the bot (or is in the rugger memory). Its coins are refused.' : '',
+    d.cls === 'mixed' ? 'A mixed record — neither proven nor serial yet.' : '',
+    d.cls === 'new' ? 'Too few launches to judge.' : '',
+  ].filter(Boolean).join(' ');
+  const body = [
+    `# ${walletShort(d.creator)}… (${d.cls})`,
+    '',
+    words,
+    '',
+    `| Record | |`,
+    `|---|---|`,
+    `| Launches | ${launches} |`,
+    `| Graduated | ${graduated} |`,
+    `| Died fast | ${df}% |`,
+    `| Rugs | ${Math.round(r?.rugs ?? 0)} |`,
+    `| Other launches in the last 24 h | ${timing.launchesToday} |`,
+    `| Days since the previous launch | ${timing.daysSinceLastLaunch === null ? '?' : timing.daysSinceLastLaunch.toFixed(1)} |`,
+    `| Best peak MC | ${peak === null ? '?' : `$${fmtUsd(peak)}`} |`,
+    `| Last launch | ${r ? `${dayOf(r.last)} ${timeOf(r.last)}` : '?'} |`,
+    '',
+    `## Coins it launched (that the bot looked at)`,
+    ...(d.coins.length ? d.coins.slice(-30).map((c) => `- ${link(c)}`) : ['- none recorded yet']),
+    '',
+    `Address: \`${d.creator}\``,
+    '',
+  ].join('\n');
+  return {
+    path: `${DIRS.deployers}/${walletFile(d.creator)}.md`,
+    content: fm({
+      type: 'deployer', address: d.creator, class: d.cls, launches, graduated, died_fast_pct: df, rugs: Math.round(r?.rugs ?? 0),
+      launches_today: timing.launchesToday, days_since_last_launch: timing.daysSinceLastLaunch === null ? null : Math.round(timing.daysSinceLastLaunch * 10) / 10,
+      peak_mc_usd: peak, coins_seen: d.coins.length, last_seen: new Date(d.lastSeenMs).toISOString(), tags: ['deployer', d.cls],
+    }) + body,
+  };
+}
+
+export function deployerEvictionsForNotes(states: ReadonlyArray<DeployerState>, max: number): string[] {
+  if (states.length <= max) return [];
+  return [...states].sort((a, b) => a.lastSeenMs - b.lastSeenMs).slice(0, states.length - max).map((s) => s.creator);
 }
 
 // ───────────────────────────── trades ─────────────────────────────
@@ -426,6 +496,7 @@ export function howToNote(): Note {
     `5. **10 Trades** — a log per day plus one note per closed trade (P&L, peak, exit reason, why it bought, who was in the coin).`,
     `6. **20 Coins** — one note per coin the bot took seriously: what it decided and why, linked to its trades and notable wallets.`,
     `7. **30 Wallets** — proven wallets (green), dumpers and deployer-funded snipers (red) with their record and the coins they were in.`,
+    `7b. **35 Deployers** — creators with a record: proven (graduated before, never rugged), serial launchers and ruggers, with every coin of theirs the bot looked at.`,
     `8. **40 Strategies** — one note per strategy with its numbers and the Sniper rules in force.`,
     `9. **50 Daily** — one note per day: P&L, trades, link to the diary.`,
     `10. **90 Brain** — Memory (what the coach knows for sure), Insights, Diary (one entry per review), Tip replies.`,

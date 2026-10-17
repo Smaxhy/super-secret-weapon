@@ -586,6 +586,14 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['obsidian', ['minSkippedScoreMargin'], 10],
     ],
   },
+  {
+    version: 41,
+    note: 'v11.10 deployer history + holder-growth exit (deployers is a new section → defaults; saved exit / sniper rows get the new keys)',
+    set: [
+      ['exit', ['holderGrowth'], { enabled: true, minMultiple: 1.15, collapsePct: 35, holdSec: 45, minSellerSharePct: 45, sellPct: 50, tightenTrailFactor: 0.7, fullTrailFromMultiple: 1.5 }],
+      ['sniper', ['requireDeployerNotSerial'], true],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

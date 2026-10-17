@@ -104,7 +104,7 @@ export interface AiCoachConfig {
 // Features: one flat map of numbers per trade (same shape at entry and in the backtest)
 // ---------------------------------------------------------------------------
 
-const SECTIONS = ['market', 'shape', 'tf', 'pa', 'x', 'crowd', 'manipulation', 'newPair', 'trending', 'kol', 'chart', 'swing', 'pressure', 'mood', 'wallets'] as const;
+const SECTIONS = ['market', 'shape', 'tf', 'pa', 'x', 'crowd', 'manipulation', 'newPair', 'trending', 'kol', 'chart', 'swing', 'pressure', 'mood', 'wallets', 'deployer'] as const;
 
 /** Pure: numeric (and boolean → 0/1) leaves of the evaluation features, namespaced, ≤3 levels deep. */
 export function flattenFeatures(features: unknown, extra: Record<string, number | null | undefined> = {}): Record<string, number> {

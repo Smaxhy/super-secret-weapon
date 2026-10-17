@@ -65,6 +65,23 @@ export async function walletsRoutes(app: FastifyInstance, deps?: ApiDeps): Promi
     return { stats: b.stats(), proven: b.top('proven', 10).map(row), dumpers: b.top('dumper', 10).map(row) };
   });
 
+  /** v11.10 deployer history: counts + the most proven creators and the worst serial launchers / ruggers. */
+  app.get('/api/deployers', async () => {
+    const b = deps?.deployers;
+    if (!b) return null;
+    const row = (x: { creator: string; class: string; rec: { l: number; g: number; df: number; rugs: number; mcs: number[]; last: number } }) => ({
+      creator: `${x.creator.slice(0, 6)}…${x.creator.slice(-4)}`,
+      class: x.class,
+      launches: Math.round(x.rec.l),
+      graduated: Math.round(x.rec.g),
+      diedFastPct: x.rec.l > 0 ? Math.round((x.rec.df / x.rec.l) * 100) : 0,
+      rugs: Math.round(x.rec.rugs),
+      peakMcUsd: x.rec.mcs.length ? Math.max(...x.rec.mcs) : null,
+      lastLaunch: new Date(x.rec.last).toISOString(),
+    });
+    return { stats: b.stats(), proven: b.top('proven', 10).map(row), serial: b.top('serial', 10).map(row), ruggers: b.top('rugger', 10).map(row) };
+  });
+
   /** Wallet analyzer (Solscan): trading patterns + copy simulation. ?pages=1–10 (100 swaps each), ?refresh=1. */
   app.get<{ Params: { address: string }; Querystring: { pages?: string; refresh?: string } }>('/api/wallets/:address/report', async (req, reply) => {
     const { address } = req.params;

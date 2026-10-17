@@ -14,6 +14,7 @@
 import type { TapeStats } from '../learner/tape-recorder';
 import { usageSnapshot, type UsageSnapshot } from './usage-budget';
 import type { WalletBookStats } from '../learner/wallet-book';
+import type { DeployerStats } from '../learner/deployer-book';
 import type { Redis } from 'ioredis';
 import { eventLoopLagMs } from './process-guard';
 import { blockerSnapshot, type BlockerSnapshot } from './entry-blockers';
@@ -93,6 +94,8 @@ export interface HealthSnapshot {
   walletBook?: WalletBookStats | null;
   /** v11.7: requests per provider today vs the owner's budgets. */
   usage?: UsageSnapshot | null;
+  /** v11.10: the deployer book (creators known, proven, serial, ruggers). */
+  deployers?: DeployerStats | null;
 }
 
 let tapeSource: (() => TapeStats) | null = null;
@@ -104,6 +107,11 @@ let walletBookSource: (() => WalletBookStats) | null = null;
 /** index.ts: where the Bot health panel reads the wallet book's counts from. */
 export function setWalletBookStatsSource(fn: (() => WalletBookStats) | null): void {
   walletBookSource = fn;
+}
+let deployerSource: (() => DeployerStats) | null = null;
+/** index.ts: where the Bot health panel reads the deployer book's counts from. */
+export function setDeployerStatsSource(fn: (() => DeployerStats) | null): void {
+  deployerSource = fn;
 }
 
 export async function healthSnapshot(now = Date.now()): Promise<HealthSnapshot> {
@@ -124,6 +132,7 @@ export async function healthSnapshot(now = Date.now()): Promise<HealthSnapshot> 
     tape: tapeSource?.() ?? null,
     walletBook: walletBookSource?.() ?? null,
     usage: usageSnapshot(),
+    deployers: deployerSource?.() ?? null,
   };
   if (!redisRef) return base;
   try {

@@ -51,6 +51,8 @@ import { DexScreener } from './scanner/dexscreener';
 import { MarketLeaders } from './scanner/market-leaders';
 import { WalletPnl } from './learner/wallet-pnl';
 import { WalletBook } from './learner/wallet-book';
+import { DeployerBook, type BackfillRow } from './learner/deployer-book';
+import { getSolUsd } from './lib/sol-price';
 import { DipWatcher } from './executor/dip-watcher';
 import { StrategyLab } from './learner/strategy-lab';
 import { NewPairWatcher } from './scanner/new-pair-watcher';
@@ -70,7 +72,7 @@ import { OutcomeLabeler } from './learner/outcome-labeler';
 import { startRegimeDetector } from './learner/regime-detector';
 import { logger } from './lib/logger';
 import { installProcessGuards } from './lib/process-guard';
-import { recordError, recordExit, recordStart, setTapeStatsSource, setWalletBookStatsSource } from './lib/bot-health';
+import { recordError, recordExit, recordStart, setDeployerStatsSource, setTapeStatsSource, setWalletBookStatsSource } from './lib/bot-health';
 import { prisma } from './lib/prisma';
 import { setLastEntryAt } from './lib/entry-blockers';
 import { closeQueues } from './lib/queues';
@@ -278,6 +280,49 @@ async function main(): Promise<void> {
   evaluator.walletBook = walletBook;
   sellManager.walletBook = walletBook;
   setWalletBookStatsSource(() => walletBook.stats());
+  // v11.10: the deployer book — every creator's record (launches / graduations / died fast / rugs), zero RPC.
+  const deployerBook = new DeployerBook(redis);
+  await deployerBook.load();
+  deployerBook.start();
+  registry.deployers = deployerBook;
+  evaluator.deployers = deployerBook;
+  sellManager.deployers = deployerBook;
+  setDeployerStatsSource(() => deployerBook.stats());
+  // Backfill once per gap (Token rows + rugged positions of the last `backfillDays`), paged + yielding; never blocks startup.
+  void (async () => {
+    try {
+      const dc = getConfig().deployers ?? DEFAULT_CONFIG.deployers;
+      if (!dc.enabled) return;
+      const startedAtMs = Date.now();
+      const since = Math.max(await deployerBook.backfilledUntil(), startedAtMs - dc.backfillDays * 86_400_000);
+      const rugged = new Set((await prisma.position.findMany({ where: { exitReason: 'RUG_DETECTED', openedAt: { gte: new Date(since - 86_400_000) } }, select: { mint: true } })).map((p) => p.mint));
+      let cursor: string | null = null;
+      let rows = 0;
+      for (;;) {
+        const page: Array<{ mint: string; creator: string; createdAt: Date; completedAt: Date | null; status: string; lastHolderCount: number | null; peakMarketCapSol: number | null }> = await prisma.token.findMany({
+          where: { createdAt: { gte: new Date(since), lt: new Date(startedAtMs) } },
+          select: { mint: true, creator: true, createdAt: true, completedAt: true, status: true, lastHolderCount: true, peakMarketCapSol: true },
+          orderBy: { mint: 'asc' },
+          take: 1000,
+          ...(cursor ? { cursor: { mint: cursor }, skip: 1 } : {}),
+        });
+        if (!page.length) break;
+        const solUsd = (await getSolUsd().catch(() => null)) ?? 0;
+        const batch: BackfillRow[] = page.map((t) => ({
+          creator: t.creator, mint: t.mint, createdAtMs: t.createdAt.getTime(), completedAtMs: t.completedAt?.getTime() ?? null,
+          rugged: t.status === 'RUGGED' || rugged.has(t.mint), holders: t.lastHolderCount, peakMcUsd: t.peakMarketCapSol && solUsd ? t.peakMarketCapSol * solUsd : null,
+        }));
+        rows += deployerBook.backfillFrom(batch, startedAtMs);
+        cursor = page[page.length - 1]!.mint;
+        await new Promise((r) => setImmediate(r));
+      }
+      await deployerBook.markBackfilled(startedAtMs);
+      await deployerBook.persist();
+      log.info({ rows, creators: deployerBook.size }, '🏗️ deployer book backfilled');
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'deployer backfill failed');
+    }
+  })();
   // Don't buy the top: stretched charts wait here for a dip + bounce.
   const dips = new DipWatcher(crowd, evaluator);
   evaluator.dips = dips;
@@ -337,6 +382,7 @@ async function main(): Promise<void> {
     markSeen: async (key, member) => (await redis.sadd(key, member)) === 1,
     memory: () => aiCoach.memory(),
     sniperRules: () => sniperRuleLines(getConfig().sniper ?? DEFAULT_CONFIG.sniper, getConfig().trading.highConviction?.sizeSol ?? 1),
+    deployerRec: (c) => deployerBook.get(c),
   });
   void obsidian.start(bus);
   evaluator.obsidian = obsidian;
@@ -400,6 +446,7 @@ async function main(): Promise<void> {
   runningCoins.start();
   const swingTrader = new SwingTrader(redis, liveState, crowd, swingUniverse, trader, outcomes);
   swingTrader.walletBook = walletBook;
+  swingTrader.deployers = deployerBook;
   swingTrader.ta = taLab;
   swingTrader.trending = trending;
   swingTrader.start();
@@ -429,6 +476,8 @@ async function main(): Promise<void> {
       const held = new Set((await prisma.position.findMany({ where: { status: { in: ['OPEN', 'CLOSING'] } }, select: { mint: true } })).map((p) => p.mint));
       const dead = (await liveState.deadMints(30 * 60, 10, 15 * 60)).filter((m) => !held.has(m));
       for (let i = 0; i < dead.length; i++) {
+        const meta = liveState.meta(dead[i]!);
+        if (meta?.creator) deployerBook.onDead(meta.creator, dead[i]!, Math.max(0, Date.now() / 1000 - meta.createdSec), 0);
         await liveState.forget(dead[i]!);
         if (i % 200 === 199) await new Promise((r) => setImmediate(r));
       }
@@ -657,7 +706,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, moonshot, tape: tapeRecorder, walletBook }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, moonshot, tape: tapeRecorder, walletBook, deployers: deployerBook }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -736,6 +785,7 @@ async function main(): Promise<void> {
       leaders.stop();
       walletPnl.stop();
       await walletBook.stop();
+      await deployerBook.stop();
       dips.stop();
       lab.stop();
       shadow.stop();

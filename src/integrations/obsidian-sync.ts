@@ -17,10 +17,11 @@ import { moduleLogger } from '../lib/logger';
 import { bus, type BusEvent } from '../lib/bus';
 import type { WalletRec, WalletClass } from '../learner/wallet-book';
 import {
-  DIRS, coinFile, coinNote, dailyNote, dashboardNote, dayOf, diaryEntryText, diaryHeader, howToNote, indexNote, inboxKey, insightsNote, memoryNote,
+  DIRS, coinFile, coinNote, dailyNote, dashboardNote, dayOf, deployerEvictionsForNotes, deployerNote, diaryEntryText, diaryHeader, howToNote, indexNote, inboxKey, insightsNote, memoryNote,
   parseInbox, strategyNote, tipRepliesNote, tradeLogHeader, tradeLogLine, tradeNote, walletEvictions, walletNote, withinDailyCap,
-  type CoinState, type DiaryEntry, type NotableWallet, type Note, type TipView, type WalletState,
+  type CoinState, type DeployerState, type DiaryEntry, type NotableWallet, type Note, type TipView, type WalletState,
 } from './obsidian-notes';
+import type { DeployerClass, DeployerRec } from '../learner/deployer-book';
 
 const log = moduleLogger('obsidian');
 
@@ -72,6 +73,8 @@ export interface ObsidianSources {
   markSeen?: (key: string, member: string) => Promise<boolean>;
   memory?: () => Promise<string[]>;
   sniperRules?: () => string[];
+  /** v11.10: the deployer book's record for a creator (refreshed when its note is written) */
+  deployerRec?: (creator: string) => DeployerRec | undefined;
 }
 
 export interface EvaluationEvent {
@@ -92,6 +95,10 @@ export interface EvaluationEvent {
   crowdNote: string | null;
   dumpCrew: boolean;
   provenCrowd: boolean;
+  /** v11.10 deployer history */
+  creator?: string | null;
+  deployerClass?: string | null;
+  deployerNote?: string | null;
 }
 
 /** Pure: the bus's trade event (one 'event' with type 'trade') → a journal line. */
@@ -117,6 +124,7 @@ export function tradeFromBus(d: BusTrade, pos: PositionInfo | null): TradeEvent 
 
 const MAX_COIN_STATES = 3000;
 const WALLET_REFRESH_MS = 60 * 60_000;
+const MAX_DEPLOYER_NOTES = 1000;
 
 async function ensureDir(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true }).catch(() => {});
@@ -130,6 +138,8 @@ export class ObsidianSync {
   private readonly dirtyCoins = new Set<string>();
   private readonly wallets = new Map<string, WalletState>();
   private readonly dirtyWallets = new Set<string>();
+  private readonly deployers = new Map<string, DeployerState>();
+  private readonly dirtyDeployers = new Set<string>();
   /** trade note paths per day (for the day note) */
   private readonly tradeNotes = new Map<string, string[]>();
   private readonly counts = { coins: 0, wallets: 0, trades: 0 };
@@ -217,6 +227,12 @@ export class ObsidianSync {
     c.crowdNote = ev.crowdNote ?? c.crowdNote;
     c.dumpCrew = c.dumpCrew || ev.dumpCrew;
     c.provenCrowd = c.provenCrowd || ev.provenCrowd;
+    if (ev.creator) c.creator = ev.creator;
+    if (ev.deployerClass) {
+      c.deployerClass = ev.deployerClass;
+      c.deployerNote = ev.deployerNote ?? c.deployerNote ?? null;
+      if (ev.creator && (ev.deployerClass === 'proven' || ev.deployerClass === 'serial' || ev.deployerClass === 'rugger')) this.touchDeployer(ev.creator, ev.deployerClass, `${DIRS.coins}/${coinFile(c.symbol, c.mint)}`, now);
+    }
     const day = dayOf(now);
     if (!c.days.includes(day)) c.days.push(day);
     for (const w of this.notable(ev.buyerWallets, ev.deployerSniperWallets)) {
@@ -251,6 +267,18 @@ export class ObsidianSync {
     if (coinPath && !s.coins.includes(coinPath)) s.coins = [...s.coins, coinPath].slice(-30);
     s.lastSeenMs = now;
     if (now - s.writtenMs >= WALLET_REFRESH_MS) this.dirtyWallets.add(w.wallet);
+  }
+
+  private touchDeployer(creator: string, cls: DeployerClass, coinPath: string | null, now: number): void {
+    let s = this.deployers.get(creator);
+    if (!s) {
+      s = { creator, cls, rec: null, coins: [], lastSeenMs: now, writtenMs: 0 };
+      this.deployers.set(creator, s);
+    }
+    s.cls = cls;
+    if (coinPath && !s.coins.includes(coinPath)) s.coins = [...s.coins, coinPath].slice(-30);
+    s.lastSeenMs = now;
+    if (now - s.writtenMs >= WALLET_REFRESH_MS) this.dirtyDeployers.add(creator);
   }
 
   // ───────────────────────────── trades ─────────────────────────────
@@ -317,6 +345,16 @@ export class ObsidianSync {
           this.counts.wallets++;
         }
         this.dirtyWallets.delete(w);
+      }
+      for (const c of deployerEvictionsForNotes([...this.deployers.values()], MAX_DEPLOYER_NOTES)) { this.deployers.delete(c); this.dirtyDeployers.delete(c); }
+      for (const c of [...this.dirtyDeployers]) {
+        const s = this.deployers.get(c);
+        if (s) {
+          s.rec = this.sources.deployerRec?.(c) ?? s.rec;
+          await this.write(deployerNote(s, now));
+          s.writtenMs = now;
+        }
+        this.dirtyDeployers.delete(c);
       }
       if (this.sources.tips) await this.write(tipRepliesNote(await this.sources.tips(), now));
       if (this.sources.memory) await this.write(memoryNote(await this.sources.memory(), now));

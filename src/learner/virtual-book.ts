@@ -13,6 +13,7 @@ import { getConfig } from '../config/runtime-config';
 import type { StrategyName } from '../config/types';
 import { decideExit, exitCostPctFor, exitRulesFor, spikeRisePct, trailRules, type ExitInput } from '../executor/sell-manager';
 import type { WatchedHolder } from '../executor/holder-clock';
+import { holderGrowth, type HolderGrowthState } from '../executor/holder-growth';
 import { poolFeeBps } from '../lib/pumpfun';
 import { settledHigh } from '../lib/settled-price';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
@@ -65,6 +66,8 @@ interface VPos extends VirtualOpen {
   peakAtMs: number;
   holdersAt?: number;
   holders?: WatchedHolder[] | null;
+  growthAt?: number;
+  growth?: HolderGrowthState | null;
 }
 
 const priceOfLast = (crowd: CrowdTracker, mint: string): number => {
@@ -205,6 +208,7 @@ export class VirtualBook {
       migratedAgoSec: null,
       spikeRisePct: rules.spikeSell?.enabled ? spikeRisePct(trades, price, Math.max(vp.openedAt, now - rules.spikeSell.windowSec * 1000)) : null,
       holders: this.holdersOf(vp, now),
+      holderGrowth: this.growthOf(vp, trades, now, rules),
     };
     const d = decideExit(input, rules);
     vp.peakPriceSol = d.state.peakPriceSol;
@@ -227,6 +231,16 @@ export class VirtualBook {
         return;
       }
     }
+  }
+
+  /** v11.10 holder growth (≤ once per 2 s per position; the state carries "below since"). */
+  private growthOf(vp: VPos, trades: readonly import('../scanner/crowd-tracker').CrowdTrade[], now: number, rules: ExitRules): HolderGrowthState | null {
+    const hg = (rules as { holderGrowth?: { enabled: boolean; collapsePct: number } }).holderGrowth;
+    if (!hg?.enabled || !trades.length) return null;
+    if (vp.growthAt !== undefined && now - vp.growthAt < 2_000) return vp.growth ?? null;
+    vp.growthAt = now;
+    vp.growth = holderGrowth(trades, vp.openedAt, now, vp.growth ?? null, hg);
+    return vp.growth;
   }
 
   private holdersOf(vp: VPos, now: number): WatchedHolder[] | null {

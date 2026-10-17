@@ -22,6 +22,8 @@ export interface SniperConfig {
   minScoreMargin: number;
   volume: { minBuyers: number; minBuySol: number; minBuySharePct: number; minOrganicPct: number };
   requireProvenCrowd: boolean;
+  /** v11.10: refuse serial launchers / deployers that rugged before (absent in old saved rows = on). */
+  requireDeployerNotSerial?: boolean;
   exits: SniperExits;
 }
 
@@ -40,6 +42,8 @@ export interface SniperEntryInput {
   probe: boolean;
   risky: boolean;
   dipEntry: boolean;
+  /** v11.10 deployer class (null = unknown / not checked) */
+  deployerClass?: string | null;
 }
 
 /** Pure: why Sniper mode refuses this buy (empty = take it). */
@@ -61,6 +65,7 @@ export function sniperEntryFails(i: SniperEntryInput, c: SniperConfig): string[]
   if (i.pressureSellersInControl) out.push('sellers in control');
   if (i.crowd?.fails.length) out.push(`crowd: ${i.crowd.fails[0]}`);
   if (c.requireProvenCrowd && (i.crowd?.provenSolPct ?? 0) < 20) out.push(`only ${Math.round(i.crowd?.provenSolPct ?? 0)}% of buying from proven wallets (needs 20%)`);
+  if ((c.requireDeployerNotSerial ?? true) && (i.deployerClass === 'serial' || i.deployerClass === 'rugger')) out.push(`deployer is a ${i.deployerClass === 'serial' ? 'serial launcher' : 'known rugger'}`);
   if (i.explore) out.push('learning trades are off in sniper mode');
   if (i.probe) out.push('probe trades are off in sniper mode');
   if (i.risky) out.push('half-size risky entries are off in sniper mode');

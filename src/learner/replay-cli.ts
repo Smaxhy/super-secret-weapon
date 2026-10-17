@@ -12,6 +12,7 @@ import { redis } from '../lib/redis';
 import { getSolUsd } from '../lib/sol-price';
 import { policyByName, Replay, type ReplayReport, type StoredEval, type TapeRow, type TapeToken } from './replay';
 import { seedBook, WalletBook, WBOOK_KEY } from './wallet-book';
+import { DBOOK_KEY, DeployerBook, seedDeployers } from './deployer-book';
 
 export const REPLAY_LAST = 'replay:last';
 export const REPLAY_IDS = 'replay:ids';
@@ -86,7 +87,10 @@ export async function runReplay(a: ReplayArgs, onProgress?: (msg: string) => voi
   // v11.6: the wallet book, seeded from the live records (read only — the replay never writes them back).
   const book = new WalletBook(null);
   seedBook(book, await redis.hgetall(WBOOK_KEY).catch(() => ({}) as Record<string, string>));
-  const engine = new Replay({ policy, tokens, evals, solUsd, from: a.from, to: a.to, book });
+  // v11.10: the deployer book, seeded the same way (read only).
+  const deployers = new DeployerBook(null);
+  seedDeployers(deployers, await redis.hgetall(DBOOK_KEY).catch(() => ({}) as Record<string, string>));
+  const engine = new Replay({ policy, tokens, evals, solUsd, from: a.from, to: a.to, book, deployers });
   let slices = 0;
   for (let t0 = a.from; t0 < a.to; t0 += SLICE_MS) {
     const t1 = Math.min(a.to, t0 + SLICE_MS);

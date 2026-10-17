@@ -23,6 +23,17 @@ to confirm they want to end the freeze first. Freeze goal: 5–7 days / 200–30
 strategy on Performance → Mistakes ("Does each strategy deserve to run?") and switch losers OFF (don't tweak).
 Diagnosing (reading code, explaining Bot health, diagnose.sh output) is always fine — it changes nothing.
 
+## Oct 17 build queue (owner: "even if the session runs out, continue when it's back"; owner approved all, no asking)
+Done: v11 … v11.10 (see Current state), dashboard colour pass (bb75986), 4 GB tuning. Running: dashboard LAYOUT rebuild
+(every page, multi-column; owner: "all you did is change the colour"). Next, in order, one worker at a time per tree:
+(1) research ports — Telegram + launch-size features, first-buyers-still-holding %, holder-rewards longer holds, early-leg
+lab variant; (2) self-improving loop: AI proposes ONE editable change → replay proves it on 2–3 days of tape vs current →
+applyEdit source 'loop' → watch N live trades → auto-revert on divergence; (3) live execution (Phase 4): direct program
+only (pump.fun app fee 0.45% since Oct 17), on-chain max_sol_cost = size on every buy, Helius Sender / FluxRPC shield,
+priority fees, kill switch, daily loss limit, wallet key ONLY in VPS .env, paper-mode tested first, go/no-go Nov 7;
+(4) policy tournament; (5) AI meme-reading. OFF the list (owner): Bonk.fun, market regime gate. Target: real money by
+December (small wallet in Nov if paper edge is positive).
+
 ## Where things run
 - **Branch:** `claude/festive-albattani-6aufe6` (all work goes here; the VPS and GitHub Pages follow it).
 - **VPS:** Vultr, Ubuntu 24.04, `ssh root@209.250.254.34` (SSH key from the owner's Windows PC).
@@ -868,6 +879,36 @@ Diagnosing (reading code, explaining Bot health, diagnose.sh output) is always f
   log since the last entry, results since the previous review), `90 Brain/Tip replies.md`, `_Dashboard.md` (Dataview
   queries), `_Index.md`, `_How to read this vault.md` (incl. graph colour groups). Editable group "Obsidian".
   tests/obsidian-brain.test.ts, tests/obsidian.test.ts. Zero RPC / API; never writes `.obsidian/*` or `00 Inbox/*`.
+- **v11.10 (Oct 17): deployer history + holder-growth exits** (owner: "game changers"; research: the creator's record is the
+  strongest predictor on pump.fun; a live sniper's data: 64–78% of a creator's second launch of the day dies; a study: a
+  creator with a prior graduation who stayed quiet ≥7 days graduates 12% vs 1.7% base). Migration v41. Zero new RPC.
+  - **Deployer book** (`src/learner/deployer-book.ts`, `deployers` config): per creator — launches, graduations (curve
+    complete), died fast (the dead-launch sweep: forgotten with <10 holders inside 30 min), rugs (RUG_DETECTED on its coin,
+    sell manager), peak MCs, newest 24 mints + launch times, funder (funding-graph cache `wfund:<creator>`, read by the
+    evaluator; `byFunder` → creators sharing it). Fed by token-registry `onCreate` / `onComplete`, the index.ts dead sweep
+    and the sell manager; **backfill** once per gap from the Token table (`backfillDays` 30, paged 1,000, yields;
+    `dbook:meta.until` so restarts never double-count) + positions with RUG_DETECTED. Redis HASH `dbook` (compact JSON per
+    creator), ≤50k creators LRU by last launch, counts halve every 30 days. `classifyDeployer` → **rugger** (≥1 rug or in
+    `rug:wallets`) / **serial** (≥5 launches, 0 graduated, ≥60% died fast) / **proven** (≥1 graduated, 0 rugs, ≤40% died
+    fast) / new (<2 launches) / mixed. `deployerView` (pure) → rule fails for EVERY strategy (evaluator after crowd quality;
+    swing trader; replay via the live records seeded read-only): "deployer: serial launcher (N launches, 0 graduated, X%
+    died fast)", "deployer: rugged before (n×)", "deployer: funded alongside N serial launchers" (`linkedSerialFail` 3),
+    "deployer: already launched N other coins today (serial)" (`maxLaunchesPerDay` 1, 24 h window); proven → `points.proven`
+    +6, plus `points.quietProven` +4 when the previous launch was ≥ `quietDays` 7 ago. Adopted coins (no creator) skip it.
+    `features.deployer` {class, launches, graduated, diedFastPct, rugs, linked, launchesToday, daysSinceLastLaunch, points}
+    (AI / rule-search section `deployer`), buy note "deployer: …". Sniper mode `requireDeployerNotSerial` (serial / rugger
+    → no sniper buy). Bot health `deployers` counts (API only — the dashboard line is not wired yet); GET `/api/deployers`
+    (counts + top proven / serial / ruggers, addresses truncated). Obsidian: coin notes carry `deployer_class` + a link to
+    `35 Deployers/<addr12>.md` (proven / serial / rugger creators, ≤1000, record + every coin of theirs the bot looked at).
+  - **Holder-growth exit** (`src/executor/holder-growth.ts`, `exit.holderGrowth`): new unique buyers per minute (a wallet's
+    FIRST buy in the coin, rolling 60 s) vs the settled peak of that rate since entry (a level counts only if the rate was
+    still there 10 s later; peak <3/min = not judged). ≥ `minMultiple` 1.15, rate under `collapsePct` 35% of the peak for
+    `holdSec` 45 AND sellers ≥ `minSellerSharePct` 45% of the last minute → sell `sellPct` 50 of what's left once
+    (`HOLDER_GROWTH_MARKER` −8, counts as banked) and the trail × `tightenTrailFactor` 0.7; never a full exit on growth
+    alone; rug / mirror / early bail come first. Wired like the holder clock: `ExitInput.holderGrowth` (sell manager
+    `growthFor` ≤ once per 2 s per position, the state carries "below since"), VirtualBook `growthOf` (labs + replay).
+    Strategy-lab variant **G** = live without it (what the exit is worth). Editable groups "Deployer history", "Holder
+    growth exit", Sniper mode. tests/deployer-book.test.ts, tests/holder-growth.test.ts.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

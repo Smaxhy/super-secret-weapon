@@ -79,6 +79,7 @@ import { edgeGateVerdict, probeTurn, DEFAULT_EDGE_GATE } from './edge-gate';
 import { sniperEntryFails } from './sniper';
 import { sniperOn } from '../config/sniper';
 import { crowdQuality, type CrowdQuality } from './crowd-quality';
+import type { DeployerBook, DeployerView } from '../learner/deployer-book';
 import type { WalletBook } from '../learner/wallet-book';
 import type { RuggerMemory } from '../executor/rug-watch';
 import type { ObsidianSync } from '../integrations/obsidian-sync';
@@ -124,6 +125,8 @@ export class Evaluator {
   walletBook: WalletBook | null = null;
   /** v11.8: dumper memory (set in index.ts) — deployer-funded launch snipers are remembered as ruggers. */
   ruggers: RuggerMemory | null = null;
+  /** v11.10: the deployer book (set in index.ts) — the creator's record gates every buy. */
+  deployers: DeployerBook | null = null;
   /** v11.9 Obsidian shared brain (set in index.ts): coins it wanted / nearly wanted get a linked note. */
   obsidian: ObsidianSync | null = null;
 
@@ -529,6 +532,24 @@ export class Evaluator {
         void this.ruggers?.record(cq.deployerSniperWallets, days).catch(() => undefined);
       }
     }
+    // v11.10 deployer history: the creator's record — serial launchers / ruggers / a second launch today → no buy;
+    // proven (and quiet) creators → points. Rugger memory + funding cache only (no RPC).
+    const dpCfg = cfg.deployers ?? DEFAULT_CONFIG.deployers;
+    let deployer: DeployerView | null = null;
+    if (dpCfg.enabled && this.deployers && token.creator && !view.adopted) {
+      try {
+        const days = (cfg.antiRug as { rugGuard?: { ruggerMemoryDays?: number } }).rugGuard?.ruggerMemoryDays ?? 14;
+        const [flagged, fund] = await Promise.all([this.ruggers ? this.ruggers.flagged([token.creator], days) : Promise.resolve(new Set<string>()), this.redis.get(`wfund:${token.creator}`).catch(() => null)]);
+        if (fund) {
+          try { this.deployers.noteFunder(token.creator, (JSON.parse(fund) as { funder?: string | null }).funder ?? null); } catch { /* skip */ }
+        }
+        this.deployers.setRugFlagged(token.creator, flagged.has(token.creator));
+        deployer = this.deployers.view(token.creator, flagged.has(token.creator), mint, Date.now());
+        if (deployer.fails.length) ruleFails = [...ruleFails, ...deployer.fails];
+      } catch (err) {
+        log.warn({ mint, err: (err as Error).message }, 'deployer check failed');
+      }
+    }
 
     // Learned odds: how often coins with the same patterns went on to win (bounded ±points).
     const lc = cfg.learning ?? DEFAULT_CONFIG.learning;
@@ -549,7 +570,7 @@ export class Evaluator {
     // keep losing get marked down). `pre` (before calibration) is what calibration measures.
     const score = (f: FeatureVector): Scored => {
       const r = withOdds(scoreFeatures(f, weights), odds);
-      const pre = Math.round((r.score - manip.penalty + dexBonus.points + kolBonus.points + chartPoints + (newPair?.points ?? 0) + taBonus.points + (trend?.points ?? 0) + eq.points + (cq?.points ?? 0)) * 100) / 100;
+      const pre = Math.round((r.score - manip.penalty + dexBonus.points + kolBonus.points + chartPoints + (newPair?.points ?? 0) + taBonus.points + (trend?.points ?? 0) + eq.points + (cq?.points ?? 0) + (deployer?.points ?? 0)) * 100) / 100;
       const cal = calibrationAdjust(calibration(), STRATEGY.name, pre);
       return { ...r, score: Math.round(Math.max(0, Math.min(100, pre + cal.points)) * 100) / 100, pre, cal };
     };
@@ -692,7 +713,7 @@ export class Evaluator {
     if (snCfg.enabled && decision === 'BUY') {
       const flow5 = this.crowd ? organicFlow(this.crowd.trades(mint), Date.now()) : null;
       const fails = sniperEntryFails(
-        { flow: flow5, score: result.score, threshold, momentumGateWhy: mgWhy, entryQualityVerdict: eq.verdict, edgeGatePass: egInfo ? egInfo.pass : null, pressureSellersInControl: prWhy !== null, crowd: cq, explore, probe: edgeProbe, risky: risky !== null, dipEntry: job.data.dip === true },
+        { flow: flow5, score: result.score, threshold, momentumGateWhy: mgWhy, entryQualityVerdict: eq.verdict, edgeGatePass: egInfo ? egInfo.pass : null, pressureSellersInControl: prWhy !== null, crowd: cq, explore, probe: edgeProbe, risky: risky !== null, dipEntry: job.data.dip === true, deployerClass: deployer?.class ?? null },
         snCfg,
       );
       sniperInfo = { fails };
@@ -721,7 +742,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, trusted: kolAct.buyers.filter((b) => b.weight >= (kolCfg.trustedMinWeight ?? Infinity)).length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, copied: job.data.wallet ? 1 : 0, owner: { profile: owner.profile, fails: owner.fails }, pressure, wallets: cq, mood: moodNow(), market: market.raw, shape, tf, pa, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, momentumGate: mgWhy ? { blocked: true, reason: mgWhy } : null, edgeGate: egInfo, sniper: sniperInfo, entryQuality: eq.verdict !== 'ok' ? { verdict: eq.verdict, reason: eq.reason, points: eq.points } : null, rugCheck: rc.result ? { score: rc.score, riskLevel: rc.riskLevel, pass: rc.pass, reasons: rc.reasons } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, trusted: kolAct.buyers.filter((b) => b.weight >= (kolCfg.trustedMinWeight ?? Infinity)).length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, copied: job.data.wallet ? 1 : 0, owner: { profile: owner.profile, fails: owner.fails }, pressure, wallets: cq, deployer: deployer ? { class: deployer.class, launches: deployer.launches, graduated: deployer.graduated, diedFastPct: deployer.diedFastPct, rugs: deployer.rugs, linked: deployer.linked, launchesToday: deployer.launchesToday, daysSinceLastLaunch: deployer.daysSinceLastLaunch, points: deployer.points } : null, mood: moodNow(), market: market.raw, shape, tf, pa, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, momentumGate: mgWhy ? { blocked: true, reason: mgWhy } : null, edgeGate: egInfo, sniper: sniperInfo, entryQuality: eq.verdict !== 'ok' ? { verdict: eq.verdict, reason: eq.reason, points: eq.points } : null, rugCheck: rc.result ? { score: rc.score, riskLevel: rc.riskLevel, pass: rc.pass, reasons: rc.reasons } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },
@@ -740,6 +761,7 @@ export class Evaluator {
       mcUsd: market.raw.marketCapUsd ?? null, migrated: !!(market.raw.complete || market.raw.onAmm), firstSeenMs: view.createdAtMs > 0 ? view.createdAtMs : 0,
       buyerWallets: cqBuyers, deployerSniperWallets: cq?.deployerSniperWallets ?? [], crowdNote: cq?.note ?? null,
       dumpCrew: (cq?.dumpersInside ?? 0) > 0 || (cq?.deployerSnipers ?? 0) > 0, provenCrowd: (cq?.provenSolPct ?? 0) >= 20,
+      creator: token.creator ?? null, deployerClass: deployer?.class ?? null, deployerNote: deployer?.note ?? null,
     });
     if (decision === 'REJECT') noteSkip(STRATEGY.name, ruleFails[0] ?? reasons[0] ?? 'rejected');
     if (decision === 'REJECT') {
@@ -938,7 +960,7 @@ export class Evaluator {
         explore,
         adaptiveStopFactor: asf,
         explain: (sizeSol) =>
-          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, chartNote: chart ? `${chart.summary}${dipEntry ? ` — bought the dip: ${job.data.dipWhy ?? ''}` : ''}` : null, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: explore ? `learning trade ×${ex.sizeMultiplier} (score just under the bar)` : conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...(explore ? [`LEARNING TRADE: score ${result.score.toFixed(1)} is just under the bar ${threshold.toFixed(0)} — bought small so the bot learns whether these near-misses pay`] : []), ...(newPair?.notes ?? []), ...taBonus.notes.map((n) => `chart setup: ${n}`), ...(trend?.notes ?? []), ...aiVerdict.notes, ...(modelNote ? [modelNote] : []), ...(xv?.notes ?? []).map((n) => `X: ${n}`), ...kolBonus.notes, ...(kolRelaxNote ? [`top holders high but KOLs in: ${kolRelaxNote}`] : []), ...(pressure ? [`buyers ${pressure.buySharePct}% of the last ${prCfg.windowSec}s${pressure.prevBuySharePct !== null ? ` (was ${pressure.prevBuySharePct}%)` : ''}`] : []), ...(cq ? [cq.note] : []), ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : []), ...(rc.result && rc.pass ? [`RugCheck: score ${rc.score}, ${rc.riskLevel}`] : []), ...(eq.verdict === 'boost' ? [`entry quality: ${eq.reason}`] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
+          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, chartNote: chart ? `${chart.summary}${dipEntry ? ` — bought the dip: ${job.data.dipWhy ?? ''}` : ''}` : null, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: explore ? `learning trade ×${ex.sizeMultiplier} (score just under the bar)` : conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...(explore ? [`LEARNING TRADE: score ${result.score.toFixed(1)} is just under the bar ${threshold.toFixed(0)} — bought small so the bot learns whether these near-misses pay`] : []), ...(newPair?.notes ?? []), ...taBonus.notes.map((n) => `chart setup: ${n}`), ...(trend?.notes ?? []), ...aiVerdict.notes, ...(modelNote ? [modelNote] : []), ...(xv?.notes ?? []).map((n) => `X: ${n}`), ...kolBonus.notes, ...(kolRelaxNote ? [`top holders high but KOLs in: ${kolRelaxNote}`] : []), ...(pressure ? [`buyers ${pressure.buySharePct}% of the last ${prCfg.windowSec}s${pressure.prevBuySharePct !== null ? ` (was ${pressure.prevBuySharePct}%)` : ''}`] : []), ...(cq ? [cq.note] : []), ...(deployer ? [deployer.note] : []), ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : []), ...(rc.result && rc.pass ? [`RugCheck: score ${rc.score}, ${rc.riskLevel}`] : []), ...(eq.verdict === 'boost' ? [`entry quality: ${eq.reason}`] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
       });
       if (!res.entered && !/^(already traded|still holding)/.test(res.reason)) shadowOf('refused', res.reason);
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.

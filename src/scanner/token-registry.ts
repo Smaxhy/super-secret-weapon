@@ -31,6 +31,7 @@ import { PublicKey } from '@solana/web3.js';
 import type { InsiderTracker } from '../evaluator/insider-cluster';
 import type { CrowdTracker } from './crowd-tracker';
 import type { TapeRecorder } from '../learner/tape-recorder';
+import type { DeployerBook } from '../learner/deployer-book';
 import type { WalletBook } from '../learner/wallet-book';
 import type { WalletPnl } from '../learner/wallet-pnl';
 
@@ -49,6 +50,8 @@ export class TokenRegistry {
   tape: TapeRecorder | null = null;
   /** v11.6: the wallet book (set in index.ts) — every wallet's record, from the same trades. */
   book: WalletBook | null = null;
+  /** v11.10: the deployer book (set in index.ts) — launches and graduations per creator. */
+  deployers: DeployerBook | null = null;
 
   constructor(
     private readonly liveState: LiveState,
@@ -147,6 +150,7 @@ export class TokenRegistry {
       // Live state first: trades from the same transaction arrive right behind this.
       await this.liveState.onCreate(ev, detectedAt);
       if (this.insiders) void this.insiders.onCreate({ mint: ev.mint, creator: ev.creator, timestamp: ev.timestamp }).catch(() => undefined);
+      this.deployers?.onLaunch(ev.creator, ev.mint, createdAtMs);
 
       await prisma.token.upsert({
         where: { mint: ev.mint },
@@ -313,6 +317,7 @@ export class TokenRegistry {
       }
       if (count > 0) {
         this.stats.completed++;
+        this.deployers?.onGraduated(this.liveState.meta(ev.mint)?.creator, ev.mint, null, ev.timestamp * 1000 || Date.now());
         log.info({ mint: ev.mint }, '🎓 bonding curve complete');
         await recordEvent({ module: 'scanner', type: 'curve_complete', mint: ev.mint, message: 'Bonding curve completed' });
       }

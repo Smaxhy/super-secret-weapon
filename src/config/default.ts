@@ -605,6 +605,26 @@ export const DEFAULT_CONFIG = {
    * Wallet engine (v11.6, learner/wallet-book.ts): every wallet's track record from the trade stream alone — realised
    * P&L, usual hold time, dump events. `entry` (evaluator/crowd-quality.ts): WHO is buying → points / no buy.
    */
+  /**
+   * v11.10 deployer history (learner/deployer-book.ts): every creator wallet's record from data the bot already has —
+   * launches, graduations, launches that died fast, rugs, creators sharing its funder (cache only). serial / rugger
+   * → no buy (every strategy); proven → points; ≥ linkedSerialFail serial launchers on the same funder → no buy.
+   */
+  deployers: {
+    enabled: true as boolean,
+    serialMinLaunches: 5,
+    serialDiedFastPct: 60,
+    provenMaxDiedFastPct: 40,
+    maxCreators: 50_000,
+    halfLifeDays: 30,
+    backfillDays: 30,
+    linkedSerialFail: 3,
+    /** a creator that already launched this many OTHER coins in the last 24 h → no buy (a live sniper's data: 64–78% of those die) */
+    maxLaunchesPerDay: 1,
+    /** a proven creator whose previous launch was ≥ this many days ago → extra points (12% graduate vs 1.7% base) */
+    quietDays: 7,
+    points: { proven: 6, quietProven: 4 },
+  },
   wallets: {
     enabled: true as boolean,
     minSells: 6,
@@ -897,6 +917,8 @@ export const DEFAULT_CONFIG = {
     minScoreMargin: 8,
     volume: { minBuyers: 30, minBuySol: 12, minBuySharePct: 60, minOrganicPct: 60 },
     requireProvenCrowd: false as boolean,
+    /** v11.10: no sniper buy from a serial launcher or a deployer that rugged before. */
+    requireDeployerNotSerial: true as boolean,
     exits: {
       takeProfitTiers: [
         { multiple: 1.5, sellPct: 25 },
@@ -1071,6 +1093,8 @@ export const DEFAULT_CONFIG = {
         },
       },
       { id: 'N', name: 'Live settings without time stops', exit: { timeStop: { enabled: false } } },
+      // v11.10: what is the holder-growth exit worth? (live settings without it)
+      { id: 'G', name: 'Live settings without the holder-growth exit', exit: { holderGrowth: { enabled: false } } },
       {
         id: 'W',
         name: 'Wider stop (−25 to −30%) — research suggests it; outside your 10–20% rule, so never applied automatically',
@@ -1267,6 +1291,12 @@ export const DEFAULT_CONFIG = {
      * left (once) and tighten the trail. A known dumper selling half its bag while we hold → rug exit.
      */
     holderClock: { enabled: true as boolean, minHolderPct: 1.5, expiryShare: 0.8, tightenTrailFactor: 0.6, sellPct: 40, minMultiple: 1.1 },
+    /**
+     * Holder growth (v11.10, executor/holder-growth.ts): new unique buyers per minute vs the settled peak of that rate
+     * since entry. In profit, the rate under collapsePct% of its peak for holdSec AND sellers ≥ minSellerSharePct of the
+     * last minute → sell sellPct of what's left (once) and tighten the trail. Never a full exit on growth alone.
+     */
+    holderGrowth: { enabled: true as boolean, minMultiple: 1.15, collapsePct: 35, holdSec: 45, minSellerSharePct: 45, sellPct: 50, tightenTrailFactor: 0.7, fullTrailFromMultiple: 1.5 },
     /** After reaching `afterMultiple`, sell everything if it falls back to `floorMultiple` (before initials are out). */
     protectProfit: { afterMultiple: 1.2, floorMultiple: 1.03 },
     /**

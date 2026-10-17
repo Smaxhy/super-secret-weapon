@@ -36,6 +36,7 @@ import { VirtualBook, type VirtualResult } from './virtual-book';
 import { crowdQuality } from '../evaluator/crowd-quality';
 import { watchedHolders } from '../executor/holder-clock';
 import { walletBookConfig, type WalletBook } from './wallet-book';
+import type { DeployerBook, DeployerView } from './deployer-book';
 
 export interface TapeRow {
   mint: string;
@@ -101,6 +102,8 @@ export interface ReplayOptions {
   to: number;
   /** v11.6: the wallet book fed from the tape (seeded from the live book when available) — crowd quality + holder clock. */
   book?: WalletBook | null;
+  /** v11.10: the deployer book (seeded from the live records, read-only) — the creator's record as an entry rule. */
+  deployers?: DeployerBook | null;
 }
 
 export interface ReplayTrade {
@@ -458,6 +461,12 @@ export class Replay {
     const wb = this.o.book;
     const cq = wb && wbCfg.enabled && cqCfg.enabled ? crowdQuality({ trades, now: t }, (w) => wb.get(w), () => null, wbCfg, cqCfg) : null;
     if (cq?.fails.length) fails.push(...cq.fails);
+    // v11.10 deployer history (the live records; the tape itself carries no creator history).
+    let dp: DeployerView | null = null;
+    if (this.o.deployers && (cfg.deployers ?? DEFAULT_CONFIG.deployers).enabled && tok?.creator) {
+      dp = this.o.deployers.view(tok.creator, undefined, coin.mint, t);
+      if (dp.fails.length) fails.push(...dp.fails);
+    }
 
     const ev = this.storedEval(coin.mint, t);
     let score: number;
@@ -469,7 +478,7 @@ export class Replay {
       if (!flow) flow = organicFlow(trades, t);
       score = this.tapeScore(coin, trades, t, flow, active5m, holders) + (eq.verdict === 'boost' ? eq.points : 0);
     }
-    score += cq?.points ?? 0;
+    score += (cq?.points ?? 0) + (dp?.points ?? 0);
 
     const ctx: EntryContext = { mint: coin.mint, symbol: tok?.symbol ?? '', strategy, now: t, trades, priceSol: price, mcUsd, ageSec, flow, shape, score, threshold, fails };
     const extra = this.o.policy.entry?.(ctx);
@@ -486,7 +495,7 @@ export class Replay {
     const snCfg = cfg.sniper ?? DEFAULT_CONFIG.sniper;
     if (snCfg.enabled) {
       if (!flow) flow = organicFlow(trades, t);
-      const sf = sniperEntryFails({ flow, score, threshold, momentumGateWhy: mg, entryQualityVerdict: eq.verdict, edgeGatePass: null, pressureSellersInControl: false, crowd: cq, explore: false, probe: false, risky: false, dipEntry: false }, snCfg);
+      const sf = sniperEntryFails({ flow, score, threshold, momentumGateWhy: mg, entryQualityVerdict: eq.verdict, edgeGatePass: null, pressureSellersInControl: false, crowd: cq, explore: false, probe: false, risky: false, dipEntry: false, deployerClass: dp?.class ?? null }, snCfg);
       if (sf.length) {
         this.skip(`sniper: ${sf[0]}`, strategy);
         return;
