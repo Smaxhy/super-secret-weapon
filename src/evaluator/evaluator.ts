@@ -46,8 +46,14 @@ import { NEUTRAL_WALLET_FEATURES, walletFeatures, type CreatorProfile, type Wall
 const log = moduleLogger('evaluator');
 const STATE_TTL_SECONDS = 60 * 60;
 
-/** Phase 2 runs the curve-snipe strategy; the other two arrive in Phase 6. */
-const STRATEGY = STRATEGIES.CURVE_SNIPE;
+/** Resolve the best strategy for a token based on its current market state. */
+function resolveStrategy(market: { bondingCurvePct: number; complete: boolean; ageSec: number; strength: number }): import('../config/strategies').StrategyParams {
+  if (market.complete) return STRATEGIES.MIGRATION_MOMENTUM;
+  if (market.bondingCurvePct >= 60 && market.bondingCurvePct < 100) return STRATEGIES.SOON;
+  if (market.bondingCurvePct >= 15 && market.ageSec > 180 && market.strength > 0.6) return STRATEGIES.RUNNER;
+  if (market.ageSec > 600 && market.bondingCurvePct >= 20) return STRATEGIES.SWING;
+  return STRATEGIES.CURVE_SNIPE;
+}
 
 export class Evaluator {
   private worker: Worker<EvaluateJob> | null = null;
@@ -124,9 +130,10 @@ export class Evaluator {
     }
     this.stats.evaluated++;
 
+    const strategy = resolveStrategy(market.raw);
     const regime = regimeAdjustment();
     const threshold = cfg.entry.minCombinedScore + regime.scoreThresholdDelta;
-    const ruleFails = checkEntryRules({ safetyScore: token.safetyScore, safetyHardFail: token.safetyHardFail, market: market.raw, strategy: STRATEGY, entry: cfg.entry });
+    const ruleFails = checkEntryRules({ safetyScore: token.safetyScore, safetyHardFail: token.safetyHardFail, market: market.raw, strategy, entry: cfg.entry });
     const timingFails = checkTimingRules(market.raw, cfg.entry, roundTripCostPct(cfg.paper.curveFeeBps, cfg.paper.slippagePct));
 
     let profile: CreatorProfile | null = null;
@@ -152,7 +159,7 @@ export class Evaluator {
       const row = await prisma.evaluation.create({
         data: {
           mint,
-          strategy: STRATEGY.name,
+          strategy: strategy.name,
           safetyScore: token.safetyScore,
           walletScore: profile ? avg(walletFeatures(profile)) * 100 : null,
           marketScore: avg(market.features) * 100,
@@ -186,12 +193,12 @@ export class Evaluator {
       const res = await this.trader.tryEnter({
         mint,
         symbol: token.symbol,
-        strategy: STRATEGY.name,
+        strategy: strategy.name,
         evaluationId,
         score: result.score,
         threshold,
         market: market.raw,
-        maxSlippageBps: STRATEGY.maxSlippageBps,
+        maxSlippageBps: strategy.maxSlippageBps,
         features,
       });
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.

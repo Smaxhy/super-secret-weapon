@@ -18,6 +18,7 @@ import cron, { type ScheduledTask } from 'node-cron';
 import { DEFAULT_WEIGHTS, type FeatureName, type Weights } from '../config/default';
 import { getConfig, getWeights, refreshConfig } from '../config/runtime-config';
 import { recordEvent } from '../lib/bot-events';
+import { bus } from '../lib/bus';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 
@@ -151,6 +152,7 @@ export class DailyAdjuster {
         .join(', ');
       log.info({ version: nextVersion, changes: result.changes.length }, `🧠 weights v${nextVersion}: ${summary}`);
       await recordEvent({ module: 'learner', type: 'weights_adjusted', message: `Weights v${nextVersion}: ${summary}`, data: { reason, changes: JSON.parse(JSON.stringify(result.changes)) } });
+      bus.publish({ type: 'weights_adjusted', data: { message: `Weights v${nextVersion}: ${reason}\n${summary}`, changes: result.changes } });
     } catch (err) {
       log.warn({ err: (err as Error).message }, 'daily adjuster failed');
     }

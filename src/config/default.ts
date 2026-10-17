@@ -15,17 +15,23 @@ export const DEFAULT_CONFIG = {
     maxPositionSol: 0.2,
     minPositionSol: 0.1,
     maxPositionSolCeiling: 0.3, // the dashboard slider can't go above this
-    maxConcurrentPositions: 5,
+    maxConcurrentPositions: 8,
     /** Fraction of capital per strategy. Must add up to 1. */
     allocation: {
-      MIGRATION_MOMENTUM: 0.6,
-      SMART_MONEY_COPY: 0.25,
+      MIGRATION_MOMENTUM: 0.25,
+      SMART_MONEY_COPY: 0.15,
       CURVE_SNIPE: 0.15,
+      SOON: 0.15,
+      RUNNER: 0.20,
+      SWING: 0.10,
     } satisfies Record<StrategyName, number>,
     enabledStrategies: {
       MIGRATION_MOMENTUM: true,
       SMART_MONEY_COPY: true,
       CURVE_SNIPE: true,
+      SOON: true,
+      RUNNER: true,
+      SWING: true,
     } satisfies Record<StrategyName, boolean>,
     /**
      * Conviction sizing: a bare-minimum pass gets `minPositionSol`, a setup
@@ -37,7 +43,7 @@ export const DEFAULT_CONFIG = {
 
   entry: {
     minSafetyScore: 70,
-    minCombinedScore: 75,
+    minCombinedScore: 65,
     minHoldersCurveSnipe: 20,
     minHoldersMigration: 50,
     maxDevHoldingPct: 10,
@@ -76,22 +82,23 @@ export const DEFAULT_CONFIG = {
   exit: {
     /** Tiered take-profit: sell `sellPct` of the ORIGINAL position at `multiple`x. */
     takeProfitTiers: [
-      { multiple: 2, sellPct: 30 },
-      { multiple: 5, sellPct: 30 },
+      { multiple: 1.5, sellPct: 25 },
+      { multiple: 2.5, sellPct: 25 },
+      { multiple: 5, sellPct: 25 },
     ],
-    /** The remaining 40% rides with the trailing stop. */
-    trailingStopActivateMultiple: 2,
-    trailingStopPct: 30,
+    /** The remaining 25% rides with the trailing stop. */
+    trailingStopActivateMultiple: 1.5,
+    trailingStopPct: 25,
     /**
      * Adaptive trailing: a strong chart (higher lows, buyers in control) gets the
      * wide stop so a winner isn't cut on noise; a weak chart gets the tight one.
      */
-    trailingStopPctStrong: 40,
-    trailingStopPctWeak: 18,
-    hardStopLossPct: 40,
+    trailingStopPctStrong: 30,
+    trailingStopPctWeak: 15,
+    hardStopLossPct: 20,
     /** Once up this much, the stop moves to entry + costs so a winner can't turn into a loser. */
-    breakEvenActivateMultiple: 1.5,
-    breakEvenStopMultiple: 1.06,
+    breakEvenActivateMultiple: 1.25,
+    breakEvenStopMultiple: 1.04,
     /**
      * Failing-trade time stop: still at/below `timeStopMaxMultiple` after this many
      * minutes with no uptrend → cut it and recycle the capital.
@@ -100,8 +107,11 @@ export const DEFAULT_CONFIG = {
       CURVE_SNIPE: 8,
       MIGRATION_MOMENTUM: 30,
       SMART_MONEY_COPY: 30,
+      SOON: 12,
+      RUNNER: 15,
+      SWING: 60,
     } satisfies Record<StrategyName, number>,
-    timeStopMaxMultiple: 0.97,
+    timeStopMaxMultiple: 1.0,
     /** In profit, sellers took over and price is off the peak → bank half. */
     momentumFade: { minMultiple: 1.25, dropFromPeakPct: 12, sellPct: 50 },
     /** After being up ≥ minPeakMultiple, a close below the last swing low (by breakPct) = structure broken → exit. */
@@ -121,6 +131,9 @@ export const DEFAULT_CONFIG = {
       CURVE_SNIPE: 30,
       MIGRATION_MOMENTUM: 120,
       SMART_MONEY_COPY: 120,
+      SOON: 45,
+      RUNNER: 60,
+      SWING: 180,
     } satisfies Record<StrategyName, number>,
     /** Partial sells smaller than this % of the original position aren't worth the fee. */
     minSellChunkPct: 10,

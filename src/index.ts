@@ -26,14 +26,18 @@ import { OutcomeTracker } from './learner/missed-opportunity';
 import { ObservationLogger } from './learner/observation-logger';
 import { getRegime, RegimeDetector } from './learner/regime-detector';
 import { TapeArchiver } from './learner/tape-archiver';
+import { obsidianSync } from './integrations/obsidian-sync';
 import { logger } from './lib/logger';
 import { prisma } from './lib/prisma';
 import { closeQueues } from './lib/queues';
 import { closeRedis, redis } from './lib/redis';
 import { rpcLimiter } from './lib/solana';
+import { WalletScorer } from './learner/wallet-scorer';
 import { LiveState } from './scanner/live-state';
+import { migrationDetector } from './scanner/migration-detector';
 import { PumpFunListener } from './scanner/pumpfun-listener';
 import { TokenRegistry } from './scanner/token-registry';
+import { whaleTracker } from './scanner/whale-tracker';
 
 const log = logger.child({ module: 'main' });
 
@@ -83,6 +87,17 @@ async function main(): Promise<void> {
   observations?.addListener(tapes.onSnapshot);
   const adjuster = new DailyAdjuster(executor.mode);
   adjuster.start();
+
+  // Obsidian vault integration (optional — runs only if OBSIDIAN_VAULT_PATH is set)
+  await obsidianSync.start();
+
+  // Smart-money wallet tracking + scoring
+  await whaleTracker.start();
+  const walletScorer = new WalletScorer();
+  walletScorer.start();
+
+  // Migration detector — watches for post-completion pool creation
+  migrationDetector.start();
 
   const trader = new Trader(executor);
   const sellManager = new SellManager(executor, liveState);
@@ -153,6 +168,18 @@ async function main(): Promise<void> {
     );
     lastCreates = s?.creates ?? 0;
     lastTrades = s?.trades ?? 0;
+
+    // Sync dashboard to Obsidian vault
+    if (obsidianSync.isEnabled()) {
+      obsidianSync.updateDashboard({
+        balance: isNaN(balance) ? 0 : balance,
+        openPositions,
+        todayPnl: 0, // TODO: pull from daily stats once wired
+        todayTrades: evaluator.stats.buys,
+        regime: getRegime(),
+        uptime: `${Math.round((Date.now() - startedAt) / 60_000)}m`,
+      }).catch(() => { /* non-critical */ });
+    }
   }, 60_000);
 
   // Graceful shutdown
@@ -170,6 +197,9 @@ async function main(): Promise<void> {
       await evaluator.stop();
       await sellManager.stop();
       adjuster.stop();
+      walletScorer.stop();
+      whaleTracker.stop();
+      migrationDetector.stop();
       regime.stop();
       beliefs.stop();
       stopConfigRefresh();

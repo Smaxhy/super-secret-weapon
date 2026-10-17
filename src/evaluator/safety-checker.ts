@@ -28,6 +28,7 @@ import { prisma } from '../lib/prisma';
 import { PUMP_DEFAULT_TOTAL_SUPPLY, PUMP_TOKEN_DECIMALS, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '../lib/pumpfun';
 import { getConnection } from '../lib/solana';
 import type { LiveState } from '../scanner/live-state';
+import { fetchRugCheckReport, rugCheckPenalty } from './rugcheck-client';
 
 const log = moduleLogger('safety-checker');
 
@@ -168,6 +169,9 @@ export class SafetyChecker {
       select: { address: true },
     });
 
+    // Run RugCheck API in parallel with on-chain analysis (non-blocking)
+    const rugCheckResult = await fetchRugCheckReport(mint).catch(() => ({ ok: false as const, error: 'fetch failed' }));
+
     const report = evaluateSafety({
       mint,
       owner,
@@ -182,6 +186,28 @@ export class SafetyChecker {
       devInitialBuyPct,
       creatorBlacklisted: blacklisted !== null,
     });
+
+    // Apply RugCheck penalty on top of on-chain checks
+    const rugPenalty = rugCheckPenalty(rugCheckResult);
+    if (rugPenalty.penalty > 0) {
+      report.checks.push({
+        id: 'rugcheck_api',
+        label: 'RugCheck external validation',
+        severity: rugPenalty.hardFail ? 'FAIL' : 'WARN',
+        penalty: rugPenalty.penalty,
+        detail: rugPenalty.detail,
+      });
+      report.score = Math.max(0, report.score - rugPenalty.penalty);
+      if (rugPenalty.hardFail) report.hardFail = true;
+    } else {
+      report.checks.push({
+        id: 'rugcheck_api',
+        label: 'RugCheck external validation',
+        severity: 'PASS',
+        penalty: 0,
+        detail: rugPenalty.detail,
+      });
+    }
 
     await prisma.$transaction([
       prisma.safetyCheck.create({

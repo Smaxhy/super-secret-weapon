@@ -22,6 +22,8 @@ import type { SafetyChecker } from '../evaluator/safety-checker';
 import type { ObservationLogger } from '../learner/observation-logger';
 import type { Evaluator } from '../evaluator/evaluator';
 import type { LiveState } from './live-state';
+import { migrationDetector } from './migration-detector';
+import { whaleTracker } from './whale-tracker';
 
 const log = moduleLogger('token-registry');
 
@@ -50,6 +52,14 @@ export class TokenRegistry {
         this.liveState.onTrade(event).catch((err: Error) => {
           this.stats.tradeErrors++;
           if (this.stats.tradeErrors % 100 === 1) log.warn({ err: err.message }, 'trade update failed');
+        });
+        // Feed every trade to the whale tracker for smart-money detection
+        whaleTracker.onTrade({
+          user: event.user,
+          mint: event.mint,
+          isBuy: event.isBuy,
+          solAmount: Number(event.solAmount) / 1e9,
+          tsMs: event.timestamp * 1000,
         });
         break;
       case 'complete':
@@ -125,6 +135,8 @@ export class TokenRegistry {
         this.stats.completed++;
         log.info({ mint: ev.mint }, '🎓 bonding curve complete');
         await recordEvent({ module: 'scanner', type: 'curve_complete', mint: ev.mint, message: 'Bonding curve completed' });
+        // Feed to migration detector to watch for pool creation
+        migrationDetector.onComplete(ev.mint, ev.bondingCurve, ev.user);
       }
     } catch (err) {
       log.error({ mint: ev.mint, err: (err as Error).message }, 'failed to handle curve completion');

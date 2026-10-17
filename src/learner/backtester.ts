@@ -200,8 +200,17 @@ function prefix(tape: TapeTrade[], nowMs: number): TapeTrade[] {
 
 const athUpTo = (tape: TapeTrade[]) => tape.reduce((m, t) => Math.max(m, t.priceSol), 0);
 
+/** Resolve which strategy best fits the token's current market state — mirrors the live evaluator. */
+function resolveStrategy(market: { bondingCurvePct: number; complete: boolean; ageSec: number; strength: number }): import('../config/strategies').StrategyParams {
+  if (market.complete) return STRATEGIES.MIGRATION_MOMENTUM;
+  if (market.bondingCurvePct >= 60 && market.bondingCurvePct < 100) return STRATEGIES.SOON;
+  if (market.bondingCurvePct >= 15 && market.ageSec > 180 && market.strength > 0.6) return STRATEGIES.RUNNER;
+  if (market.ageSec > 600 && market.bondingCurvePct >= 20) return STRATEGIES.SWING;
+  return STRATEGIES.CURVE_SNIPE;
+}
+
 export function simulateToken(tape: TapeTrade[], meta: TokenMeta, policy: Policy): SimResult {
-  const strategy = STRATEGIES.CURVE_SNIPE;
+  // Strategy is resolved dynamically per checkpoint based on market state (no more hardcoded CURVE_SNIPE)
   const cost = roundTripCostPct(policy.paper.curveFeeBps, policy.paper.slippagePct);
   // Mirror the evaluator's queue: fixed checkpoints, plus at most one chained
   // re-check at a time (re-check i fires delays[i] after the previous look).
@@ -224,6 +233,7 @@ export function simulateToken(tape: TapeTrade[], meta: TokenMeta, policy: Policy
 
     const entryCfg = policy.useChart ? policy.entry : { ...policy.entry, maxDrawdownFromAthPct: 1e9, maxManipulation: 1e9 };
     const rawForRules = policy.useChart ? raw : { ...raw, setup: 'THIN' as const };
+    const strategy = resolveStrategy(raw);
     const ruleFails = checkEntryRules({ safetyScore: meta.safetyScore, safetyHardFail: meta.safetyHardFail, market: rawForRules, strategy, entry: entryCfg });
     const timingFails = policy.useChart ? checkTimingRules(raw, policy.entry, cost) : [];
     const features: FeatureVector = { safety: meta.safetyScore / 100, ...marketFeatures(raw), ...(meta.walletFeatures ?? NEUTRAL_WALLET_FEATURES), patternPrior: 0.5 };
