@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
     # appendonly = survive restarts (BullMQ delayed jobs live here).
     # noeviction is required by BullMQ — it must never silently drop jobs.
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "1gb", "--maxmemory-policy", "noeviction"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "2gb", "--maxmemory-policy", "noeviction"]
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
