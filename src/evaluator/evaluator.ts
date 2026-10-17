@@ -81,6 +81,7 @@ import { sniperOn } from '../config/sniper';
 import { crowdQuality, type CrowdQuality } from './crowd-quality';
 import type { WalletBook } from '../learner/wallet-book';
 import type { RuggerMemory } from '../executor/rug-watch';
+import type { ObsidianSync } from '../integrations/obsidian-sync';
 import { confirmHoldSec, confirmStep } from './confirm';
 import type { CrowdTrade } from '../scanner/crowd-tracker';
 
@@ -123,6 +124,8 @@ export class Evaluator {
   walletBook: WalletBook | null = null;
   /** v11.8: dumper memory (set in index.ts) — deployer-funded launch snipers are remembered as ruggers. */
   ruggers: RuggerMemory | null = null;
+  /** v11.9 Obsidian shared brain (set in index.ts): coins it wanted / nearly wanted get a linked note. */
+  obsidian: ObsidianSync | null = null;
 
   /** Funders of the biggest recent buyers, from the funding-graph cache only (`wfund:<wallet>`, no RPC). */
   private async cachedFunders(trades: readonly CrowdTrade[], now: number, launchMs: number | null = null): Promise<Map<string, string | null>> {
@@ -511,8 +514,10 @@ export class Evaluator {
     const wbCfg = cfg.wallets ?? DEFAULT_CONFIG.wallets;
     const cqCfg = wbCfg.entry ?? DEFAULT_CONFIG.wallets.entry;
     let cq: CrowdQuality | null = null;
+    let cqBuyers: string[] = [];
     if (wbCfg.enabled && cqCfg.enabled && this.walletBook && this.crowd) {
       const cqTrades = this.crowd.trades(mint);
+      cqBuyers = [...new Set(cqTrades.filter((t) => t.buy).map((t) => t.w))].slice(0, 80);
       const launchMs = view.createdAtMs > 0 ? view.createdAtMs : null;
       const funders = await this.cachedFunders(cqTrades, Date.now(), launchMs);
       cq = crowdQuality({ trades: cqTrades, now: Date.now(), launchMs, creator: token.creator, supply: Number(view.curve.totalSupply || 1_000_000_000_000_000n) }, (w) => this.walletBook!.get(w), (w) => funders.get(w) ?? null, wbCfg, cqCfg);
@@ -730,6 +735,12 @@ export class Evaluator {
       await prisma.token.update({ where: { mint }, data: { combinedScore: result.score } });
     }
 
+    this.obsidian?.onEvaluation({
+      mint, symbol: token.symbol ?? null, name: token.name ?? null, strategy: STRATEGY.name, decision, score: result.score, threshold, reasons,
+      mcUsd: market.raw.marketCapUsd ?? null, migrated: !!(market.raw.complete || market.raw.onAmm), firstSeenMs: view.createdAtMs > 0 ? view.createdAtMs : 0,
+      buyerWallets: cqBuyers, deployerSniperWallets: cq?.deployerSniperWallets ?? [], crowdNote: cq?.note ?? null,
+      dumpCrew: (cq?.dumpersInside ?? 0) > 0 || (cq?.deployerSnipers ?? 0) > 0, provenCrowd: (cq?.provenSolPct ?? 0) >= 20,
+    });
     if (decision === 'REJECT') noteSkip(STRATEGY.name, ruleFails[0] ?? reasons[0] ?? 'rejected');
     if (decision === 'REJECT') {
       noteEvaluation(STRATEGY.name, { rulesOk, signal: false, outcome: 'none' });

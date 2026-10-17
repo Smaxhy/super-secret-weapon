@@ -840,6 +840,25 @@ Diagnosing (reading code, explaining Bot health, diagnose.sh output) is always f
   (`src/evaluator/confirm.ts`, `entry.confirm.consecutivePasses` 2 / `intervalSec` 7): the confirmation rules must pass
   N checks in a row (same signal price / new-buyer window; the confirm job re-queues itself with `passes`), lock held
   `confirmHoldSec` = 15 + 7 s. Migration v39; editable (Every coin, Wallet engine). tests/pumpswap-pool-decode.test.ts.
+- **v11.9 (Oct 17): Obsidian shared brain** (owner: "the brain of the bot where it remembers everything"; the vault is
+  `/vault` = `/root/bot/obsidian` on the VPS, copied to the owner's PC by a scheduled `scp` every 10 min; the owner's
+  `00 Inbox/` goes PC→VPS the same way — set that up as a second scp line when the owner wants it). Migration v40.
+  `src/integrations/obsidian-notes.ts` = PURE note builders (frontmatter + wikilinks), `obsidian-sync.ts` = the writer
+  (everything queued; a 10-min flush; trade logs + diary entries written as they happen). Layout: `00 Inbox/` (owner:
+  `Tips.md` lines → `aiCoach.addTip` once each, sha1 in Redis SET `obs:tips:seen`, polled every 60 s; `Notes.md` tail
+  4,000 chars → AI prompt section `ownerNotes`), `10 Trades/<day>.md` + `10 Trades/<strategy>/<SYM-mint8>-<day>-<time>.md`,
+  `20 Coins/<SYM-mint8>.md` (every BUY signal / bought coin / skipped coin within `obsidian.minSkippedScoreMargin` 10 of
+  the bar — `evaluator.obsidian.onEvaluation`, cap `maxCoinNotesPerDay` 300 via Redis `obs:coins:<day>`; verdict
+  bought / signal / skipped, why, crowd note, links to strategy, trades, days and ≤15 notable wallets = proven / dumper /
+  deployer-sniper buyers), `30 Wallets/<wallet12>.md` (record from the wallet book, coins it appeared in, ≤ `maxWalletNotes`
+  2000 LRU, refreshed ≤ hourly, top 50 proven + 50 dumpers always kept), `40 Strategies/` (numbers + the Sniper rules in
+  words (`sniperRuleLines`) + Dataview blocks), `50 Daily/` (P&L + trade links + diary link), `90 Brain/Memory.md`
+  (the coach's durable memory: Redis `ai:memory`, prompt section `memory`, output field `memory`; `mergeMemory`: a normal
+  review may ADD ≤3 dated bullets, a deep review may rewrite, ≤1,500 chars — enforced in code), `90 Brain/Insights.md`,
+  `90 Brain/Diary/<day>.md` (one entry per AI review via `aiCoach.onReview`: insights, rules, settings changed, the change
+  log since the last entry, results since the previous review), `90 Brain/Tip replies.md`, `_Dashboard.md` (Dataview
+  queries), `_Index.md`, `_How to read this vault.md` (incl. graph colour groups). Editable group "Obsidian".
+  tests/obsidian-brain.test.ts, tests/obsidian.test.ts. Zero RPC / API; never writes `.obsidian/*` or `00 Inbox/*`.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

@@ -9,7 +9,7 @@ describe('obsidian sync', () => {
     const buy = tradeFromBus({ mint: 'M1', symbol: 'PEPE', side: 'BUY', mode: 'PAPER', amountSol: 1, reason: 'buy' }, { strategy: 'SOON', sizeSol: 1, score: 82, mcUsd: 61_000 });
     expect(buy).toMatchObject({ type: 'entry', strategy: 'SOON', sizeSol: 1, score: 82, marketCapUsd: 61_000 });
     const sell = tradeFromBus({ mint: 'M1', symbol: 'PEPE', side: 'SELL', mode: 'PAPER', amountSol: 1.3, reason: 'TAKE_PROFIT 1.5x', pnlSol: 0.3, peakMultiple: 1.6, closed: true }, { strategy: 'SOON', sizeSol: 1 });
-    expect(sell).toMatchObject({ type: 'exit', pnlSol: 0.3, pnlPct: 30, exitReason: 'TAKE_PROFIT 1.5x', multiple: 1.6 });
+    expect(sell).toMatchObject({ type: 'exit', pnlSol: 0.3, pnlPct: 30, exitReason: 'TAKE_PROFIT 1.5x', multiple: 1.6, closed: true });
     expect(tradeFromBus({ mint: 'M2', side: 'SELL', mode: 'PAPER', amountSol: 0.5, reason: 'STOP_LOSS' }, null).strategy).toBe('unknown');
   });
 
@@ -24,12 +24,12 @@ describe('obsidian sync', () => {
       insights: async () => [{ text: 'Buying into +30% candles loses.' }],
     });
     await o.writeSummaries(Date.parse('2026-10-18T12:00:00Z'));
-    const daily = await fs.readFile(path.join(vault, 'Performance', '2026-10-18.md'), 'utf8');
+    const daily = await fs.readFile(path.join(vault, '50 Daily', '2026-10-18.md'), 'utf8');
     expect(daily).toContain('PEPE +0.300 SOL');
     expect(daily).toContain('DOGE -0.120 SOL');
-    const strat = await fs.readFile(path.join(vault, 'Strategies', 'SOON.md'), 'utf8');
+    const strat = await fs.readFile(path.join(vault, '40 Strategies', 'SOON.md'), 'utf8');
     expect(strat).toContain('trades: 12');
-    const brain = await fs.readFile(path.join(vault, 'Brain', 'insights.md'), 'utf8');
+    const brain = await fs.readFile(path.join(vault, '90 Brain', 'Insights.md'), 'utf8');
     expect(brain).toContain('Buying into +30% candles loses.');
   });
 
@@ -37,6 +37,6 @@ describe('obsidian sync', () => {
     const vault = await fs.mkdtemp(path.join(os.tmpdir(), 'obsidian-off-'));
     const o = new ObsidianSync({ enabled: false, vaultPath: vault }, { closedSince: async () => [{ symbol: 'X', strategy: 'SOON', pnlSol: 1, sizeSol: 1 }] });
     await o.writeSummaries();
-    await expect(fs.access(path.join(vault, 'Performance'))).rejects.toBeTruthy();
+    await expect(fs.access(path.join(vault, '50 Daily'))).rejects.toBeTruthy();
   });
 });

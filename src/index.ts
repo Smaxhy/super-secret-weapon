@@ -31,6 +31,8 @@ import { Brain } from './learner/brain';
 import { startPushNotifier } from './lib/push';
 import { LossAutopsy } from './learner/loss-autopsy';
 import { ObsidianSync } from './integrations/obsidian-sync';
+import { sniperRuleLines } from './integrations/obsidian-notes';
+import { recentChanges } from './lib/change-log';
 import { MigratedScanner } from './scanner/migrated-scanner';
 import { RunningCoins } from './scanner/running-coins';
 import { priceShape } from './evaluator/price-shape';
@@ -316,16 +318,30 @@ async function main(): Promise<void> {
       select: { strategy: true, realizedPnlSol: true, sizeSol: true, token: { select: { symbol: true } } },
     })).map((p) => ({ symbol: p.token?.symbol ?? null, strategy: p.strategy, pnlSol: p.realizedPnlSol, sizeSol: p.sizeSol })),
     positionFor: async (mint) => {
-      const p = await prisma.position.findFirst({ where: { mint, mode: 'PAPER' }, orderBy: { openedAt: 'desc' }, select: { strategy: true, sizeSol: true, entryContext: true, evaluation: { select: { combinedScore: true } } } });
-      return p ? { strategy: p.strategy, sizeSol: p.sizeSol, score: p.evaluation?.combinedScore ?? null, mcUsd: (p.entryContext as { marketCapUsd?: number } | null)?.marketCapUsd ?? null } : null;
+      const p = await prisma.position.findFirst({ where: { mint, mode: 'PAPER' }, orderBy: { openedAt: 'desc' }, select: { strategy: true, sizeSol: true, openedAt: true, entryContext: true, evaluation: { select: { combinedScore: true } } } });
+      return p ? { strategy: p.strategy, sizeSol: p.sizeSol, openedAtMs: p.openedAt.getTime(), score: p.evaluation?.combinedScore ?? null, mcUsd: (p.entryContext as { marketCapUsd?: number } | null)?.marketCapUsd ?? null } : null;
     },
     strategies: () => {
       const a = autopsy.snapshot();
       return a ? a.byStrategy.map((s) => ({ strategy: s.strategy, trades: s.n, winRate: s.winRatePct, avgPnl: s.avgPct, totalPnl: s.pnlSol, verdict: a.cards?.find((k) => k.strategy === s.strategy)?.verdict })) : [];
     },
-    insights: async () => (await redis.lrange('ai:insights', 0, 19)).map((s) => { try { return { text: (JSON.parse(s) as { text: string }).text }; } catch { return { text: s }; } }),
+    insights: async () => (await redis.lrange('ai:insights', 0, 19)).map((s) => { try { const x = JSON.parse(s) as { text: string; at?: string }; return { text: x.text, at: x.at }; } catch { return { text: s }; } }),
+    // v11.9 shared brain: wallet classes for the coin / wallet notes, the owner's inbox → tips, the coach's memory + diary.
+    walletRec: (w) => walletBook.get(w),
+    walletClass: (w) => walletBook.classOf(w),
+    topWallets: () => [...walletBook.top('proven', 50).map((x) => ({ wallet: x.wallet, cls: 'proven' as const })), ...walletBook.top('dumper', 50).map((x) => ({ wallet: x.wallet, cls: 'dumper' as const }))],
+    tips: () => aiCoach.tips(),
+    addTip: (text) => aiCoach.addTip(text),
+    changesSince: async (since) => (await recentChanges(60)).filter((c) => Date.parse(c.at) > since),
+    incrDaily: async (key) => { const n = await redis.incr(key); if (n === 1) await redis.expire(key, 3 * 86_400); return n; },
+    markSeen: async (key, member) => (await redis.sadd(key, member)) === 1,
+    memory: () => aiCoach.memory(),
+    sniperRules: () => sniperRuleLines(getConfig().sniper ?? DEFAULT_CONFIG.sniper, getConfig().trading.highConviction?.sizeSol ?? 1),
   });
   void obsidian.start(bus);
+  evaluator.obsidian = obsidian;
+  aiCoach.ownerNotesSource = () => obsidian.ownerNotes();
+  aiCoach.onReview = (e) => obsidian.onReview(e);
   const brain = new Brain(redis, (since) => shadow.results(since), aiCoach, (since) => coinOutcomes.results(since));
   brain.outcomeSource = () => coinOutcomes.snapshot();
   brain.exitSource = () => exitTuner.snapshot();

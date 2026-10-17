@@ -31,6 +31,7 @@ import { wouldHaveTaken, type ShadowReport, type ShadowResult } from './shadow-t
 import type { Autopsy } from './loss-autopsy';
 import { readHistory } from '../executor/position-history';
 import { afterEntry } from '../evaluator/price-shape';
+import { mergeMemory } from '../integrations/obsidian-notes';
 
 const log = moduleLogger('ai-coach');
 const TIP_MAX = 30;
@@ -209,15 +210,33 @@ export function priceFor(model: string, promptTokens = 0): { in: number; out: nu
   return { in: 5, out: 25 };
 }
 
-const K = { tips: 'ai:tips', rules: 'ai:rules', insights: 'ai:insights', last: 'ai:lastRun', lastDeep: 'ai:lastDeep', reviews: 'ai:reviews', spend: (d: string) => `ai:spend:${d}` };
+const K = { tips: 'ai:tips', rules: 'ai:rules', insights: 'ai:insights', last: 'ai:lastRun', lastDeep: 'ai:lastDeep', reviews: 'ai:reviews', memory: 'ai:memory', spend: (d: string) => `ai:spend:${d}` };
+
+/** What the coach tells the Obsidian diary after each review (src/integrations/obsidian-sync.ts onReview). */
+export interface ReviewEntry {
+  atMs: number;
+  model: string;
+  deep: boolean;
+  tradesReviewed: number;
+  insights: string[];
+  rulesProposed: string[];
+  rulesLive: number;
+  rulesRetired: number;
+  settingsChanged: string[];
+  resultsBefore: { n: number; avgPct: number } | null;
+  resultsAfterPrevious: { n: number; avgPct: number | null } | null;
+  memoryAdded: string[];
+  memory: string[];
+}
 const STRATS = ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'SMART_MONEY_COPY', 'SWING', 'RUNNER'];
 
 const OUTPUT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['insights', 'rules', 'tipResponses', 'settingChanges'],
+  required: ['insights', 'rules', 'tipResponses', 'settingChanges', 'memory'],
   properties: {
     insights: { type: 'array', items: { type: 'string' } },
+    memory: { type: 'array', items: { type: 'string' } },
     tipResponses: {
       type: 'array',
       items: { type: 'object', additionalProperties: false, required: ['tipId', 'response'], properties: { tipId: { type: 'string' }, response: { type: 'string' } } },
@@ -275,7 +294,10 @@ Return:
 "ownerTips" are messages from the bot's OWNER, written as if talking to you. They have priority over everything else: the owner knows this market. For every tip with status "new":
 - turn it into action: rules (set tipId to the tip's id — these go live at once, no testing; you may use any feature name from "allFeatureNames") and/or settingChanges (only keys listed in "editableSettings", value inside its min–max; set tipId). Do what the tip asks even when the data is thin — but if the data clearly shows it would lose money, still do it and say so plainly in the response.
 - answer it in tipResponses (tipId + 2–4 plain, friendly sentences: what you changed, and what the trades say about it). If a tip can't be turned into a rule or setting, say what you'll watch for instead.
-Tips with status "done" are standing instructions: keep following them in your insights and rules, don't redo their changes, and don't answer them again.`;
+Tips with status "done" are standing instructions: keep following them in your insights and rules, don't redo their changes, and don't answer them again.
+
+"memory" is your durable memory: dated bullets of what you know FOR SURE about this market and this bot so far (it is shown to you before every review and kept in the owner's notebook). "ownerNotes" is free text the owner wrote in that notebook — read it as context from the person who knows this market.
+- memory (output): in a normal review return up to 3 NEW bullets worth keeping for weeks (a confirmed pattern, a rule that clearly worked or failed, a fact about costs or timing) — or an empty list; never repeat what is already there. In a deep review you may return the whole memory rewritten (≤ 12 bullets, each ≤ 200 characters, start each with the date YYYY-MM-DD).`;
 
 export class AiCoach {
   private timer: NodeJS.Timeout | null = null;
@@ -294,6 +316,21 @@ export class AiCoach {
   exitSource: (() => { at: string; verdicts: Array<{ strategy: string; timer: string; n: number; ranPct: number; medianEndX: number; avgMaxAfterX: number; action: string }>; lossExits?: unknown[] } | null) | null = null;
   /** Best hours / days to trade (src/learner/timing.ts) — set in index.ts. */
   timingSource: (() => TimingProfile | null) | null = null;
+  /** The owner's free-form notes from the Obsidian inbox (set in index.ts). */
+  ownerNotesSource: (() => Promise<string>) | null = null;
+  /** After every review: the Obsidian diary + memory note (set in index.ts). */
+  onReview: ((e: ReviewEntry) => Promise<void>) | null = null;
+
+  /** The coach's durable memory (dated bullets; Redis `ai:memory`). */
+  async memory(): Promise<string[]> {
+    try {
+      const raw = await this.redis.get(K.memory);
+      const xs = raw ? (JSON.parse(raw) as unknown) : [];
+      return Array.isArray(xs) ? xs.filter((x): x is string => typeof x === 'string').slice(0, 20) : [];
+    } catch {
+      return [];
+    }
+  }
 
   constructor(
     private readonly redis: Redis,
@@ -616,7 +653,11 @@ export class AiCoach {
       const recent30 = trades.slice(0, 30).map((t) => t.pnlPct);
       const allNames = new Set(trades.flatMap((t) => Object.keys(t.flat)));
       const cfgNow = getConfig();
+      const memoryBefore = await this.memory();
+      const ownerNotes = this.ownerNotesSource ? (await this.ownerNotesSource().catch(() => '')).trim() : '';
       const input = {
+        memory: memoryBefore,
+        ownerNotes: ownerNotes || undefined,
         ownerTips: tips.slice(0, 15).map((t) => ({ id: t.id, at: t.at, text: t.text, status: t.status, whatYouDid: t.response })),
         editableSettings: newTips.length ? EDITABLE.map((e) => ({ key: e.key, group: e.group, label: e.label, min: e.min, max: e.max, unit: e.unit ?? null, now: getPath(cfgNow, e.key) })) : undefined,
         allFeatureNames: newTips.length ? [...allNames].slice(0, 400) : undefined,
@@ -693,10 +734,14 @@ export class AiCoach {
         rules: Array<{ tipId?: string; title: string; why: string; strategy: string; action: 'avoid' | 'prefer'; conditions: AiRuleCondition[] }>;
         tipResponses?: Array<{ tipId: string; response: string }>;
         settingChanges?: Array<{ tipId: string; key: string; value: number; why: string }>;
+        memory?: string[];
       };
       const tipIds = new Set(newTips.map((t) => t.id));
       const at = new Date().toISOString();
+      const mem = mergeMemory(memoryBefore, Array.isArray(out.memory) ? out.memory : [], deep, at.slice(0, 10));
+      const settingsChanged: string[] = [];
       const p = this.redis.pipeline();
+      p.set(K.memory, JSON.stringify(mem.bullets));
       for (const i of out.insights.slice(0, 6).reverse()) p.lpush(K.insights, JSON.stringify({ at, text: i.slice(0, 400) }));
       p.ltrim(K.insights, 0, 59);
       let added = 0;
@@ -740,6 +785,7 @@ export class AiCoach {
           const tip = newTips.find((t) => t.id === ch.tipId)!;
           const res = await applyEdit(ch.key, ch.value, 'owner-tip', `your tip "${tip.text.slice(0, 80)}" — ${ch.why.slice(0, 160)}`);
           tipSettings.set(ch.tipId, [...(tipSettings.get(ch.tipId) ?? []), res.ok ? res.text : `not changed (${res.error})`]);
+          if (res.ok) settingsChanged.push(res.text);
         }
         const answers = new Map((out.tipResponses ?? []).map((x) => [x.tipId, x.response.slice(0, 800)]));
         const latest = await this.tips();
@@ -758,6 +804,17 @@ export class AiCoach {
       const all = await this.rules();
       const retired = all.filter((r) => r.status === 'retired');
       if (retired.length > 40) await this.redis.hdel(K.rules, ...retired.slice(40).map((r) => r.id));
+      if (this.onReview) {
+        const prev = past[0];
+        void this.onReview({
+          atMs: Date.parse(at), model, deep, tradesReviewed: sample.length,
+          insights: out.insights.slice(0, 6).map((x) => x.slice(0, 400)),
+          rulesProposed: out.rules.slice(0, 6).map((r) => `${r.action} ${r.strategy}: ${r.title.slice(0, 120)}`),
+          rulesLive: all.filter((r) => r.status === 'live').length, rulesRetired: retired.length,
+          settingsChanged, resultsBefore: { n: recent30.length, avgPct: recent30.length ? r1(recent30.reduce((a, b) => a + b, 0) / recent30.length) : 0 },
+          resultsAfterPrevious: prev ? realAfter(prev.at) : null, memoryAdded: mem.added, memory: mem.bullets,
+        }).catch(() => undefined);
+      }
       this.lastError = null;
       log.info({ insights: out.insights.length, rules: added, costUsd: cost.toFixed(3) }, '🤖 AI coach reviewed the latest trades');
       return { ran: true, why: `${deep ? 'deep review: ' : ''}read ${sample.length} trades, ${out.insights.length} insights, ${added} new rules to test ($${cost.toFixed(3)})` };

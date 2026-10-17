@@ -1,27 +1,37 @@
 /**
- * Obsidian vault sync — writes trading data as Markdown files.
+ * Obsidian shared brain — the bot's notebook, read and written by the owner AND the bot.
  *
- * When `OBSIDIAN_VAULT_PATH` is set (env or BotConfig `obsidian.vaultPath`), the bot writes:
- *   - Daily trade logs:        <vault>/Trades/YYYY-MM-DD.md
- *   - Trade details:           <vault>/Trades/<strategy>/<mint-short>.md
- *   - Strategy summaries:      <vault>/Strategies/<strategy>.md
- *   - Daily P&L:               <vault>/Performance/YYYY-MM-DD.md
- *   - Brain insights:          <vault>/Brain/insights.md
+ * When `OBSIDIAN_VAULT_PATH` is set (env or BotConfig `obsidian.vaultPath`) the bot keeps a vault (layout in
+ * obsidian-notes.ts): trade logs + one note per closed trade, one note per coin it took seriously, one per notable
+ * wallet (proven / dumper / deployer sniper), one per strategy, one per day, and the AI coach's memory, insights,
+ * diary and tip replies — all linked with wikilinks so the graph view shows coins ↔ wallets ↔ trades ↔ strategies.
+ * The owner writes in `00 Inbox/` only: Tips.md lines become brain tips, Notes.md is read before every AI review.
  *
- * Files use Obsidian-compatible YAML frontmatter + wikilinks.
- * The sync runs on trade events (bus) and on a 10-minute timer for summaries.
- * On the VPS: set OBSIDIAN_VAULT_PATH=/root/obsidian-vault, then rsync or Obsidian Sync to your PC.
+ * Nothing here touches the hot path: evaluations and trades are queued in memory and written by a 10-minute flush
+ * (trade logs and diary entries are written as they happen — rare). File counts are capped.
+ * On the VPS the vault is /vault (= /root/bot/obsidian); the owner's PC copies it every 10 minutes.
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { moduleLogger } from '../lib/logger';
 import { bus, type BusEvent } from '../lib/bus';
+import type { WalletRec, WalletClass } from '../learner/wallet-book';
+import {
+  DIRS, coinFile, coinNote, dailyNote, dashboardNote, dayOf, diaryEntryText, diaryHeader, howToNote, indexNote, inboxKey, insightsNote, memoryNote,
+  parseInbox, strategyNote, tipRepliesNote, tradeLogHeader, tradeLogLine, tradeNote, walletEvictions, walletNote, withinDailyCap,
+  type CoinState, type DiaryEntry, type NotableWallet, type Note, type TipView, type WalletState,
+} from './obsidian-notes';
 
 const log = moduleLogger('obsidian');
 
 export interface ObsidianConfig {
   enabled: boolean;
   vaultPath: string;
+  inbox?: { enabled: boolean; pollSec: number };
+  maxCoinNotesPerDay?: number;
+  maxWalletNotes?: number;
+  /** skipped coins get a note only when their score is within this many points of the bar */
+  minSkippedScoreMargin?: number;
 }
 
 interface TradeEvent {
@@ -29,7 +39,6 @@ interface TradeEvent {
   mint: string;
   symbol?: string;
   strategy: string;
-  priceSol?: number;
   sizeSol?: number;
   pnlSol?: number;
   pnlPct?: number;
@@ -37,40 +46,52 @@ interface TradeEvent {
   explanation?: string;
   score?: number;
   marketCapUsd?: number;
-  entryAt?: string;
-  exitAt?: string;
   multiple?: number;
-  features?: Record<string, unknown>;
-}
-
-async function ensureDir(dir: string): Promise<void> {
-  await fs.mkdir(dir, { recursive: true }).catch(() => {});
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function timeStr(): string {
-  return new Date().toISOString().slice(11, 19);
-}
-
-function mintShort(mint: string): string {
-  return mint.slice(0, 8);
-}
-
-function sanitize(s: string): string {
-  return s.replace(/[<>:"/\\|?*]/g, '_').slice(0, 60);
+  closed?: boolean;
 }
 
 type BusTrade = Extract<BusEvent, { type: 'trade' }>['data'];
-export interface PositionInfo { strategy: string; sizeSol: number; score?: number | null; mcUsd?: number | null }
-/** Where the summaries come from (wired in index.ts); every source is optional. */
+export interface PositionInfo { strategy: string; sizeSol: number; score?: number | null; mcUsd?: number | null; openedAtMs?: number | null }
+
+/** Where the notes get their facts (wired in index.ts); every source is optional. */
 export interface ObsidianSources {
   closedSince?: (sinceMs: number) => Promise<Array<{ symbol: string | null; strategy: string; pnlSol: number; sizeSol: number }>>;
   positionFor?: (mint: string) => Promise<PositionInfo | null>;
   strategies?: () => Array<{ strategy: string; trades: number; winRate: number; avgPnl: number; totalPnl: number; verdict?: string; topSkips?: string[] }>;
-  insights?: () => Promise<Array<{ text: string; confidence?: number }>>;
+  insights?: () => Promise<Array<{ text: string; confidence?: number; at?: string }>>;
+  walletRec?: (wallet: string) => WalletRec | undefined;
+  walletClass?: (wallet: string) => WalletClass;
+  /** the book's current best proven / worst dumpers (so wallet notes exist even without a coin event) */
+  topWallets?: () => Array<{ wallet: string; cls: WalletClass }>;
+  tips?: () => Promise<TipView[]>;
+  addTip?: (text: string) => Promise<unknown>;
+  changesSince?: (sinceMs: number) => Promise<Array<{ at: string; source: string; what: string; why: string }>>;
+  /** Redis INCR on a daily counter (the coin-note cap) */
+  incrDaily?: (key: string) => Promise<number>;
+  /** Redis SADD → true when the member is new (inbox dedupe) */
+  markSeen?: (key: string, member: string) => Promise<boolean>;
+  memory?: () => Promise<string[]>;
+  sniperRules?: () => string[];
+}
+
+export interface EvaluationEvent {
+  mint: string;
+  symbol: string | null;
+  name: string | null;
+  strategy: string;
+  decision: 'BUY' | 'SKIP' | 'REJECT';
+  score: number;
+  threshold: number;
+  reasons: string[];
+  mcUsd: number | null;
+  migrated: boolean;
+  firstSeenMs: number;
+  /** distinct buyers in the crowd log (classified here through the wallet book) */
+  buyerWallets: string[];
+  deployerSniperWallets: string[];
+  crowdNote: string | null;
+  dumpCrew: boolean;
+  provenCrowd: boolean;
 }
 
 /** Pure: the bus's trade event (one 'event' with type 'trade') → a journal line. */
@@ -90,241 +111,321 @@ export function tradeFromBus(d: BusTrade, pos: PositionInfo | null): TradeEvent 
     score: pos?.score ?? undefined,
     marketCapUsd: pos?.mcUsd ?? undefined,
     multiple: d.peakMultiple,
+    closed: d.closed,
   };
 }
 
-export class ObsidianSync {
-  private vault: string;
-  private timer: ReturnType<typeof setInterval> | null = null;
+const MAX_COIN_STATES = 3000;
+const WALLET_REFRESH_MS = 60 * 60_000;
 
-  constructor(private cfg: ObsidianConfig, private readonly sources: ObsidianSources = {}) {
+async function ensureDir(dir: string): Promise<void> {
+  await fs.mkdir(dir, { recursive: true }).catch(() => {});
+}
+
+export class ObsidianSync {
+  private readonly vault: string;
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private inboxTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly coins = new Map<string, CoinState>();
+  private readonly dirtyCoins = new Set<string>();
+  private readonly wallets = new Map<string, WalletState>();
+  private readonly dirtyWallets = new Set<string>();
+  /** trade note paths per day (for the day note) */
+  private readonly tradeNotes = new Map<string, string[]>();
+  private readonly counts = { coins: 0, wallets: 0, trades: 0 };
+  private lastDiaryMs = 0;
+  private flushing = false;
+
+  constructor(private readonly cfg: ObsidianConfig, private readonly sources: ObsidianSources = {}) {
     this.vault = cfg.vaultPath;
   }
 
-  async start(b: typeof bus, summaryEveryMs = 10 * 60_000, firstAfterMs = 20_000): Promise<void> {
-    if (!this.cfg.enabled || !this.vault) return;
-    await ensureDir(path.join(this.vault, 'Trades'));
-    await ensureDir(path.join(this.vault, 'Strategies'));
-    await ensureDir(path.join(this.vault, 'Performance'));
-    await ensureDir(path.join(this.vault, 'Brain'));
+  get enabled(): boolean {
+    return this.cfg.enabled && !!this.vault;
+  }
+
+  async start(b: typeof bus, flushEveryMs = 10 * 60_000, firstAfterMs = 20_000): Promise<void> {
+    if (!this.enabled) return;
+    for (const d of Object.values(DIRS)) await ensureDir(path.join(this.vault, d));
+    await ensureDir(path.join(this.vault, DIRS.inbox));
+    await this.write(dashboardNote());
+    await this.write(howToNote());
+    await this.writeIndex();
     b.on('event', (ev: BusEvent) => {
       if (ev.type !== 'trade') return;
       void this.onBusTrade(ev.data).catch((e) => log.warn({ err: (e as Error).message }, 'obsidian trade write failed'));
     });
-    this.timer = setInterval(() => void this.writeSummaries(), summaryEveryMs);
-    setTimeout(() => void this.writeSummaries(), firstAfterMs);
-    log.info({ vault: this.vault }, 'obsidian sync started');
-  }
-
-  private async onBusTrade(d: BusTrade): Promise<void> {
-    const pos = this.sources.positionFor ? await this.sources.positionFor(d.mint).catch(() => null) : null;
-    await this.onTrade(tradeFromBus(d, pos));
-  }
-
-  /** Today's P&L note, one note per strategy, the AI's latest insights. Runs on the timer and once at start. */
-  async writeSummaries(now = Date.now()): Promise<void> {
-    if (!this.cfg.enabled || !this.vault) return;
-    try {
-      const day = new Date(now).toISOString().slice(0, 10);
-      const closed = this.sources.closedSince ? await this.sources.closedSince(Date.parse(`${day}T00:00:00Z`)) : [];
-      const label = (t: { symbol: string | null; pnlSol: number }) => `${t.symbol ?? '?'} ${t.pnlSol >= 0 ? '+' : ''}${t.pnlSol.toFixed(3)} SOL`;
-      const sorted = [...closed].sort((a, b) => b.pnlSol - a.pnlSol);
-      const byStrategy = new Map<string, { trades: number; pnl: number }>();
-      for (const t of closed) {
-        const s = byStrategy.get(t.strategy) ?? { trades: 0, pnl: 0 };
-        s.trades += 1;
-        s.pnl += t.pnlSol;
-        byStrategy.set(t.strategy, s);
-      }
-      await this.writeDailyPerformance(day, {
-        trades: closed.length,
-        wins: closed.filter((t) => t.pnlSol > 0).length,
-        pnlSol: closed.reduce((a, t) => a + t.pnlSol, 0),
-        bestTrade: sorted[0] ? label(sorted[0]) : undefined,
-        worstTrade: sorted.length > 1 ? label(sorted[sorted.length - 1]!) : undefined,
-        byStrategy: [...byStrategy].map(([strategy, v]) => ({ strategy, ...v })),
-      });
-      for (const s of this.sources.strategies?.() ?? []) await this.writeStrategySummary(s.strategy, s);
-      const ins = this.sources.insights ? await this.sources.insights() : [];
-      if (ins.length) await this.writeBrainInsights(ins);
-    } catch (e) {
-      log.warn({ err: (e as Error).message }, 'obsidian summaries failed');
+    this.timer = setInterval(() => void this.flush(), flushEveryMs);
+    setTimeout(() => void this.flush(), firstAfterMs);
+    const ib = this.cfg.inbox ?? { enabled: true, pollSec: 60 };
+    if (ib.enabled && this.sources.addTip && this.sources.markSeen) {
+      this.inboxTimer = setInterval(() => void this.pollInbox(), Math.max(15, ib.pollSec) * 1000);
+      setTimeout(() => void this.pollInbox(), 10_000);
     }
+    log.info({ vault: this.vault }, 'obsidian shared brain started');
   }
 
   stop(): void {
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
+    if (this.inboxTimer) { clearInterval(this.inboxTimer); this.inboxTimer = null; }
   }
 
-  private async onTrade(ev: TradeEvent): Promise<void> {
-    const day = today();
-    const time = timeStr();
-    const sym = ev.symbol ?? mintShort(ev.mint);
-
-    // Append to daily log
-    const dailyPath = path.join(this.vault, 'Trades', `${day}.md`);
-    const emoji = ev.type === 'entry' ? '🟢' : (ev.pnlSol && ev.pnlSol > 0 ? '🟢' : '🔴');
-    let line: string;
-    if (ev.type === 'entry') {
-      line = `| ${time} | ${emoji} BUY | ${sym} | ${ev.strategy} | ${ev.sizeSol?.toFixed(3) ?? '?'} SOL | score ${ev.score ?? '?'} | MC $${fmtUsd(ev.marketCapUsd)} |\n`;
-    } else {
-      line = `| ${time} | ${emoji} SELL | ${sym} | ${ev.strategy} | ${ev.pnlSol?.toFixed(3) ?? '?'} SOL (${ev.pnlPct?.toFixed(1) ?? '?'}%) | ${ev.exitReason ?? '?'} | ${ev.multiple?.toFixed(2) ?? '?'}x |\n`;
+  // ───────────────────────────── evaluations → coin + wallet notes ─────────────────────────────
+  /** Called by the evaluator (synchronous, no I/O): coins it wanted or nearly wanted get a note on the next flush. */
+  onEvaluation(ev: EvaluationEvent, now = Date.now()): void {
+    if (!this.enabled) return;
+    const margin = this.cfg.minSkippedScoreMargin ?? 10;
+    const wanted = ev.decision === 'BUY';
+    if (!wanted && !(ev.decision === 'SKIP' && ev.score >= ev.threshold - margin)) return;
+    const existing = this.coins.get(ev.mint);
+    if (!existing) {
+      // New coin note today → counts against the daily cap (Redis so a restart doesn't reset it).
+      void this.admit(ev, now).catch(() => undefined);
+      return;
     }
+    this.mergeCoin(existing, ev, now);
+  }
 
+  private async admit(ev: EvaluationEvent, now: number): Promise<void> {
+    const n = this.sources.incrDaily ? await this.sources.incrDaily(`obs:coins:${dayOf(now)}`) : this.counts.coins + 1;
+    if (!withinDailyCap(n, this.cfg.maxCoinNotesPerDay ?? 300)) return;
+    if (this.coins.has(ev.mint)) return this.mergeCoin(this.coins.get(ev.mint)!, ev, now);
+    const c: CoinState = {
+      mint: ev.mint, symbol: ev.symbol, name: ev.name, strategies: [], firstSeenMs: ev.firstSeenMs || now, mcUsd: ev.mcUsd, migrated: ev.migrated,
+      verdict: 'skipped', score: null, threshold: null, why: '', crowdNote: null, dumpCrew: false, provenCrowd: false, wallets: [], trades: [], days: [], updatedMs: now,
+    };
+    this.coins.set(ev.mint, c);
+    if (this.coins.size > MAX_COIN_STATES) {
+      const oldest = [...this.coins.values()].sort((a, b) => a.updatedMs - b.updatedMs).slice(0, this.coins.size - MAX_COIN_STATES);
+      for (const o of oldest) { this.coins.delete(o.mint); this.dirtyCoins.delete(o.mint); }
+    }
+    this.mergeCoin(c, ev, now);
+  }
+
+  private mergeCoin(c: CoinState, ev: EvaluationEvent, now: number): void {
+    if (!c.strategies.includes(ev.strategy)) c.strategies.push(ev.strategy);
+    if (c.verdict !== 'bought' && (ev.decision === 'BUY' || c.score === null || ev.score > c.score)) {
+      if (ev.decision === 'BUY' && c.verdict === 'skipped') c.verdict = 'signal';
+      c.score = ev.score;
+      c.threshold = ev.threshold;
+      c.why = ev.reasons[0] ?? c.why;
+    }
+    if (ev.symbol) c.symbol = ev.symbol;
+    if (ev.name) c.name = ev.name;
+    if (ev.mcUsd !== null) c.mcUsd = ev.mcUsd;
+    c.migrated = c.migrated || ev.migrated;
+    c.crowdNote = ev.crowdNote ?? c.crowdNote;
+    c.dumpCrew = c.dumpCrew || ev.dumpCrew;
+    c.provenCrowd = c.provenCrowd || ev.provenCrowd;
+    const day = dayOf(now);
+    if (!c.days.includes(day)) c.days.push(day);
+    for (const w of this.notable(ev.buyerWallets, ev.deployerSniperWallets)) {
+      if (!c.wallets.some((x) => x.wallet === w.wallet)) c.wallets.push(w);
+      this.touchWallet(w, `${DIRS.coins}/${coinFile(c.symbol, c.mint)}`, now);
+    }
+    c.wallets = c.wallets.slice(0, 15);
+    c.updatedMs = now;
+    this.dirtyCoins.add(c.mint);
+  }
+
+  private notable(buyers: string[], snipers: string[]): NotableWallet[] {
+    const out = new Map<string, NotableWallet>();
+    for (const w of snipers) out.set(w, { wallet: w, cls: 'deployer-sniper' });
+    if (this.sources.walletClass) {
+      for (const w of buyers.slice(0, 80)) {
+        if (out.has(w)) continue;
+        const cls = this.sources.walletClass(w);
+        if (cls === 'proven' || cls === 'dumper') out.set(w, { wallet: w, cls });
+      }
+    }
+    return [...out.values()].slice(0, 15);
+  }
+
+  private touchWallet(w: NotableWallet, coinPath: string | null, now: number): void {
+    let s = this.wallets.get(w.wallet);
+    if (!s) {
+      s = { wallet: w.wallet, cls: w.cls, rec: null, coins: [], lastSeenMs: now, writtenMs: 0 };
+      this.wallets.set(w.wallet, s);
+    }
+    if (w.cls === 'deployer-sniper' || s.cls !== 'deployer-sniper') s.cls = w.cls;
+    if (coinPath && !s.coins.includes(coinPath)) s.coins = [...s.coins, coinPath].slice(-30);
+    s.lastSeenMs = now;
+    if (now - s.writtenMs >= WALLET_REFRESH_MS) this.dirtyWallets.add(w.wallet);
+  }
+
+  // ───────────────────────────── trades ─────────────────────────────
+  private async onBusTrade(d: BusTrade, now = Date.now()): Promise<void> {
+    if (!this.enabled) return;
+    const pos = this.sources.positionFor ? await this.sources.positionFor(d.mint).catch(() => null) : null;
+    const ev = tradeFromBus(d, pos);
+    const day = dayOf(now);
+    const logPath = path.join(this.vault, DIRS.trades, `${day}.md`);
     try {
-      await fs.access(dailyPath);
+      await fs.access(logPath);
     } catch {
-      const header = `---\ndate: ${day}\ntype: daily-trades\n---\n# Trades — ${day}\n\n| Time | Action | Token | Strategy | Size/PnL | Details | Extra |\n|------|--------|-------|----------|----------|---------|-------|\n`;
-      await fs.writeFile(dailyPath, header);
+      await fs.writeFile(logPath, tradeLogHeader(day));
     }
-    await fs.appendFile(dailyPath, line);
+    await fs.appendFile(logPath, tradeLogLine({ atMs: now, entry: ev.type === 'entry', symbol: ev.symbol ?? null, mint: ev.mint, strategy: ev.strategy, sizeSol: ev.sizeSol, pnlSol: ev.pnlSol, pnlPct: ev.pnlPct, score: ev.score, mcUsd: ev.marketCapUsd, exitReason: ev.exitReason, multiple: ev.multiple }));
+    // The coin note: a trade = the bot really bought it.
+    let c = this.coins.get(ev.mint);
+    if (!c) {
+      c = { mint: ev.mint, symbol: ev.symbol ?? null, name: null, strategies: [], firstSeenMs: pos?.openedAtMs ?? now, mcUsd: ev.marketCapUsd ?? null, migrated: false, verdict: 'bought', score: ev.score ?? null, threshold: null, why: ev.explanation ?? 'bought', crowdNote: null, dumpCrew: false, provenCrowd: false, wallets: [], trades: [], days: [], updatedMs: now };
+      this.coins.set(ev.mint, c);
+    }
+    c.verdict = 'bought';
+    if (!c.strategies.includes(ev.strategy)) c.strategies.push(ev.strategy);
+    if (!c.days.includes(day)) c.days.push(day);
+    if (ev.explanation && c.why.length < 40) c.why = ev.explanation;
+    if (ev.type === 'exit' && ev.closed !== false) {
+      const note = tradeNote({
+        mint: ev.mint, symbol: ev.symbol ?? null, strategy: ev.strategy, atMs: now, pnlSol: ev.pnlSol ?? null, pnlPct: ev.pnlPct ?? null, peakMultiple: ev.multiple ?? null,
+        exitReason: ev.exitReason ?? null, score: ev.score ?? null, mcUsd: ev.marketCapUsd ?? null, sizeSol: ev.sizeSol ?? null,
+        heldMin: pos?.openedAtMs ? (now - pos.openedAtMs) / 60_000 : null, explanation: ev.explanation ?? null, wallets: c.wallets,
+      });
+      await this.write(note);
+      this.counts.trades++;
+      const p = note.path.replace(/\.md$/, '');
+      c.trades.push(p);
+      this.tradeNotes.set(day, [...(this.tradeNotes.get(day) ?? []), p]);
+      for (const w of c.wallets) this.touchWallet(w, `${DIRS.coins}/${coinFile(c.symbol, c.mint)}`, now);
+    }
+    c.updatedMs = now;
+    this.dirtyCoins.add(ev.mint);
+    await this.write(coinNote(c));
+    this.dirtyCoins.delete(ev.mint);
+  }
 
-    // Write individual trade file
-    if (ev.type === 'exit') {
-      await this.writeTradeDetail(ev, day, time);
+  // ───────────────────────────── the 10-minute flush ─────────────────────────────
+  async flush(now = Date.now()): Promise<void> {
+    if (!this.enabled || this.flushing) return;
+    this.flushing = true;
+    try {
+      await this.writeSummaries(now);
+      for (const mint of [...this.dirtyCoins]) {
+        const c = this.coins.get(mint);
+        if (c) { await this.write(coinNote(c)); this.counts.coins++; }
+        this.dirtyCoins.delete(mint);
+      }
+      for (const w of this.sources.topWallets?.() ?? []) this.touchWallet({ wallet: w.wallet, cls: w.cls }, null, now);
+      for (const w of walletEvictions([...this.wallets.values()], this.cfg.maxWalletNotes ?? 2000)) { this.wallets.delete(w); this.dirtyWallets.delete(w); }
+      for (const w of [...this.dirtyWallets]) {
+        const s = this.wallets.get(w);
+        if (s) {
+          s.rec = this.sources.walletRec?.(w) ?? s.rec;
+          await this.write(walletNote(s));
+          s.writtenMs = now;
+          this.counts.wallets++;
+        }
+        this.dirtyWallets.delete(w);
+      }
+      if (this.sources.tips) await this.write(tipRepliesNote(await this.sources.tips(), now));
+      if (this.sources.memory) await this.write(memoryNote(await this.sources.memory(), now));
+      await this.writeIndex(now);
+    } catch (e) {
+      log.warn({ err: (e as Error).message }, 'obsidian flush failed');
+    } finally {
+      this.flushing = false;
     }
   }
 
-  private async writeTradeDetail(ev: TradeEvent, day: string, time: string): Promise<void> {
-    const sym = sanitize(ev.symbol ?? mintShort(ev.mint));
-    const dir = path.join(this.vault, 'Trades', sanitize(ev.strategy));
-    await ensureDir(dir);
-    const fp = path.join(dir, `${sym}-${day}-${time.replace(/:/g, '')}.md`);
-    const win = ev.pnlSol && ev.pnlSol > 0;
-    const content = `---
-mint: "${ev.mint}"
-symbol: "${ev.symbol ?? mintShort(ev.mint)}"
-strategy: "${ev.strategy}"
-date: "${day}"
-pnlSol: ${ev.pnlSol?.toFixed(4) ?? 0}
-pnlPct: ${ev.pnlPct?.toFixed(2) ?? 0}
-exitReason: "${ev.exitReason ?? 'unknown'}"
-result: "${win ? 'WIN' : 'LOSS'}"
-score: ${ev.score ?? 0}
-marketCapUsd: ${ev.marketCapUsd ?? 0}
-multiple: ${ev.multiple?.toFixed(3) ?? 0}
-tags:
-  - trade
-  - ${ev.strategy.toLowerCase()}
-  - ${win ? 'win' : 'loss'}
----
-# ${win ? '✅' : '❌'} ${ev.symbol ?? mintShort(ev.mint)} — ${ev.strategy}
-
-**${day} ${time}** · ${ev.pnlPct?.toFixed(1)}% · ${ev.pnlSol?.toFixed(4)} SOL · ${ev.multiple?.toFixed(2)}x
-
-## Entry
-- **Score:** ${ev.score ?? '?'}
-- **Market cap:** $${fmtUsd(ev.marketCapUsd)}
-- **Size:** ${ev.sizeSol?.toFixed(3) ?? '?'} SOL
-${ev.explanation ? `\n## Why it bought\n${ev.explanation}\n` : ''}
-## Exit
-- **Reason:** ${ev.exitReason ?? 'unknown'}
-- **P&L:** ${ev.pnlSol?.toFixed(4) ?? '?'} SOL (${ev.pnlPct?.toFixed(1) ?? '?'}%)
-- **Peak multiple:** ${ev.multiple?.toFixed(2) ?? '?'}x
-
-## Links
-- [[${day}|Daily log]]
-- [[${sanitize(ev.strategy)}|Strategy: ${ev.strategy}]]
-`;
-    await fs.writeFile(fp, content);
+  /** Today's note, one note per strategy, the AI's latest insights (also called by tests). */
+  async writeSummaries(now = Date.now()): Promise<void> {
+    if (!this.enabled) return;
+    const day = dayOf(now);
+    const closed = this.sources.closedSince ? await this.sources.closedSince(Date.parse(`${day}T00:00:00Z`)) : [];
+    const label = (t: { symbol: string | null; pnlSol: number }) => `${t.symbol ?? '?'} ${t.pnlSol >= 0 ? '+' : ''}${t.pnlSol.toFixed(3)} SOL`;
+    const sorted = [...closed].sort((a, b) => b.pnlSol - a.pnlSol);
+    const byStrategy = new Map<string, { trades: number; pnl: number }>();
+    for (const t of closed) {
+      const s = byStrategy.get(t.strategy) ?? { trades: 0, pnl: 0 };
+      s.trades += 1;
+      s.pnl += t.pnlSol;
+      byStrategy.set(t.strategy, s);
+    }
+    await this.write(dailyNote(day, {
+      trades: closed.length,
+      wins: closed.filter((t) => t.pnlSol > 0).length,
+      pnlSol: closed.reduce((a, t) => a + t.pnlSol, 0),
+      bestTrade: sorted[0] ? label(sorted[0]) : undefined,
+      worstTrade: sorted.length > 1 ? label(sorted[sorted.length - 1]!) : undefined,
+      byStrategy: [...byStrategy].map(([strategy, v]) => ({ strategy, ...v })),
+      tradeLinks: this.tradeNotes.get(day) ?? [],
+    }));
+    const rules = this.sources.sniperRules?.() ?? [];
+    for (const s of this.sources.strategies?.() ?? []) await this.write(strategyNote(s.strategy, s, rules, now));
+    const ins = this.sources.insights ? await this.sources.insights() : [];
+    if (ins.length) await this.write(insightsNote(ins, now));
   }
 
-  /** Write a strategy summary (called from the autopsy / brain). */
-  async writeStrategySummary(strategy: string, data: {
-    trades: number; winRate: number; avgPnl: number; totalPnl: number;
-    topSkips?: string[]; verdict?: string;
-  }): Promise<void> {
-    if (!this.cfg.enabled) return;
-    const dir = path.join(this.vault, 'Strategies');
-    await ensureDir(dir);
-    const fp = path.join(dir, `${sanitize(strategy)}.md`);
-    const content = `---
-strategy: "${strategy}"
-updated: "${new Date().toISOString()}"
-trades: ${data.trades}
-winRate: ${data.winRate.toFixed(1)}
-avgPnl: ${data.avgPnl.toFixed(2)}
-totalPnl: ${data.totalPnl.toFixed(4)}
-verdict: "${data.verdict ?? 'unknown'}"
-tags:
-  - strategy
----
-# ${strategy}
-
-**Last updated:** ${new Date().toISOString().slice(0, 16)}
-
-| Metric | Value |
-|--------|-------|
-| Trades | ${data.trades} |
-| Win rate | ${data.winRate.toFixed(1)}% |
-| Avg P&L | ${data.avgPnl.toFixed(2)}% |
-| Total P&L | ${data.totalPnl.toFixed(4)} SOL |
-| Verdict | ${data.verdict ?? '—'} |
-
-${data.topSkips?.length ? `## Top skip reasons\n${data.topSkips.map((s) => `- ${s}`).join('\n')}\n` : ''}
-`;
-    await fs.writeFile(fp, content);
+  // ───────────────────────────── inbox (owner → brain) ─────────────────────────────
+  /** New lines in 00 Inbox/Tips.md become brain tips (deduped forever by their hash). */
+  async pollInbox(): Promise<number> {
+    if (!this.enabled || !this.sources.addTip || !this.sources.markSeen) return 0;
+    let text: string;
+    try {
+      text = await fs.readFile(path.join(this.vault, DIRS.inbox, 'Tips.md'), 'utf8');
+    } catch {
+      return 0;
+    }
+    let added = 0;
+    for (const line of parseInbox(text).slice(0, 50)) {
+      try {
+        if (!(await this.sources.markSeen('obs:tips:seen', inboxKey(line)))) continue;
+        await this.sources.addTip(line.slice(0, 1000));
+        added++;
+        log.info({ tip: line.slice(0, 120) }, '📝 tip from the Obsidian inbox');
+      } catch (e) {
+        log.warn({ err: (e as Error).message }, 'inbox tip failed');
+      }
+    }
+    if (added && this.sources.tips) await this.write(tipRepliesNote(await this.sources.tips())).catch(() => undefined);
+    return added;
   }
 
-  /** Write daily performance (called from the timer or API). */
-  async writeDailyPerformance(day: string, data: {
-    trades: number; wins: number; pnlSol: number; bestTrade?: string; worstTrade?: string;
-    byStrategy?: Array<{ strategy: string; trades: number; pnl: number }>;
-  }): Promise<void> {
-    if (!this.cfg.enabled) return;
-    const dir = path.join(this.vault, 'Performance');
-    await ensureDir(dir);
-    const fp = path.join(dir, `${day}.md`);
-    const wr = data.trades > 0 ? ((data.wins / data.trades) * 100).toFixed(1) : '0';
-    const content = `---
-date: "${day}"
-trades: ${data.trades}
-wins: ${data.wins}
-pnlSol: ${data.pnlSol.toFixed(4)}
-winRate: ${wr}
-tags:
-  - daily-performance
----
-# Performance — ${day}
-
-| Metric | Value |
-|--------|-------|
-| Trades | ${data.trades} |
-| Wins | ${data.wins} (${wr}%) |
-| P&L | ${data.pnlSol.toFixed(4)} SOL |
-${data.bestTrade ? `| Best | ${data.bestTrade} |` : ''}
-${data.worstTrade ? `| Worst | ${data.worstTrade} |` : ''}
-
-${data.byStrategy?.length ? `## By strategy\n| Strategy | Trades | P&L |\n|----------|--------|-----|\n${data.byStrategy.map((s) => `| ${s.strategy} | ${s.trades} | ${s.pnl.toFixed(4)} SOL |`).join('\n')}\n` : ''}
-`;
-    await fs.writeFile(fp, content);
+  /** The owner's free-form notes (00 Inbox/Notes.md, last 4,000 characters) for the AI coach's prompt. */
+  async ownerNotes(maxChars = 4000): Promise<string> {
+    if (!this.enabled) return '';
+    try {
+      const t = await fs.readFile(path.join(this.vault, DIRS.inbox, 'Notes.md'), 'utf8');
+      return t.length > maxChars ? t.slice(-maxChars) : t;
+    } catch {
+      return '';
+    }
   }
 
-  /** Write brain insights. */
-  async writeBrainInsights(insights: Array<{ text: string; confidence?: number }>): Promise<void> {
-    if (!this.cfg.enabled) return;
-    const dir = path.join(this.vault, 'Brain');
-    await ensureDir(dir);
-    const fp = path.join(dir, `insights.md`);
-    const content = `---
-updated: "${new Date().toISOString()}"
-tags:
-  - brain
-  - ai-insights
----
-# Brain Insights
-
-**Last updated:** ${new Date().toISOString().slice(0, 16)}
-
-${insights.map((i, idx) => `${idx + 1}. ${i.text}${i.confidence ? ` *(confidence: ${(i.confidence * 100).toFixed(0)}%)*` : ''}`).join('\n')}
-`;
-    await fs.writeFile(fp, content);
+  // ───────────────────────────── AI coach → diary + memory ─────────────────────────────
+  async onReview(e: Omit<DiaryEntry, 'changes'> & { memory: string[] }): Promise<void> {
+    if (!this.enabled) return;
+    try {
+      const changes = this.sources.changesSince ? await this.sources.changesSince(this.lastDiaryMs || e.atMs - 3600_000) : [];
+      const day = dayOf(e.atMs);
+      const fp = path.join(this.vault, DIRS.diary, `${day}.md`);
+      await ensureDir(path.dirname(fp));
+      try {
+        await fs.access(fp);
+      } catch {
+        await fs.writeFile(fp, diaryHeader(day));
+      }
+      await fs.appendFile(fp, diaryEntryText({ ...e, changes }));
+      await this.write(memoryNote(e.memory, e.atMs));
+      this.lastDiaryMs = e.atMs;
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'obsidian diary failed');
+    }
   }
-}
 
-function fmtUsd(v: number | undefined | null): string {
-  if (!v) return '?';
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}k`;
-  return v.toFixed(0);
+  snapshot(): { coins: number; wallets: number; trades: number; vault: string } {
+    return { ...this.counts, vault: this.vault };
+  }
+
+  private async writeIndex(now = Date.now()): Promise<void> {
+    const days = [...new Set([...this.tradeNotes.keys(), dayOf(now)])].sort().reverse().slice(0, 3);
+    await this.write(indexNote({ recentDays: days, recentDiary: days, strategies: (this.sources.strategies?.() ?? []).map((s) => s.strategy), counts: this.counts }, now));
+  }
+
+  private async write(n: Note): Promise<void> {
+    const fp = path.join(this.vault, n.path);
+    await ensureDir(path.dirname(fp));
+    await fs.writeFile(fp, n.content);
+  }
 }

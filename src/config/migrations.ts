@@ -576,6 +576,16 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['wallets', ['entry', 'deployerSniperHoldPct'], 1],
     ],
   },
+  {
+    version: 40,
+    note: 'v11.9 Obsidian shared brain: inbox tips, note caps (a saved obsidian row keeps its vaultPath / enabled)',
+    set: [
+      ['obsidian', ['inbox'], { enabled: true, pollSec: 60 }],
+      ['obsidian', ['maxCoinNotesPerDay'], 300],
+      ['obsidian', ['maxWalletNotes'], 2000],
+      ['obsidian', ['minSkippedScoreMargin'], 10],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

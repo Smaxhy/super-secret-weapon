@@ -943,7 +943,16 @@ export const DEFAULT_CONFIG = {
   momentumGate: { enabled: true as boolean, maxRun1mPct: 18, maxRun3mPct: 30, minOffHighPct: 6, minBuyShare2m: 0.52, maxLastCandlePct: 15, skipForExplore: true as boolean, skipForDipEntry: true as boolean },
 
   /** v11: Obsidian vault sync — writes trades, strategies, performance as Markdown files (set OBSIDIAN_VAULT_PATH on the VPS). */
-  obsidian: { enabled: false as boolean, vaultPath: '' },
+  obsidian: {
+    enabled: false as boolean,
+    vaultPath: '',
+    /** v11.9 shared brain: lines in 00 Inbox/Tips.md become brain tips; Notes.md is read before every AI review. */
+    inbox: { enabled: true as boolean, pollSec: 60 },
+    maxCoinNotesPerDay: 300,
+    maxWalletNotes: 2000,
+    /** skipped coins get a note only when their score is within this many points of the bar */
+    minSkippedScoreMargin: 10,
+  },
   /** v11: Real-time trade-level entry quality — blocks dumps, seller floods, retraced spikes; boosts clean bounces. */
   entryQuality: { enabled: true as boolean, maxDrop15sPct: 5, maxSellBuyRatio30s: 2.0, spikeRetracePct: 20, bounceBoostPct: 4, minBuyers30s: 3, minVolRatio: 0.3 },
   /** v11: Adaptive stop loss — tightens stops on weak entries (caution quality, high RugCheck, low score margin), widens on strong ones. */
