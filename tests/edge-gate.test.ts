@@ -87,3 +87,47 @@ describe('edgeGateVerdict', () => {
     expect(v.expectedEdgePct).toBeCloseTo(3, 0);
   });
 });
+
+import { probeTurn } from '../src/evaluator/edge-gate';
+import { setStrategyEdgeStats, strategyEdgeStatsFor, type ClosedTrade } from '../src/learner/loss-autopsy';
+
+describe('edge gate probes (1 in N refused signals still buys at the minimum size)', () => {
+  it('every Nth refused signal is the probe; 0 = never', () => {
+    expect([1, 2, 3].map((n) => probeTurn(n, 4))).toEqual([false, false, false]);
+    expect(probeTurn(4, 4)).toBe(true);
+    expect(probeTurn(8, 4)).toBe(true);
+    expect(probeTurn(0, 4)).toBe(false);
+    expect(probeTurn(4, 0)).toBe(false);
+  });
+});
+
+describe('the record the edge gate judges by', () => {
+  const trade = (strategy: string, pnlPct: number, closedAtMs: number): ClosedTrade =>
+    ({ strategy, pnlPct, pnlSol: pnlPct / 100, sizeSol: 0.1, exitReason: 'x', peakMultiple: 1, heldMin: 1, explore: false, closedAtMs } as unknown as ClosedTrade);
+  const OLD = 1_000_000, NEW = 2_000_000;
+  const old = Array.from({ length: 30 }, (_, i) => trade('SOON', -15, OLD + i));
+  const fresh = Array.from({ length: 30 }, (_, i) => trade('SOON', +12, NEW + i));
+
+  it('only trades since the current strategy went live count — the old setup cannot refuse the new one', () => {
+    setStrategyEdgeStats([...old, ...fresh], { sinceMs: NEW, window: 100 });
+    const s = strategyEdgeStatsFor('SOON')!;
+    expect(s.n).toBe(30);
+    expect(s.winRate).toBe(1);
+    setStrategyEdgeStats([...old, ...fresh], { sinceMs: 0, window: 100 });
+    expect(strategyEdgeStatsFor('SOON')!.n).toBe(60);
+  });
+
+  it('only the newest `window` trades form the record', () => {
+    setStrategyEdgeStats([...old, ...fresh], { window: 10 });
+    const s = strategyEdgeStatsFor('SOON')!;
+    expect(s.n).toBe(10);
+    expect(s.winRate).toBe(1);
+    expect(strategyEdgeStatsFor('NOPE')).toBeNull();
+  });
+
+  it('trades without a close time are kept (input order) when a since-date is set', () => {
+    const t = { ...trade('MIGRATION_MOMENTUM', 5, 0), closedAtMs: undefined } as unknown as ClosedTrade;
+    setStrategyEdgeStats([t], { sinceMs: NEW });
+    expect(strategyEdgeStatsFor('MIGRATION_MOMENTUM')!.n).toBe(1);
+  });
+});

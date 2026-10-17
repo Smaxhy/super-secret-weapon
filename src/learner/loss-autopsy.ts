@@ -17,6 +17,8 @@
 import type { Redis } from 'ioredis';
 import { prisma } from '../lib/prisma';
 import { learningSince } from './labels';
+import { getConfig } from '../config/runtime-config';
+import { strategySince } from '../config/migrations';
 import { entryStyles, setEntryStyles, type EntryStyle } from './entry-style';
 import { diffByStrategy, recordChange } from '../lib/change-log';
 import { moduleLogger } from '../lib/logger';
@@ -285,10 +287,17 @@ let edgeStatsCache = new Map<string, StrategyEdgeStats>();
 export function strategyEdgeStatsFor(strategy: string): StrategyEdgeStats | null {
   return edgeStatsCache.get(strategy) ?? null;
 }
-export function setStrategyEdgeStats(trades: readonly ClosedTrade[]): void {
+/**
+ * The record the edge gate judges each strategy by: trades closed since the current strategy went live
+ * (`sinceMs`, 0 = all) and only the newest `window` of them — the old setup's losses must not refuse the new one.
+ */
+export function setStrategyEdgeStats(trades: readonly ClosedTrade[], opts: { sinceMs?: number; window?: number } = {}): void {
   edgeStatsCache = new Map();
-  for (const s of [...new Set(trades.map((t) => t.strategy))]) {
-    const ts = trades.filter((t) => t.strategy === s);
+  const since = opts.sinceMs ?? 0;
+  const window = opts.window ?? 40;
+  const eligible = trades.filter((t) => since <= 0 || t.closedAtMs === undefined || t.closedAtMs >= since);
+  for (const s of [...new Set(eligible.map((t) => t.strategy))]) {
+    const ts = eligible.filter((t) => t.strategy === s).sort((a, b) => (b.closedAtMs ?? 0) - (a.closedAtMs ?? 0)).slice(0, Math.max(1, window));
     if (!ts.length) continue;
     const wins = ts.filter((t) => t.pnlPct > 0);
     const losses = ts.filter((t) => t.pnlPct <= 0);
@@ -334,7 +343,7 @@ export const segmentKey = (strategy: string, dim: string, b: string) => `${strat
  * Pure: the full autopsy. `shadow` = pretend trades on coins it wanted but didn't buy: they join the bands
  * and the strategy tuning (so a losing kind of trade is found sooner), never the headline numbers.
  */
-export function runAutopsy(realTrades: readonly ClosedTrade[], c: AutopsyConfig, now = Date.now(), shadow: readonly ClosedTrade[] = []): Autopsy {
+export function runAutopsy(realTrades: readonly ClosedTrade[], c: AutopsyConfig, now = Date.now(), shadow: readonly ClosedTrade[] = [], edge: { sinceMs?: number; window?: number } = {}): Autopsy {
   const trades = realTrades;
   const pool = shadow.length ? [...realTrades, ...shadow] : realTrades;
   const all = record(trades);
@@ -414,7 +423,7 @@ export function runAutopsy(realTrades: readonly ClosedTrade[], c: AutopsyConfig,
   for (const k of cards) if (k.verdict !== 'unproven') findings.push(`${k.verdict === 'losing' ? 'LOSING' : 'PROFITABLE'} strategy ${k.strategy}: ${k.why}.`);
   findings.push(...scoreInversions(trades, c.minTrades));
 
-  setStrategyEdgeStats(pool);
+  setStrategyEdgeStats(pool, edge);
   const edgeStats = [...edgeStatsCache.values()].map((v, i) => ({ ...v, strategy: [...edgeStatsCache.keys()][i]! }));
   return {
     at: new Date(now).toISOString(),
@@ -545,7 +554,8 @@ export class LossAutopsy {
         };
       });
       const sh = this.shadowSource ? await this.shadowSource(since.getTime()).catch(() => []) : [];
-      const a = runAutopsy(trades, c, now, sh);
+      const egCfg = getConfig().entry.edgeGate;
+      const a = runAutopsy(trades, c, now, sh, { sinceMs: (await strategySince())?.getTime() ?? 0, window: egCfg?.window });
       // Tell the owner what changed since the last run (bar / size / trail, and how it enters).
       const prev = this.last;
       const tuneText = (t: StrategyTune | undefined) => (t && (t.barDelta || t.sizeFactor !== 1 || t.trailFactor !== 1) ? `buy bar ${t.barDelta >= 0 ? '+' : ''}${t.barDelta}, size ×${t.sizeFactor}${t.trailFactor !== 1 ? `, trail ×${t.trailFactor}` : ''}` : 'normal');

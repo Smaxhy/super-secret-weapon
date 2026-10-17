@@ -118,6 +118,12 @@ async function main(): Promise<void> {
     await TradeCoach.reset(redis);
     await markStrategySince();
   });
+  // v11 strategy (edge gate, early bail, momentum / entry-quality gates, new exits): the coach's lessons and the
+  // per-strategy record the edge gate judges by both come from the old setup → start both fresh, once.
+  await oneTimeUpgrade('v11-strategy', async () => {
+    await TradeCoach.reset(redis);
+    await markStrategySince();
+  });
   await startConfigRefresh();
 
   // 2. Redis

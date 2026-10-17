@@ -50,6 +50,8 @@ export interface EntryRequest {
   swing?: boolean;
   /** Learning trade (config `explore`): a near-miss bought small so the bot learns from it. */
   explore?: boolean;
+  /** Edge-gate probe (1 in N refused signals): minimum size so the strategy's record keeps updating. */
+  probe?: boolean;
   /** KOLs still holding this coin when we bought (for the loss autopsy). */
   kols?: number;
   /** A KOL-follow buy (several KOLs in) — its own open-position limit. */
@@ -212,7 +214,7 @@ export class Trader {
     // Kinds of trades the loss autopsy found losing again and again → no (probe = small learning trade).
     const band = this.bandCheck?.(req) ?? null;
     if (band?.block) return refuse(band.block);
-    const probe = band?.probe === true || rebound;
+    const probe = band?.probe === true || rebound || req.probe === true;
 
     const strategyOpen = open.filter((p) => p.strategy === req.strategy).reduce((s, p) => s + (p.sizeSol * p.remainingPct) / 100, 0);
     // The allocator shifts budget toward strategies that are proven to make money (×0.5–1.6, 1 until it knows).

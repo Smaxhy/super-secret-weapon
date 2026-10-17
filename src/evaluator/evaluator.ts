@@ -75,7 +75,7 @@ import { momentumGateFails, type MomentumGateConfig } from './momentum-gate';
 import { entryQuality, DEFAULT_ENTRY_QUALITY } from './entry-quality';
 import { fetchRugCheck, rugCheckVerdict, type RugCheckVerdict } from '../integrations/rugcheck';
 import { adaptiveStopMultiplier, mcAgeStopMultiplier, DEFAULT_ADAPTIVE_STOP } from '../executor/adaptive-stop';
-import { edgeGateVerdict, DEFAULT_EDGE_GATE } from './edge-gate';
+import { edgeGateVerdict, probeTurn, DEFAULT_EDGE_GATE } from './edge-gate';
 
 const log = moduleLogger('evaluator');
 
@@ -84,6 +84,8 @@ const STATE_TTL_SECONDS = 60 * 60;
 
 
 export class Evaluator {
+  /** Edge gate: refused signals per strategy (every Nth one goes through as a probe). */
+  private readonly edgeRefused = new Map<string, number>();
   private worker: Worker<EvaluateJob> | null = null;
   readonly stats = { evaluated: 0, buys: 0, rejects: 0, walletLookups: 0, feeSamples: 0 };
   private readonly fees: FeeEstimator;
@@ -562,12 +564,6 @@ export class Evaluator {
       kolRelaxNote = `${ruleFails.join(', ')} — allowed: ${kolAct?.buyers.length ?? 0} KOLs still holding`;
       ruleFails = [];
     }
-    const egCfg = cfg.entry.edgeGate ?? DEFAULT_EDGE_GATE;
-    if (egCfg.enabled) {
-      const eg = edgeGateVerdict(strategyEdgeStatsFor(STRATEGY.name), result.score - threshold, egCfg);
-      if (!eg.pass) dexFails.push(`edge gate: ${eg.reason}`);
-    }
-
     let { decision, reasons } = decide(result.score, threshold, ruleFails, token.safetyHardFail);
 
     // "Still worth a shot": only soft concentration limits broken, within looser caps,
@@ -592,6 +588,28 @@ export class Evaluator {
       decision = 'BUY';
       reasons = [`learning trade: score ${result.score.toFixed(1)} vs bar ${threshold.toFixed(0)} (within ${exploreMargin(ex)}) — bought at ${ex.sizeMultiplier}× size`];
     }
+    // Edge gate (v11.3): a strategy whose record since it went live says it loses after costs doesn't buy — except
+    // every Nth refused signal, bought at the minimum size, so its record keeps updating and it can earn its way back.
+    // After the learning-trade step on purpose: learning trades are the data the gate judges by.
+    const egCfg = { ...DEFAULT_EDGE_GATE, ...(cfg.entry.edgeGate ?? {}) };
+    let edgeProbe = false;
+    let egInfo: { pass: boolean; expectedEdgePct: number; probe: boolean; reason: string } | null = null;
+    if (decision === 'BUY' && !explore && egCfg.enabled) {
+      const eg = edgeGateVerdict(strategyEdgeStatsFor(STRATEGY.name), result.score - threshold, egCfg);
+      egInfo = { pass: eg.pass, expectedEdgePct: Math.round(eg.expectedEdgePct * 10) / 10, probe: false, reason: eg.reason };
+      if (!eg.pass) {
+        const n = (this.edgeRefused.get(STRATEGY.name) ?? 0) + 1;
+        this.edgeRefused.set(STRATEGY.name, n);
+        if (probeTurn(n, egCfg.probeEvery)) {
+          edgeProbe = true;
+          egInfo.probe = true;
+          reasons = [...reasons, `edge-gate probe (1 in ${egCfg.probeEvery}): ${eg.reason} — minimum size so ${STRATEGY.name}'s record keeps updating`];
+        } else {
+          decision = 'SKIP';
+          reasons = [`edge gate: ${eg.reason}`];
+        }
+      }
+    }
     // Funnel (Bot health → strategies): did it pass every rule, was it a buy signal before any wait?
     const rulesOk = ruleFails.length === 0 && !token.safetyHardFail;
     const signalled = decision === 'BUY';
@@ -609,7 +627,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, trusted: kolAct.buyers.filter((b) => b.weight >= (kolCfg.trustedMinWeight ?? Infinity)).length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, copied: job.data.wallet ? 1 : 0, owner: { profile: owner.profile, fails: owner.fails }, pressure, mood: moodNow(), market: market.raw, shape, tf, pa, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, momentumGate: mgWhy ? { blocked: true, reason: mgWhy } : null, entryQuality: eq.verdict !== 'ok' ? { verdict: eq.verdict, reason: eq.reason, points: eq.points } : null, rugCheck: rc.result ? { score: rc.score, riskLevel: rc.riskLevel, pass: rc.pass, reasons: rc.reasons } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, trusted: kolAct.buyers.filter((b) => b.weight >= (kolCfg.trustedMinWeight ?? Infinity)).length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, copied: job.data.wallet ? 1 : 0, owner: { profile: owner.profile, fails: owner.fails }, pressure, mood: moodNow(), market: market.raw, shape, tf, pa, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, momentumGate: mgWhy ? { blocked: true, reason: mgWhy } : null, edgeGate: egInfo, entryQuality: eq.verdict !== 'ok' ? { verdict: eq.verdict, reason: eq.reason, points: eq.points } : null, rugCheck: rc.result ? { score: rc.score, riskLevel: rc.riskLevel, pass: rc.pass, reasons: rc.reasons } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },
@@ -787,7 +805,7 @@ export class Evaluator {
       const asCfg = cfg.adaptiveStop ?? DEFAULT_ADAPTIVE_STOP;
       const asf = adaptiveStopMultiplier({ entryQualityVerdict: eq.verdict, rugCheckScore: rc.score ?? null, score: result.score, threshold }, asCfg)
         * mcAgeStopMultiplier(market.raw.marketCapUsd ?? null, market.raw.ageSec != null ? market.raw.ageSec / 60 : null, asCfg);
-      const res = await this.trader.tryEnter({
+      const res = await this.trader.tryEnter({ probe: edgeProbe,
         mint,
         symbol: token.symbol,
         strategy: STRATEGY.name,

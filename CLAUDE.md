@@ -8,7 +8,11 @@ Owner has some coding knowledge; explain simply, keep chat short, spend effort o
 Original master plan: 9 phases (scanner → scoring/paper → dashboard → live execution → controls →
 smart money → learning engine → ML → social). See README.md.
 
-## ⛔ FREEZE (owner's order, Oct 15 2026 — v10.39 is the frozen version)
+## FREEZE ENDED (Oct 17 2026 — owner: "the trades are too bad, upgrade everything, make it profitable")
+The Oct 15 freeze below is over; v11 (below, "Current state") is the new setup. Judge it on Performance → Mistakes
+after 200–300 trades, same rule as before: switch losers OFF, don't tweak.
+
+## ⛔ (old) FREEZE (owner's order, Oct 15 2026 — v10.39 was the frozen version)
 **Do NOT push ANY change — no new features, no rule / setting / default tweaks, no tuning, no refactors — unless something
 is BROKEN** (crash, bug, wrong numbers, bot not trading because of a fault, dashboard error). Owner: "don't accept ANY
 updates unless something is broken, no new features or changes." Every push redeploys + restarts the bot, which also
@@ -706,6 +710,40 @@ Diagnosing (reading code, explaining Bot health, diagnose.sh output) is always f
   belowSol 3} (`scorer.feeMinimum`) replaces every fee minimum in `checkEntryRules` (MC unknown → old per-strategy one) and the
   owner-filter fee minimums are zeroed while it's on. One-time `fee-rule-by-mc` → `aiCoach.removeFeeTips()` (`feeRuleTipIds`:
   owner avoid rules on a fee feature) removes that tip + retires its rule. Editable (Your filters). Migration v30.
+- **v11 (Oct 17): profitability overhaul** (owner ended the freeze: 582 trades, 24% wins, every strategy losing, 69% of
+  losers never above 1.05x = dead-on-arrival entries; round trip ≈7% at 0.2 SOL, so a trade needs ~1.15x to break even).
+  Migrations v33–v36; one-time `v11-strategy` resets the trade coach + `_strategySince` (the old setup's record must not
+  judge the new one). Branch NOT yet pushed by the bot session (the owner pushes).
+  - **Entries**: `src/evaluator/momentum-gate.ts` (`momentumGate`: ≤+18%/1 min, ≤+30%/3 min, ≥6% under the 10-min
+    high, buyers ≥52% of 2-min volume, last candle ≤15%; learning trades + dip entries exempt) and
+    `src/evaluator/entry-quality.ts` (`entryQuality`, real trade stream: 15 s drop >5% / sell:buy >2 in 30 s / spike
+    retraced >20% → block or half size, ≥3 buyers in 30 s, volume ratio ≥0.3; bounce after a dip → +4). Confirmation
+    15 s: ≤6% lower, ≤10% higher (was 15), buyers ≥1.15× (was 1.1), ≥2 new buyers. Quiet hours 00–04 UTC back on.
+    `src/integrations/rugcheck.ts` (RugCheck API pre-buy gate, `rugCheck`, off until `RUGCHECK_API_KEY` is in .env).
+    Scale-in first leg 40% (was 50). Dip watcher: a dip that sits ≤2% over its low for 120 s without bouncing is dropped
+    (`chart.dip.maxDipStallSec`).
+  - **Edge gate** (`src/evaluator/edge-gate.ts`, `entry.edgeGate`, after decide() + learning-trade step): per strategy,
+    expected value = WR×avgWin − (1−WR)×avgLoss − 7% costs (score margin: +5% WR per 10 pts over the bar) must be ≥ +2%
+    or the signal is SKIPped ("edge gate: …" in Bot health). Record = newest 40 closed real + shadow trades per
+    strategy since `_strategySince` (`setStrategyEdgeStats` in the loss autopsy, `strategyEdgeStatsFor`, survives
+    restarts in `autopsy:last.edgeStats`); <30 trades → passes. **Every 4th refused signal buys at the minimum size**
+    (`probeEvery`, EntryRequest.probe → trader min size) so a refused strategy's record keeps updating; learning trades
+    bypass (they are the data). `features.edgeGate` on every stored evaluation.
+  - **Exits**: TP tiers 1.25x/2x/5x (SOON + MIGRATION 1.15x 40% / 1.3x / 5x), trail + break-even from 1.2x; spike sell
+    ON for every strategy (+12% in 90 s and ≥1.04x → sell 50%); time stops CURVE_SNIPE 1 min / SOON 2 / RUNNER 3 /
+    MIGRATION 8, no-follow-through peak <1.08x & ≤1.04x, stall 2/4/5/8 min; **early bail** (`src/executor/early-bail.ts`,
+    `exit.earlyBail`, sell manager between the stop loss and the time stops, also inside the min hold): 10–45 s in,
+    never ≥1.02x, under entry, buy/sell SOL ratio ≤1.0 → STALE out. No flow data (virtual book / backtester / outcome
+    replays) → never bails. "No life" exit: 3 min, never ≥1.03x, ≤0.97x, sellers ≥55% → out. Dead coin: 0 buyers 60 s +
+    never ≥1.02x → out at 2 min. **Adaptive stop** (`src/executor/adaptive-stop.ts`, `adaptiveStop`): × entry-quality
+    factor (caution 0.75 / weak 0.85 / boost 1.15) × MC band (<$10k ×1.3, <$50k ×1.1, <$200k ×1, above ×0.85) × age
+    (<2 min ×1.2), clamped 0.5–1.8. Paper slippage 0.8% (was 1.5).
+  - **Learners**: win model activates at 80 rows / 8 positives (was 150/15); allocator 0.3–1.6 (was 0.5), total floor
+    0.4; autopsy tuning losing → bar +5 / ×0.7, badly losing → +15 / ×0.3; learn-row weights shadow-skipped 0.4,
+    outcomes 0.5; `entry.autoAdjust` coach + calibration back ON. `src/integrations/obsidian-sync.ts` (`obsidian`
+    config, `OBSIDIAN_VAULT_PATH` in .env only): daily trade journal notes.
+  - All new rules editable (Controls → Rules: Momentum gate / Entry quality / Edge gate / Early bail / Trade size &
+    risk). Tests: momentum-gate, entry-quality, rugcheck, edge-gate, early-bail, adaptive-stop-mc-age (80 files / 702).
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

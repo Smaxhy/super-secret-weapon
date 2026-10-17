@@ -269,6 +269,8 @@ export const EDITABLE: EditableSetting[] = [
   S('Edge gate', 'entry.edgeGate.minEdgePct', 'Minimum expected edge after costs', 0, 20, '%', 0.5),
   S('Edge gate', 'entry.edgeGate.costPct', 'Assumed round-trip cost (fees + slippage both ways)', 2, 15, '%', 0.5),
   S('Edge gate', 'entry.edgeGate.minTrades', 'Trades a strategy needs before the gate judges it', 10, 200, undefined, 5),
+  S('Edge gate', 'entry.edgeGate.window', 'Newest trades per strategy that form its record', 20, 300, undefined, 10),
+  S('Edge gate', 'entry.edgeGate.probeEvery', 'Every Nth refused signal still buys at the minimum size (0 = never)', 0, 20, undefined, 1),
   S('Early bail', 'exit.earlyBail.enabled', 'Cut dead-on-arrival trades (no new high, sellers in control) in the first seconds: on (1) / off (0)', 0, 1, undefined, 1),
   S('Early bail', 'exit.earlyBail.maxSec', 'Only within this many seconds after the buy', 15, 180, 's', 5),
   S('Early bail', 'exit.earlyBail.minPeakMultiple', 'Trade counts as dead only if it never reached this multiple', 1.0, 1.1, 'x', 0.005),

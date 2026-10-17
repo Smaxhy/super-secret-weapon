@@ -224,7 +224,7 @@ export const DEFAULT_CONFIG = {
      */
     manipulation: { maxFakeVolumePct: 50, maxBundledBuyPct: 30, maxTop3VolumePct: 65, chasePct: 40 },
     /** v11: Edge gate — reject trades where the strategy's expected value (after costs) is below minEdgePct. */
-    edgeGate: { enabled: true as boolean, minEdgePct: 2, costPct: 7, minTrades: 30 },
+    edgeGate: { enabled: true as boolean, minEdgePct: 2, costPct: 7, minTrades: 30, window: 40, probeEvery: 4 },
   },
 
   /**

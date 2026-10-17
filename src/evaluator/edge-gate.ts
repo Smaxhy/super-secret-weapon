@@ -14,6 +14,10 @@ export interface EdgeGateConfig {
   costPct: number;
   /** Minimum trades for the strategy card to be trusted. */
   minTrades: number;
+  /** Only the newest N closed trades per strategy (since the current strategy went live) form its record. */
+  window: number;
+  /** Every Nth refused signal still goes through at the minimum size, so a refused strategy's record keeps updating. */
+  probeEvery: number;
 }
 
 export const DEFAULT_EDGE_GATE: EdgeGateConfig = {
@@ -21,7 +25,14 @@ export const DEFAULT_EDGE_GATE: EdgeGateConfig = {
   minEdgePct: 2,
   costPct: 7,
   minTrades: 30,
+  window: 40,
+  probeEvery: 4,
 };
+
+/** Pure: is the n-th refused signal (1-based) of a strategy the one that goes through as a probe? */
+export function probeTurn(n: number, every: number): boolean {
+  return every > 0 && n > 0 && n % every === 0;
+}
 
 export interface StrategyStats {
   winRate: number;

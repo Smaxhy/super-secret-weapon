@@ -545,7 +545,7 @@ export const MIGRATIONS: ConfigMigration[] = [
     version: 36,
     note: 'v11.3: edge gate (reject negative-EV strategies), early bail (cut dead trades at 45s), adaptive stop MC/age bands',
     set: [
-      ['entry', ['edgeGate'], { enabled: true, minEdgePct: 2, costPct: 7, minTrades: 30 }],
+      ['entry', ['edgeGate'], { enabled: true, minEdgePct: 2, costPct: 7, minTrades: 30, window: 40, probeEvery: 4 }],
       ['exit', ['earlyBail'], { enabled: true, maxSec: 45, minPeakMultiple: 1.02, maxBuyRatio: 1.0 }],
       ['adaptiveStop', ['mcBands'], [{ maxMcUsd: 10_000, factor: 1.3 }, { maxMcUsd: 50_000, factor: 1.1 }, { maxMcUsd: 200_000, factor: 1.0 }]],
       ['adaptiveStop', ['ageBands'], [{ maxAgeMin: 2, factor: 1.2 }]],
