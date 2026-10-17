@@ -16,6 +16,8 @@ interface Autopsy {
   byExit: Array<{ reason: string; n: number; pnlSol: number; avgPct: number }>;
   cards?: Array<{ strategy: string; n: number; avgPct: number; medianPct: number; sePct: number; withoutTop3Pct: number; recentPct: number; neverUpPct: number; gaveBackPct: number; verdict: 'profitable' | 'losing' | 'unproven'; why: string }>;
   losers: { n: number; neverUpPct: number; gaveBackPct: number; avgPeakMultiple: number };
+  /** The record the edge gate judges each strategy by (newest trades since the current setup went live). */
+  edgeStats?: Array<{ strategy: string; winRate: number; avgWinPct: number; avgLossPct: number; n: number }>;
   findings: string[];
   worst: Seg[];
   best: Seg[];
@@ -76,6 +78,30 @@ export function LossAutopsy() {
                     <div className="text-muted">{k.why}</div>
                   </li>
                 ))}
+              </ul>
+            </div>
+          )}
+          {!!data.edgeStats?.length && (
+            <div>
+              <div className="mb-1 font-medium text-ink">Expected edge after costs (the edge gate)</div>
+              <p className="mb-1 text-xs text-muted">Newest trades since this setup went live. Edge = win rate × avg win − loss rate × avg loss − 7% round trip. Under +2% with 30+ trades → the strategy only buys every 4th signal, at the minimum size, until its record improves.</p>
+              <ul className="divide-y divide-line text-xs">
+                {[...data.edgeStats].sort((a, b) => b.n - a.n).map((e) => {
+                  const edge = e.winRate * e.avgWinPct - (1 - e.winRate) * Math.abs(e.avgLossPct) - 7;
+                  const judged = e.n >= 30;
+                  const open = !judged || edge >= 2;
+                  return (
+                    <li key={e.strategy} className="flex min-w-0 items-baseline justify-between gap-2 py-1.5">
+                      <span className="min-w-0 truncate">
+                        <span className="font-medium text-ink">{strat(e.strategy)}</span>
+                        <span className="tabular-nums text-ink-2"> · {e.n} trades · {Math.round(e.winRate * 100)}% wins · +{e.avgWinPct.toFixed(1)}% / −{Math.abs(e.avgLossPct).toFixed(1)}%</span>
+                      </span>
+                      <span className={`shrink-0 tabular-nums font-medium ${!judged ? 'text-muted' : open ? 'text-up' : 'text-down'}`}>
+                        {edge >= 0 ? '+' : ''}{edge.toFixed(1)}% {judged ? (open ? '· open' : '· probes only') : '· not judged yet'}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}

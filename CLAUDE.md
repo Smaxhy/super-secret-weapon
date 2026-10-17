@@ -713,7 +713,7 @@ Diagnosing (reading code, explaining Bot health, diagnose.sh output) is always f
 - **v11 (Oct 17): profitability overhaul** (owner ended the freeze: 582 trades, 24% wins, every strategy losing, 69% of
   losers never above 1.05x = dead-on-arrival entries; round trip ≈7% at 0.2 SOL, so a trade needs ~1.15x to break even).
   Migrations v33–v36; one-time `v11-strategy` resets the trade coach + `_strategySince` (the old setup's record must not
-  judge the new one). Branch NOT yet pushed by the bot session (the owner pushes).
+  judge the new one). Pushed Oct 17 (commits d5278b4…c5917d8) → VPS redeployed.
   - **Entries**: `src/evaluator/momentum-gate.ts` (`momentumGate`: ≤+18%/1 min, ≤+30%/3 min, ≥6% under the 10-min
     high, buyers ≥52% of 2-min volume, last candle ≤15%; learning trades + dip entries exempt) and
     `src/evaluator/entry-quality.ts` (`entryQuality`, real trade stream: 15 s drop >5% / sell:buy >2 in 30 s / spike
