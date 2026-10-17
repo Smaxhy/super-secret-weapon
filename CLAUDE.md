@@ -84,7 +84,8 @@ Diagnosing (reading code, explaining Bot health, diagnose.sh output) is always f
     1.5x, 25% at 2x, 30% trail), R runner (nothing before 2x), N no time stops, W wider −25…−30% stop
     (ownerOnly — outside the owner's band, never auto-applied). Auto-apply: ≥40 results, mean−1SE > 0, beats
     live by ≥2 pts → written into the live exit config (≤ once per 6 h). Redis `lab:res:<id>`, `lab:applied`.
-  - v5 research (Oct 2026): graduation ~1–2% (0.26–6.7%); median graduate peaks AT graduation (~$31k at
+  - v5 research (Oct 2026; protocol truth as of Oct 2026 = Chainstack's
+    https://github.com/chainstacklabs/pumpfun-bonkfun-bot/blob/main/docs/pumpfun-protocol.md): graduation ~1–2% (0.26–6.7%); median graduate peaks AT graduation (~$31k at
     SOL $80); 81% of survivors fall 90%+; snipers profitable 87%, exit within 5 min; wash ≥17% of trades;
     copy-trading 2 s late lost; tight stops lose to costs (Lo & Remorov); round trip 5–10% at 0.2–0.5 SOL.
     Validate on ≥300 paper trades (positive median AND mean without the top 1%).
@@ -819,6 +820,26 @@ Diagnosing (reading code, explaining Bot health, diagnose.sh output) is always f
     owner finds the new URLs in the browser's network tab on pump.fun; set them (config push) to switch the lists back on.
   - Tests: tests/sniper.test.ts, tests/usage-budget.test.ts (84 files / 740).
 
+- **v11.8 (Oct 17): research ports** (GitHub/paper sweep; sources in the Oct 17 research report). (1) **PumpSwap pricing
+  from the chain** (`src/lib/pumpswap-pool.ts`, Chainstack protocol doc layout: `coin_creator` @211, `virtual_quote_reserves`
+  i128 @245, live pools 301 bytes): the token registry reads the pool ACCOUNT once per migration / adoption and again
+  345 s later (BOOST end) → `liveState.applyPoolAccount` stores `ammVirtQ`; every priced PumpSwap trade then uses
+  vault + virtual when it agrees (≤5%) with the trade-implied reserve (`onchainAmm` counter), else WARN
+  `amm_reserve_mismatch` once and the stored value is dropped (trade-implied stays the fallback). `coin_creator` set =
+  canonical pool → `pdaCheck.creatorSet/creatorNotSet` (second signal, never a replacement). Curve account decode now
+  returns `creator`, `quoteMint`, `creatorFeeBps` (@115) and `isHolderReward` (@124; 125/151/256-byte layouts, never
+  filter on length) → live hash `creatorFeeBps` → `LiveTokenView.creatorFeeBps` → paper curve fee = 1.25% + creator fee
+  (0 on SOL-paired coins). create_v2 cashback is rejected on chain (6082) — no cashback pricing anywhere.
+  (2) **Exit-liquidity machines** (Pine Analytics: deployer-funded wallets buy in the launch block, 87% profitable,
+  dump in minutes): `crowdQuality` gets `launchMs` + `creator`; a launch-window (4 s) buyer whose funder (funding-graph
+  cache only, now also one hop: the funder's funder) is the dev → `deployerSniperWallets`; one still holding ≥
+  `wallets.entry.deployerSniperHoldPct` (1%) → rule fail "deployer-funded launch sniper inside"; all of them →
+  `walletBook.markDumpers` + rugger memory (`rug:wallets`; the ZSET has no weights — the dumper class is the
+  everywhere-refusal). `features.wallets.deployerSnipers`; note "N deployer-funded snipers". Swing trader / replay
+  don't pass the launch (migrated coins; tape has no funders). (3) **Consecutive-pass confirmation**
+  (`src/evaluator/confirm.ts`, `entry.confirm.consecutivePasses` 2 / `intervalSec` 7): the confirmation rules must pass
+  N checks in a row (same signal price / new-buyer window; the confirm job re-queues itself with `passes`), lock held
+  `confirmHoldSec` = 15 + 7 s. Migration v39; editable (Every coin, Wallet engine). tests/pumpswap-pool-decode.test.ts.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

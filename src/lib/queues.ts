@@ -39,7 +39,8 @@ export interface EvaluateJob {
   dip?: boolean;
   dipWhy?: string;
   /** Confirmation re-check of a BUY signal (price + score when it fired). */
-  confirm?: { priceSol: number; at: number; score: number };
+  /** Confirmation in flight: the signal price / time and how many checks already passed (v11.8 consecutive passes). */
+  confirm?: { priceSol: number; at: number; score: number; passes?: number };
   /** Copy trades: the tracked wallet whose buy triggered this check. */
   wallet?: string;
   /** KOL follow: several KOLs / smart wallets bought this coin (strategy SMART_MONEY_COPY). */

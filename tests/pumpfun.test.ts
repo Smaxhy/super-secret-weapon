@@ -130,7 +130,7 @@ describe('bonding curve account', () => {
     b.writeBigUInt64LE(900_000_000_000_000n, 8);
     b.writeBigUInt64LE(35_000_000_000n, 16);
     b.writeUInt8(1, 48);
-    expect(decodeBondingCurveAccount(b)).toEqual({ virtualTokenReserves: 900_000_000_000_000n, virtualSolReserves: 35_000_000_000n, complete: true });
+    expect(decodeBondingCurveAccount(b)).toMatchObject({ virtualTokenReserves: 900_000_000_000_000n, virtualSolReserves: 35_000_000_000n, complete: true });
     expect(decodeBondingCurveAccount(Buffer.alloc(10))).toBeNull();
   });
 });

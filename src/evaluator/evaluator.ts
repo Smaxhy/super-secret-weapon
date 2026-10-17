@@ -80,6 +80,8 @@ import { sniperEntryFails } from './sniper';
 import { sniperOn } from '../config/sniper';
 import { crowdQuality, type CrowdQuality } from './crowd-quality';
 import type { WalletBook } from '../learner/wallet-book';
+import type { RuggerMemory } from '../executor/rug-watch';
+import { confirmHoldSec, confirmStep } from './confirm';
 import type { CrowdTrade } from '../scanner/crowd-tracker';
 
 const log = moduleLogger('evaluator');
@@ -119,13 +121,17 @@ export class Evaluator {
   brain: Brain | null = null;
   /** v11.6: every wallet's record (set in index.ts) — who is buying this coin. */
   walletBook: WalletBook | null = null;
+  /** v11.8: dumper memory (set in index.ts) — deployer-funded launch snipers are remembered as ruggers. */
+  ruggers: RuggerMemory | null = null;
 
   /** Funders of the biggest recent buyers, from the funding-graph cache only (`wfund:<wallet>`, no RPC). */
-  private async cachedFunders(trades: readonly CrowdTrade[], now: number): Promise<Map<string, string | null>> {
+  private async cachedFunders(trades: readonly CrowdTrade[], now: number, launchMs: number | null = null): Promise<Map<string, string | null>> {
     const out = new Map<string, string | null>();
     const bySol = new Map<string, number>();
     for (const t of trades) if (t.buy && now - t.t <= 300_000) bySol.set(t.w, (bySol.get(t.w) ?? 0) + t.sol);
     const top = [...bySol.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([w]) => w);
+    // v11.8: launch-window buyers too (deployer-funded snipers), whatever their size.
+    if (launchMs !== null && launchMs > 0) for (const t of trades) if (t.buy && t.t - launchMs <= 4_000 && !top.includes(t.w) && top.length < 80) top.push(t.w);
     if (!top.length) return out;
     try {
       const vals = await this.redis.mget(top.map((w) => `wfund:${w}`));
@@ -138,6 +144,20 @@ export class Evaluator {
           /* skip */
         }
       });
+      // One hop further (cache only): the funders' own funders, so "funded by a wallet the dev funded" is visible.
+      const hop = [...new Set([...out.values()].filter((f): f is string => !!f && !out.has(f)))].slice(0, 40);
+      if (hop.length) {
+        const vals2 = await this.redis.mget(hop.map((w) => `wfund:${w}`));
+        hop.forEach((w, i) => {
+          const v = vals2[i];
+          if (!v) return;
+          try {
+            out.set(w, (JSON.parse(v) as { funder?: string | null }).funder ?? null);
+          } catch {
+            /* skip */
+          }
+        });
+      }
     } catch {
       /* cache only — never blocks */
     }
@@ -493,9 +513,16 @@ export class Evaluator {
     let cq: CrowdQuality | null = null;
     if (wbCfg.enabled && cqCfg.enabled && this.walletBook && this.crowd) {
       const cqTrades = this.crowd.trades(mint);
-      const funders = await this.cachedFunders(cqTrades, Date.now());
-      cq = crowdQuality({ trades: cqTrades, now: Date.now() }, (w) => this.walletBook!.get(w), (w) => funders.get(w) ?? null, wbCfg, cqCfg);
+      const launchMs = view.createdAtMs > 0 ? view.createdAtMs : null;
+      const funders = await this.cachedFunders(cqTrades, Date.now(), launchMs);
+      cq = crowdQuality({ trades: cqTrades, now: Date.now(), launchMs, creator: token.creator, supply: Number(view.curve.totalSupply || 1_000_000_000_000_000n) }, (w) => this.walletBook!.get(w), (w) => funders.get(w) ?? null, wbCfg, cqCfg);
       if (cq?.fails.length) ruleFails = [...ruleFails, ...cq.fails];
+      // Deployer-funded launch snipers are dumpers everywhere from now on (wallet book + rugger memory).
+      if (cq?.deployerSniperWallets.length) {
+        this.walletBook.markDumpers(cq.deployerSniperWallets);
+        const days = (cfg.antiRug as { rugGuard?: { ruggerMemoryDays?: number } }).rugGuard?.ruggerMemoryDays ?? 14;
+        void this.ruggers?.record(cq.deployerSniperWallets, days).catch(() => undefined);
+      }
     }
 
     // Learned odds: how often coins with the same patterns went on to win (bounded ±points).
@@ -771,9 +798,12 @@ export class Evaluator {
       // New pairs are bought on the spot: their absorption + live-demand checks ARE the confirmation.
       const confirmSec = STRATEGY.name === 'CURVE_SNIPE' ? (npCfg.confirmDelaySec ?? 0) : (cfg.entry.confirmDelaySec ?? 0);
       const pending = job.data.confirm;
+      const cc = cfg.entry.confirm;
+      const needed = Math.max(1, cc.consecutivePasses ?? 1);
+      const interval = Math.max(1, cc.intervalSec ?? 7);
       if (confirmSec > 0 && !pending) {
-        // One confirmation at a time per coin + strategy.
-        const fresh = await this.redis.set(`confirm:${mint}:${STRATEGY.name}`, '1', 'EX', confirmSec + 10, 'NX');
+        // One confirmation at a time per coin + strategy (held for every pass).
+        const fresh = await this.redis.set(`confirm:${mint}:${STRATEGY.name}`, '1', 'EX', confirmHoldSec(confirmSec, needed, interval) + 10, 'NX');
         if (!fresh) return;
         await evaluateQueue.add(
           'confirm',
@@ -802,6 +832,17 @@ export class Evaluator {
           log.info({ mint, symbol: token.symbol, why }, `✋ ${token.symbol} signal didn't confirm: ${why}`);
           decision = 'SKIP';
           reasons = [`didn't confirm: ${why}`];
+        } else if (confirmStep(true, pending.passes ?? 0, needed) === 'again') {
+          // v11.8: one good reading isn't proof (a rugged pool's numbers lag) — read it again `interval` s later.
+          const passes = (pending.passes ?? 0) + 1;
+          await evaluateQueue.add(
+            'confirm',
+            { ...job.data, checkpointSec: checkpointSec + interval, confirm: { ...pending, passes } },
+            { jobId: `${mint}-${STRATEGY.name}-confirm${passes}-${Math.floor(Date.now() / 60_000)}`, delay: interval * 1000 },
+          );
+          log.info({ mint, symbol: token.symbol, passes, needed }, `⏱  ${token.symbol} confirmation ${passes}/${needed} passed — checking again in ${interval}s`);
+          noteEvaluation(STRATEGY.name, { rulesOk, signal: signalled, outcome: 'confirming' });
+          return;
         }
       }
     }

@@ -216,3 +216,44 @@ describe('migration v37 + replay with the wallet engine', () => {
     }
   });
 });
+
+describe('v11.8 exit-liquidity machines: deployer-funded launch snipers', () => {
+  const DEV = 'DEVwallet';
+  const SUPPLY = 1e9;
+  const T0 = 5_000_000;
+  const ct = (w: string, buy: boolean, tok: number, dt: number, sol = 0.5): CrowdTrade => ({ t: T0 + dt, w, buy, sol, tok, px: 1e-7, pp: 1e-7 } as unknown as CrowdTrade);
+  const funders: Record<string, string> = { S1: DEV, S2: 'STRANGER', MID: DEV, S3: 'MID', S4: DEV, LATE: DEV };
+  const funderOf = (w: string) => funders[w] ?? null;
+  const run = (trades: CrowdTrade[]) => crowdQuality({ trades, now: T0 + 60_000, launchMs: T0, creator: DEV, supply: SUPPLY }, () => undefined, funderOf, BOOK, { ...CQ, enabled: true, fails: true, deployerSniperHoldPct: 1 })!;
+
+  it('a launch-block buyer funded by the dev (directly or one hop away) still holding ≥1% → no buy; wallets listed', () => {
+    const q = run([
+      ct('S1', true, 0.02 * SUPPLY, 1_000), // funded by the dev, holds 2%
+      ct('S3', true, 0.015 * SUPPLY, 2_500), // funded by MID, which the dev funded
+      ct('S2', true, 0.03 * SUPPLY, 1_500), // stranger-funded: not a deployer sniper
+      ct('R1', true, 0.001 * SUPPLY, 30_000),
+    ]);
+    expect(q.deployerSnipers).toBe(2);
+    expect(q.deployerSniperWallets.sort()).toEqual(['S1', 'S3']);
+    expect(q.deployerSniperHoldPct).toBe(2);
+    expect(q.fails.some((f) => f.startsWith('deployer-funded launch sniper inside'))).toBe(true);
+    expect(q.note).toContain('2 deployer-funded snipers');
+  });
+  it('sold out → counted but no fail; bought after the launch window → not a sniper; unknown launch → not checked', () => {
+    const sold = run([ct('S4', true, 0.02 * SUPPLY, 500), ct('S4', false, 0.02 * SUPPLY, 20_000), ct('R1', true, 0.001 * SUPPLY, 30_000)]);
+    expect(sold.deployerSnipers).toBe(1);
+    expect(sold.fails).toEqual([]);
+    const late = run([ct('LATE', true, 0.05 * SUPPLY, 9_000), ct('R1', true, 0.001 * SUPPLY, 30_000)]);
+    expect(late.deployerSnipers).toBe(0);
+    const unknown = crowdQuality({ trades: [ct('S1', true, 0.02 * SUPPLY, 1_000)], now: T0 + 60_000, supply: SUPPLY }, () => undefined, funderOf, BOOK, { ...CQ, enabled: true, fails: true })!;
+    expect(unknown.deployerSnipers).toBe(0);
+    expect(unknown.note).not.toContain('deployer-funded');
+  });
+  it('the wallet book brands them as dumpers so every later coin they enter is refused', () => {
+    const b = new WalletBook(null);
+    b.markDumpers(['S1', 'S3'], T0);
+    expect(b.classOf('S1')).toBe('dumper');
+    expect(b.classOf('S3')).toBe('dumper');
+    expect(b.classOf('S2')).toBe('unknown');
+  });
+});

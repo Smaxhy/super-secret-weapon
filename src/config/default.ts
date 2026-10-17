@@ -213,7 +213,8 @@ export const DEFAULT_CONFIG = {
     // bought the top of a spike): wait 25 s and the price must HOLD (≤4% lower, ≤15% higher, buyers ≥1.1× sellers).
     // v10.23 (owner: "5 trades in 6 hours is way too little"): 15 s, ≤6% lower (still ≤15% higher, buyers ≥1.1×).
     confirmDelaySec: 15,
-    confirm: { maxDropPct: 6, maxPumpPct: 10, minBuyRatio: 1.15, minNewBuyers: 2 },
+    // v11.8: the rules must pass `consecutivePasses` checks in a row, `intervalSec` apart (a rugged pool's numbers lag).
+    confirm: { maxDropPct: 6, maxPumpPct: 10, minBuyRatio: 1.15, minNewBuyers: 2, consecutivePasses: 2, intervalSec: 7 },
     /**
      * Fake volume / bundles / chasing (from the live trade log):
      *  - fake volume = wallets trading back and forth (wash trading, volume bots)
@@ -617,6 +618,8 @@ export const DEFAULT_CONFIG = {
       enabled: true as boolean,
       points: 12,
       minProvenSolPct: 20,
+      /** v11.8: a deployer-funded launch-block buyer still holding ≥ this % of the supply → no buy (exit-liquidity machine). */
+      deployerSniperHoldPct: 1,
       minProvenCount: 3,
       fullPointsProvenSolPct: 40,
       dumperHoldPct: 2,

@@ -27,7 +27,7 @@ describe('v10.21 focus cut (owner CSV, 515 trades)', () => {
   });
   it('the buy wait is 15 s and the price must hold (v10.23)', () => {
     expect(DEFAULT_CONFIG.entry.confirmDelaySec).toBe(15);
-    expect(DEFAULT_CONFIG.entry.confirm).toEqual({ maxDropPct: 6, maxPumpPct: 10, minBuyRatio: 1.15, minNewBuyers: 2 });
+    expect(DEFAULT_CONFIG.entry.confirm).toEqual({ maxDropPct: 6, maxPumpPct: 10, minBuyRatio: 1.15, minNewBuyers: 2, consecutivePasses: 2, intervalSec: 7 });
   });
   it('migration v19 pushes it into saved settings', () => {
     const m = MIGRATIONS.find((x) => x.version === 19)!;
@@ -46,5 +46,24 @@ describe('applyMigration with an empty path (whole section)', () => {
     expect(out.momentumGate).toEqual({ enabled: true, maxRun1mPct: 18 });
     expect('undefined' in out.momentumGate!).toBe(false);
     expect(applyMigration({}, m)).toEqual({});
+  });
+});
+
+import { confirmHoldSec, confirmStep } from '../src/evaluator/confirm';
+
+describe('v11.8 consecutive-pass confirmation', () => {
+  it('pass, pass → confirmed; pass, fail → not; 1 needed = the old single check', () => {
+    expect(confirmStep(true, 0, 2)).toBe('again');
+    expect(confirmStep(true, 1, 2)).toBe('confirmed');
+    expect(confirmStep(false, 1, 2)).toBe('failed');
+    expect(confirmStep(true, 0, 1)).toBe('confirmed');
+    expect(confirmHoldSec(15, 2, 7)).toBe(22);
+    expect(confirmHoldSec(15, 1, 7)).toBe(15);
+  });
+  it('migration v39 pushes the two keys into a saved entry row', () => {
+    const m = MIGRATIONS.find((x) => x.version === 39)!;
+    const out = applyMigration({ entry: { confirm: { maxDropPct: 6 } }, wallets: { entry: {} } }, m) as Record<string, Record<string, Record<string, unknown>>>;
+    expect(out.entry!.confirm).toEqual({ maxDropPct: 6, consecutivePasses: 2, intervalSec: 7 });
+    expect(out.wallets!.entry!.deployerSniperHoldPct).toBe(1);
   });
 });

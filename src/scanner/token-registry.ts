@@ -24,7 +24,10 @@ import type { ObservationLogger } from '../learner/observation-logger';
 import type { Evaluator } from '../evaluator/evaluator';
 import { ADOPTED_CREATOR, type LiveState } from './live-state';
 import { curvePriceSol, isSolQuote } from '../lib/pumpfun';
-import { bondingCurveAddress, checkPoolEvent } from '../lib/pump-pda';
+import { bondingCurveAddress, checkPoolEvent, pdaCheck } from '../lib/pump-pda';
+import { decodePumpSwapPool } from '../lib/pumpswap-pool';
+import { getConnection } from '../lib/solana';
+import { PublicKey } from '@solana/web3.js';
 import type { InsiderTracker } from '../evaluator/insider-cluster';
 import type { CrowdTracker } from './crowd-tracker';
 import type { TapeRecorder } from '../learner/tape-recorder';
@@ -32,6 +35,8 @@ import type { WalletBook } from '../learner/wallet-book';
 import type { WalletPnl } from '../learner/wallet-pnl';
 
 const log = moduleLogger('token-registry');
+/** pump.fun's BOOST buys run ~5 min after migration (focus.migrated.noEntryFirstSec 330) — re-read the pool just after. */
+const BOOST_REREAD_SEC = 345;
 
 export class TokenRegistry {
   private safetyWorker: Worker<SafetyJob> | null = null;
@@ -223,6 +228,7 @@ export class TokenRegistry {
    */
   async adoptMigrated(c: { mint: string; pool: string; symbol: string; name: string; uri?: string | null; createdAtMs: number | null; migratedAtMs: number | null; baseReserve?: bigint | null; quoteReserve?: bigint | null }): Promise<'adopted' | 'tracked'> {
     const res = await this.liveState.adoptPool(c);
+    if (res === 'adopted') void this.readPoolAccount(c.mint, c.pool, 'adopt');
     if (res === 'tracked') return res;
     const now = Date.now();
     const createdAt = new Date(c.createdAtMs ?? c.migratedAtMs ?? now);
@@ -254,6 +260,25 @@ export class TokenRegistry {
     return res;
   }
 
+  /**
+   * v11.8: read the PumpSwap pool ACCOUNT (one RPC call, counted by the usage budget) for its virtual quote reserve
+   * (exact pricing from then on) and `coin_creator` (canonical-pool second signal). Once per migration / adoption,
+   * and again after the BOOST window, when pump.fun's virtual reserves change.
+   */
+  private async readPoolAccount(mint: string, pool: string, why: string): Promise<void> {
+    try {
+      const info = await getConnection().getAccountInfo(new PublicKey(pool), 'confirmed');
+      const st = info ? decodePumpSwapPool(info.data) : null;
+      if (!st || st.baseMint !== mint) return;
+      if (st.canonical) pdaCheck.creatorSet++;
+      else pdaCheck.creatorNotSet++;
+      await this.liveState.applyPoolAccount(mint, st);
+      log.debug({ mint, why, virtualQuote: st.virtualQuoteReserves?.toString() ?? null, canonical: st.canonical, size: st.size }, 'pool account read');
+    } catch (err) {
+      log.debug({ mint, pool, why, err: (err as Error).message }, 'pool account read failed');
+    }
+  }
+
   /** A tracked token's PumpSwap pool appeared: it can be traded again → start migration checkpoints. */
   private async onAmmPool(ev: AmmPoolEvent): Promise<void> {
     try {
@@ -263,6 +288,9 @@ export class TokenRegistry {
       await prisma.token.updateMany({ where: { mint, status: { not: 'COMPLETED' } }, data: { status: 'COMPLETED', completedAt: new Date(ev.timestamp * 1000) } });
       log.info({ mint, pool: ev.pool, liquiditySol: Number(ev.quoteReserve) / 1e9 }, '🌊 migrated to PumpSwap');
       await this.evaluator?.scheduleMigration(mint, ev.timestamp > 0 ? ev.timestamp * 1000 : Date.now());
+      void this.readPoolAccount(mint, ev.pool, 'migration');
+      const t = setTimeout(() => void this.readPoolAccount(mint, ev.pool, 'boost-end'), BOOST_REREAD_SEC * 1000);
+      t.unref();
     } catch (err) {
       log.error({ pool: ev.pool, err: (err as Error).message }, 'failed to handle PumpSwap pool');
     }

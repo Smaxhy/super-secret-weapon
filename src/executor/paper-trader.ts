@@ -159,14 +159,15 @@ function landingDelay(): Promise<void> {
  * after migration. Both are constant-product (x*y=k), so the same quote maths
  * applies — only the reserves and the fee differ. null = migrating.
  */
-function poolOf(view: LiveTokenView, p: { curveFeeBps: number; ammFeeBps: number; ammTieredFees?: boolean }): { sol: bigint; tokens: bigint; feeBps: number } | null {
+export function poolOf(view: Pick<LiveTokenView, 'ammBaseReserve' | 'ammQuoteReserve' | 'curve' | 'complete' | 'virtualSolReserves' | 'virtualTokenReserves'> & { creatorFeeBps?: number | null }, p: { curveFeeBps: number; ammFeeBps: number; ammTieredFees?: boolean }): { sol: bigint; tokens: bigint; feeBps: number } | null {
   if (view.ammBaseReserve && view.ammQuoteReserve) {
     // Market cap in SOL = price × supply (graduated coins pay tiered PumpSwap fees by market cap).
     const mcSol = (Number(view.ammQuoteReserve) / 1e9 / (Number(view.ammBaseReserve) / 10 ** PUMP_TOKEN_DECIMALS)) * (Number(view.curve.totalSupply || 1_000_000_000_000_000n) / 10 ** PUMP_TOKEN_DECIMALS);
     return { sol: view.ammQuoteReserve, tokens: view.ammBaseReserve, feeBps: poolFeeBps(p, true, mcSol) };
   }
   if (view.complete) return null;
-  return { sol: view.virtualSolReserves, tokens: view.virtualTokenReserves, feeBps: p.curveFeeBps };
+  // v11.8: a create_v2 curve's on-chain creator fee (0 on SOL-paired coins) comes on top of the protocol fee.
+  return { sol: view.virtualSolReserves, tokens: view.virtualTokenReserves, feeBps: p.curveFeeBps + Math.max(0, view.creatorFeeBps ?? 0) };
 }
 
 function failed(error: string): Fill {

@@ -38,6 +38,7 @@ import {
   PUMP_DEFAULT_INITIAL_VIRTUAL_TOKEN_RESERVES,
   PUMP_DEFAULT_TOTAL_SUPPLY,
 } from '../lib/pumpfun';
+import { effectiveQuoteReserve, reservesAgree } from '../lib/pumpswap-pool';
 
 const log = moduleLogger('live-state');
 
@@ -147,6 +148,8 @@ export interface LiveTokenView {
   migratedAtMs: number | null;
   /** PumpSwap trades seen — 0 means we have no live post-migration price yet. */
   ammTrades: number;
+  /** create_v2 creator fee on the curve (bps) from the last on-chain poll; null = not read / old layout. */
+  creatorFeeBps: number | null;
   /**
    * Independent reference price (SOL per whole token): what the most recent real
    * trade actually executed at (or the on-chain poll / pool opening price). Paper
@@ -517,6 +520,9 @@ export class LiveState {
   reanchoredAmm = 0;
   /** PumpSwap trades whose effective (virtual-reserve) price differed from the raw vault ratio by >2%. */
   effectiveAmm = 0;
+  /** v11.8: PumpSwap trades priced from the pool account's virtual reserve (vault + virtual). */
+  onchainAmm = 0;
+  private readonly virtWarned = new Set<string>();
 
   /**
    * A buy or sell on PumpSwap. Same bookkeeping as curve trades, price from the pool.
@@ -535,7 +541,7 @@ export class LiveState {
   async onAmmTrade(ev: AmmTradeEvent): Promise<string | null> {
     const mint = this.pools.get(ev.pool);
     if (!mint) return null;
-    const [primary, pb, pq, adoptedS, tradesS] = await this.r.hmget(key.live(mint), 'ammPool', 'ammBase', 'ammQuote', 'adopted', 'ammTrades');
+    const [primary, pb, pq, adoptedS, tradesS, virtQ] = await this.r.hmget(key.live(mint), 'ammPool', 'ammBase', 'ammQuote', 'adopted', 'ammTrades', 'ammVirtQ');
     // An adopted coin's seed reserves (from an outside API) never block its first real trade's price.
     const firstOfAdopted = adoptedS === '1' && !Number(tradesS ?? 0);
     // Only the token's own market moves its price (old pools / stale mappings are ignored).
@@ -580,7 +586,23 @@ export class LiveState {
         const effPx = Number(eff) / Number(baseReserve);
         if (prev > 0 && ratio(effPx, prev) > EFFECTIVE_MAX_JUMP) return this.rejectAmm(mint, 'implausible price jump', { prev, next: effPx });
         if (Math.abs(vaultRatio - 1) > 0.02) this.effectiveAmm++;
-        quoteReserve = eff;
+        // v11.8: the pool account's virtual_quote_reserves (read once per migration / adoption / BOOST end) make the
+        // program's reserve exact: vault + virtual. Used when it agrees with the trade-implied one; a >5% disagreement
+        // means the stored virtual reserve is stale → warn once, drop it, fall back to the trade-implied reserve.
+        const onchain = virtQ ? effectiveQuoteReserve(quoteReserve, BigInt(virtQ)) : 0n;
+        if (onchain > 0n && reservesAgree(onchain, eff)) {
+          quoteReserve = onchain;
+          this.onchainAmm++;
+        } else {
+          if (onchain > 0n) {
+            if (!this.virtWarned.has(mint)) {
+              this.virtWarned.add(mint);
+              log.warn({ mint, onchain: onchain.toString(), implied: eff.toString() }, 'amm_reserve_mismatch: pool virtual reserve disagrees with the trade — dropping it until the next pool read');
+            }
+            void this.r.hdel(key.live(mint), 'ammVirtQ').catch(() => undefined);
+          }
+          quoteReserve = eff;
+        }
       } else {
         // Dust trade: no price of its own → apply it to OUR (effective) reserves; the event's raw
         // vault number would undo the virtual-reserve correction. Only small moves allowed.
@@ -689,16 +711,31 @@ export class LiveState {
    * A completed (migrated) curve account no longer describes the market, so its
    * reserves are ignored — only the flag is taken. Empty reserves are ignored too.
    */
-  async applyCurveState(mint: string, s: { virtualSolReserves: bigint; virtualTokenReserves: bigint; complete: boolean }): Promise<void> {
+  async applyCurveState(mint: string, s: { virtualSolReserves: bigint; virtualTokenReserves: bigint; complete: boolean; creatorFeeBps?: number | null; isHolderReward?: boolean | null }): Promise<void> {
     if (!this.tracked.has(mint)) return;
     const polledAt = String(Date.now());
+    const fee = typeof s.creatorFeeBps === 'number' ? { creatorFeeBps: String(s.creatorFeeBps), holderReward: s.isHolderReward ? '1' : '0' } : {};
     if (s.complete || s.virtualSolReserves <= 0n || s.virtualTokenReserves <= 0n) {
-      await this.r.hset(key.live(mint), { ...(s.complete ? { complete: '1' } : {}), polledAt });
+      await this.r.hset(key.live(mint), { ...(s.complete ? { complete: '1' } : {}), ...fee, polledAt });
       return;
     }
     // Chain state is the truth → it is also the new reference price.
     const px = curvePriceSol(s.virtualSolReserves, s.virtualTokenReserves);
-    await this.r.hset(key.live(mint), { vSol: s.virtualSolReserves.toString(), vTok: s.virtualTokenReserves.toString(), refPx: String(px), refAt: polledAt, polledAt });
+    await this.r.hset(key.live(mint), { vSol: s.virtualSolReserves.toString(), vTok: s.virtualTokenReserves.toString(), refPx: String(px), refAt: polledAt, polledAt, ...fee });
+  }
+
+  /**
+   * v11.8: the PumpSwap pool account (read once per migration / adoption and again after the BOOST window):
+   * its virtual quote reserve makes every later trade's effective reserve exact (vault + virtual).
+   */
+  async applyPoolAccount(mint: string, s: { virtualQuoteReserves: bigint | null; canonical: boolean }): Promise<void> {
+    if (!this.tracked.has(mint)) return;
+    this.virtWarned.delete(mint);
+    if (s.virtualQuoteReserves === null) {
+      await this.r.hdel(key.live(mint), 'ammVirtQ');
+      return;
+    }
+    await this.r.hset(key.live(mint), { ammVirtQ: s.virtualQuoteReserves.toString(), ammVirtAt: String(Date.now()), ammCanonical: s.canonical ? '1' : '0' });
   }
 
   async onComplete(ev: PumpCompleteEvent): Promise<void> {
@@ -744,6 +781,7 @@ export class LiveState {
       ammQuoteReserve: h.ammQuote ? BigInt(h.ammQuote) : null,
       migratedAtMs: h.migratedAt ? Number(h.migratedAt) : null,
       ammTrades: Number(h.ammTrades ?? 0),
+      creatorFeeBps: h.creatorFeeBps !== undefined && h.creatorFeeBps !== '' ? Number(h.creatorFeeBps) : null,
       refPriceSol: h.refPx && Number(h.refPx) > 0 ? Number(h.refPx) : null,
       refPriceAtMs: h.refAt ? Number(h.refAt) : null,
       lastTradeAtMs: h.lastTradeAt ? Number(h.lastTradeAt) : null,

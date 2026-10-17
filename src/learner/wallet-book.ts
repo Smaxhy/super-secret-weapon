@@ -193,6 +193,18 @@ export class WalletBook {
     return classify(this.recs.get(wallet), walletBookConfig());
   }
 
+  /** v11.8: brand wallets as dumpers outright (deployer-funded launch snipers) so every later coin they enter is refused. */
+  markDumpers(wallets: readonly string[], now = Date.now()): void {
+    const c = walletBookConfig();
+    for (const w of wallets) {
+      if (!w) continue;
+      const r = this.rec(w, now);
+      r.dumps = Math.max(r.dumps, c.dumperMinEvents);
+      r.dumpAt = now;
+      r.last = now;
+    }
+  }
+
   /** Feed every trade (live: token registry; replay: tape rows). Sync, never throws. */
   onTrade(t: BookTrade): void {
     try {

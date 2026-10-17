@@ -68,7 +68,15 @@ export function bondingCurveAddress(mint: string): string | null {
  * `foreignCreator` counts pump.fun-looking pools whose creator isn't the derived authority (if
  * that grows while `match` stays 0, the derivation is wrong — shown in /api/swing).
  */
-export const pdaCheck = { match: 0, mismatch: 0, foreignCreator: 0, lastMismatch: null as null | { mint: string; pool: string; derived: string | null } };
+export const pdaCheck = {
+  match: 0,
+  mismatch: 0,
+  foreignCreator: 0,
+  lastMismatch: null as null | { mint: string; pool: string; derived: string | null },
+  /** v11.8 second signal from the pool ACCOUNT: `coin_creator` set (canonical) vs default on pools the PDA matched. */
+  creatorSet: 0,
+  creatorNotSet: 0,
+};
 
 export function checkPoolEvent(ev: { pool: string; baseMint: string; quoteMint: string; creator?: string; index?: number }): void {
   if (!ev.creator || ev.quoteMint !== WSOL_MINT || (ev.index ?? 0) !== 0) return;

@@ -38,13 +38,37 @@ export const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 export const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 export const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 
-/** Decode a bonding-curve account (getAccountInfo data). null if it doesn't look like one. Pure. */
-export function decodeBondingCurveAccount(data: Buffer): { virtualTokenReserves: bigint; virtualSolReserves: bigint; complete: boolean } | null {
+export interface BondingCurveState {
+  virtualTokenReserves: bigint;
+  virtualSolReserves: bigint;
+  complete: boolean;
+  creator?: string;
+  isMayhemMode?: boolean;
+  quoteMint?: string;
+  /** create_v2 field (offset 115); null on accounts shorter than 125 bytes. 0 on SOL-paired coins. */
+  creatorFeeBps: number | null;
+  /** create_v2: the creator fee goes to holders instead (BondingCurve.creator is then a pump.fun PDA). */
+  isHolderReward: boolean | null;
+}
+
+/**
+ * Decode a bonding-curve account (getAccountInfo data). null if it doesn't look like one. Pure.
+ * Layout (Chainstack protocol doc): reserves 8…48, complete @48, creator @49, is_mayhem_mode @81, is_cashback_coin @82,
+ * quote_mint @83, creator_fee_bps u64 @115, can_edit_creator_fee @123, is_holder_reward @124 → create_v2 = 125 bytes;
+ * 151 (old size) / 256 (extend_account) decode the same way — never filter on length.
+ */
+export function decodeBondingCurveAccount(data: Buffer): BondingCurveState | null {
   if (data.length < 49) return null;
+  const pk = (o: number) => new PublicKey(data.subarray(o, o + 32)).toBase58();
   return {
     virtualTokenReserves: data.readBigUInt64LE(8),
     virtualSolReserves: data.readBigUInt64LE(16),
     complete: data.readUInt8(48) !== 0,
+    ...(data.length >= 81 ? { creator: pk(49) } : {}),
+    ...(data.length >= 82 ? { isMayhemMode: data.readUInt8(81) !== 0 } : {}),
+    ...(data.length >= 115 ? { quoteMint: pk(83) } : {}),
+    creatorFeeBps: data.length >= 125 ? Number(data.readBigUInt64LE(115)) : null,
+    isHolderReward: data.length >= 125 ? data.readUInt8(124) !== 0 : null,
   };
 }
 
@@ -172,8 +196,11 @@ function decodeCreate(r: BorshReader): PumpCreateEvent {
   const tokenTotalSupply = hasReserves ? r.u64() : PUMP_DEFAULT_TOTAL_SUPPLY;
   const tokenProgram = r.remaining >= 32 ? r.pubkey() : undefined;
   // Newer program versions: is_mayhem_mode (bool), is_cashback_enabled (bool), quote_mint (pubkey), …
+  // create_v2 (2026): `is_cashback_enabled = true` is REJECTED on chain (6082 CashbackDeprecated) — no new cashback
+  // coins exist, so the flag is read past and never used for pricing. Trailing creator_fee_bps / holder-reward fields
+  // are read from the curve account instead (decodeBondingCurveAccount) — their event order isn't documented.
   const isMayhemMode = r.remaining >= 1 ? r.bool() : undefined;
-  if (r.remaining >= 1) r.bool(); // is_cashback_enabled
+  if (r.remaining >= 1) r.bool(); // is_cashback_enabled (deprecated)
   const quoteMint = r.remaining >= 32 ? r.pubkey() : undefined;
   return {
     kind: 'create',

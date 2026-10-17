@@ -22,6 +22,8 @@ export interface CrowdQualityConfig {
   loserSolPct: number;
   loserPoints: number;
   fails: boolean;
+  /** v11.8: a deployer-funded launch-block buyer still holding ≥ this % of the supply → no buy. */
+  deployerSniperHoldPct?: number;
 }
 
 export interface CrowdQuality {
@@ -36,6 +38,14 @@ export interface CrowdQuality {
   /** the biggest bag a dumper still holds, % of supply */
   dumperHoldPct: number;
   crewPct: number;
+  /**
+   * v11.8 "exit-liquidity machines" (Pine Analytics): wallets funded by the deployer (directly or one hop away) that
+   * bought in the launch window. Counted whenever the launch time + creator are known; `deployerSniperHoldPct` = the
+   * biggest bag one of them still holds (% of supply).
+   */
+  deployerSnipers: number;
+  deployerSniperWallets: string[];
+  deployerSniperHoldPct: number;
   points: number;
   fails: string[];
   note: string;
@@ -47,7 +57,13 @@ export interface CrowdQualityInput {
   windowMs?: number;
   dustSol?: number;
   supply?: number;
+  /** Launch time (ms) + creator → deployer-funded launch snipers can be found; absent = not checked. */
+  launchMs?: number | null;
+  creator?: string | null;
+  launchWindowMs?: number;
 }
+
+const DEFAULT_LAUNCH_WINDOW_MS = 4_000;
 
 const r1 = (x: number) => Math.round(x * 10) / 10;
 
@@ -102,6 +118,32 @@ export function crowdQuality(
   }
   const biggestCrew = Math.max(0, ...funders.values());
   const crewPct = crewKnown >= 3 && biggestCrew >= 2 ? (biggestCrew / buySol.size) * 100 : 0;
+  // Deployer-funded launch snipers: bought within the launch window, funded by the creator (or by a creator-funded wallet).
+  const launchMs = i.launchMs ?? null;
+  const creator = i.creator ?? null;
+  const launchKnown = launchMs !== null && launchMs > 0 && !!creator;
+  const deployerFunded = (w: string): boolean => {
+    const f = funderOf(w);
+    if (!f) return false;
+    if (f === creator) return true;
+    const f2 = funderOf(f);
+    return !!f2 && f2 === creator;
+  };
+  const sniperWallets: string[] = [];
+  let sniperHold = 0;
+  if (launchKnown) {
+    const lw = i.launchWindowMs ?? DEFAULT_LAUNCH_WINDOW_MS;
+    const seen = new Set<string>();
+    for (const t of i.trades) {
+      if (!t.buy || t.w === creator || seen.has(t.w) || t.t < launchMs! - 1_000 || t.t - launchMs! > lw) continue;
+      seen.add(t.w);
+      if (deployerFunded(t.w)) {
+        sniperWallets.push(t.w);
+        const held = ((net.get(t.w) ?? 0) / supply) * 100;
+        if (held > sniperHold) sniperHold = held;
+      }
+    }
+  }
   const pct = (x: number) => (total > 0 ? (x / total) * 100 : 0);
   const q: CrowdQuality = {
     buyers: buySol.size,
@@ -114,6 +156,9 @@ export function crowdQuality(
     dumpersInside,
     dumperHoldPct: Math.round(dumperHold * 100) / 100,
     crewPct: r1(crewPct),
+    deployerSnipers: sniperWallets.length,
+    deployerSniperWallets: sniperWallets,
+    deployerSniperHoldPct: Math.round(sniperHold * 100) / 100,
     points: 0,
     fails: [],
     note: '',
@@ -122,6 +167,9 @@ export function crowdQuality(
   if (c.fails) {
     if (dumpersInside >= 1 && dumperHold >= c.dumperHoldPct) q.fails.push(`dump crew inside: ${dumpersInside} known dumper${dumpersInside > 1 ? 's' : ''} still holding ${q.dumperHoldPct}% of the supply`);
     if (q.dumperSolPct >= c.maxDumperSolPct) q.fails.push(`known dumpers are ${q.dumperSolPct}% of the buying`);
+    const minHold = c.deployerSniperHoldPct ?? 1;
+    const inside = sniperWallets.filter((w) => ((net.get(w) ?? 0) / supply) * 100 >= minHold).length;
+    if (inside > 0) q.fails.push(`deployer-funded launch sniper inside (exit-liquidity machine): ${inside} wallet${inside > 1 ? 's' : ''} funded by the dev bought at launch and still hold${inside > 1 ? '' : 's'} ${q.deployerSniperHoldPct}% of the supply`);
   }
   if (q.provenSolPct >= c.minProvenSolPct && provenCount >= c.minProvenCount) {
     const span = Math.max(1, c.fullPointsProvenSolPct - c.minProvenSolPct);
@@ -129,6 +177,6 @@ export function crowdQuality(
     q.points = Math.round((c.points * (2 / 3) + c.points * (1 / 3) * frac) * 10) / 10;
   }
   if (q.loserSolPct >= c.loserSolPct) q.points -= c.loserPoints;
-  q.note = `crowd: ${q.provenSolPct}% of buying from proven wallets (${provenCount}), ${dumpersInside} dump crew${dumpersInside === 1 ? '' : 's'} inside${q.loserSolPct >= c.loserSolPct ? `, ${q.loserSolPct}% from losing wallets` : ''}${q.crewPct > 0 ? `, ${q.crewPct}% of buyers share one funder` : ''}`;
+  q.note = `crowd: ${q.provenSolPct}% of buying from proven wallets (${provenCount}), ${dumpersInside} dump crew${dumpersInside === 1 ? '' : 's'} inside${q.loserSolPct >= c.loserSolPct ? `, ${q.loserSolPct}% from losing wallets` : ''}${q.crewPct > 0 ? `, ${q.crewPct}% of buyers share one funder` : ''}${launchKnown ? `, ${sniperWallets.length} deployer-funded sniper${sniperWallets.length === 1 ? '' : 's'}` : ''}`;
   return q;
 }

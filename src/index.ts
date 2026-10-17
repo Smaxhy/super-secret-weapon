@@ -169,6 +169,7 @@ async function main(): Promise<void> {
   // Rug guard v2: wallets that dumped on us before are refused at entry (sell manager records them).
   const ruggers = new RuggerMemory(redis);
   sellManager.ruggers = ruggers;
+  evaluator.ruggers = ruggers;
   trader.screen = (req) => screenEntry(req, { liveState, redis, crowd, ruggers });
   // Migrated coins with strong organic flow → checked any time, not only in their first hour.
   const migratedScanner = new MigratedScanner(crowd, (mint, why) => evaluator.checkNow(mint, 'MIGRATION_MOMENTUM', why, { rescan: true, bucketSec: 300 }), (mint) => sellManager.isHolding(mint));

@@ -567,6 +567,15 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['trending', ['pumpUrls'], { live: '/coins/currently-live?offset=0&limit=60&includeNsfw=false', koth: '', forYou: '', runners: '' }],
     ],
   },
+  {
+    version: 39,
+    note: 'v11.8 research ports: confirmation must pass 2 checks in a row 7 s apart; deployer-funded launch snipers refused (wallets.entry.deployerSniperHoldPct)',
+    set: [
+      ['entry', ['confirm', 'consecutivePasses'], 2],
+      ['entry', ['confirm', 'intervalSec'], 7],
+      ['wallets', ['entry', 'deployerSniperHoldPct'], 1],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */
