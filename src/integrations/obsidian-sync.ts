@@ -15,7 +15,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { moduleLogger } from '../lib/logger';
-import { bus } from '../lib/bus';
+import { bus, type BusEvent } from '../lib/bus';
 
 const log = moduleLogger('obsidian');
 
@@ -63,22 +63,93 @@ function sanitize(s: string): string {
   return s.replace(/[<>:"/\\|?*]/g, '_').slice(0, 60);
 }
 
+type BusTrade = Extract<BusEvent, { type: 'trade' }>['data'];
+export interface PositionInfo { strategy: string; sizeSol: number; score?: number | null; mcUsd?: number | null }
+/** Where the summaries come from (wired in index.ts); every source is optional. */
+export interface ObsidianSources {
+  closedSince?: (sinceMs: number) => Promise<Array<{ symbol: string | null; strategy: string; pnlSol: number; sizeSol: number }>>;
+  positionFor?: (mint: string) => Promise<PositionInfo | null>;
+  strategies?: () => Array<{ strategy: string; trades: number; winRate: number; avgPnl: number; totalPnl: number; verdict?: string; topSkips?: string[] }>;
+  insights?: () => Promise<Array<{ text: string; confidence?: number }>>;
+}
+
+/** Pure: the bus's trade event (one 'event' with type 'trade') → a journal line. */
+export function tradeFromBus(d: BusTrade, pos: PositionInfo | null): TradeEvent {
+  const entry = d.side.toUpperCase() === 'BUY';
+  const sizeSol = pos?.sizeSol ?? (entry ? d.amountSol : undefined);
+  return {
+    type: entry ? 'entry' : 'exit',
+    mint: d.mint,
+    symbol: d.symbol,
+    strategy: pos?.strategy ?? 'unknown',
+    sizeSol,
+    pnlSol: entry ? undefined : d.pnlSol,
+    pnlPct: !entry && d.pnlSol !== undefined && sizeSol ? (d.pnlSol / sizeSol) * 100 : undefined,
+    exitReason: entry ? undefined : d.reason,
+    explanation: d.explanation ?? undefined,
+    score: pos?.score ?? undefined,
+    marketCapUsd: pos?.mcUsd ?? undefined,
+    multiple: d.peakMultiple,
+  };
+}
+
 export class ObsidianSync {
   private vault: string;
   private timer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private cfg: ObsidianConfig) {
+  constructor(private cfg: ObsidianConfig, private readonly sources: ObsidianSources = {}) {
     this.vault = cfg.vaultPath;
   }
 
-  async start(b: typeof bus): Promise<void> {
+  async start(b: typeof bus, summaryEveryMs = 10 * 60_000, firstAfterMs = 20_000): Promise<void> {
     if (!this.cfg.enabled || !this.vault) return;
     await ensureDir(path.join(this.vault, 'Trades'));
     await ensureDir(path.join(this.vault, 'Strategies'));
     await ensureDir(path.join(this.vault, 'Performance'));
     await ensureDir(path.join(this.vault, 'Brain'));
-    b.on('trade', (ev: TradeEvent) => this.onTrade(ev).catch((e) => log.warn({ err: (e as Error).message }, 'obsidian trade write failed')));
+    b.on('event', (ev: BusEvent) => {
+      if (ev.type !== 'trade') return;
+      void this.onBusTrade(ev.data).catch((e) => log.warn({ err: (e as Error).message }, 'obsidian trade write failed'));
+    });
+    this.timer = setInterval(() => void this.writeSummaries(), summaryEveryMs);
+    setTimeout(() => void this.writeSummaries(), firstAfterMs);
     log.info({ vault: this.vault }, 'obsidian sync started');
+  }
+
+  private async onBusTrade(d: BusTrade): Promise<void> {
+    const pos = this.sources.positionFor ? await this.sources.positionFor(d.mint).catch(() => null) : null;
+    await this.onTrade(tradeFromBus(d, pos));
+  }
+
+  /** Today's P&L note, one note per strategy, the AI's latest insights. Runs on the timer and once at start. */
+  async writeSummaries(now = Date.now()): Promise<void> {
+    if (!this.cfg.enabled || !this.vault) return;
+    try {
+      const day = new Date(now).toISOString().slice(0, 10);
+      const closed = this.sources.closedSince ? await this.sources.closedSince(Date.parse(`${day}T00:00:00Z`)) : [];
+      const label = (t: { symbol: string | null; pnlSol: number }) => `${t.symbol ?? '?'} ${t.pnlSol >= 0 ? '+' : ''}${t.pnlSol.toFixed(3)} SOL`;
+      const sorted = [...closed].sort((a, b) => b.pnlSol - a.pnlSol);
+      const byStrategy = new Map<string, { trades: number; pnl: number }>();
+      for (const t of closed) {
+        const s = byStrategy.get(t.strategy) ?? { trades: 0, pnl: 0 };
+        s.trades += 1;
+        s.pnl += t.pnlSol;
+        byStrategy.set(t.strategy, s);
+      }
+      await this.writeDailyPerformance(day, {
+        trades: closed.length,
+        wins: closed.filter((t) => t.pnlSol > 0).length,
+        pnlSol: closed.reduce((a, t) => a + t.pnlSol, 0),
+        bestTrade: sorted[0] ? label(sorted[0]) : undefined,
+        worstTrade: sorted.length > 1 ? label(sorted[sorted.length - 1]!) : undefined,
+        byStrategy: [...byStrategy].map(([strategy, v]) => ({ strategy, ...v })),
+      });
+      for (const s of this.sources.strategies?.() ?? []) await this.writeStrategySummary(s.strategy, s);
+      const ins = this.sources.insights ? await this.sources.insights() : [];
+      if (ins.length) await this.writeBrainInsights(ins);
+    } catch (e) {
+      log.warn({ err: (e as Error).message }, 'obsidian summaries failed');
+    }
   }
 
   stop(): void {

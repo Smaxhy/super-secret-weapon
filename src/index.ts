@@ -310,7 +310,21 @@ async function main(): Promise<void> {
   // Obsidian vault sync: writes trades as Markdown files when OBSIDIAN_VAULT_PATH is set.
   const obsCfg = getConfig().obsidian ?? DEFAULT_CONFIG.obsidian;
   const obsVaultPath = process.env.OBSIDIAN_VAULT_PATH || obsCfg.vaultPath;
-  const obsidian = new ObsidianSync({ enabled: obsCfg.enabled || !!obsVaultPath, vaultPath: obsVaultPath || '' });
+  const obsidian = new ObsidianSync({ enabled: obsCfg.enabled || !!obsVaultPath, vaultPath: obsVaultPath || '' }, {
+    closedSince: async (since) => (await prisma.position.findMany({
+      where: { mode: 'PAPER', status: 'CLOSED', closedAt: { gte: new Date(since) } },
+      select: { strategy: true, realizedPnlSol: true, sizeSol: true, token: { select: { symbol: true } } },
+    })).map((p) => ({ symbol: p.token?.symbol ?? null, strategy: p.strategy, pnlSol: p.realizedPnlSol, sizeSol: p.sizeSol })),
+    positionFor: async (mint) => {
+      const p = await prisma.position.findFirst({ where: { mint, mode: 'PAPER' }, orderBy: { openedAt: 'desc' }, select: { strategy: true, sizeSol: true, entryContext: true, evaluation: { select: { combinedScore: true } } } });
+      return p ? { strategy: p.strategy, sizeSol: p.sizeSol, score: p.evaluation?.combinedScore ?? null, mcUsd: (p.entryContext as { marketCapUsd?: number } | null)?.marketCapUsd ?? null } : null;
+    },
+    strategies: () => {
+      const a = autopsy.snapshot();
+      return a ? a.byStrategy.map((s) => ({ strategy: s.strategy, trades: s.n, winRate: s.winRatePct, avgPnl: s.avgPct, totalPnl: s.pnlSol, verdict: a.cards?.find((k) => k.strategy === s.strategy)?.verdict })) : [];
+    },
+    insights: async () => (await redis.lrange('ai:insights', 0, 19)).map((s) => { try { return { text: (JSON.parse(s) as { text: string }).text }; } catch { return { text: s }; } }),
+  });
   void obsidian.start(bus);
   const brain = new Brain(redis, (since) => shadow.results(since), aiCoach, (since) => coinOutcomes.results(since));
   brain.outcomeSource = () => coinOutcomes.snapshot();
