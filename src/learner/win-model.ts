@@ -72,8 +72,8 @@ export interface WinModelOptions {
 
 export const DEFAULT_WIN_MODEL_OPTIONS: WinModelOptions = {
   winPct: 3,
-  minRows: 150,
-  minValPositives: 15,
+  minRows: 80,
+  minValPositives: 8,
   minValAuc: 0.58,
   minAucGain: 0.02,
   trainShare: 0.75,

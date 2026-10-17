@@ -11,7 +11,7 @@ const NOW = 1_760_000_000_000;
 
 describe('two-step buys (v10.30)', () => {
   it('splits the size in two; learning trades and too-small legs buy at once', () => {
-    expect(scaleInPlan(0.4, 0.1, SI, false)).toEqual({ firstSol: 0.2, laterSol: 0.2 });
+    expect(scaleInPlan(0.4, 0.1, SI, false)).toEqual({ firstSol: 0.16, laterSol: 0.24 });
     expect(scaleInPlan(0.15, 0.1, SI, false)).toBeNull(); // 0.075 < the 0.1 minimum
     expect(scaleInPlan(0.4, 0.1, SI, true)).toBeNull(); // learning / probe trade
     expect(scaleInPlan(0.4, 0.1, { ...SI, enabled: false }, false)).toBeNull();

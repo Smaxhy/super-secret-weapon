@@ -54,6 +54,8 @@ export interface EntryRequest {
   kols?: number;
   /** A KOL-follow buy (several KOLs in) — its own open-position limit. */
   kolFollow?: boolean;
+  /** Adaptive stop factor: multiplier on the stop-loss % (tighter on weak entries, wider on strong ones). */
+  adaptiveStopFactor?: number;
   /** Builds the human-readable "why we bought" once the size is known. */
   explain?: (sizeSol: number) => string;
 }
@@ -304,6 +306,7 @@ export class Trader {
             // Two-step buy: the second half waits for the coin to prove itself (null = bought in one go).
             scaleIn: plan ? { plannedSol: round4(size), pendingSol: plan.laterSol, maxSlippageBps: req.maxSlippageBps, status: 'pending' } : null,
             explanation,
+            adaptiveStopFactor: req.adaptiveStopFactor ?? 1,
             top10HolderPct: req.market.top10HolderPct,
             holders: req.market.holders,
             marketCapSol: req.market.marketCapSol,

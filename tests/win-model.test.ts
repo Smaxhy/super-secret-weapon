@@ -95,9 +95,9 @@ describe('win model: self-validating win probability', () => {
   });
 
   it('too little data is never active', async () => {
-    const m = await trainWinModel(makeRows(120, 9, (_i, x) => 2 * x), T0);
+    const m = await trainWinModel(makeRows(60, 9, (_i, x) => 2 * x), T0);
     expect(m.active).toBe(false);
-    expect(m.json.report.reason).toMatch(/effective rows .*120 rows/);
+    expect(m.json.report.reason).toMatch(/effective rows .*60 rows/);
   });
 
   it('a relationship that flips over time fails the time-ordered exam', async () => {
@@ -265,12 +265,12 @@ describe('win model: self-validating win probability', () => {
   });
 
   it('row minimum and exam winners use effective (weighted) counts', async () => {
-    const rows = makeRows(200, 61, (_i, x) => 2 * x).map((r) => ({ ...r, weight: 0.5 }));
+    const rows = makeRows(120, 61, (_i, x) => 2 * x).map((r) => ({ ...r, weight: 0.5 }));
     const m = await trainWinModel(rows, T0);
     const rep = m.json.report;
-    expect(rep.nEffective).toBe(100);
+    expect(rep.nEffective).toBe(60);
     expect(rep.active).toBe(false);
-    expect(rep.reason).toMatch(/only 100\.0 effective rows/);
+    expect(rep.reason).toMatch(/only 60\.0 effective rows/);
     const { val } = timeSplit(rows, 0.75);
     expect(rep.valPositives).toBe(val.filter((r) => r.pnlPct > 3).length * 0.5);
   });

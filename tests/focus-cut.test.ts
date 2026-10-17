@@ -8,7 +8,7 @@ describe('v10.21 focus cut (owner CSV, 515 trades)', () => {
   it('SOON, migrated coins, KOL follow, (small) RUNNER and — since v10.27 — new pairs trade; the budget adds up to 1', () => {
     const t = DEFAULT_CONFIG.trading;
     expect(Object.entries(t.enabledStrategies).filter(([, on]) => on).map(([s]) => s).sort()).toEqual(['CURVE_SNIPE', 'MIGRATION_MOMENTUM', 'RUNNER', 'SMART_MONEY_COPY', 'SOON']);
-    expect(DEFAULT_CONFIG.trading.quietHours.enabled).toBe(false);
+    expect(DEFAULT_CONFIG.trading.quietHours.enabled).toBe(true);
     expect(Object.values(t.allocation).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
   });
   it('night pause 00–04 UTC (and wraps past midnight when asked)', () => {
@@ -19,13 +19,13 @@ describe('v10.21 focus cut (owner CSV, 515 trades)', () => {
   });
   it('SOON and migrated coins bank 30% at 1.2x; others keep their own tiers', () => {
     const r = DEFAULT_CONFIG.exit as unknown as Parameters<typeof exitRulesFor>[1];
-    expect(exitRulesFor('SOON', r).takeProfitTiers[0]).toEqual({ multiple: 1.2, sellPct: 30 });
-    expect(exitRulesFor('MIGRATION_MOMENTUM', r).takeProfitTiers.map((x) => x.multiple)).toEqual([1.2, 1.4, 5]);
-    expect(exitRulesFor('SMART_MONEY_COPY', r).takeProfitTiers[0]).toEqual({ multiple: 1.4, sellPct: 40 });
+    expect(exitRulesFor('SOON', r).takeProfitTiers[0]).toEqual({ multiple: 1.15, sellPct: 40 });
+    expect(exitRulesFor('MIGRATION_MOMENTUM', r).takeProfitTiers.map((x) => x.multiple)).toEqual([1.15, 1.3, 5]);
+    expect(exitRulesFor('SMART_MONEY_COPY', r).takeProfitTiers[0]).toEqual({ multiple: 1.25, sellPct: 40 });
   });
   it('the buy wait is 15 s and the price must hold (v10.23)', () => {
     expect(DEFAULT_CONFIG.entry.confirmDelaySec).toBe(15);
-    expect(DEFAULT_CONFIG.entry.confirm).toEqual({ maxDropPct: 6, maxPumpPct: 15, minBuyRatio: 1.1 });
+    expect(DEFAULT_CONFIG.entry.confirm).toEqual({ maxDropPct: 6, maxPumpPct: 10, minBuyRatio: 1.15, minNewBuyers: 2 });
   });
   it('migration v19 pushes it into saved settings', () => {
     const m = MIGRATIONS.find((x) => x.version === 19)!;

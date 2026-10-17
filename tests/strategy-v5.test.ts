@@ -171,13 +171,13 @@ describe('v5 exits', () => {
     const after = decideExit({ ...base, peakPriceSol: 1.45, priceSol: 1.0, tpTiersHit: [1.4], remainingPct: 60, trailingActive: true, proceedsSol: 0.55, strategy: 'CURVE_SNIPE' }, rules);
     expect(after.sells.map((s) => s.reason)).toEqual(['TRAILING_STOP']);
   });
-  it('time stop: a new pair that never got going is cut after 1.5 min at a small loss', () => {
-    const t = { ...base, strategy: 'CURVE_SNIPE', openedAtMs: NOW - 95_000, peakPriceSol: 1.04, priceSol: 0.97 };
+  it('time stop: a new pair that never got going is cut after 1 min at a small loss', () => {
+    const t = { ...base, strategy: 'CURVE_SNIPE', openedAtMs: NOW - 65_000, peakPriceSol: 1.04, priceSol: 0.97 };
     expect(decideExit(t, rules).sells[0]?.detail).toContain('no follow-through');
-    expect(decideExit({ ...t, openedAtMs: NOW - 60_000 }, rules).sells).toEqual([]); // too early to judge
+    expect(decideExit({ ...t, openedAtMs: NOW - 50_000 }, rules).sells).toEqual([]); // too early to judge
   });
-  it('stall: no new high for 3 min below the first take-profit → out', () => {
-    const t = { ...base, strategy: 'CURVE_SNIPE', openedAtMs: NOW - 300_000, peakPriceSol: 1.3, peakAtMs: NOW - 200_000, priceSol: 1.15 };
+  it('stall: no new high for 2 min below the first take-profit → out', () => {
+    const t = { ...base, strategy: 'CURVE_SNIPE', openedAtMs: NOW - 300_000, peakPriceSol: 1.3, peakAtMs: NOW - 130_000, priceSol: 1.15 };
     expect(decideExit(t, rules).sells[0]?.detail).toContain('stalled');
     expect(decideExit({ ...t, peakAtMs: NOW - 60_000 }, rules).sells).toEqual([]);
   });

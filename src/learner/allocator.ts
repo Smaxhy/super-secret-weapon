@@ -64,7 +64,7 @@ export const DEFAULT_ALLOC_OPTS: AllocatorOptions = {
   minEffTrades: 10,
   draws: 2000,
   seed: 1234567,
-  multMin: 0.5,
+  multMin: 0.3,
   multMax: 1.6,
   blend: 0.4,
 };
@@ -309,7 +309,7 @@ export function allocate(rows: LearnRow[], base: Record<string, number>, now = D
   });
   // Total for the eligible ones: shrinks when they are probably losing, never grows above their base.
   const eligPPos = eligBase > 0 ? names.reduce((a, s, i) => a + (eligible[i] ? base[s]! * (pos[i]! / draws) : 0), 0) / eligBase : 0;
-  const totalFactor = Math.min(1, Math.max(0.6, 0.6 + 0.8 * eligPPos));
+  const totalFactor = Math.min(1, Math.max(0.4, 0.4 + 0.8 * eligPPos));
   const target = eligBase * totalFactor;
 
   // Raw budget = base × (multMin … multMax by score), then rescaled to the target within [multMin, multMax] × base.

@@ -28,6 +28,7 @@ import { TapeArchiver } from './learner/tape-archiver';
 import { Brain } from './learner/brain';
 import { startPushNotifier } from './lib/push';
 import { LossAutopsy } from './learner/loss-autopsy';
+import { ObsidianSync } from './integrations/obsidian-sync';
 import { MigratedScanner } from './scanner/migrated-scanner';
 import { RunningCoins } from './scanner/running-coins';
 import { priceShape } from './evaluator/price-shape';
@@ -277,6 +278,11 @@ async function main(): Promise<void> {
   // The brain: win-probability model, statistical rule search and budget allocator on real + shadow trades.
   // Phone notifications: a trade closed in profit → push to the installed app.
   const stopPush = startPushNotifier();
+  // Obsidian vault sync: writes trades as Markdown files when OBSIDIAN_VAULT_PATH is set.
+  const obsCfg = getConfig().obsidian ?? DEFAULT_CONFIG.obsidian;
+  const obsVaultPath = process.env.OBSIDIAN_VAULT_PATH || obsCfg.vaultPath;
+  const obsidian = new ObsidianSync({ enabled: obsCfg.enabled || !!obsVaultPath, vaultPath: obsVaultPath || '' });
+  void obsidian.start(bus);
   const brain = new Brain(redis, (since) => shadow.results(since), aiCoach, (since) => coinOutcomes.results(since));
   brain.outcomeSource = () => coinOutcomes.snapshot();
   brain.exitSource = () => exitTuner.snapshot();
@@ -675,6 +681,7 @@ async function main(): Promise<void> {
       moonshot.stop();
       brain.stop();
       stopPush();
+      obsidian.stop();
       taLab.stop();
       trendFeeds.stop();
       trending.stop();

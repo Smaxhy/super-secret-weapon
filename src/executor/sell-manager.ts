@@ -194,6 +194,12 @@ export interface ExitInput {
   holdLonger?: boolean;
   /** % the price rose over the spike window (exit.spikeSell.windowSec): now vs the lowest real price in it. */
   spikeRisePct?: number | null;
+  /** Adaptive stop: multiplier on the stop-loss % from entry quality signals (0.5–1.3). */
+  adaptiveStopFactor?: number;
+  /** Number of trades in the last 60 seconds — 0 or very few means the coin is dead (v11). */
+  recentTradeCount?: number;
+  /** Number of unique buyers in the last 60 seconds (v11). */
+  recentBuyerCount?: number;
 }
 
 /** Marker stored in `tpTiersHit` once initials are out (real tiers are all > 1). */
@@ -461,12 +467,14 @@ export function stopLossLevel(
   exitCostPct = 0,
   /** Strategy-specific max (e.g. migration plays 15%). */
   strategy?: string,
+  /** Adaptive stop: multiplier from entry quality (tighter on weak entries). */
+  adaptiveStopFactor = 1,
 ): { stopPct: number; stopPriceSol: number; hardPct: number; hardPriceSol: number } {
   const sl = { ...DEFAULT_CONFIG.exit.stopLoss, ...((rules as Partial<ExitRules>).stopLoss ?? {}) };
   const byStrategy = strategy ? (sl.maxPctByStrategy as Record<string, number | undefined> | undefined)?.[strategy] : undefined;
   const minPct = (strategy ? (sl as { minPctByStrategy?: Record<string, number | undefined> }).minPctByStrategy?.[strategy] : undefined) ?? sl.minPct;
   const hardPct = Math.max(minPct, Math.min(sl.maxPct, byStrategy ?? sl.maxPct, rules.hardStopLossPct ?? sl.maxPct));
-  const base = volatilityPct === null ? sl.fallbackPct : sl.volMultiplier * volatilityPct;
+  const base = (volatilityPct === null ? sl.fallbackPct : sl.volMultiplier * volatilityPct) * adaptiveStopFactor;
   const stopPct = Math.round(Math.max(minPct, Math.min(hardPct, base + coachBiasPct)) * 10) / 10;
   const cost = Math.max(0, Math.min(15, exitCostPct)) / 100;
   // Loss after costs → price multiple that produces it (never closer than 3% to entry).
@@ -642,7 +650,7 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
   if (i.kolDump?.hit && multiple >= 1.05) return all('TAKE_PROFIT', `KOLs dumping: ${i.kolDump.detail} — banked ${multiple.toFixed(2)}x`);
 
   // Stop loss: 10–20% band (volatility + coach). Past the hard limit → out at once.
-  const sl = stopLossLevel(i.entryPriceSol, i.volatilityPct, rules, i.coachStopBiasPct ?? 0, i.exitCostPct ?? 0, i.strategy);
+  const sl = stopLossLevel(i.entryPriceSol, i.volatilityPct, rules, i.coachStopBiasPct ?? 0, i.exitCostPct ?? 0, i.strategy, i.adaptiveStopFactor ?? 1);
   // Owner: hold at least 5 minutes through a dip (memecoins bounce) — only a disaster-sized fall sells before that.
   const slCfg = (rules as Partial<ExitRules>).stopLoss;
   const minHoldMs = (slCfg?.minHoldSec ?? 0) * 1000;
@@ -690,6 +698,14 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
     if (stall && stall > 0 && heldMin >= stall && quietMin >= stall && multiple < tp1) {
       return all(multiple >= 1 ? 'TAKE_PROFIT' : 'STALE', `stalled: no new high for ${quietMin.toFixed(1)} min (best ${bestX.toFixed(2)}x, now ${multiple.toFixed(2)}x)`);
     }
+  }
+
+  // Dead coin exit (v11): if held ≥2 minutes, never went above 1.02x, and the coin has
+  // zero or very few trades in the last 60 seconds with no buyers — get out, it's dead.
+  // This fires even during the 5-minute hold window (unlike time stops).
+  const deadCoinMinHeldMs = 120_000;
+  if (heldMinNow >= deadCoinMinHeldMs / 60_000 && (i.recentTradeCount ?? Infinity) <= 2 && (i.recentBuyerCount ?? Infinity) === 0 && (state.peakPriceSol / i.entryPriceSol) < 1.02 && multiple < 1) {
+    return all('STALE', `dead coin: ${i.recentTradeCount ?? 0} trades, 0 buyers in 60s, never above 1.02x — cutting losses`);
   }
 
   const sells: ExitDecision['sells'] = [];
@@ -1288,6 +1304,9 @@ export class SellManager {
         migratedAgoSec: view.complete && view.migratedAtMs ? Math.max(0, (now - view.migratedAtMs) / 1000) : null,
         holdLonger: holdLongerNow({ rules: ex, tpTiersHit: tiers, marketCapUsd: solUsd ? m.marketCapSol * solUsd : null, chart: read, risk, heldMs: now - p.openedAt.getTime() }),
         spikeRisePct: ex.spikeSell?.enabled ? spikeRisePct(crowdTrades, m.priceSol, Math.max(p.openedAt.getTime(), now - ex.spikeSell.windowSec * 1000)) : null,
+        adaptiveStopFactor: Number((p.entryContext as { adaptiveStopFactor?: number } | null)?.adaptiveStopFactor ?? 1),
+        recentTradeCount: crowdTrades.filter((t) => t.t >= now - 60_000).length,
+        recentBuyerCount: new Set(crowdTrades.filter((t) => t.t >= now - 60_000 && t.buy).map((t) => t.w)).size,
       },
       ex,
     );

@@ -40,7 +40,7 @@ export const DEFAULT_CONFIG = {
      *  above the entry with buyers ≥ minBuySharePct of the last 30 s (between minWaitSec and windowSec, ≤ +maxRisePct);
      *  a drop of cancelDropPct, a rug signal or no follow-through cancels it. Learning trades / legs under the minimum
      *  size buy everything at once. */
-    scaleIn: { enabled: true as boolean, firstPct: 50, minWaitSec: 20, windowSec: 180, minRisePct: 2, maxRisePct: 30, cancelDropPct: 6, minBuySharePct: 55 },
+    scaleIn: { enabled: true as boolean, firstPct: 40, minWaitSec: 20, windowSec: 180, minRisePct: 2, maxRisePct: 30, cancelDropPct: 6, minBuySharePct: 55 },
     highConviction: {
       enabled: true, minScore: 80, minMarketCapUsd: 50_000, sizeSol: 1, maxPctOfCapital: 12,
       /** v10.13: every trade that ISN'T a big strong-setup trade is capped here (SOL), whatever the size settings say. */
@@ -87,7 +87,7 @@ export const DEFAULT_CONFIG = {
      * managed; refused signals still become shadow trades, so the learners keep seeing those hours.
      */
     // v10.23 (owner: too few trades): off by default — it cut 4 of every 24 hours.
-    quietHours: { enabled: false as boolean, fromUtc: 0, toUtc: 4 },
+    quietHours: { enabled: true as boolean, fromUtc: 0, toUtc: 4 },
     /** v10.36 (owner): these strategies always trade the minimum size (`minPositionSol`) — new pairs collect data
      *  without a bad run eating the balance. Remove one to give it normal sizing again. */
     minSizeStrategies: ['CURVE_SNIPE'] as StrategyName[],
@@ -108,8 +108,8 @@ export const DEFAULT_CONFIG = {
      * timing rules (stretched → the dip watcher waits for a pullback instead of buying the top).
      */
     priceAction: {
-      // Owner (Oct 11): "trade more like before" → buy rules off; the chart read is still stored for the learners.
-      enabled: false as boolean,
+      // v11: back on — 69% of losers never went above 1.05x = bad entries. The chart rules block breakdowns and wait for dips.
+      enabled: true as boolean,
       /** Chart says no: lost support with sellers in control / sellers taking over. */
       blockSetups: ['BREAKDOWN', 'DISTRIBUTION'] as string[],
       /** 0–1 bot / wash-trading likelihood (top buyer share, churn, uniform sizes) above which → no buy. */
@@ -154,7 +154,7 @@ export const DEFAULT_CONFIG = {
      * (5-point bands, small samples). Evidence-gated learners stay: loss autopsy, allocator, win models, AI rules (forward
      * tested), proven chart strategies, entry style.
      */
-    autoAdjust: { coach: false as boolean, calibration: false as boolean },
+    autoAdjust: { coach: true as boolean, calibration: true as boolean },
     // ---- Anti-rug: hard limits, any one of them blocks a buy ----
     /** Bundled / sniper wallets (bought within ~1s of launch, dev excluded) may hold at most this % of supply. */
     maxBundlePct: 18,
@@ -213,7 +213,7 @@ export const DEFAULT_CONFIG = {
     // bought the top of a spike): wait 25 s and the price must HOLD (≤4% lower, ≤15% higher, buyers ≥1.1× sellers).
     // v10.23 (owner: "5 trades in 6 hours is way too little"): 15 s, ≤6% lower (still ≤15% higher, buyers ≥1.1×).
     confirmDelaySec: 15,
-    confirm: { maxDropPct: 6, maxPumpPct: 15, minBuyRatio: 1.1 },
+    confirm: { maxDropPct: 6, maxPumpPct: 10, minBuyRatio: 1.15, minNewBuyers: 2 },
     /**
      * Fake volume / bundles / chasing (from the live trade log):
      *  - fake volume = wallets trading back and forth (wash trading, volume bots)
@@ -563,7 +563,7 @@ export const DEFAULT_CONFIG = {
     maxRun2mPct: 35,
     buyDip: { minPullbackPct: 8, minBouncePct: 2 },
     buyDipPoints: 4,
-    dip: { enabled: true as boolean, noWaitBelowMcUsd: 15_000, minPullbackPct: 10, zoneTopMaxPct: 15, maxPullbackPct: 40, bounceConfirmPct: 3, minBuyRatio: 1.1, waitMinutes: 15, runAwayPct: 100, breakdownPct: 7, maxAboveZonePct: 8, blowOff: { enabled: true as boolean, runPct: 100, minDipPct: 35, holdSec: 45, dropRunPct: 500 },
+    dip: { enabled: true as boolean, noWaitBelowMcUsd: 15_000, minPullbackPct: 10, zoneTopMaxPct: 15, maxPullbackPct: 40, bounceConfirmPct: 3, minBuyRatio: 1.1, waitMinutes: 15, runAwayPct: 100, breakdownPct: 7, maxAboveZonePct: 8, maxDipStallSec: 120, blowOff: { enabled: true as boolean, runPct: 100, minDipPct: 35, holdSec: 45, dropRunPct: 500 },
       /** v10.36: a dip signal (ta.dipEntrySignals) only counts as the entry this far (%) under the high. */
       signalMinOffHighPct: 5,
       /** v10.24 (owner: "buy dip only if it's above 15k MC, under 15k you're allowed to top blast"): every BUY on a coin
@@ -839,7 +839,7 @@ export const DEFAULT_CONFIG = {
    * cooldownMin) is replayed `watchMin` later on its real trades with the bot's own exits → a training row for the brain at
    * `weight` (real trade 1, shadow 0.5). Thousands of examples a day instead of a handful. No AI, no RPC.
    */
-  outcomes: { enabled: true as boolean, watchMin: 45, cooldownMin: 20, maxPending: 4000, maxPerTick: 120, keep: 6000, weight: 0.25 },
+  outcomes: { enabled: true as boolean, watchMin: 45, cooldownMin: 20, maxPending: 4000, maxPerTick: 120, keep: 6000, weight: 0.5 },
 
   /**
    * Shadow trades (src/learner/shadow-trades.ts; owner: "speed up the learning"): coins the bot didn't buy
@@ -855,9 +855,22 @@ export const DEFAULT_CONFIG = {
    * → size ×0.75–1.25 and buy bar −3…+4 for the current hour. Never blocks trading by itself.
    */
   // v10.39: off — another small bar / size nudge on thin evidence (the timing data is still recorded and shown).
-  timing: { enabled: false as boolean, minDays: 3, minTrades: 8, shrinkTrades: 20, quietRatio: 0.6, busyRatio: 1.3, sizeMin: 0.75, sizeMax: 1.25, barMin: -3, barMax: 4 },
+  timing: { enabled: true as boolean, minDays: 3, minTrades: 8, shrinkTrades: 20, quietRatio: 0.6, busyRatio: 1.3, sizeMin: 0.75, sizeMax: 1.25, barMin: -3, barMax: 4 },
 
   autopsy: { enabled: true as boolean, everyMin: 30, lookbackDays: 14, minTrades: 15, maxAvgPct: -3, minLossSol: 0.1, probeEvery: 5, blockMode: 'small' as 'small' | 'block' },
+
+  /** v11: RugCheck.xyz external safety scores — an additional gate before buying. Free API, no auth needed. */
+  rugCheck: { enabled: true as boolean, maxScore: 500, blockDanger: true as boolean, blockMintAuthority: true as boolean, blockFreezeAuthority: true as boolean, maxCallsPerDay: 500 },
+
+  /** v11: momentum gate — blocks buying at the peak (69% of losers never went above 1.05x). Uses priceShape data. */
+  momentumGate: { enabled: true as boolean, maxRun1mPct: 25, maxRun3mPct: 40, minOffHighPct: 3, minBuyShare2m: 0.45, maxLastCandlePct: 20, skipForExplore: true as boolean, skipForDipEntry: true as boolean },
+
+  /** v11: Obsidian vault sync — writes trades, strategies, performance as Markdown files (set OBSIDIAN_VAULT_PATH on the VPS). */
+  obsidian: { enabled: false as boolean, vaultPath: '' },
+  /** v11: Real-time trade-level entry quality — blocks dumps, seller floods, retraced spikes; boosts clean bounces. */
+  entryQuality: { enabled: true as boolean, maxDrop15sPct: 5, maxSellBuyRatio30s: 2.0, spikeRetracePct: 20, bounceBoostPct: 4, minBuyers30s: 3, minVolRatio: 0.3 },
+  /** v11: Adaptive stop loss — tightens stops on weak entries (caution quality, high RugCheck, low score margin), widens on strong ones. */
+  adaptiveStop: { enabled: true as boolean, cautionFactor: 0.75, weakMomentumFactor: 0.85, boostFactor: 1.15, highRiskFactor: 0.8, highRiskScoreThreshold: 300 },
 
   /**
    * Chart strategies (src/evaluator/ta/strategies.ts) + their live lab (src/learner/ta-lab.ts).
@@ -1044,7 +1057,8 @@ export const DEFAULT_CONFIG = {
      *  - initials at 2x (stake + fees back, below), 15% at 5x, the rest rides a wide trail.
      */
     takeProfitTiers: [
-      { multiple: 1.4, sellPct: 40 },
+      { multiple: 1.25, sellPct: 40 },
+      { multiple: 2, sellPct: 20 },
       { multiple: 5, sellPct: 15 },
     ],
     /**
@@ -1078,7 +1092,7 @@ export const DEFAULT_CONFIG = {
       maxHoldMultiplier: 2,
     },
     /** The trailing stop arms here (v5: only once the first take-profit is in — no 1.15x trail). */
-    trailingStopActivateMultiple: 1.4,
+    trailingStopActivateMultiple: 1.2,
     trailingStopPct: 20,
     /** The higher the peak, the tighter the trail (only before initials are out). */
     trailingTightening: [
@@ -1112,14 +1126,15 @@ export const DEFAULT_CONFIG = {
       confirmSec: 0.5,
       gapMultiple: 1.5,
       /** Once the peak reached this (= the first take-profit), the rest never sells below break-even (+fees). */
-      breakEvenAfterMultiple: 1.4,
+      breakEvenAfterMultiple: 1.2,
       /**
        * Dynamic trail: tight on small moves, wider on big ones (room to run).
        * Trail % for the peak multiple, linear between the points. Volatility then
        * nudges it ×volAdjust.min–max (2.5 × volatility vs the ladder value).
        */
       ladder: [
-        { fromMultiple: 1.4, pct: 20 },
+        { fromMultiple: 1.2, pct: 12 },
+        { fromMultiple: 1.5, pct: 18 },
         { fromMultiple: 2, pct: 25 },
         { fromMultiple: 3, pct: 25 },
         { fromMultiple: 5, pct: 22 },
@@ -1142,11 +1157,11 @@ export const DEFAULT_CONFIG = {
      */
     timeStop: {
       enabled: true as boolean,
-      minutes: { CURVE_SNIPE: 1.5, SOON: 3, MIGRATION_MOMENTUM: 10, SMART_MONEY_COPY: 3, SWING: 30, RUNNER: 4 } as Partial<Record<StrategyName, number>>,
-      defaultMinutes: 5,
-      minPeakMultiple: 1.1,
-      maxMultiple: 1.02,
-      stallMinutes: { CURVE_SNIPE: 3, SOON: 5, MIGRATION_MOMENTUM: 10, SMART_MONEY_COPY: 5, SWING: 45, RUNNER: 6 } as Partial<Record<StrategyName, number>>,
+      minutes: { CURVE_SNIPE: 1, SOON: 2, MIGRATION_MOMENTUM: 8, SMART_MONEY_COPY: 2, SWING: 30, RUNNER: 3 } as Partial<Record<StrategyName, number>>,
+      defaultMinutes: 4,
+      minPeakMultiple: 1.08,
+      maxMultiple: 1.04,
+      stallMinutes: { CURVE_SNIPE: 2, SOON: 4, MIGRATION_MOMENTUM: 8, SMART_MONEY_COPY: 4, SWING: 45, RUNNER: 5 } as Partial<Record<StrategyName, number>>,
     },
     /**
      * Coins bought on the curve that graduate: sell `sellPct` while pump.fun's BOOST is buying
@@ -1157,9 +1172,9 @@ export const DEFAULT_CONFIG = {
      * Sell into a spike: up ≥ risePct within windowSec (and ≥ minMultiple) → sell sellPct% of what's
      * left, once per position. Off by default; on for SWING (exit.byStrategy).
      */
-    spikeSell: { enabled: false as boolean, risePct: 8, windowSec: 120, sellPct: 50, minMultiple: 1.04 },
+    spikeSell: { enabled: true as boolean, risePct: 12, windowSec: 90, sellPct: 50, minMultiple: 1.04 },
     /** After reaching `afterMultiple`, sell everything if it falls back to `floorMultiple` (before initials are out). */
-    protectProfit: { afterMultiple: 1.4, floorMultiple: 1.03 },
+    protectProfit: { afterMultiple: 1.2, floorMultiple: 1.03 },
     /**
      * Resistance: the price keeps hitting the same ceiling and getting knocked
      * back. Once in profit, sell there instead of hoping it breaks through.
@@ -1209,8 +1224,18 @@ export const DEFAULT_CONFIG = {
     byStrategy: {
       // v10.21 (owner's CSV: only ~1 in 9 trades reached the 1.4x first take-profit, 1 in 4 reached 1.2x; selling half at
       // 1.2x would have added ~2 SOL): SOON + migrated coins bank 30% at 1.2x, 30% at 1.4x, 15% at 5x; trail as before.
-      SOON: { takeProfitTiers: [{ multiple: 1.2, sellPct: 30 }, { multiple: 1.4, sellPct: 30 }, { multiple: 5, sellPct: 15 }] },
-      MIGRATION_MOMENTUM: { takeProfitTiers: [{ multiple: 1.2, sellPct: 30 }, { multiple: 1.4, sellPct: 30 }, { multiple: 5, sellPct: 15 }] },
+      SOON: {
+        takeProfitTiers: [{ multiple: 1.15, sellPct: 40 }, { multiple: 1.3, sellPct: 25 }, { multiple: 5, sellPct: 15 }],
+        trailingStopActivateMultiple: 1.15,
+        trail: { breakEvenAfterMultiple: 1.15, ladder: [{ fromMultiple: 1.15, pct: 8 }, { fromMultiple: 1.3, pct: 14 }, { fromMultiple: 2, pct: 22 }, { fromMultiple: 5, pct: 20 }] },
+        protectProfit: { afterMultiple: 1.15, floorMultiple: 1.02 },
+      },
+      MIGRATION_MOMENTUM: {
+        takeProfitTiers: [{ multiple: 1.15, sellPct: 40 }, { multiple: 1.3, sellPct: 25 }, { multiple: 5, sellPct: 15 }],
+        trailingStopActivateMultiple: 1.15,
+        trail: { breakEvenAfterMultiple: 1.15, ladder: [{ fromMultiple: 1.15, pct: 8 }, { fromMultiple: 1.3, pct: 14 }, { fromMultiple: 2, pct: 22 }, { fromMultiple: 5, pct: 20 }] },
+        protectProfit: { afterMultiple: 1.15, floorMultiple: 1.02 },
+      },
       // v8 (owner: "10% is good profit — be faster and stricter with swing trading, sell on spikes"):
       // half out at +10%, a quarter at +20%, 15% at +50%; the rest on a tight trail with a break-even
       // floor from 1.1x; a spike of +8% within 2 minutes sells half of what's left at once.
@@ -1345,7 +1370,7 @@ export const DEFAULT_CONFIG = {
     /** Pump.fun curve fee (protocol + creator), basis points per side. Approximate. */
     curveFeeBps: 125,
     /** Extra adverse price movement assumed between decision and fill (latency). */
-    slippagePct: 1.5,
+    slippagePct: 0.8,
     /**
      * Time for a real transaction to land (sign → send → confirm). Each paper buy/sell
      * waits a random delay in this range and THEN fills at the live price, so fast

@@ -45,7 +45,7 @@ describe('learning rows', () => {
   it('weights shadow trades by whether the bot would have taken them', () => {
     const base = { mint: 'm', symbol: 'X', strategy: 'RUNNER' as const, why: '', score: 70, bar: 72, mcUsd: null, ageMin: null, curvePct: null, kols: null, run3m: null, offHigh10m: null, flat: { a: 1 }, openedAtMs: 1, closedAtMs: 2, pnlPct: 5, peakX: 1.2, holdSec: 60, exitReason: 'TP' };
     expect(shadowRow({ ...base, kind: 'refused' }).weight).toBe(0.5);
-    expect(shadowRow({ ...base, kind: 'skipped' }).weight).toBe(0.3);
+    expect(shadowRow({ ...base, kind: 'skipped' }).weight).toBe(0.4);
     expect(shadowRow({ ...base, kind: 'near' }).source).toBe('shadow');
   });
   it('waits for long holds to close before using a strategy\'s newest trades', () => {

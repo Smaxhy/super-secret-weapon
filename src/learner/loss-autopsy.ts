@@ -247,18 +247,18 @@ export function tuneStrategies(trades: readonly ClosedTrade[], minTrades: number
       why.push(`working (${r.n} trades, avg +${r.avgPct}%) → easier bar, bigger size`);
     } else if (r.avgPct + r.sePct < -10) {
       // Clearly broken (e.g. SOON: 13% wins, −16% a trade): much stricter, much smaller — still trading for data.
-      t.barDelta = 10;
-      t.sizeFactor = 0.4;
-      why.push(`badly losing (${r.n} trades, ${r.winRatePct}% wins, avg ${r.avgPct}%) → much stricter, 40% size`);
+      t.barDelta = 15;
+      t.sizeFactor = 0.3;
+      why.push(`badly losing (${r.n} trades, ${r.winRatePct}% wins, avg ${r.avgPct}%) → much stricter, 30% size`);
     } else if (r.avgPct < 0) {
       if (neverUp >= 0.55) {
         t.barDelta = 6;
         t.sizeFactor = 0.7;
         why.push(`${Math.round(neverUp * 100)}% of its losers never went up → stricter entries`);
       } else {
-        t.barDelta = 3;
-        t.sizeFactor = 0.85;
-        why.push(`losing (avg ${r.avgPct}%) → a bit stricter`);
+        t.barDelta = 5;
+        t.sizeFactor = 0.7;
+        why.push(`losing (avg ${r.avgPct}%) → stricter`);
       }
     }
     if (r.avgPct < 2 && gaveBack >= 0.35) {

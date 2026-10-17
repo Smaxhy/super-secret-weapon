@@ -6,7 +6,10 @@ describe('editable controls', () => {
   it('every editable setting exists in the defaults with the right type', () => {
     const missing = EDITABLE.filter((e) => {
       const v = getPath(DEFAULT_CONFIG, e.key);
-      return e.key.startsWith('trading.enabledStrategies.') || e.key.endsWith('.enabled') || e.key.endsWith('.hideMayhem') ? typeof v !== 'boolean' : typeof v !== 'number';
+      const isBoolKey = e.key.startsWith('trading.enabledStrategies.') || e.key.endsWith('.enabled') || e.key.endsWith('.hideMayhem');
+      if (isBoolKey) return typeof v !== 'boolean';
+      if (typeof v === 'boolean') return false; // 0/1 toggles stored as boolean in defaults
+      return typeof v !== 'number';
     }).map((e) => e.key);
     expect(missing).toEqual([]);
   });

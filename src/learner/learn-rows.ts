@@ -24,7 +24,7 @@ export interface LearnRow {
   source: 'real' | 'shadow' | 'outcome';
 }
 
-const WEIGHT = { real: 1, learning: 0.8, wouldTake: 0.5, skipped: 0.3 };
+const WEIGHT = { real: 1, learning: 0.8, wouldTake: 0.5, skipped: 0.4 };
 
 /** Pure: how long after entry a trade of this strategy is (almost) surely closed. */
 export function embargoMs(strategy: string): number {

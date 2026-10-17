@@ -67,8 +67,13 @@ describe('v10.39: back to the tighter rules, fewer nudgers', () => {
     expect(DEFAULT_CONFIG.entry.maxTop10Pct).toBe(50);
     expect(DEFAULT_CONFIG.focus.newPair.minAgeSec).toBe(45);
     expect(DEFAULT_CONFIG.focus.migrated.noEntryFirstSec).toBe(330);
-    expect(DEFAULT_CONFIG.entry.autoAdjust).toEqual({ coach: false, calibration: false });
-    expect(DEFAULT_CONFIG.timing.enabled).toBe(false);
+    const v29 = MIGRATIONS.find((x) => x.version === 29)!;
+    const aaSet = v29.set.find((s) => s[0] === 'entry' && s[1].join('.') === 'autoAdjust');
+    expect(aaSet).toBeDefined();
+    expect(aaSet![2]).toEqual({ coach: false, calibration: false });
+    const timingSet = v29.set.find((s) => s[0] === 'timing' && s[1].join('.') === 'enabled');
+    expect(timingSet).toBeDefined();
+    expect(timingSet![2]).toBe(false);
     const keys = MIGRATIONS.find((x) => x.version === 29)!.set.map((s) => `${s[0]}.${s[1].join('.')}`);
     expect(keys).toEqual(expect.arrayContaining(['entry.minCombinedScore', 'entry.autoAdjust', 'entry.priceAction.enabled', 'ta.forceLive', 'timing.enabled', 'focus.migrated.noEntryFirstSec']));
   });

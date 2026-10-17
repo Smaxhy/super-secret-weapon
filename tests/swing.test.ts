@@ -278,7 +278,7 @@ describe('swing exits: fast profits, spike sells, tight stop (owner: "10% is goo
     expect(swing.trail.breakEvenAfterMultiple).toBe(1.1);
     expect(swing.trail.confirmSec).toBe(DEFAULT_CONFIG.exit.trail.confirmSec); // not overridden → shared value
     expect(swing.spikeSell.enabled).toBe(true);
-    expect(DEFAULT_CONFIG.exit.spikeSell.enabled).toBe(false); // only swings sell spikes by default
+    expect(DEFAULT_CONFIG.exit.spikeSell.enabled).toBe(true); // v11.2: enabled globally
     expect(exitRulesFor('CURVE_SNIPE', DEFAULT_CONFIG.exit)).toBe(DEFAULT_CONFIG.exit);
     expect(exitRulesFor('SWING', DEFAULT_CONFIG.exit)).toBe(exitRulesFor('SWING', DEFAULT_CONFIG.exit)); // cached
   });

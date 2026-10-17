@@ -496,6 +496,50 @@ export const MIGRATIONS: ConfigMigration[] = [
     note: 'v10.43 (owner CSV since the freeze: stop losses averaged −21%, many −25…−40% inside the 5-minute hold): no minimum hold — the normal stop works from the start',
     set: [['exit', ['stopLoss', 'minHoldSec'], 0]],
   },
+  {
+    version: 33,
+    note: 'v11: re-enable learners (coach, calibration, timing, priceAction), add RugCheck + momentum gate + Obsidian config',
+    set: [
+      ['entry', ['autoAdjust'], { coach: true, calibration: true }],
+      ['timing', ['enabled'], true],
+      ['entry', ['priceAction', 'enabled'], true],
+      ['rugCheck', [], { enabled: true, maxScore: 500, blockDanger: true }],
+      ['momentumGate', [], { enabled: true, maxRun1mPct: 25, maxRun3mPct: 40, minOffHighPct: 3, minBuyShare2m: 0.45, maxLastCandlePct: 20, skipForExplore: true, skipForDipEntry: true }],
+      ['obsidian', [], { enabled: false, vaultPath: '' }],
+    ],
+  },
+  {
+    version: 34,
+    note: 'v11.1: exit math fix (lower TP tiers + earlier break-even/trail), learner aggressiveness (lower win-model thresholds, outcome weight 0.5, allocator floor 0.4, autopsy harder on losers), slippage 0.8%',
+    set: [
+      ['exit', ['takeProfitTiers'], [{ multiple: 1.25, sellPct: 40 }, { multiple: 2, sellPct: 20 }, { multiple: 5, sellPct: 15 }]],
+      ['exit', ['trailingStopActivateMultiple'], 1.2],
+      ['exit', ['trail', 'breakEvenAfterMultiple'], 1.2],
+      ['exit', ['protectProfit'], { afterMultiple: 1.2, floorMultiple: 1.03 }],
+      ['exit', ['trail', 'ladder'], [{ fromMultiple: 1.2, pct: 12 }, { fromMultiple: 1.5, pct: 18 }, { fromMultiple: 2, pct: 25 }, { fromMultiple: 3, pct: 25 }, { fromMultiple: 5, pct: 22 }, { fromMultiple: 10, pct: 20 }]],
+      ['exit', ['byStrategy', 'SOON'], { takeProfitTiers: [{ multiple: 1.15, sellPct: 40 }, { multiple: 1.3, sellPct: 25 }, { multiple: 5, sellPct: 15 }], trailingStopActivateMultiple: 1.15, trail: { breakEvenAfterMultiple: 1.15, ladder: [{ fromMultiple: 1.15, pct: 8 }, { fromMultiple: 1.3, pct: 14 }, { fromMultiple: 2, pct: 22 }, { fromMultiple: 5, pct: 20 }] }, protectProfit: { afterMultiple: 1.15, floorMultiple: 1.02 } }],
+      ['exit', ['byStrategy', 'MIGRATION_MOMENTUM'], { takeProfitTiers: [{ multiple: 1.15, sellPct: 40 }, { multiple: 1.3, sellPct: 25 }, { multiple: 5, sellPct: 15 }], trailingStopActivateMultiple: 1.15, trail: { breakEvenAfterMultiple: 1.15, ladder: [{ fromMultiple: 1.15, pct: 8 }, { fromMultiple: 1.3, pct: 14 }, { fromMultiple: 2, pct: 22 }, { fromMultiple: 5, pct: 20 }] }, protectProfit: { afterMultiple: 1.15, floorMultiple: 1.02 } }],
+      ['paper', ['slippagePct'], 0.8],
+      ['outcomes', ['weight'], 0.5],
+    ],
+  },
+  {
+    version: 35,
+    note: 'v11.2: tighter entry quality, spike sell global, scale-in 40%, quiet hours, faster time stops, stricter confirmation, dip stall detection',
+    set: [
+      ['entryQuality', [], { enabled: true, maxDrop15sPct: 5, maxSellBuyRatio30s: 2.0, spikeRetracePct: 20, bounceBoostPct: 4, minBuyers30s: 3, minVolRatio: 0.3 }],
+      ['exit', ['spikeSell'], { enabled: true, risePct: 12, windowSec: 90 }],
+      ['trading', ['scaleIn', 'firstPct'], 40],
+      ['trading', ['quietHours', 'enabled'], true],
+      ['exit', ['timeStop', 'minutes'], { CURVE_SNIPE: 1, SOON: 2, MIGRATION_MOMENTUM: 8, SMART_MONEY_COPY: 2, SWING: 30, RUNNER: 3 }],
+      ['exit', ['timeStop', 'defaultMinutes'], 4],
+      ['exit', ['timeStop', 'minPeakMultiple'], 1.08],
+      ['exit', ['timeStop', 'maxMultiple'], 1.04],
+      ['exit', ['timeStop', 'stallMinutes'], { CURVE_SNIPE: 2, SOON: 4, MIGRATION_MOMENTUM: 8, SMART_MONEY_COPY: 4, SWING: 45, RUNNER: 5 }],
+      ['entry', ['confirm'], { maxDropPct: 6, maxPumpPct: 10, minBuyRatio: 1.15, minNewBuyers: 2 }],
+      ['chart', ['dip', 'maxDipStallSec'], 120],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

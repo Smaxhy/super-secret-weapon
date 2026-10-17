@@ -66,6 +66,11 @@ export function dipDecision(w: DipWatch, price: number, buyRatio1m: number | nul
   if (now > w.expiresAt) return { action: 'drop', why: `no dip within ${Math.round((w.expiresAt - w.startedAt) / 60_000)} min` };
   if (price > w.signalPrice * (1 + c.runAwayPct / 100)) return { action: 'drop', why: `ran +${Math.round((price / w.signalPrice - 1) * 100)}% without a dip (not chasing)` };
   if (price < w.zone.lo * (1 - c.breakdownPct / 100)) return { action: 'drop', why: 'broke down below the buy zone' };
+  // Dip stall: the price sat near the low for too long without bouncing — the coin is bleeding out, not dipping.
+  const dipStallSec = (c as { maxDipStallSec?: number }).maxDipStallSec ?? 120;
+  if (dipStallSec > 0 && w.lowest !== null && w.lowestAt && now - w.lowestAt > dipStallSec * 1000 && price < w.lowest * 1.02) {
+    return { action: 'drop', why: `dip stalled ${Math.round((now - w.lowestAt) / 1000)}s near the low — no bounce` };
+  }
   // New high before any dip: the zone moves up with it (same distance below the high).
   if (w.lowest === null && price > w.high) {
     const k = price / w.high;

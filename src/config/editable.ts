@@ -200,6 +200,26 @@ export const EDITABLE: EditableSetting[] = [
   S('Chart rules — selling (every coin)', 'exit.rugExit.singleSellLiquidityPct', 'Whale exit: one sell ≥ … % of liquidity (0 = off)', 0, 100, '%', 1),
   S('Chart rules — selling (every coin)', 'exit.rugExit.devAnySellMinHoldingPct', 'Dev holding ≥ … %: any dev sell = rug (0 = off)', 0, 50, '%', 0.5),
 
+  // ---- Momentum gate (v11) ----
+  S('Momentum gate', 'momentumGate.enabled', 'Block entries chasing pumps / buying at the top: on (1) / off (0)', 0, 1, undefined, 1),
+  S('Momentum gate', 'momentumGate.maxRun1mPct', 'Max 1-min price run before entry is blocked', 5, 100, '%', 1),
+  S('Momentum gate', 'momentumGate.maxRun3mPct', 'Max 3-min price run before entry is blocked', 10, 200, '%', 5),
+  S('Momentum gate', 'momentumGate.minOffHighPct', 'Must be at least this far from the 10-min high (0 = off)', 0, 50, '%', 0.5),
+  S('Momentum gate', 'momentumGate.minBuyShare2m', 'Buyers must be at least this share of 2-min volume (0 = off)', 0, 1, '0–1', 0.05),
+  S('Momentum gate', 'momentumGate.maxLastCandlePct', 'Max last-candle rise (0 = off)', 0, 100, '%', 1),
+
+  // ---- RugCheck (v11) ----
+  S('RugCheck', 'rugCheck.enabled', 'Check RugCheck.xyz before buying: on (1) / off (0)', 0, 1, undefined, 1),
+  S('RugCheck', 'rugCheck.maxScore', 'Block coins with a RugCheck score above this (0–1000, lower = safer)', 0, 1000, undefined, 10),
+  S('RugCheck', 'rugCheck.maxCallsPerDay', 'Max API calls per day', 10, 5000, undefined, 10),
+
+  // ---- Entry quality (v11) ----
+  S('Entry quality', 'entryQuality.enabled', 'Real-time trade-level momentum check: on (1) / off (0)', 0, 1, undefined, 1),
+  S('Entry quality', 'entryQuality.maxDrop15sPct', 'Block if price dropped more than this in the last 15s', 1, 30, '%', 1),
+  S('Entry quality', 'entryQuality.maxSellBuyRatio30s', 'Block if sell/buy SOL ratio exceeds this in 30s', 1, 10, 'x', 0.5),
+  S('Entry quality', 'entryQuality.spikeRetracePct', 'Half size if spike retraced more than this %', 5, 80, '%', 5),
+  S('Entry quality', 'entryQuality.bounceBoostPct', 'Boost size if bounced more than this % off the dip', 1, 20, '%', 1),
+
   // ---- Size & risk ----
   S('Trade size & risk', 'trading.maxPositionSol', 'Normal trade size', 0.01, 50, 'SOL', 0.05),
   S('Moonshot (test mode)', 'moonshot.enabled', 'Watch for moonshot setups (pretend trades only): on (1) / off (0)', 0, 1, undefined, 1),
