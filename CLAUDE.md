@@ -33,6 +33,15 @@ Diagnosing (reading code, explaining Bot health, diagnose.sh output) is always f
 - **Dashboard:** `https://smaxhy.github.io/super-secret-weapon/` built by `.github/workflows/dashboard.yml`
   on pushes to the branch (github-pages environment allows the branch).
 - Secrets live only in `/root/bot/.env` on the VPS (never in git).
+- **Oct 17: 4 GB VPS tuning** (Vultr resize 2 → 4 GB RAM / 80 GB SSD; all in `docker-compose.yml`, applied by the normal
+  auto-update `docker compose up -d --build`): Postgres `-c` flags (shared_buffers 512 MB, effective_cache_size 1.5 GB,
+  work_mem 16 MB, maintenance_work_mem 128 MB, max_wal_size 1 GB, 4 Timescale background workers, 8 worker processes,
+  2 parallel) + `shm_size` 256 m — command-line flags beat the postgresql.conf timescaledb-tune wrote at first init;
+  Redis maxmemory 2 GB (noeviction), appendfsync everysec, lazyfree; bot `NODE_OPTIONS=--max-old-space-size=1536
+  --max-semi-space-size=32`; memory caps bot 2 g / postgres 1.5 g / caddy 128 m (Redis: no hard cap — its own maxmemory governs; an AOF rewrite forks and briefly doubles RSS) (soft reservations
+  768/512/768/32 m — caps are ceilings, expected use ≈ 2.2 GB; `oom_score_adj` bot +300, databases −500 so the bot
+  dies first if the kernel must kill); every service logs rotate at 20 MB × 5. `scripts/diagnose.sh` prints memory
+  vs limit per container, the Postgres settings in effect and the TradeTape size / compression.
 
 ## Current state (keep this section updated)
 - Phases done: 1 (scanner), 2 (scoring + paper trading), 3 (API + dashboard + PWA), 7 (learning:

@@ -14,7 +14,15 @@ line "memory / disk"
 free -m
 docker stats --no-stream --format '{{.Name}}  cpu {{.CPUPerc}}  mem {{.MemUsage}}' 2>/dev/null
 df -h / | tail -1
+echo "-- per-container memory vs its limit (4 GB VPS caps: bot 2g, postgres 1.2g, redis 2.3g, caddy 128m) --"
+docker stats --no-stream --format '{{.Name}}  {{.MemUsage}}  ({{.MemPerc}} of its limit)' 2>/dev/null
 docker compose exec -T redis redis-cli info memory 2>/dev/null | grep -E '^used_memory_human|^maxmemory_human'
+echo "-- Postgres settings in effect --"
+docker compose exec -T postgres psql -U "${POSTGRES_USER:-bot}" -d "${POSTGRES_DB:-solbot}" -Atc "SELECT name || '=' || setting || COALESCE(unit,'') FROM pg_settings WHERE name IN ('shared_buffers','effective_cache_size','work_mem','maintenance_work_mem','max_wal_size','max_worker_processes','max_parallel_workers','timescaledb.max_background_workers')" 2>/dev/null | tr '\n' ' '; echo
+echo "-- Trade tape (replay recording) on disk --"
+docker compose exec -T postgres psql -U "${POSTGRES_USER:-bot}" -d "${POSTGRES_DB:-solbot}" -Atc "SELECT 'TradeTape ' || pg_size_pretty(hypertable_size('\"TradeTape\"')) || ', rows ~' || (SELECT reltuples::bigint FROM pg_class WHERE relname='TradeTape') || ', oldest ' || COALESCE((SELECT min(t)::text FROM \"TradeTape\"),'-')" 2>/dev/null || echo "TradeTape: not a hypertable / no TimescaleDB"
+docker compose exec -T postgres psql -U "${POSTGRES_USER:-bot}" -d "${POSTGRES_DB:-solbot}" -Atc "SELECT 'compressed chunks: ' || count(*) FILTER (WHERE is_compressed) || ' of ' || count(*) FROM timescaledb_information.chunks WHERE hypertable_name='TradeTape'" 2>/dev/null
+docker compose exec -T postgres psql -U "${POSTGRES_USER:-bot}" -d "${POSTGRES_DB:-solbot}" -Atc "SELECT 'before/after compression: ' || pg_size_pretty(before_compression_total_bytes) || ' -> ' || pg_size_pretty(after_compression_total_bytes) FROM hypertable_compression_stats('\"TradeTape\"')" 2>/dev/null
 echo "-- Redis keys per prefix (what fills the memory) --"
 docker compose exec -T redis sh -c "redis-cli --scan --count 1000 | cut -d: -f1 | sort | uniq -c | sort -rn | head -15" 2>/dev/null
 echo "-- Biggest Redis keys --"

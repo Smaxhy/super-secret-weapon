@@ -8,6 +8,33 @@ services:
   postgres:
     image: timescale/timescaledb:2.17.2-pg16
     restart: unless-stopped
+    # 4 GB VPS (Oct 17): explicit memory settings. Command-line -c flags take precedence over the
+    # postgresql.conf that timescaledb-tune wrote at first init, so the two never fight.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=1536MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - max_wal_size=1GB
+      - -c
+      - timescaledb.max_background_workers=4
+      - -c
+      - max_worker_processes=8
+      - -c
+      - max_parallel_workers=2
+    shm_size: 256m
+    mem_limit: 1500m
+    mem_reservation: 512m
+    oom_score_adj: -500
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -27,7 +54,13 @@ services:
     restart: unless-stopped
     # appendonly = survive restarts (BullMQ delayed jobs live here).
     # noeviction is required by BullMQ — it must never silently drop jobs.
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "2gb", "--maxmemory-policy", "noeviction"]
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory", "2gb", "--maxmemory-policy", "noeviction", "--lazyfree-lazy-eviction", "yes", "--lazyfree-lazy-expire", "yes"]
+    # No hard cap: Redis's own --maxmemory governs; an AOF rewrite forks and briefly doubles RSS.
+    mem_reservation: 768m
+    oom_score_adj: -500
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -54,6 +87,13 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-bot}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-solbot}?schema=public
       REDIS_URL: redis://redis:6379
       NODE_ENV: production
+      # 4 GB VPS: V8 heap 1.5 GB (the box used to swap at the default ~2 GB on 2 GB RAM); bigger young
+      # generation = fewer scavenges for the trade-stream churn.
+      NODE_OPTIONS: --max-old-space-size=1536 --max-semi-space-size=32
+    mem_limit: 2g
+    mem_reservation: 768m
+    # If the kernel must kill something, the bot goes first (it restarts in seconds; the databases don't).
+    oom_score_adj: 300
     ports:
       - "127.0.0.1:8080:8080" # API — only reachable via Caddy (HTTPS) from outside
     depends_on:
@@ -73,7 +113,7 @@ services:
     stop_grace_period: 20s
     logging:
       driver: json-file
-      options: { max-size: "50m", max-file: "5" }
+      options: { max-size: "20m", max-file: "5" }
 
   # HTTPS reverse proxy for the dashboard API (VPS only — set API_DOMAIN in .env).
   caddy:
@@ -89,9 +129,11 @@ services:
       - caddydata:/data
     depends_on:
       - bot
+    mem_limit: 128m
+    mem_reservation: 32m
     logging:
       driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+      options: { max-size: "20m", max-file: "5" }
 
   # Phase 8 — uncomment once ml/ has a real service.
   # ml-service:
