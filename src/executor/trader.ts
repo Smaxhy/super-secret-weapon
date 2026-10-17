@@ -139,6 +139,23 @@ export class Trader {
       return refuse(`execution failed: ${fill.error}`);
     }
 
+    // Log trade entry to Obsidian (fire-and-forget)
+    void import('../integrations/obsidian-sync').then(({ obsidianSync }) =>
+      obsidianSync.logTradeEntry({
+        mint: req.mint,
+        symbol: req.symbol,
+        strategy: req.strategy,
+        score: req.score,
+        threshold: req.threshold,
+        sizeSol: round4(size),
+        entryPrice: fill.priceSol,
+        regime: regime.regime,
+        market: req.market as Record<string, unknown>,
+        features: (req.features ?? {}) as Record<string, number>,
+        timestamp: new Date(),
+      }),
+    ).catch(() => { /* non-critical */ });
+
     const position = await prisma.$transaction(async (tx) => {
       const p = await tx.position.create({
         data: {

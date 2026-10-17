@@ -15,6 +15,7 @@
  */
 import type { MarketRegime } from '@prisma/client';
 import { getConfig } from '../config/runtime-config';
+import { bus } from '../lib/bus';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 
@@ -87,13 +88,17 @@ export class RegimeDetector {
     try {
       const stats = await this.collect();
       const regime = classifyRegime(stats);
-      const changed = regime !== current;
+      const prev = current;
+      const changed = regime !== prev;
       current = regime;
       lastStats = stats;
       if (changed || Date.now() - this.lastSnapshotAt >= SNAPSHOT_AT_LEAST_MS) {
         this.lastSnapshotAt = Date.now();
         await prisma.regimeSnapshot.create({ data: { regime, stats: JSON.parse(JSON.stringify(stats)) } });
-        if (changed) log.info({ regime, ...stats }, `🌡️  market regime → ${regime}`);
+        if (changed) {
+          log.info({ regime, ...stats }, `🌡️  market regime → ${regime}`);
+          bus.publish({ type: 'regime_change', data: { from: prev, to: regime, stats: JSON.parse(JSON.stringify(stats)) } });
+        }
       }
     } catch (err) {
       log.warn({ err: (err as Error).message }, 'regime refresh failed — keeping previous regime');

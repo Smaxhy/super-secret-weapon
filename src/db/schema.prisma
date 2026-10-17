@@ -33,11 +33,15 @@ enum Strategy {
   CURVE_SNIPE
   MIGRATION_MOMENTUM
   SMART_MONEY_COPY
+  SOON
+  RUNNER
+  SWING
 }
 
 enum TokenStatus {
   ACTIVE // trading on the bonding curve
-  COMPLETED // curve filled, migrating / migrated
+  COMPLETED // curve filled, migrating
+  MIGRATED // liquidity moved to PumpSwap/Raydium pool
   DEAD // no trades for a long time
   RUGGED // flagged as a rug by the evaluator / sell manager
 }
@@ -150,6 +154,11 @@ model Token {
 
   status      TokenStatus @default(ACTIVE)
   completedAt DateTime?   @db.Timestamptz(3)
+
+  // Migration data (filled by the migration detector)
+  poolAddress  String?
+  dex          String?    // PUMPSWAP or RAYDIUM
+  migratedAt   DateTime?  @db.Timestamptz(3)
 
   // Latest summary numbers (denormalised for fast dashboard queries)
   safetyScore      Int?

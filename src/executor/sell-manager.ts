@@ -312,7 +312,7 @@ export class SellManager {
       );
       if (!fill.ok) return p;
       if (closing && reason === 'RUG_DETECTED') await tx.token.update({ where: { mint: p.mint }, data: { status: 'RUGGED' } });
-      return tx.position.update({
+      const updated = await tx.position.update({
         where: { id: p.id },
         data: {
           remainingPct: closing ? 0 : p.remainingPct - pct,
@@ -320,6 +320,26 @@ export class SellManager {
           ...(closing ? { status: 'CLOSED' as const, closedAt: new Date(), exitReason: reason } : {}),
         },
       });
+
+      // Log trade exit to Obsidian (fire-and-forget, outside tx)
+      if (closing) {
+        void import('../integrations/obsidian-sync').then(({ obsidianSync }) =>
+          obsidianSync.logTradeExit({
+            mint: p.mint,
+            symbol,
+            strategy: p.strategy,
+            exitReason: `${reason}: ${detail}`,
+            entryPrice: p.entryPriceSol,
+            exitPrice: fill.priceSol,
+            pnlSol: updated.realizedPnlSol,
+            peakMultiple: p.peakPriceSol / p.entryPriceSol,
+            holdTimeSec: Math.round((Date.now() - p.openedAt.getTime()) / 1000),
+            timestamp: new Date(),
+          }),
+        ).catch(() => { /* non-critical */ });
+      }
+
+      return updated;
     });
   }
 

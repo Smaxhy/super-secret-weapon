@@ -10,7 +10,10 @@ export type BusEvent =
   | { type: 'safety'; data: { mint: string; score: number; hardFail: boolean } }
   | { type: 'evaluation'; data: { mint: string; symbol: string; score: number; decision: string; reasons: string[] } }
   | { type: 'trade'; data: { mint: string; symbol?: string; side: string; mode: string; amountSol: number; reason: string; pnlSol?: number } }
-  | { type: 'stats'; data: Record<string, unknown> };
+  | { type: 'stats'; data: Record<string, unknown> }
+  | { type: 'regime_change'; data: { from: string; to: string; stats: Record<string, unknown> } }
+  | { type: 'weights_adjusted'; data: { message: string; changes?: unknown } }
+  | { type: 'migration_detected'; data: { mint: string; poolAddress: string; dex: string; creator: string; migrationTimeMs: number } };
 
 class Bus extends EventEmitter {
   publish(e: BusEvent): void {
@@ -19,6 +22,19 @@ class Bus extends EventEmitter {
     } catch {
       // a broken listener must not break the publisher
     }
+  }
+
+  /** Subscribe to all events. Returns an unsubscribe function. */
+  subscribe(fn: (e: BusEvent) => void | Promise<void>): () => void {
+    const wrapper = (e: BusEvent) => {
+      try {
+        void fn(e);
+      } catch {
+        // subscriber errors must not propagate
+      }
+    };
+    this.on('event', wrapper);
+    return () => this.off('event', wrapper);
   }
 }
 
