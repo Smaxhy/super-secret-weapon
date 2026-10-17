@@ -128,7 +128,7 @@ function BulkImport({ onDone }: { onDone: () => void }) {
       <p className="mb-2 text-sm text-ink-2">Paste one wallet per line, e.g. <code>Cupsey 2fg5QD…</code> (from kolscan.io / gmgn.ai). KOLs aren't copied one by one — the bot watches how many of them are in a coin.</p>
       <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} placeholder={'Cupsey 2fg5QD1eD7rzNNCsvnhmXFm5hqNgwTTG8p7kQ6f3rx6f\nCented CyaE1VxvBrahnPWkqm5VsdCvyS2QmNht2UFrKJHga54o'} className="w-full rounded-lg border border-line bg-page px-3 py-2 font-mono text-xs text-ink" />
       <div className="mt-2 flex flex-wrap items-center gap-3">
-        <button type="button" disabled={busy || !text.trim()} onClick={() => void run()} className="rounded-lg bg-accent px-4 py-2 font-semibold text-white disabled:opacity-60">
+        <button type="button" disabled={busy || !text.trim()} onClick={() => void run()} className="rounded-lg bg-accent px-4 py-2 font-semibold text-on-accent disabled:opacity-60">
           {busy ? 'Importing…' : 'Import as KOLs'}
         </button>
         {msg && <span className="text-sm text-ink-2">{msg}</span>}
@@ -280,7 +280,7 @@ export function Wallets() {
               <option value="COPY">Copy trades</option>
             </select>
           </label>
-          <button type="submit" disabled={busy} className="rounded-lg bg-accent px-5 py-2.5 font-semibold text-white disabled:opacity-60">
+          <button type="submit" disabled={busy} className="rounded-lg bg-accent px-5 py-2.5 font-semibold text-on-accent disabled:opacity-60">
             {busy ? 'Adding…' : 'Add'}
           </button>
         </form>

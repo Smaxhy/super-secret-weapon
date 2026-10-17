@@ -57,10 +57,10 @@ function Results({ d }: { d: PerformanceData | null | undefined }) {
   return (
     <Stack>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile label="Total profit" value={<Pnl value={d.totalPnlSol} />} sub={`${pct((d.totalPnlSol / (d.startingBalanceSol + (d.addedSol ?? 0))) * 100, 1, true)} of the money put in`} />
+        <StatTile label="Total profit" value={<Pnl value={d.totalPnlSol} />} delta={(d.totalPnlSol / (d.startingBalanceSol + (d.addedSol ?? 0))) * 100} sub="of the money put in" spark={d.cumulative.slice(-40).map((p) => p.pnl)} tone={d.totalPnlSol >= 0 ? 'up' : 'down'} />
         <StatTile label="Win rate" value={pct(d.winRate, 0)} sub={`${d.wins} wins · ${d.losses} losses`} />
-        <StatTile label="Avg win / loss" value={<span className="flex flex-col text-base leading-tight sm:text-lg"><Pnl value={d.avgWinSol} /><Pnl value={d.avgLossSol} /></span>} />
-        <StatTile label="Max drawdown" value={`−${d.maxDrawdownSol.toFixed(3)} SOL`} sub={`${d.maxDrawdownPct.toFixed(1)}% from peak`} />
+        <StatTile label="Avg win / loss" value={<span className="flex flex-col gap-0.5 text-lg leading-tight"><Pnl value={d.avgWinSol} /><Pnl value={d.avgLossSol} /></span>} />
+        <StatTile label="Max drawdown" value={`−${d.maxDrawdownSol.toFixed(3)} SOL`} sub={`${d.maxDrawdownPct.toFixed(1)}% from peak`} tone="down" />
       </div>
 
       <Card title="Cumulative profit">

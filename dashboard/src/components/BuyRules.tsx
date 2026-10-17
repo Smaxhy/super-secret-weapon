@@ -74,7 +74,7 @@ function Row({ s, onSaved }: { s: Setting; onSaved: () => void }) {
             className="w-28 rounded-lg border border-line bg-page px-2 py-1.5 text-right text-base text-ink"
           />
           <span className="w-8 text-xs text-muted">{s.unit === '0–1' ? '' : s.unit ?? ''}</span>
-          <button type="submit" disabled={!changed} className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-30">
+          <button type="submit" disabled={!changed} className="rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-on-accent disabled:opacity-30">
             Save
           </button>
         </form>

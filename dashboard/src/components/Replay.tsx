@@ -6,7 +6,8 @@ import { useEffect, useState } from 'react';
 import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 import { STRATEGY_LABEL } from '../lib/format';
-import { Card } from './ui';
+import { Icon } from './Icon';
+import { Badge, Button, Card, inputCls, RankedBars, Row, Rows, SectionLabel } from './ui';
 
 interface Trade { symbol: string; strategy: string; pnlPct: number; pnlSol: number; peakX: number; holdSec: number; reason: string; score: number }
 interface Report {
@@ -78,129 +79,142 @@ export function Replay() {
   };
   const r = data?.last ?? null;
   return (
-    <Card title="Replay: the rules over the recorded market" subtitle="Every trade on every coin is recorded. A replay runs the bot's entry rules and exits over those days in minutes — a number instead of a week of waiting.">
-      <div className="mb-3 flex flex-wrap items-end gap-2 text-sm">
-        <label className="flex flex-col text-xs text-muted">
+    <Card title="Replay the rules over the recorded market" subtitle="Every trade on every coin is recorded. A replay runs the bot's entry rules and exits over those days in minutes — a number instead of a week of waiting.">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-[1fr_1fr_1.4fr_auto] sm:items-end">
+        <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-muted">
           From
-          <input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} className="rounded-lg border border-line bg-page px-2 py-1 text-sm text-ink" />
+          <input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} className={inputCls} />
         </label>
-        <label className="flex flex-col text-xs text-muted">
+        <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-muted">
           To
-          <input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} className="rounded-lg border border-line bg-page px-2 py-1 text-sm text-ink" />
+          <input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} className={inputCls} />
         </label>
-        <label className="flex flex-col text-xs text-muted">
+        <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-muted">
           Rules
-          <select value={policy} onChange={(e) => setPolicy(e.target.value as 'live' | 'sniper')} className="rounded-lg border border-line bg-page px-2 py-1 text-sm text-ink">
+          <select value={policy} onChange={(e) => setPolicy(e.target.value as 'live' | 'sniper')} className={inputCls}>
             <option value="live">Live rules (as the bot trades now)</option>
             <option value="sniper">Sniper (fewer, bigger trades)</option>
           </select>
         </label>
-        <button type="button" disabled={busy || running} onClick={() => void run()} className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50">
+        <Button disabled={busy || running} onClick={() => void run()} className="col-span-2 sm:col-span-1">
+          <Icon name="play" size={15} />
           {running ? 'Running…' : 'Run replay'}
-        </button>
+        </Button>
       </div>
-      {(error || err) && <p className="text-sm text-down">{error ?? err}</p>}
+      {(error || err) && <p className="mt-3 text-sm text-down">{error ?? err}</p>}
       {data?.running && (
-        <div className="mb-3 rounded-lg border border-line bg-page p-2 text-xs text-muted">
-          Replaying since {new Date(data.running.startedAt).toLocaleTimeString()}…
+        <div className="fade-in mt-4 rounded-xl border border-line bg-surface-2/50 p-3 text-xs text-muted">
+          <div className="mb-1 flex items-center gap-2 font-medium text-ink">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-accent" aria-hidden="true" />
+            Replaying since {new Date(data.running.startedAt).toLocaleTimeString()}…
+          </div>
           {data.running.log.slice(-3).map((l, i) => (
             <div key={i} className="truncate">{l}</div>
           ))}
         </div>
       )}
       {data?.lastJob && data.lastJob.exitCode !== 0 && data.lastJob.exitCode !== null && !data.running && (
-        <p className="mb-2 text-sm text-down">The last replay failed: {data.lastJob.log.slice(-2).join(' · ') || `exit code ${data.lastJob.exitCode}`}</p>
+        <p className="mt-3 text-sm text-down">The last replay failed: {data.lastJob.log.slice(-2).join(' · ') || `exit code ${data.lastJob.exitCode}`}</p>
       )}
       {r ? (
-        <>
-          <p className="mb-2 text-sm text-ink">
-            With the <span className="font-medium">{r.policy}</span> rules over {new Date(r.from).toLocaleString()} → {new Date(r.to).toLocaleString()}: <span className={`font-semibold ${tone(r.totalSol)}`}>{sol(r.totalSol)}</span> on {r.trades} trades, {r.winRatePct}% wins (avg {pct(r.avgPct)}, median {pct(r.medianPct)}{r.profitFactor !== null ? `, profit factor ${r.profitFactor}` : ''}), {r.sizeSol} SOL each.
-          </p>
-          <p className="mb-3 text-xs text-muted">
-            {r.rows.toLocaleString()} recorded trades on {r.coins.toLocaleString()} coins · {r.evaluated.toLocaleString()} checks · {r.signals} buy signals · took {(r.durationMs / 1000).toFixed(0)} s
-          </p>
-          {r.byStrategy.length > 0 && (
-            <ul className="mb-3 divide-y divide-line text-xs">
-              {r.byStrategy.map((s) => (
-                <li key={s.strategy} className="flex justify-between gap-2 py-1">
-                  <span className="truncate text-ink">{strat(s.strategy)}</span>
-                  <span className="shrink-0 tabular-nums text-ink-2">
-                    {s.n} trades · {s.winRatePct}% wins · <span className={tone(s.totalSol)}>{sol(s.totalSol)}</span> · avg {pct(s.avgPct)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {r.byExit.length > 0 && (
-            <div className="mb-3">
-              <div className="mb-1 text-xs font-medium text-ink">By exit</div>
-              <ul className="divide-y divide-line text-xs">
-                {r.byExit.map((e) => (
-                  <li key={e.reason} className="flex justify-between gap-2 py-1">
-                    <span className="truncate text-ink-2">{e.reason}</span>
-                    <span className={`shrink-0 tabular-nums ${tone(e.totalSol)}`}>
-                      {e.n} · {sol(e.totalSol)} · avg {pct(e.avgPct)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+        <div className="mt-5 flex flex-col gap-5">
+          <div className="rounded-2xl border border-line bg-surface-2/50 p-4">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+              <Badge tone="accent">{r.policy} rules</Badge>
+              <span>
+                {new Date(r.from).toLocaleString()} → {new Date(r.to).toLocaleString()}
+              </span>
             </div>
-          )}
+            <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className={`tabular text-3xl font-bold tracking-tight ${tone(r.totalSol)}`}>{sol(r.totalSol)}</span>
+              <span className="text-sm text-ink-2">
+                on {r.trades} trades · {r.winRatePct}% wins · {r.sizeSol} SOL each
+              </span>
+            </div>
+            <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+              <Mini label="Avg per trade" value={<span className={tone(r.avgPct)}>{pct(r.avgPct)}</span>} />
+              <Mini label="Median" value={<span className={tone(r.medianPct)}>{pct(r.medianPct)}</span>} />
+              <Mini label="Profit factor" value={r.profitFactor !== null ? r.profitFactor.toFixed(2) : '—'} />
+              <Mini label="Buy signals" value={r.signals.toLocaleString()} />
+            </dl>
+            <p className="mt-3 text-xs text-muted">
+              {r.rows.toLocaleString()} recorded trades on {r.coins.toLocaleString()} coins · {r.evaluated.toLocaleString()} checks · took {(r.durationMs / 1000).toFixed(0)} s
+            </p>
+          </div>
+
+          <div className="grid gap-5 lg:grid-cols-2">
+            {r.byStrategy.length > 0 && (
+              <div>
+                <SectionLabel>By strategy</SectionLabel>
+                <Rows>
+                  {r.byStrategy.map((s) => (
+                    <Row key={s.strategy} label={strat(s.strategy)} sub={`${s.n} trades · ${s.winRatePct}% wins · avg ${pct(s.avgPct)}`} value={<span className={tone(s.totalSol)}>{sol(s.totalSol)}</span>} />
+                  ))}
+                </Rows>
+              </div>
+            )}
+            {r.byExit.length > 0 && (
+              <div>
+                <SectionLabel>By exit</SectionLabel>
+                <Rows>
+                  {r.byExit.map((e) => (
+                    <Row key={e.reason} label={e.reason} sub={`${e.n} · avg ${pct(e.avgPct)}`} value={<span className={tone(e.totalSol)}>{sol(e.totalSol)}</span>} />
+                  ))}
+                </Rows>
+              </div>
+            )}
+          </div>
+
           {r.skips.length > 0 && (
-            <div className="mb-3">
-              <div className="mb-1 text-xs font-medium text-ink">Why it did not buy (top reasons)</div>
-              <ul className="text-xs text-muted">
-                {r.skips.map((s) => (
-                  <li key={s.reason} className="truncate">
-                    ×{s.count.toLocaleString()} {s.reason}
-                  </li>
-                ))}
-              </ul>
+            <div>
+              <SectionLabel>Why it did not buy (top reasons)</SectionLabel>
+              <RankedBars rows={r.skips.map((s) => ({ label: s.reason, count: s.count }))} />
             </div>
           )}
+
           {(r.worst.length > 0 || r.best.length > 0) && (
-            <div className="mb-3 grid gap-3 text-xs sm:grid-cols-2">
+            <div className="grid gap-5 sm:grid-cols-2">
               {[{ label: 'Best', xs: r.best }, { label: 'Worst', xs: r.worst }].map((g) => (
                 <div key={g.label}>
-                  <div className="mb-1 font-medium text-ink">{g.label}</div>
-                  <ul className="divide-y divide-line">
+                  <SectionLabel>{g.label}</SectionLabel>
+                  <Rows>
                     {g.xs.map((t, i) => (
-                      <li key={`${t.symbol}-${i}`} className="flex justify-between gap-2 py-1">
-                        <span className="truncate text-ink-2">
-                          {t.symbol || '?'} · {strat(t.strategy)} · {t.reason}
-                        </span>
-                        <span className={`shrink-0 tabular-nums ${tone(t.pnlSol)}`}>
-                          {pct(t.pnlPct)} · peak {t.peakX}x
-                        </span>
-                      </li>
+                      <Row key={`${t.symbol}-${i}`} label={t.symbol || '?'} sub={`${strat(t.strategy)} · ${t.reason} · peak ${t.peakX}×`} value={<span className={tone(t.pnlSol)}>{pct(t.pnlPct)}</span>} />
                     ))}
-                  </ul>
+                  </Rows>
                 </div>
               ))}
             </div>
           )}
-          <p className="text-xs text-muted">{r.note}</p>
-        </>
+          <p className="text-xs leading-relaxed text-muted">{r.note}</p>
+        </div>
       ) : (
-        !data?.running && <p className="text-sm text-muted">No replay yet. Recording starts with this update — give it a few hours of tape, then press Run.</p>
+        !data?.running && <p className="mt-4 text-sm text-muted">No replay yet. Recording starts with this update — give it a few hours of tape, then press Run.</p>
       )}
       {!!data?.history?.length && (
-        <div className="mt-3">
-          <div className="mb-1 text-xs font-medium text-ink">Recent runs</div>
-          <ul className="divide-y divide-line text-xs">
+        <div className="mt-5">
+          <SectionLabel>Recent runs</SectionLabel>
+          <Rows>
             {data.history.map((h) => (
-              <li key={h.id} className="flex justify-between gap-2 py-1">
-                <span className="truncate text-ink-2">
-                  {new Date(h.at).toLocaleString()} · {h.policy} · {new Date(h.from).toLocaleDateString()}→{new Date(h.to).toLocaleDateString()}
-                </span>
-                <span className={`shrink-0 tabular-nums ${tone(h.totalSol)}`}>
-                  {h.trades} trades · {h.winRatePct}% · {sol(h.totalSol)}
-                </span>
-              </li>
+              <Row
+                key={h.id}
+                label={`${new Date(h.at).toLocaleString()} · ${h.policy}`}
+                sub={`${new Date(h.from).toLocaleDateString()} → ${new Date(h.to).toLocaleDateString()} · ${h.trades} trades · ${h.winRatePct}% wins`}
+                value={<span className={tone(h.totalSol)}>{sol(h.totalSol)}</span>}
+              />
             ))}
-          </ul>
+          </Rows>
         </div>
       )}
     </Card>
+  );
+}
+
+function Mini({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs font-medium text-muted">{label}</dt>
+      <dd className="tabular mt-0.5 font-semibold text-ink">{value}</dd>
+    </div>
   );
 }

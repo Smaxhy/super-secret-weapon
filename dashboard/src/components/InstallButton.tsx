@@ -9,7 +9,7 @@ export function InstallButton({ compact = false }: { compact?: boolean }) {
 
   if (canPrompt) {
     return (
-      <button type="button" onClick={() => void install()} className={`inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent font-semibold text-white ${compact ? 'px-2.5 py-1 text-xs' : 'w-full px-3 py-2 text-sm'}`}>
+      <button type="button" onClick={() => void install()} className={`inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent font-semibold text-on-accent ${compact ? 'px-2.5 py-1 text-xs' : 'w-full px-3 py-2 text-sm'}`}>
         <Icon name="download" size={compact ? 14 : 16} />
         {compact ? 'Install' : 'Install app'}
       </button>

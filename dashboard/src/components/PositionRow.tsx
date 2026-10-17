@@ -8,9 +8,10 @@ import { Link } from 'react-router-dom';
 import type { LivePosition } from '../hooks/useLivePositions';
 import { api } from '../lib/api';
 import { ago, mcSol, multiple, num, pct, price, sol, STRATEGY_LABEL, usd } from '../lib/format';
+import { Icon } from './Icon';
 import { McChange, McCompare } from './McCompare';
 import { PositionChart } from './PositionChart';
-import { Pnl } from './ui';
+import { Badge, Button, Pnl } from './ui';
 
 /** Where the price sits between the stop (left) and the next take-profit (right), entry marked. */
 function RangeBar({ p }: { p: LivePosition }) {
@@ -27,20 +28,16 @@ function RangeBar({ p }: { p: LivePosition }) {
   const at = (x: number) => `${Math.max(0, Math.min(100, ((x - lo) / (hi - lo || 1)) * 100))}%`;
   const up = m >= 1;
   return (
-    <div className="mt-2.5">
-      <div className="relative h-2 rounded-full bg-surface-2" aria-hidden="true">
-        {/* filled from entry to now */}
-        <div
-          className={`absolute inset-y-0 rounded-full ${up ? 'bg-good/70' : 'bg-critical/60'}`}
-          style={{ left: up ? at(1) : at(m), right: `calc(100% - ${up ? at(m) : at(1)})` }}
-        />
-        <span className="absolute -top-0.5 h-3 w-0.5 rounded bg-ink-2" style={{ left: at(1) }} title="entry" />
-        {trailX && <span className="absolute -top-0.5 h-3 w-0.5 rounded bg-warning" style={{ left: at(trailX) }} title="trailing stop" />}
-        <span className={`absolute -top-1 h-4 w-4 -translate-x-1/2 rounded-full border-2 border-surface ${up ? 'bg-good' : 'bg-critical'}`} style={{ left: at(m) }} />
+    <div className="mt-3">
+      <div className="relative h-1.5 rounded-full bg-surface-3" aria-hidden="true">
+        <div className={`absolute inset-y-0 rounded-full transition-[left,right] duration-400 ${up ? 'bg-good/70' : 'bg-critical/60'}`} style={{ left: up ? at(1) : at(m), right: `calc(100% - ${up ? at(m) : at(1)})` }} />
+        <span className="absolute -top-[3px] h-3 w-0.5 rounded bg-ink-2" style={{ left: at(1) }} title="entry" />
+        {trailX && <span className="absolute -top-[3px] h-3 w-0.5 rounded bg-warning" style={{ left: at(trailX) }} title="trailing stop" />}
+        <span className={`absolute -top-[5px] h-4 w-4 -translate-x-1/2 rounded-full border-2 border-surface shadow transition-[left] duration-400 ${up ? 'bg-good' : 'bg-critical'}`} style={{ left: at(m) }} />
       </div>
-      <div className="mt-1 flex justify-between gap-2 text-xs text-muted">
-        <span>stop {multiple(stopX)}{trailX ? ` · trail ${multiple(trailX)}` : ''}</span>
-        <span className="truncate text-right">{next ? `next: sell ${next.sellPct}% at ${next.multiple}×` : 'all targets hit — trailing'}</span>
+      <div className="mt-1.5 flex justify-between gap-2 text-xs text-muted">
+        <span className="tabular">stop {multiple(stopX)}{trailX ? ` · trail ${multiple(trailX)}` : ''}</span>
+        <span className="tabular truncate text-right">{next ? `next: sell ${next.sellPct}% at ${next.multiple}×` : 'all targets hit — trailing'}</span>
       </div>
     </div>
   );
@@ -51,17 +48,17 @@ export function PositionRow({ p, onSold }: { p: LivePosition; onSold: () => void
   const m = p.multiple;
   const fresh = p.live && Date.now() - p.live.at < 6_000;
   const left = (p.sizeSol * p.remainingPct) / 100;
-  const edge = m === null ? 'border-l-line' : m >= 1 ? 'border-l-good' : 'border-l-critical';
+  const edge = m === null ? 'border-l-line-strong' : m >= 1 ? 'border-l-good' : 'border-l-critical';
   const risk = p.live?.risk;
   return (
-    <li className={`min-w-0 rounded-xl border border-l-4 border-line bg-surface shadow-card ${edge}`}>
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="block w-full rounded-xl p-3 text-left hover:bg-surface-2/60 sm:p-4">
+    <li className={`card card-lift min-w-0 overflow-hidden border-l-[3px] ${edge}`}>
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="block w-full p-4 text-left transition-colors hover:bg-surface-2/40 sm:p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               <span className="truncate text-base font-semibold text-ink">{p.symbol}</span>
-              <span className="shrink-0 rounded-md bg-surface-2 px-1.5 py-0.5 text-xs font-medium text-ink-2">{STRATEGY_LABEL[p.strategy] ?? p.strategy}</span>
-              {p.learning && <span className="shrink-0 rounded-md bg-accent/12 px-1.5 py-0.5 text-xs font-medium text-accent">learning</span>}
+              <Badge>{STRATEGY_LABEL[p.strategy] ?? p.strategy}</Badge>
+              {p.learning && <Badge tone="accent">learning</Badge>}
               {fresh && (
                 <span className="inline-flex shrink-0 items-center gap-1 text-xs text-up">
                   <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-good" aria-hidden="true" />
@@ -69,8 +66,8 @@ export function PositionRow({ p, onSold }: { p: LivePosition; onSold: () => void
                 </span>
               )}
             </div>
-            <div className="tabular mt-1 truncate text-sm text-ink-2">
-              {p.mcEntryUsd !== null ? usd(p.mcEntryUsd) : mcSol(p.entryMarketCapSol)} → <span className="text-ink">{p.mcNowUsd !== null ? usd(p.mcNowUsd) : mcSol(p.mcNowSol)}</span>{' '}
+            <div className="tabular mt-1.5 truncate text-sm text-ink-2">
+              {p.mcEntryUsd !== null ? usd(p.mcEntryUsd) : mcSol(p.entryMarketCapSol)} → <span className="font-medium text-ink">{p.mcNowUsd !== null ? usd(p.mcNowUsd) : mcSol(p.mcNowSol)}</span>{' '}
               <McChange value={p.mcChangePct} className="text-xs" />
             </div>
             <div className="tabular mt-0.5 truncate text-xs text-muted">
@@ -78,8 +75,8 @@ export function PositionRow({ p, onSold }: { p: LivePosition; onSold: () => void
             </div>
           </div>
           <div className="shrink-0 text-right">
-            <div className={`tabular text-2xl font-bold leading-tight ${m === null ? 'text-ink-2' : m >= 1 ? 'text-up' : 'text-down'}`}>{multiple(m)}</div>
-            <div className="text-sm">
+            <div className={`tabular text-[26px] font-bold leading-none tracking-tight ${m === null ? 'text-ink-2' : m >= 1 ? 'text-up' : 'text-down'}`}>{multiple(m)}</div>
+            <div className="mt-1.5 text-sm">
               <Pnl value={p.unrealizedPnlSol} />
             </div>
             {p.realizedPnlSol !== 0 && (
@@ -90,16 +87,19 @@ export function PositionRow({ p, onSold }: { p: LivePosition; onSold: () => void
           </div>
         </div>
         <RangeBar p={p} />
-        <div className="mt-1 text-center text-xs text-muted" aria-hidden="true">{open ? '▲ less' : '▼ chart & details'}</div>
+        <div className="mt-2 flex items-center justify-center gap-1 text-xs text-muted" aria-hidden="true">
+          <Icon name="chevron" size={12} className={`transition-transform duration-250 ${open ? '-rotate-90' : 'rotate-90'}`} />
+          {open ? 'less' : 'chart & details'}
+        </div>
       </button>
 
       {open && (
-        <div className="border-t border-line p-3 sm:p-4">
+        <div className="fade-in border-t border-line p-4 sm:p-5">
           <McCompare p={p} />
           <div className="mt-3">
             <PositionChart position={p} height={170} />
           </div>
-          <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+          <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             <Field label="Entry price">{price(p.entryPriceSol)}</Field>
             <Field label="Current price">{price(p.currentPriceSol)}</Field>
             <Field label="Peak">{multiple(p.peakPriceSol / p.entryPriceSol)}</Field>
@@ -107,20 +107,20 @@ export function PositionRow({ p, onSold }: { p: LivePosition; onSold: () => void
               {risk === undefined ? '—' : <span className={risk >= 0.6 ? 'text-down' : risk >= 0.35 ? 'text-warning' : 'text-up'}>{risk >= 0.6 ? 'High' : risk >= 0.35 ? 'Rising' : 'Low'} ({Math.round(risk * 100)})</span>}
             </Field>
           </dl>
-          <div className="mt-3 text-sm">
-            <div className="mb-1 font-medium text-ink">Exit plan</div>
-            <ul className="flex flex-wrap gap-x-4 gap-y-1 text-ink-2">
-              <li>Stop {price(p.targets.stopLossPrice)}</li>
+          <div className="mt-4 text-sm">
+            <div className="mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted">Exit plan</div>
+            <ul className="flex flex-wrap gap-2 text-ink-2">
+              <li className="rounded-lg bg-surface-2 px-2 py-1 text-xs">Stop {price(p.targets.stopLossPrice)}</li>
               {p.targets.takeProfits.map((t) => (
-                <li key={t.multiple}>
+                <li key={t.multiple} className={`rounded-lg px-2 py-1 text-xs ${t.hit ? 'bg-good/12 text-up' : 'bg-surface-2'}`}>
                   {t.hit ? '✓' : '○'} {t.sellPct}% at {t.multiple}×
                 </li>
               ))}
-              <li>{p.targets.trailingStopPrice !== null ? `Trailing stop ${price(p.targets.trailingStopPrice)}` : 'Trailing stop not active yet'}</li>
+              <li className="rounded-lg bg-surface-2 px-2 py-1 text-xs">{p.targets.trailingStopPrice !== null ? `Trailing stop ${price(p.targets.trailingStopPrice)}` : 'Trailing stop not active yet'}</li>
             </ul>
           </div>
           {p.live && (
-            <p className="mt-2 text-sm text-ink-2">
+            <p className="mt-3 text-sm text-ink-2">
               You hold <span className="tabular text-ink">{p.live.ownSupplyPct.toFixed(2)}%</span> of the supply · selling it all now moves the price{' '}
               <span className={`tabular ${p.live.exitImpactPct > 5 ? 'text-down' : 'text-ink'}`}>−{p.live.exitImpactPct.toFixed(1)}%</span>
             </p>
@@ -132,20 +132,16 @@ export function PositionRow({ p, onSold }: { p: LivePosition; onSold: () => void
             </p>
           )}
           {p.buyReason && (
-            <details className="mt-2 text-sm">
-              <summary className="cursor-pointer text-ink-2">Why it bought</summary>
-              <p className="mt-1 leading-relaxed text-ink">{p.buyReason}</p>
+            <details className="mt-3 text-sm">
+              <summary className="cursor-pointer text-ink-2 hover:text-ink">Why it bought</summary>
+              <p className="mt-2 rounded-xl bg-surface-2/60 p-3 leading-relaxed text-ink">{p.buyReason}</p>
             </details>
           )}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => window.confirm(`Sell all of ${p.symbol} now?`) && void api(`/api/positions/${p.id}/sell`, { method: 'POST' }).then(onSold)}
-              className="rounded-lg border border-critical px-4 py-2 text-sm font-semibold text-down hover:bg-critical/10"
-            >
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button variant="danger" onClick={() => window.confirm(`Sell all of ${p.symbol} now?`) && void api(`/api/positions/${p.id}/sell`, { method: 'POST' }).then(onSold)}>
               Sell now
-            </button>
-            <Link to={`/token/${p.mint}`} className="rounded-lg px-3 py-2 text-sm text-accent hover:underline">
+            </Button>
+            <Link to={`/token/${p.mint}`} className="inline-flex min-h-11 items-center rounded-xl px-3 text-sm font-medium text-accent-text hover:underline">
               Coin details →
             </Link>
           </div>
@@ -158,8 +154,8 @@ export function PositionRow({ p, onSold }: { p: LivePosition; onSold: () => void
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="truncate text-xs text-muted">{label}</dt>
-      <dd className="tabular break-words text-ink">{children}</dd>
+      <dt className="truncate text-xs font-medium text-muted">{label}</dt>
+      <dd className="tabular mt-0.5 break-words text-ink">{children}</dd>
     </div>
   );
 }

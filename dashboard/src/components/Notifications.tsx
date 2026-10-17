@@ -121,7 +121,7 @@ export function Notifications() {
                 <button type="button" disabled={busy} onClick={() => void disable()} className="rounded-lg px-3 py-2 text-sm text-ink-2 hover:bg-surface-2">Turn off</button>
               </>
             ) : (
-              <button type="button" disabled={busy || !data} onClick={() => void enable()} className="rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+              <button type="button" disabled={busy || !data} onClick={() => void enable()} className="rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent disabled:opacity-50">
                 {busy ? 'Turning on…' : 'Turn on notifications'}
               </button>
             )}

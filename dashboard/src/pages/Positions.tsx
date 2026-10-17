@@ -9,7 +9,7 @@ import { useState } from 'react';
 import { DipWatch, type DipRow } from '../components/DipWatch';
 import { PositionRow } from '../components/PositionRow';
 import { SwingCoins, type SwingData } from '../components/SwingCoins';
-import { Chip, Empty, ErrorBox, Loading, PageHeader, Pnl, Stat, Tabs } from '../components/ui';
+import { Chip, Empty, ErrorBox, inputCls, Loading, PageHeader, Pnl, Stat, Tabs } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { useLivePositions, type LivePosition } from '../hooks/useLivePositions';
 import { sol } from '../lib/format';
@@ -74,7 +74,7 @@ export function Positions() {
       <PageHeader title="Positions" subtitle="What it holds right now. Prices update live on every trade." />
 
       {/* Summary — always visible */}
-      <section aria-label="Invested now summary" className="mb-4 grid grid-cols-2 gap-x-4 gap-y-3 rounded-2xl border border-line bg-surface p-4 shadow-card sm:grid-cols-4">
+      <section aria-label="Invested now summary" className="card mb-4 grid grid-cols-2 gap-x-4 gap-y-4 p-4 sm:grid-cols-4 sm:p-5">
         <Stat label="Open trades" value={`${list.length}${ov.data ? ` / ${ov.data.maxPositions}` : ''}`} sub={bigOpen ? `${bigOpen} on bigger coins` : undefined} />
         <Stat label="In trades" value={sol(inSol, 2)} sub={ov.data ? `${sol(ov.data.balanceSol, 2)} free` : undefined} />
         <Stat label="Unrealised" value={<Pnl value={list.length ? unreal : null} />} sub="if sold now, after fees" />
@@ -95,7 +95,7 @@ export function Positions() {
               </div>
               <label className="flex shrink-0 items-center gap-1.5 text-sm text-ink-2">
                 <span className="hidden sm:inline">Sort</span>
-                <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} className="rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink">
+                <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} className={`${inputCls} min-h-9 py-1`}>
                   <option value="newest">Newest</option>
                   <option value="best">Best first</option>
                   <option value="worst">Worst first</option>
@@ -110,7 +110,7 @@ export function Positions() {
           ) : !shown.length ? (
             <Empty>No open trades in this group.</Empty>
           ) : (
-            <ul className="grid items-start gap-3 xl:grid-cols-2">
+            <ul className="stagger grid items-start gap-3 xl:grid-cols-2">
               {shown.map((p) => (
                 <PositionRow key={p.id} p={p} onSold={() => void reload()} />
               ))}

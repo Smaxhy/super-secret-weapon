@@ -3,7 +3,7 @@ import { DexTrending } from '../components/DexTrending';
 import { TrendingTabs } from '../components/TrendingTabs';
 import { MarketLeadersCard } from '../components/MarketLeaders';
 import { CountBars } from '../components/Charts';
-import { Card, ErrorBox, Loading, PageHeader, Row, Rows, Stack, Stat, StatTile, Tabs, useTab } from '../components/ui';
+import { Card, ErrorBox, Loading, PageHeader, RankedBars, Row, Rows, Stack, Stat, StatTile, Tabs, useTab } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { num, pct } from '../lib/format';
 import type { ScannerStatsData } from '../lib/types';
@@ -49,22 +49,7 @@ export function ScannerStats() {
             <>
               <Card title="Why coins weren't bought" subtitle="Last 24 h · coins that failed each rule (one coin can fail several).">
                 {d.skipReasons.length ? (
-                  <ul className="space-y-2.5">
-                    {d.skipReasons.slice(0, 12).map((r) => {
-                      const max = d.skipReasons[0]?.tokens || 1;
-                      return (
-                        <li key={r.reason} className="text-sm">
-                          <div className="mb-1 flex items-baseline justify-between gap-3">
-                            <span className="min-w-0 truncate text-ink">{REASON_LABEL[r.reason] ?? r.reason}</span>
-                            <span className="tabular shrink-0 text-ink-2">{num(r.tokens)}</span>
-                          </div>
-                          <div className="h-1.5 rounded-full bg-[color-mix(in_srgb,var(--series-1)_15%,transparent)]">
-                            <div className="h-1.5 rounded-full bg-[var(--series-1)]" style={{ width: `${(r.tokens / max) * 100}%` }} />
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                  <RankedBars rows={d.skipReasons.slice(0, 12).map((r) => ({ label: REASON_LABEL[r.reason] ?? r.reason, count: r.tokens }))} />
                 ) : (
                   <p className="text-sm text-ink-2">No coins have been scored in the last 24h yet.</p>
                 )}

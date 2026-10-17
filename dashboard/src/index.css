@@ -1,111 +1,161 @@
 @import "tailwindcss";
 
 /*
- * Design tokens. Light + dark are each chosen (not auto-inverted), from the
- * validated reference palette. Components use the Tailwind names below
- * (bg-surface, text-ink-2, …) so both themes swap in one place.
+ * Design tokens — dark first (a warm near-black trading desk with one coral accent), light derived
+ * from the same roles. Every colour in the app goes through these names (bg-surface, text-ink-2,
+ * text-accent …); nothing in a component carries a hex value. Green / red are for P&L only.
  */
 :root {
   color-scheme: light;
-  --page: #f9f9f7;
-  --surface: #fcfcfb;
-  --surface-2: #f0efec;
-  --ink: #0b0b0b;
-  --ink-2: #52514e;
-  --muted: #6f6e69;
-  --grid: #e1e0d9;
-  --axis: #c3c2b7;
-  --border: rgba(11, 11, 11, 0.1);
-  --series-1: #2a78d6; /* primary series / sequential blue */
-  --pos: #2a78d6; /* diverging: gain pole */
-  --neg: #e34948; /* diverging: loss pole */
-  --up-text: #006300;
-  --down-text: #c23232;
-  --good: #0ca30c;
-  --warning: #b77600;
-  --critical: #d03b3b;
-  --accent: #2a78d6;
-  /* Soft card lift; borders still carry the edge so it works without shadows. */
-  --card-shadow: 0 1px 2px rgba(11, 11, 11, 0.04), 0 4px 16px -6px rgba(11, 11, 11, 0.08);
-  --hero-glow: rgba(42, 120, 214, 0.08);
+  --page: #f6f4f0;
+  --surface: #ffffff;
+  --surface-2: #efece6;
+  --surface-3: #e6e2da;
+  --ink: #17140f;
+  --ink-2: #4a453e;
+  --muted: #6b655c;
+  --grid: #e5e1d9;
+  --axis: #cfcac1;
+  --border: rgba(23, 20, 15, 0.09);
+  --border-strong: rgba(23, 20, 15, 0.18);
+  --accent: #cf4a25;
+  --accent-text: #bd4320;
+  --on-accent: #ffffff;
+  --accent-soft: rgba(207, 74, 37, 0.1);
+  --series-1: #cf4a25;
+  --pos: #13803f;
+  --neg: #c62f35;
+  --up-text: #13803f;
+  --down-text: #c62f35;
+  --good: #13803f;
+  --warning: #9a6200;
+  --critical: #c62f35;
+  --card-shadow: 0 1px 2px rgba(23, 20, 15, 0.04), 0 8px 24px -12px rgba(23, 20, 15, 0.12);
+  --card-shadow-hover: 0 2px 4px rgba(23, 20, 15, 0.05), 0 14px 32px -12px rgba(23, 20, 15, 0.18);
+  --card-glow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --hero-glow: rgba(207, 74, 37, 0.1);
+  --pnl-up-bg: 19, 128, 63;
+  --pnl-down-bg: 198, 47, 53;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --page: #0d0d0d;
-    --surface: #1a1a19;
-    --surface-2: #262624;
-    --ink: #ffffff;
-    --ink-2: #c3c2b7;
-    --muted: #9a998f;
-    --grid: #2c2c2a;
-    --axis: #383835;
-    --border: rgba(255, 255, 255, 0.1);
-    --series-1: #3987e5;
-    --pos: #3987e5;
-    --neg: #e66767;
-    --up-text: #0ca30c;
-    --down-text: #e66767;
-    --good: #0ca30c;
-    --warning: #fab219;
-    --critical: #e66767;
-    --accent: #3987e5;
-    --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 20px -8px rgba(0, 0, 0, 0.6);
-    --hero-glow: rgba(57, 135, 229, 0.14);
+    --page: #0e0d0c;
+    --surface: #171614;
+    --surface-2: #211f1c;
+    --surface-3: #2a2724;
+    --ink: #f5f3ef;
+    --ink-2: #c9c4bb;
+    --muted: #948f86;
+    --grid: #262320;
+    --axis: #332f2b;
+    --border: rgba(255, 255, 255, 0.07);
+    --border-strong: rgba(255, 255, 255, 0.14);
+    --accent: #f0683f;
+    --accent-text: #ff8a63;
+    --on-accent: #140c08;
+    --accent-soft: rgba(240, 104, 63, 0.14);
+    --series-1: #f0683f;
+    --pos: #3ecf85;
+    --neg: #ff6b6b;
+    --up-text: #3ecf85;
+    --down-text: #ff6b6b;
+    --good: #3ecf85;
+    --warning: #f5b544;
+    --critical: #ff6b6b;
+    --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 30px -14px rgba(0, 0, 0, 0.7);
+    --card-shadow-hover: 0 2px 4px rgba(0, 0, 0, 0.5), 0 18px 40px -14px rgba(0, 0, 0, 0.8);
+    --card-glow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    --hero-glow: rgba(240, 104, 63, 0.16);
+    --pnl-up-bg: 62, 207, 133;
+    --pnl-down-bg: 255, 107, 107;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --page: #0d0d0d;
-  --surface: #1a1a19;
-  --surface-2: #262624;
-  --ink: #ffffff;
-  --ink-2: #c3c2b7;
-  --muted: #9a998f;
-  --grid: #2c2c2a;
-  --axis: #383835;
-  --border: rgba(255, 255, 255, 0.1);
-  --series-1: #3987e5;
-  --pos: #3987e5;
-  --neg: #e66767;
-  --up-text: #0ca30c;
-  --down-text: #e66767;
-  --good: #0ca30c;
-  --warning: #fab219;
-  --critical: #e66767;
-  --accent: #3987e5;
-  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 20px -8px rgba(0, 0, 0, 0.6);
-  --hero-glow: rgba(57, 135, 229, 0.14);
+  --page: #0e0d0c;
+  --surface: #171614;
+  --surface-2: #211f1c;
+  --surface-3: #2a2724;
+  --ink: #f5f3ef;
+  --ink-2: #c9c4bb;
+  --muted: #948f86;
+  --grid: #262320;
+  --axis: #332f2b;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --accent: #f0683f;
+  --accent-text: #ff8a63;
+  --on-accent: #140c08;
+  --accent-soft: rgba(240, 104, 63, 0.14);
+  --series-1: #f0683f;
+  --pos: #3ecf85;
+  --neg: #ff6b6b;
+  --up-text: #3ecf85;
+  --down-text: #ff6b6b;
+  --good: #3ecf85;
+  --warning: #f5b544;
+  --critical: #ff6b6b;
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 30px -14px rgba(0, 0, 0, 0.7);
+  --card-shadow-hover: 0 2px 4px rgba(0, 0, 0, 0.5), 0 18px 40px -14px rgba(0, 0, 0, 0.8);
+  --card-glow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --hero-glow: rgba(240, 104, 63, 0.16);
+  --pnl-up-bg: 62, 207, 133;
+  --pnl-down-bg: 255, 107, 107;
+}
+
+/* Motion tokens. */
+:root {
+  --dur-fast: 150ms;
+  --dur: 250ms;
+  --dur-slow: 400ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --radius: 14px;
+  --radius-lg: 20px;
 }
 
 @theme inline {
   --color-page: var(--page);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
   --color-ink: var(--ink);
   --color-ink-2: var(--ink-2);
   --color-muted: var(--muted);
   --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
   --color-grid: var(--grid);
   --color-accent: var(--accent);
+  --color-accent-text: var(--accent-text);
+  --color-on-accent: var(--on-accent);
   --color-up: var(--up-text);
   --color-down: var(--down-text);
   --color-good: var(--good);
   --color-warning: var(--warning);
   --color-critical: var(--critical);
-  --shadow-card: var(--card-shadow);
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --shadow-card: var(--card-shadow), var(--card-glow);
+  --shadow-card-hover: var(--card-shadow-hover), var(--card-glow);
+  --radius-card: var(--radius);
+  --radius-card-lg: var(--radius-lg);
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --ease-out: var(--ease);
 }
 
 html,
 body {
-  overscroll-behavior-y: none; /* no rubber-band bounce in the installed app */
+  overscroll-behavior-y: none;
   -webkit-tap-highlight-color: transparent;
   background: var(--page);
   color: var(--ink);
   font-family: var(--font-sans);
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+h1,
+h2,
+h3 {
+  letter-spacing: -0.015em;
 }
 .tabular {
   font-variant-numeric: tabular-nums;
@@ -113,7 +163,10 @@ body {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius: 8px;
+}
+::selection {
+  background: var(--accent-soft);
 }
 @media (prefers-reduced-motion: reduce) {
   * {
@@ -122,18 +175,42 @@ body {
   }
 }
 
-/* Hero card on Overview: a faint accent wash in the corner (token-based, so both themes work). */
-.hero-glow {
-  background-image: radial-gradient(120% 90% at 0% 0%, var(--hero-glow), transparent 60%);
+/* Cards: elevated surface, hairline border, soft inner glow, gentle lift on hover (pointer devices only). */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--card-shadow), var(--card-glow);
+  border-radius: var(--radius-lg);
+  transition:
+    box-shadow var(--dur) var(--ease),
+    transform var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
 }
-/* Frosted bars (header / bottom nav) where the browser supports it. */
-.glass {
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-  backdrop-filter: saturate(1.4) blur(12px);
-  -webkit-backdrop-filter: saturate(1.4) blur(12px);
+@media (hover: hover) {
+  .card-lift:hover {
+    box-shadow: var(--card-shadow-hover), var(--card-glow);
+    transform: translateY(-1px);
+    border-color: var(--border-strong);
+  }
+}
+.card-accent {
+  border-left: 3px solid var(--accent);
 }
 
-/* Height of the phone header (sticky tabs sit right under it); 0 on wide screens with the sidebar. */
+/* Hero: faint accent wash from the top-left corner. */
+.hero-glow {
+  background-image:
+    radial-gradient(90% 70% at 0% 0%, var(--hero-glow), transparent 60%),
+    radial-gradient(60% 50% at 100% 100%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 70%);
+}
+/* Frosted bars (phone header / tab bar). */
+.glass {
+  background: color-mix(in srgb, var(--page) 94%, transparent);
+  backdrop-filter: saturate(1.5) blur(16px);
+  -webkit-backdrop-filter: saturate(1.5) blur(16px);
+}
+
+/* Phone header height (sticky tabs sit under it); 0 on wide screens with the sidebar. */
 :root {
   --hdr: calc(3.5rem + env(safe-area-inset-top));
 }
@@ -142,17 +219,30 @@ body {
     --hdr: 0px;
   }
 }
-/* Sideways-scrolling rows (tabs, chips) without a visible scrollbar. */
 .no-scrollbar {
   scrollbar-width: none;
 }
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
-/* Bottom sheet slide-up on phones. */
+
+/* Motion: pages fade + rise, sheets slide up, chips/indicators glide. */
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.page-enter {
+  animation: page-enter var(--dur) var(--ease) both;
+}
 @keyframes sheet-up {
   from {
-    transform: translateY(16px);
+    transform: translateY(24px);
     opacity: 0;
   }
   to {
@@ -161,5 +251,73 @@ body {
   }
 }
 .sheet-up {
-  animation: sheet-up 0.18s ease-out;
+  animation: sheet-up var(--dur) var(--ease);
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.fade-in {
+  animation: fade-in var(--dur-fast) var(--ease) both;
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.pop {
+  animation: pop var(--dur) var(--ease) both;
+}
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+/* Stagger children of a stack on first paint. */
+.stagger > * {
+  animation: page-enter var(--dur-slow) var(--ease) both;
+}
+.stagger > *:nth-child(2) {
+  animation-delay: 40ms;
+}
+.stagger > *:nth-child(3) {
+  animation-delay: 80ms;
+}
+.stagger > *:nth-child(4) {
+  animation-delay: 120ms;
+}
+.stagger > *:nth-child(n + 5) {
+  animation-delay: 160ms;
+}
+
+/* Native controls pick up the theme. */
+input[type="date"],
+input[type="datetime-local"],
+input[type="number"],
+input[type="text"],
+input[type="password"],
+select,
+textarea {
+  color-scheme: inherit;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
 }

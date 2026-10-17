@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react';
 import { useApi } from '../hooks/useApi';
 import { STRATEGY_LABEL } from '../lib/format';
+import { Icon } from './Icon';
 import { Pnl } from './ui';
 
 interface Day {
@@ -47,55 +48,65 @@ export function PnlCalendar({ picked, onPick }: { picked: string | null; onPick:
   const max = Math.max(0.0001, ...inMonth.map((d) => Math.abs(d.pnlSol)));
 
   return (
-    <div className="rounded-xl border border-line bg-surface-2/40 p-3">
-      {error && <p className="text-sm text-down">{error}</p>}
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <button type="button" aria-label="Previous month" onClick={() => step(-1)} className="rounded-md px-3 py-1 text-lg leading-none text-ink-2 hover:bg-surface-2">‹</button>
+    <div className="pop rounded-2xl border border-line bg-surface-2/40 p-3 sm:p-4">
+      {error && <p className="mb-2 text-sm text-down">{error}</p>}
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <button type="button" aria-label="Previous month" onClick={() => step(-1)} className="grid h-10 w-10 place-items-center rounded-full text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink">
+          <Icon name="chevron" size={18} className="rotate-180" />
+        </button>
         <div className="text-center">
           <div className="text-sm font-semibold text-ink">{first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</div>
-          <div className="text-xs text-ink-2 tabular-nums">
-            <Pnl value={monthPnl} /> · {green} green · {red} red
+          <div className="tabular mt-0.5 text-xs text-muted">
+            <Pnl value={monthPnl} /> · <span className="text-up">{green} up</span> · <span className="text-down">{red} down</span>
           </div>
         </div>
-        <button type="button" aria-label="Next month" disabled={isThisMonth} onClick={() => step(1)} className="rounded-md px-3 py-1 text-lg leading-none text-ink-2 hover:bg-surface-2 disabled:opacity-30">›</button>
+        <button type="button" aria-label="Next month" disabled={isThisMonth} onClick={() => step(1)} className="grid h-10 w-10 place-items-center rounded-full text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-30">
+          <Icon name="chevron" size={18} />
+        </button>
       </div>
-      <div className="grid grid-cols-7 gap-1 text-center">
+      <div className="grid grid-cols-7 gap-1.5 text-center">
         {WEEK.map((w) => (
-          <div key={w} className="pb-1 text-[11px] text-muted">{w}</div>
+          <div key={w} className="pb-1 text-[11px] font-medium uppercase tracking-wide text-muted">{w}</div>
         ))}
         {cells.map((d, i) => {
           if (d === null) return <div key={`e${i}`} />;
           const k = keyOf(month.y, month.m, d);
           const v = byDay.get(k);
-          const a = v ? 0.12 + 0.38 * Math.min(1, Math.abs(v.pnlSol) / max) : 0;
-          const bg = v && v.pnlSol > 0 ? `rgba(34,197,94,${a})` : v && v.pnlSol < 0 ? `rgba(239,68,68,${a})` : undefined;
+          const intensity = v ? 0.14 + 0.5 * Math.min(1, Math.abs(v.pnlSol) / max) : 0;
+          const bg = v && v.pnlSol > 0 ? `rgba(var(--pnl-up-bg), ${intensity})` : v && v.pnlSol < 0 ? `rgba(var(--pnl-down-bg), ${intensity})` : undefined;
           const future = k > today;
+          const isToday = k === today;
+          const on = picked === k;
           return (
             <button
               key={k}
               type="button"
               disabled={future}
-              aria-pressed={picked === k}
-              onClick={() => onPick(picked === k ? null : k)}
+              aria-pressed={on}
+              aria-label={`${new Date(`${k}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'long' })}${v ? `, ${short(v.pnlSol)} SOL` : ''}`}
+              onClick={() => onPick(on ? null : k)}
               style={bg ? { backgroundColor: bg } : undefined}
-              className={`flex min-h-[2.75rem] flex-col items-center justify-center rounded-md border text-[11px] leading-tight ${picked === k ? 'border-2 border-accent' : 'border-line'} ${k === today ? 'font-semibold' : ''} ${future ? 'opacity-30' : ''}`}
+              className={`flex min-h-[2.9rem] flex-col items-center justify-center rounded-xl text-[11px] leading-tight transition-[transform,box-shadow,background-color] duration-150 ${on ? 'ring-2 ring-accent ring-offset-1 ring-offset-page' : isToday ? 'ring-1 ring-line-strong' : ''} ${!v && !future ? 'bg-surface/60' : ''} ${future ? 'opacity-30' : 'hover:scale-[1.04]'}`}
             >
-              <span className="text-ink-2">{d}</span>
-              {v && <span className={`tabular-nums ${v.pnlSol > 0 ? 'text-up' : v.pnlSol < 0 ? 'text-down' : 'text-ink-2'}`}>{short(v.pnlSol)}</span>}
+              <span className={`${isToday ? 'font-bold text-ink' : 'text-ink-2'}`}>{d}</span>
+              {v && <span className={`tabular mt-0.5 font-semibold ${v.pnlSol > 0 ? 'text-up' : v.pnlSol < 0 ? 'text-down' : 'text-ink-2'}`}>{short(v.pnlSol)}</span>}
             </button>
           );
         })}
       </div>
       {picked && (
-        <div className="mt-3 text-sm">
+        <div className="fade-in mt-3 rounded-xl border border-line bg-surface p-3 text-sm">
           {sel ? (
             <>
-              <p className="text-xs text-ink-2 tabular-nums">
-                {sel.trades} trade{sel.trades === 1 ? '' : 's'} · {sel.volumeSol.toFixed(2)} SOL traded
-              </p>
-              <ul className="mt-1 space-y-0.5 text-xs">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="tabular text-xs text-muted">
+                  {sel.trades} trade{sel.trades === 1 ? '' : 's'} · {sel.volumeSol.toFixed(2)} SOL traded{sel.winRate !== null ? ` · ${Math.round(sel.winRate)}% wins` : ''}
+                </span>
+                <Pnl value={sel.pnlSol} />
+              </div>
+              <ul className="mt-2 divide-y divide-line text-xs">
                 {sel.byStrategy.map((s) => (
-                  <li key={s.strategy} className="flex justify-between gap-2">
+                  <li key={s.strategy} className="flex justify-between gap-2 py-1.5">
                     <span className="text-ink-2">{STRATEGY_LABEL[s.strategy] ?? s.strategy} · {s.trades}</span>
                     <Pnl value={s.pnlSol} />
                   </li>

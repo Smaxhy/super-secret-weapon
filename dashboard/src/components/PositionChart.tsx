@@ -152,7 +152,7 @@ export function PositionChart({ position, height = 180 }: { position: LivePositi
               type="button"
               onClick={() => setRange(ms)}
               aria-pressed={range === ms}
-              className={`rounded-md px-2 py-0.5 text-xs font-medium ${range === ms ? 'bg-accent text-white' : 'text-ink-2 hover:bg-surface-2'}`}
+              className={`rounded-md px-2 py-0.5 text-xs font-medium ${range === ms ? 'bg-accent text-on-accent' : 'text-ink-2 hover:bg-surface-2'}`}
             >
               {l}
             </button>

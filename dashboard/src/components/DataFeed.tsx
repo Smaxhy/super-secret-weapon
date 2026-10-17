@@ -73,7 +73,7 @@ export function DataFeed() {
           <p className="text-xs text-muted">Chainstack → your Solana mainnet node → Access → copy the address that starts with wss://.{s?.tradesWsUrl ? ` Saved: ${s.tradesWsUrl}` : ''}</p>
           <input id={`${id}-ws`} className={input} value={ws} onChange={(e) => setWs(e.target.value)} placeholder="wss://solana-mainnet.core.chainstack.com/…" autoComplete="off" autoCapitalize="off" spellCheck={false} />
           <div className="flex flex-wrap gap-2">
-            <button type="submit" disabled={busy || !ws.trim()} className="rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+            <button type="submit" disabled={busy || !ws.trim()} className="rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent disabled:opacity-50">
               Save and restart
             </button>
             {s?.tradesWsUrl && (
@@ -95,7 +95,7 @@ export function DataFeed() {
           <input aria-label="gRPC endpoint" className={input} value={ep} onChange={(e) => setEp(e.target.value)} placeholder="https://yellowstone-solana-mainnet.core.chainstack.com:443" autoComplete="off" autoCapitalize="off" spellCheck={false} />
           <input aria-label="gRPC token" type="password" className={input} value={tk} onChange={(e) => setTk(e.target.value)} placeholder="x-token" autoComplete="off" />
           <div className="flex flex-wrap gap-2">
-            <button type="submit" disabled={busy || !ep.trim()} className="rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+            <button type="submit" disabled={busy || !ep.trim()} className="rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent disabled:opacity-50">
               Save, switch on and restart
             </button>
             {s?.useGrpc && (

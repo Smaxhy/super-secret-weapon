@@ -87,7 +87,7 @@ export function AddFundsDialog({ open, onClose }: { open: boolean; onClose: () =
             <button type="button" onClick={onClose} className="rounded-lg px-4 py-2.5 text-sm text-ink-2 hover:bg-surface-2">
               Cancel
             </button>
-            <button type="submit" disabled={!valid || busy} className="rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+            <button type="submit" disabled={!valid || busy} className="rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent disabled:opacity-50">
               {busy ? 'Adding…' : 'Add SOL'}
             </button>
           </div>

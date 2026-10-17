@@ -66,7 +66,7 @@ export function BrainTips() {
           placeholder="e.g. only buy migrated coins with at least 300 holders and $40k liquidity"
           className="w-full min-w-0 rounded-lg border border-line bg-page px-3 py-2.5 text-base text-ink"
         />
-        <button type="submit" disabled={busy || text.trim().length < 3} className="self-start rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+        <button type="submit" disabled={busy || text.trim().length < 3} className="self-start rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent disabled:opacity-50">
           {busy ? 'Thinking…' : 'Send to the brain'}
         </button>
       </form>

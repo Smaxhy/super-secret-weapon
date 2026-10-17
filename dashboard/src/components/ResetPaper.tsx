@@ -92,7 +92,7 @@ export function ResetPaperForm({ defaultBalance = 10, onDone, onCancel }: { defa
         </div>
       )}
       <div className="flex flex-wrap gap-2">
-        <button type="submit" disabled={!ready} className="rounded-xl bg-critical px-4 py-3 font-semibold text-white disabled:opacity-50">
+        <button type="submit" disabled={!ready} className="rounded-xl bg-critical px-4 py-3 font-semibold text-on-accent disabled:opacity-50">
           {busy ? 'Resetting…' : 'Reset paper account'}
         </button>
         {onCancel && (

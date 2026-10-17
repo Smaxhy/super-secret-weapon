@@ -1,5 +1,7 @@
 import { useState, type FormEvent } from 'react';
+import { Brand } from '../components/Brand';
 import { InstallButton } from '../components/InstallButton';
+import { Button, inputCls } from '../components/ui';
 import { getApiUrl, login, setApiUrl } from '../lib/api';
 
 export function Login() {
@@ -23,32 +25,32 @@ export function Login() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center p-4">
-      <form onSubmit={submit} className="w-full max-w-sm rounded-2xl border border-line bg-surface p-6 shadow-sm">
-        <h1 className="text-2xl font-bold text-ink">Solbot</h1>
-        <p className="mb-6 mt-1 text-ink-2">Log in to see your bot.</p>
+    <main className="hero-glow flex min-h-screen items-center justify-center p-4">
+      <form onSubmit={submit} className="card pop w-full max-w-sm p-6 sm:p-7">
+        <Brand />
+        <p className="mb-6 mt-3 text-sm text-ink-2">Log in to see your bot.</p>
 
-        <label htmlFor="pw" className="mb-1 block text-sm font-medium text-ink">
+        <label htmlFor="pw" className="mb-1 block text-xs font-medium text-muted">
           Password
         </label>
-        <input id="pw" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} className="mb-4 w-full rounded-lg border border-line bg-page px-3 py-2.5 text-ink" />
+        <input id="pw" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} className={`${inputCls} mb-4 w-full`} />
 
         <details className="mb-5">
-          <summary className="cursor-pointer text-sm text-ink-2">Bot address</summary>
-          <label htmlFor="url" className="mb-1 mt-3 block text-sm text-ink-2">
+          <summary className="cursor-pointer text-sm text-ink-2 hover:text-ink">Bot address</summary>
+          <label htmlFor="url" className="mb-1 mt-3 block text-xs font-medium text-muted">
             API URL (e.g. https://209-250-254-34.sslip.io)
           </label>
-          <input id="url" type="url" value={url} onChange={(e) => setUrl(e.target.value)} className="w-full rounded-lg border border-line bg-page px-3 py-2 text-sm text-ink" />
+          <input id="url" type="url" value={url} onChange={(e) => setUrl(e.target.value)} className={`${inputCls} w-full`} />
         </details>
 
         {error && (
-          <p role="alert" className="mb-4 text-sm text-down">
+          <p role="alert" className="mb-4 rounded-xl border border-critical/40 bg-critical/10 px-3 py-2 text-sm text-ink">
             {error}
           </p>
         )}
-        <button type="submit" disabled={busy} className="w-full rounded-lg bg-accent py-2.5 font-semibold text-white disabled:opacity-60">
+        <Button type="submit" size="lg" disabled={busy} className="w-full">
           {busy ? 'Logging in…' : 'Log in'}
-        </button>
+        </Button>
         <div className="mt-4 flex justify-center">
           <InstallButton compact />
         </div>

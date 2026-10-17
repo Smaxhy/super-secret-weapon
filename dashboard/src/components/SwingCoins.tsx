@@ -110,7 +110,7 @@ export function SwingCoins({ data, reload }: { data: SwingData | null; reload: (
           placeholder="Paste a coin's contract address (e.g. $clude's)"
           className="min-w-0 flex-1 rounded-lg border border-line bg-page px-3 py-2 text-sm text-ink"
         />
-        <button onClick={() => void add()} disabled={busy || mint.trim().length < 32} className="rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
+        <button onClick={() => void add()} disabled={busy || mint.trim().length < 32} className="rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-on-accent disabled:opacity-50">
           Add to swing list
         </button>
       </div>

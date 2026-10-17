@@ -7,7 +7,7 @@ import { SniperMode } from '../components/SniperMode';
 import { Notifications } from '../components/Notifications';
 import { Icon } from '../components/Icon';
 import { UpdateCard } from '../components/UpdateCard';
-import { Card, ErrorBox, Loading, PageHeader, Stack, Tabs, useTab } from '../components/ui';
+import { Button, Card, ErrorBox, Loading, PageHeader, Stack, Tabs, useTab } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 
@@ -32,7 +32,7 @@ function NumberField({ label, value, onChange, step = 1, min, max, suffix, hint 
   return (
     <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-muted">
       {label}
-      <span className="flex items-center rounded-lg border border-line bg-page focus-within:border-accent focus-within:ring-1 focus-within:ring-accent">
+      <span className="flex min-h-11 items-center rounded-xl border border-line-strong bg-surface transition-colors focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/30">
         <input type="number" inputMode="decimal" value={value} step={step} min={min} max={max} onChange={(e) => onChange(Number(e.target.value))} className="w-full min-w-0 bg-transparent px-3 py-2.5 text-base text-ink tabular outline-none focus-visible:outline-none" />
         {suffix && <span className="shrink-0 pr-3 text-sm text-muted">{suffix}</span>}
       </span>
@@ -44,13 +44,13 @@ function NumberField({ label, value, onChange, step = 1, min, max, suffix, hint 
 /** iOS-style switch row; sits inside a divided list. */
 function Toggle({ label, sub, checked, onChange }: { label: string; sub?: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
-    <label className="flex cursor-pointer items-center justify-between gap-3 py-3 first:pt-1 last:pb-1">
+    <label className="flex min-h-12 cursor-pointer items-center justify-between gap-3 py-3 first:pt-1 last:pb-1">
       <span className="min-w-0">
         <span className="block text-sm font-medium text-ink">{label}</span>
         {sub && <span className="block text-xs text-muted">{sub}</span>}
       </span>
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="peer sr-only" />
-      <span aria-hidden="true" className="relative h-7 w-12 shrink-0 rounded-full bg-surface-2 ring-1 ring-line transition-colors peer-checked:bg-accent peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-accent after:absolute after:left-0.5 after:top-0.5 after:h-6 after:w-6 after:rounded-full after:bg-white after:shadow after:transition-transform peer-checked:after:translate-x-5" />
+      <span aria-hidden="true" className="relative h-7 w-12 shrink-0 rounded-full bg-surface-3 ring-1 ring-line-strong transition-colors duration-150 peer-checked:bg-accent peer-checked:ring-accent peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-accent after:absolute after:left-0.5 after:top-0.5 after:h-6 after:w-6 after:rounded-full after:bg-surface after:shadow-[0_1px_3px_rgba(0,0,0,0.35)] after:transition-transform after:duration-150 peer-checked:after:translate-x-5" />
     </label>
   );
 }
@@ -122,7 +122,7 @@ export function Controls() {
       <PageHeader title="Controls" subtitle="Changes apply within 30 seconds, no restart needed." />
       <Tabs tabs={[...TABS]} value={tab} onChange={setTab} sticky label="Settings sections" />
       {msg && (
-        <div role="status" className={`mb-4 flex items-start gap-2 rounded-xl border px-3.5 py-3 text-sm ${msg.ok ? 'border-good/40 bg-good/10 text-ink' : 'border-critical/40 bg-critical/10 text-ink'}`}>
+        <div role="status" className={`pop mb-4 flex items-start gap-2 rounded-xl border px-3.5 py-3 text-sm ${msg.ok ? 'border-good/40 bg-good/10 text-ink' : 'border-critical/40 bg-critical/10 text-ink'}`}>
           <Icon name={msg.ok ? 'check' : 'alert'} size={18} className={msg.ok ? 'text-up' : 'text-critical'} />
           {msg.text}
         </div>
@@ -133,7 +133,7 @@ export function Controls() {
           <SniperMode />
           <Card title="Bot status">
             <div className="mb-4 flex items-center gap-3">
-              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${state.dot}`} aria-hidden="true" />
+              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${state.dot} ${!stopped ? 'shadow-[0_0_0_4px_rgba(var(--pnl-up-bg),0.18)]' : ''}`} aria-hidden="true" />
               <div>
                 <div className="font-semibold text-ink">{state.title}</div>
                 <div className="text-sm text-muted">{state.text}</div>
@@ -141,25 +141,20 @@ export function Controls() {
             </div>
             <div className="grid grid-cols-2 gap-2">
               {stopped ? (
-                <button type="button" disabled={busy} onClick={() => run(() => api('/api/controls/resume', { method: 'POST' }), 'Resumed.')} className="inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-3 py-3 text-sm font-semibold text-white">
+                <Button disabled={busy} onClick={() => run(() => api('/api/controls/resume', { method: 'POST' }), 'Resumed.')}>
                   <Icon name="play" size={16} />
                   Resume
-                </button>
+                </Button>
               ) : (
-                <button type="button" disabled={busy} onClick={() => run(() => api('/api/controls/pause', { method: 'POST', body: JSON.stringify({ paused: true }) }), 'Paused: no new buys.')} className="inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-surface px-3 py-3 text-sm font-semibold text-ink">
+                <Button variant="outline" disabled={busy} onClick={() => run(() => api('/api/controls/pause', { method: 'POST', body: JSON.stringify({ paused: true }) }), 'Paused: no new buys.')}>
                   <Icon name="pause" size={16} />
                   Pause buys
-                </button>
+                </Button>
               )}
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => window.confirm('KILL SWITCH: stop all trading and sell every open position now?') && run(() => api('/api/controls/kill', { method: 'POST' }), 'Kill switch on: all positions sold.')}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-critical px-3 py-3 text-sm font-semibold text-white"
-              >
+              <Button variant="danger" disabled={busy} onClick={() => window.confirm('KILL SWITCH: stop all trading and sell every open position now?') && run(() => api('/api/controls/kill', { method: 'POST' }), 'Kill switch on: all positions sold.')}>
                 <Icon name="stop" size={16} />
                 Sell all &amp; stop
-              </button>
+              </Button>
             </div>
           </Card>
 
@@ -179,7 +174,7 @@ export function Controls() {
               </div>
             </Card>
 
-            <Card title="Basic buy rules" subtitle="Per-strategy limits are under Buy rules.">
+            <Card title="Basic buy rules" subtitle="Per-strategy limits are under Rules.">
               <div className="grid grid-cols-2 gap-3">
                 <NumberField label="Min score" value={form.entry.minCombinedScore} min={30} max={95} onChange={(v) => set('entry', { minCombinedScore: v })} hint="Lower = more trades." />
                 <NumberField label="Min fees paid" value={form.entry.minTotalFeesSol} step={0.1} suffix="SOL" onChange={(v) => set('entry', { minTotalFeesSol: v })} />
@@ -199,11 +194,11 @@ export function Controls() {
               <div className="grid gap-3">
                 <label className="flex flex-col gap-1 text-xs font-medium text-muted">
                   Boost (raises the score)
-                  <textarea rows={3} value={form.keywords.boost.join(', ')} onChange={(e) => set('keywords', { boost: e.target.value.split(',').map((x) => x.trim()) })} className="rounded-lg border border-line bg-page px-3 py-2 text-sm text-ink" />
+                  <textarea rows={3} value={form.keywords.boost.join(', ')} onChange={(e) => set('keywords', { boost: e.target.value.split(',').map((x) => x.trim()) })} className="rounded-xl border border-line-strong bg-surface px-3 py-2 text-sm text-ink transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30" />
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-medium text-muted">
                   Block (never buys)
-                  <textarea rows={3} value={form.keywords.block.join(', ')} onChange={(e) => set('keywords', { block: e.target.value.split(',').map((x) => x.trim()) })} className="rounded-lg border border-line bg-page px-3 py-2 text-sm text-ink" />
+                  <textarea rows={3} value={form.keywords.block.join(', ')} onChange={(e) => set('keywords', { block: e.target.value.split(',').map((x) => x.trim()) })} className="rounded-xl border border-line-strong bg-surface px-3 py-2 text-sm text-ink transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30" />
                 </label>
               </div>
             </Card>
@@ -222,17 +217,21 @@ export function Controls() {
         </Stack>
       )}
 
-      {/* Save bar: only while the Trading tab has unsaved changes. Sits above the phone tab bar. */}
+      {/* Save bar: only while the Trading tab has unsaved changes. A floating pill above the phone tab bar. */}
       {dirty && (
-        <div className="fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-20 px-4 md:bottom-6 md:left-60 md:px-6">
-          <div className="mx-auto flex max-w-xl items-center gap-2 rounded-2xl border border-line bg-surface p-2 pl-4 shadow-2xl">
-            <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">Unsaved changes</span>
-            <button type="button" disabled={busy} onClick={() => setForm(structuredClone(data))} className="rounded-xl px-3 py-2 text-sm font-medium text-ink-2 hover:bg-surface-2">
+        <div className="pointer-events-none fixed inset-x-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-20 px-4 md:bottom-6 md:left-[4.5rem] md:px-6 lg:left-64">
+          <div className="pop pointer-events-auto mx-auto flex max-w-md items-center gap-2 rounded-full border border-line-strong bg-surface p-1.5 pl-4 shadow-card-hover">
+            <span className="inline-flex items-center gap-2 text-sm font-medium text-ink">
+              <span className="h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
+              Unsaved changes
+            </span>
+            <span className="flex-1" />
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => setForm(structuredClone(data))} className="rounded-full">
               Discard
-            </button>
-            <button type="button" disabled={busy} onClick={save} className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+            </Button>
+            <Button size="sm" disabled={busy} onClick={save} className="rounded-full px-4">
               {busy ? 'Saving…' : 'Save'}
-            </button>
+            </Button>
           </div>
         </div>
       )}

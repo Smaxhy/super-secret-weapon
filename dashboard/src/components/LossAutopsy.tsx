@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 import { ago, EXIT_LABEL, STRATEGY_LABEL } from '../lib/format';
-import { Card } from './ui';
+import { Badge, Button, Card, Row, Rows, SectionLabel } from './ui';
 
 interface Rec { n: number; wins: number; winRatePct: number; pnlSol: number; avgPct: number; medianPct: number }
 interface Seg extends Rec { strategy: string; band: string; key: string }
@@ -26,6 +26,7 @@ interface Autopsy {
 
 const sol = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(3)} SOL`;
 const strat = (s: string) => STRATEGY_LABEL[s] ?? s;
+const toneOf = (n: number) => (n > 0 ? 'text-up' : n < 0 ? 'text-down' : 'text-ink-2');
 
 export function LossAutopsy() {
   const { data, error, reload } = useApi<Autopsy | null>('/api/autopsy', 60_000, ['trade']);
@@ -42,100 +43,131 @@ export function LossAutopsy() {
   return (
     <Card
       title="What keeps going wrong"
+      subtitle={data ? `${data.trades} closed trades checked · ${ago(data.at)}` : undefined}
       action={
-        <button type="button" disabled={busy} onClick={() => void rerun()} className="text-sm text-accent hover:underline disabled:opacity-50">
+        <Button variant="ghost" size="sm" disabled={busy} onClick={() => void rerun()}>
           {busy ? 'Checking…' : 'Check now'}
-        </button>
+        </Button>
       }
     >
       {error && <p className="text-sm text-down">{error}</p>}
       {!data && !error && <p className="text-sm text-ink-2">The first check runs a minute after the bot starts, then every 30 minutes.</p>}
       {data && (
-        <div className="space-y-4 text-sm">
-          <p className="text-xs text-muted">{data.trades} closed trades checked · {ago(data.at)}</p>
+        <div className="space-y-6 text-sm">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <Stat label="Win rate" value={`${data.overall.winRatePct}%`} sub={data.overall.neededWinRatePct !== null ? `needs ${data.overall.neededWinRatePct}% to break even` : undefined} warn={data.overall.neededWinRatePct !== null && data.overall.winRatePct < data.overall.neededWinRatePct} />
-            <Stat label="Avg win / avg loss" value={`+${data.overall.avgWinPct}% / ${data.overall.avgLossPct}%`} sub={data.overall.profitFactor !== null ? `profit factor ${data.overall.profitFactor}` : undefined} />
-            <Stat label="Losers that never went up" value={`${data.losers.neverUpPct}%`} sub="= bad entries" warn={data.losers.neverUpPct >= 50} />
-            <Stat label="Losers that were up 15%+" value={`${data.losers.gaveBackPct}%`} sub="= gave profit back" warn={data.losers.gaveBackPct >= 30} />
+            <Tile label="Win rate" value={`${data.overall.winRatePct}%`} sub={data.overall.neededWinRatePct !== null ? `needs ${data.overall.neededWinRatePct}% to break even` : undefined} warn={data.overall.neededWinRatePct !== null && data.overall.winRatePct < data.overall.neededWinRatePct} />
+            <Tile label="Avg win / avg loss" value={<><span className="text-up">+{data.overall.avgWinPct}%</span> <span className="text-muted">/</span> <span className="text-down">{data.overall.avgLossPct}%</span></>} sub={data.overall.profitFactor !== null ? `profit factor ${data.overall.profitFactor}` : undefined} />
+            <Tile label="Losers that never went up" value={`${data.losers.neverUpPct}%`} sub="= bad entries" warn={data.losers.neverUpPct >= 50} />
+            <Tile label="Losers that were up 15%+" value={`${data.losers.gaveBackPct}%`} sub="= gave profit back" warn={data.losers.gaveBackPct >= 30} />
           </div>
+
           {!!data.cards?.length && (
-            <div>
-              <div className="mb-1 font-medium text-ink">Does each strategy deserve to run?</div>
-              <p className="mb-1 text-xs text-muted">Real trades only, % after every fee. "Profitable" needs 30+ trades, a positive average beyond the noise, still positive without its 3 best trades and in its newest 30%.</p>
-              <ul className="divide-y divide-line text-xs">
+            <section>
+              <SectionLabel>Does each strategy deserve to run?</SectionLabel>
+              <p className="mb-2 text-xs text-muted">Real trades only, % after every fee. "Profitable" needs 30+ trades, a positive average beyond the noise, still positive without its 3 best trades and in its newest 30%.</p>
+              <Rows>
                 {data.cards.map((k) => (
-                  <li key={k.strategy} className="py-1.5">
-                    <div className="flex min-w-0 justify-between gap-2">
-                      <span className="min-w-0 truncate font-medium text-ink">{strat(k.strategy)}</span>
-                      <span className={`shrink-0 font-medium ${k.verdict === 'profitable' ? 'text-up' : k.verdict === 'losing' ? 'text-down' : 'text-muted'}`}>
-                        {k.verdict === 'profitable' ? 'Profitable' : k.verdict === 'losing' ? 'Losing' : 'Not proven yet'}
+                  <Row
+                    key={k.strategy}
+                    label={
+                      <span className="inline-flex flex-wrap items-center gap-2">
+                        <span className="font-medium text-ink">{strat(k.strategy)}</span>
+                        <Badge tone={k.verdict === 'profitable' ? 'up' : k.verdict === 'losing' ? 'down' : 'neutral'}>{k.verdict === 'profitable' ? 'Profitable' : k.verdict === 'losing' ? 'Losing' : 'Not proven yet'}</Badge>
                       </span>
-                    </div>
-                    <div className="tabular-nums text-ink-2">
-                      {k.n} trades · avg {k.avgPct}% · median {k.medianPct}% · without best 3 {k.withoutTop3Pct}% · newest 30% {k.recentPct}%
-                    </div>
-                    <div className="text-muted">{k.why}</div>
-                  </li>
+                    }
+                    sub={`${k.n} trades · median ${k.medianPct}% · without best 3 ${k.withoutTop3Pct}% · newest 30% ${k.recentPct}% — ${k.why}`}
+                    value={<span className={toneOf(k.avgPct)}>{k.avgPct > 0 ? '+' : ''}{k.avgPct}% avg</span>}
+                  />
                 ))}
-              </ul>
-            </div>
+              </Rows>
+            </section>
           )}
+
           {!!data.edgeStats?.length && (
-            <div>
-              <div className="mb-1 font-medium text-ink">Expected edge after costs (the edge gate)</div>
-              <p className="mb-1 text-xs text-muted">Newest trades since this setup went live. Edge = win rate × avg win − loss rate × avg loss − 7% round trip. Under +2% with 30+ trades → the strategy only buys every 4th signal, at the minimum size, until its record improves.</p>
-              <ul className="divide-y divide-line text-xs">
+            <section>
+              <SectionLabel>Expected edge after costs (the edge gate)</SectionLabel>
+              <p className="mb-2 text-xs text-muted">Newest trades since this setup went live. Edge = win rate × avg win − loss rate × avg loss − 7% round trip. Under +2% with 30+ trades → the strategy only buys every 4th signal, at the minimum size, until its record improves.</p>
+              <Rows>
                 {[...data.edgeStats].sort((a, b) => b.n - a.n).map((e) => {
                   const edge = e.winRate * e.avgWinPct - (1 - e.winRate) * Math.abs(e.avgLossPct) - 7;
                   const judged = e.n >= 30;
                   const open = !judged || edge >= 2;
                   return (
-                    <li key={e.strategy} className="flex min-w-0 items-baseline justify-between gap-2 py-1.5">
-                      <span className="min-w-0 truncate">
-                        <span className="font-medium text-ink">{strat(e.strategy)}</span>
-                        <span className="tabular-nums text-ink-2"> · {e.n} trades · {Math.round(e.winRate * 100)}% wins · +{e.avgWinPct.toFixed(1)}% / −{Math.abs(e.avgLossPct).toFixed(1)}%</span>
-                      </span>
-                      <span className={`shrink-0 tabular-nums font-medium ${!judged ? 'text-muted' : open ? 'text-up' : 'text-down'}`}>
-                        {edge >= 0 ? '+' : ''}{edge.toFixed(1)}% {judged ? (open ? '· open' : '· probes only') : '· not judged yet'}
-                      </span>
+                    <Row
+                      key={e.strategy}
+                      label={strat(e.strategy)}
+                      sub={`${e.n} trades · ${Math.round(e.winRate * 100)}% wins · +${e.avgWinPct.toFixed(1)}% / −${Math.abs(e.avgLossPct).toFixed(1)}%`}
+                      value={
+                        <span className={!judged ? 'text-muted' : open ? 'text-up' : 'text-down'}>
+                          {edge >= 0 ? '+' : ''}{edge.toFixed(1)}% <span className="font-normal text-muted">{judged ? (open ? '· open' : '· probes only') : '· not judged yet'}</span>
+                        </span>
+                      }
+                    />
+                  );
+                })}
+              </Rows>
+            </section>
+          )}
+
+          {data.findings.length > 0 && (
+            <section>
+              <SectionLabel>Findings</SectionLabel>
+              <ul className="space-y-2">
+                {data.findings.map((f) => {
+                  const warn = f.startsWith('BLOCKED') || f.startsWith('SMALLEST');
+                  return (
+                    <li key={f} className={`flex gap-2.5 rounded-xl px-3 py-2.5 leading-relaxed ${warn ? 'bg-warning/10 text-ink' : 'bg-surface-2/60 text-ink'}`}>
+                      <span className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${warn ? 'bg-warning' : 'bg-accent'}`} aria-hidden="true" />
+                      <span className="min-w-0 break-words">{f}</span>
                     </li>
                   );
                 })}
               </ul>
-            </div>
+            </section>
           )}
-          {data.findings.length > 0 && (
-            <ul className="list-disc space-y-1 pl-5 text-ink">
-              {data.findings.map((f) => (
-                <li key={f} className={f.startsWith('BLOCKED') || f.startsWith('SMALLEST') ? 'text-warning' : undefined}>{f}</li>
-              ))}
-            </ul>
-          )}
+
           {data.blocked.length > 0 && (
-            <div>
-              <div className="mb-1 font-medium text-ink">{data.mode === 'block' ? 'Blocked now' : 'Losing kinds — smallest size only'} ({data.blocked.length})</div>
-              <p className="mb-1 text-xs text-muted">
+            <section>
+              <SectionLabel>
+                {data.mode === 'block' ? 'Blocked now' : 'Losing kinds — smallest size only'} ({data.blocked.length})
+              </SectionLabel>
+              <p className="mb-2 text-xs text-muted">
                 {data.mode === 'block'
                   ? 'New buys like these are refused; 1 in 5 still goes through at the smallest size so the bot sees when they start working again.'
                   : 'Still traded (paper keeps collecting data), but only at the smallest size until they start winning again.'}
               </p>
               <SegList rows={data.blocked} />
-            </div>
+            </section>
           )}
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div>
-              <div className="mb-1 font-medium text-ink">Losing the most</div>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <section>
+              <SectionLabel>Losing the most</SectionLabel>
               <SegList rows={data.worst} />
-            </div>
-            <div>
-              <div className="mb-1 font-medium text-ink">Working best</div>
+            </section>
+            <section>
+              <SectionLabel>Working best</SectionLabel>
               {data.best.length ? <SegList rows={data.best} /> : <p className="text-xs text-muted">Nothing clearly profitable yet.</p>}
-            </div>
+            </section>
           </div>
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Table title="By strategy" rows={data.byStrategy.map((s) => [strat(s.strategy), s.n, `${s.winRatePct}%`, `${s.avgPct}%`, s.pnlSol])} />
-            <Table title="By how it ended" rows={data.byExit.map((e) => [EXIT_LABEL[e.reason] ?? e.reason, e.n, '', `${e.avgPct}%`, e.pnlSol])} />
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <section>
+              <SectionLabel>By strategy</SectionLabel>
+              <Rows>
+                {data.byStrategy.map((s) => (
+                  <Row key={s.strategy} label={strat(s.strategy)} sub={`${s.n} trades · ${s.winRatePct}% wins · avg ${s.avgPct}%`} value={<span className={toneOf(s.pnlSol)}>{sol(s.pnlSol)}</span>} />
+                ))}
+              </Rows>
+            </section>
+            <section>
+              <SectionLabel>By how it ended</SectionLabel>
+              <Rows>
+                {data.byExit.map((e) => (
+                  <Row key={e.reason} label={EXIT_LABEL[e.reason] ?? e.reason} sub={`${e.n} trades · avg ${e.avgPct}%`} value={<span className={toneOf(e.pnlSol)}>{sol(e.pnlSol)}</span>} />
+                ))}
+              </Rows>
+            </section>
           </div>
         </div>
       )}
@@ -145,46 +177,20 @@ export function LossAutopsy() {
 
 function SegList({ rows }: { rows: Seg[] }) {
   return (
-    <ul className="divide-y divide-line text-xs">
+    <Rows>
       {rows.map((s) => (
-        <li key={s.key} className="flex min-w-0 justify-between gap-2 py-1.5">
-          <span className="min-w-0 truncate text-ink">
-            {strat(s.strategy)} · {s.band}
-          </span>
-          <span className="shrink-0 tabular-nums text-ink-2">
-            {s.n} trades · {s.winRatePct}% wins · avg {s.avgPct}% · <span className={s.pnlSol >= 0 ? 'text-up' : 'text-down'}>{sol(s.pnlSol)}</span>
-          </span>
-        </li>
+        <Row key={s.key} label={<span className="text-ink">{strat(s.strategy)} <span className="text-muted">·</span> {s.band}</span>} sub={`${s.n} trades · ${s.winRatePct}% wins · avg ${s.avgPct}%`} value={<span className={toneOf(s.pnlSol)}>{sol(s.pnlSol)}</span>} />
       ))}
-    </ul>
+    </Rows>
   );
 }
 
-function Table({ title, rows }: { title: string; rows: Array<[string, number, string, string, number]> }) {
+function Tile({ label, value, sub, warn }: { label: string; value: React.ReactNode; sub?: string; warn?: boolean }) {
   return (
-    <div className="min-w-0">
-      <div className="mb-1 font-medium text-ink">{title}</div>
-      <table className="w-full text-left text-xs tabular-nums">
-        <thead className="text-muted"><tr><th className="py-1">Kind</th><th>Trades</th><th>Wins</th><th>Avg</th><th className="text-right">SOL</th></tr></thead>
-        <tbody>
-          {rows.map(([k, n, w, a, p]) => (
-            <tr key={k} className="border-t border-line">
-              <td className="py-1 pr-2">{k}</td><td>{n}</td><td>{w}</td><td>{a}</td>
-              <td className={`text-right ${p >= 0 ? 'text-up' : 'text-down'}`}>{sol(p)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function Stat({ label, value, sub, warn }: { label: string; value: string; sub?: string; warn?: boolean }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-muted">{label}</div>
-      <div className={`truncate font-medium tabular-nums ${warn ? 'text-down' : 'text-ink'}`}>{value}</div>
-      {sub && <div className="truncate text-xs text-muted">{sub}</div>}
+    <div className="min-w-0 rounded-xl border border-line bg-surface-2/50 px-3 py-2.5">
+      <div className="truncate text-xs font-medium text-muted">{label}</div>
+      <div className={`tabular mt-1 truncate text-lg font-semibold leading-tight ${warn ? 'text-down' : 'text-ink'}`}>{value}</div>
+      {sub && <div className="mt-0.5 truncate text-xs text-muted">{sub}</div>}
     </div>
   );
 }

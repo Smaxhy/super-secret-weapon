@@ -83,7 +83,7 @@ export function UpdateCard() {
       {error && <p className="mt-2 text-sm text-down">{error}</p>}
       {note && <p className="mt-2 text-sm text-ink-2">{note}</p>}
       <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" disabled={pending} onClick={() => void ask(false)} className="rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+        <button type="button" disabled={pending} onClick={() => void ask(false)} className="rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent disabled:opacity-50">
           {pending ? 'Updating bot…' : 'Update bot now'}
         </button>
         <button type="button" disabled={pending} onClick={() => void ask(true)} className="rounded-xl border border-line px-4 py-2.5 text-sm font-semibold text-ink disabled:opacity-50" title="Rebuild and restart even if there is no new code">

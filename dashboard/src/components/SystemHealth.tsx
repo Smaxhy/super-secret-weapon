@@ -5,7 +5,7 @@
 import { useApi } from '../hooks/useApi';
 import { duration, STRATEGY_LABEL } from '../lib/format';
 import { Icon } from './Icon';
-import { Card } from './ui';
+import { Badge, Card, Funnel, RankedBars, Rows, Row, SectionLabel } from './ui';
 
 interface SystemData {
   version: string;
@@ -81,7 +81,7 @@ export function HealthBanner() {
   if (data.trading && data.trading.minutesSinceEntry >= 30 && data.uptimeSec > 10 * 60) issues.push(`no buy for ${duration(data.trading.minutesSinceEntry * 60)}: ${data.trading.summary}`);
   if (!issues.length) return null;
   return (
-    <div role="status" className="mb-4 flex items-start gap-2.5 rounded-xl border border-warning/40 bg-warning/10 px-3.5 py-3 text-sm text-ink">
+    <div role="status" className="pop mb-4 flex items-start gap-2.5 rounded-xl border border-warning/40 bg-warning/10 px-3.5 py-3 text-sm text-ink">
       <Icon name="alert" size={18} className="mt-px text-warning" />
       <div className="min-w-0">
         <div className="font-semibold">Bot health</div>
@@ -101,97 +101,102 @@ export function HealthBanner() {
 export function SystemPanel() {
   const { data, error } = useApi<SystemData>('/api/system', 30_000);
   const { data: upd } = useApi<UpdateInfo>('/api/update', 120_000);
+  const usageWarn = !!data?.usage && Object.values(data.usage.providers).some((p) => p.softLimitHit);
   return (
-    <Card title="Bot health">
-      {error && <p className="text-sm text-down">{error}</p>}
-      {data && (
-        <>
-          <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-            <Stat label="Running for" value={duration(data.uptimeSec)} />
-            <Stat label="Restarts (24h)" value={data.restarts24h ?? '—'} warn={data.crashes24h != null ? data.crashes24h >= 3 : (data.restarts24h ?? 0) >= 3} sub={data.crashes24h != null ? `${data.crashes24h} crash${data.crashes24h === 1 ? '' : 'es'}, rest = updates` : undefined} />
-            <Stat label="Memory" value={`${data.memory.rssMb} MB`} sub={data.redisMemoryMb !== null ? `Redis ${data.redisMemoryMb} MB` : undefined} />
-            <Stat label="Lag" value={data.eventLoopLagMs !== null ? `${data.eventLoopLagMs} ms` : '—'} warn={(data.eventLoopLagMs ?? 0) > 1000} />
-            <Stat label="Bot version" value={data.version} warn={botBehind(upd)} sub={botBehind(upd) ? `newest ${upd!.last!.remote}` : versionMismatch(data.version) ? `up to date (site ${SITE_VERSION})` : 'up to date'} />
-          </div>
-          {data.tape && (
-            <p className={`mt-3 text-xs ${data.tape.enabled ? (data.tape.failed > 0 && data.tape.written === 0 ? 'text-down' : 'text-muted') : 'text-muted'}`}>
-              Tape: {data.tape.enabled ? `${data.tape.perMin.toLocaleString()} trades/min recorded, ${data.tape.daysOnDisk ?? 0} days on disk${data.tape.rowsOnDisk ? ` (~${(data.tape.rowsOnDisk / 1e6).toFixed(1)}M rows)` : ''}${data.tape.dropped ? `, ${data.tape.dropped.toLocaleString()} dropped` : ''}${data.tape.failed ? `, ${data.tape.failed.toLocaleString()} failed writes` : ''}` : 'off'}
-            </p>
-          )}
-          {data.walletBook && (
-            <p className="mt-1 text-xs text-muted">
-              Wallet book: {data.walletBook.enabled ? `${data.walletBook.wallets.toLocaleString()} wallets, ${data.walletBook.proven} proven, ${data.walletBook.dumpers} known dumpers` : 'off'}
-            </p>
-          )}
-          {data.usage && (
-            <p className={`mt-1 text-xs ${Object.values(data.usage.providers).some((p) => p.softLimitHit) ? 'text-warning' : 'text-muted'}`}>
-              Usage today: Helius {data.usage.providers.helius?.used.toLocaleString() ?? 0} / {data.usage.providers.helius?.budget ? data.usage.providers.helius.budget.toLocaleString() : '∞'} · FluxRPC {data.usage.providers.flux?.used.toLocaleString() ?? 0} / {data.usage.providers.flux?.budget ? data.usage.providers.flux.budget.toLocaleString() : '∞'}
-              {Object.values(data.usage.providers).some((p) => p.softLimitHit) ? ' — optional lookups paused until midnight UTC' : ''}
-            </p>
-          )}
-          {data.lastExit && (
-            <p className={`mt-3 break-words text-sm ${crashed(data.lastExit.reason) ? 'text-down' : 'text-ink-2'}`}>
-              Last stop ({new Date(data.lastExit.at).toLocaleString()}): {data.lastExit.reason}
-            </p>
-          )}
-          {data.trading && <WhyNoTrades t={data.trading} />}
-          {data.recentErrors.length > 0 && (
-            <ul className="mt-2 space-y-1 text-xs text-muted">
-              {data.recentErrors.map((e) => (
-                <li key={e.at + e.message} className="break-words">
-                  {new Date(e.at).toLocaleTimeString()} — {e.message}
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      )}
-    </Card>
-  );
-}
-
-function WhyNoTrades({ t }: { t: NonNullable<SystemData['trading']> }) {
-  const list = (title: string, rows: Array<{ reason: string; count: number }>) =>
-    rows.length > 0 && (
-      <div className="min-w-0">
-        <div className="mb-1 text-xs text-muted">{title}</div>
-        <ul className="space-y-0.5 text-xs">
-          {rows.map((r) => (
-            <li key={r.reason} className="flex justify-between gap-2">
-              <span className="truncate text-ink-2">{r.reason}</span>
-              <span className="tabular-nums text-muted">{r.count}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
-  return (
-    <div className="mt-4 border-t border-line pt-3">
-      <div className="text-sm font-medium text-ink">Buying (last hour)</div>
-      <p className={`mt-1 text-sm ${t.lastHour.entries === 0 ? 'text-warning' : 'text-ink-2'}`}>
-        {t.summary}. Checked {t.lastHour.evaluated}, buy signals {t.lastHour.buySignals}, bought {t.lastHour.entries}
-        {t.lastEntryAt ? ` · last buy ${duration(t.minutesSinceEntry * 60)} ago` : ''}.
-      </p>
-      {t.strategies && t.strategies.length > 0 && <StrategyFunnels rows={t.strategies} />}
-      <div className="mt-2 grid gap-3 sm:grid-cols-2">
-        {list('Why coins were skipped', t.topSkips)}
-        {list('Why buy signals were refused', t.topRefusals)}
-      </div>
+    <div className="flex min-w-0 flex-col gap-4">
+      <Card title="Bot health" subtitle="Is it running, up to date and not overloaded.">
+        {error && <p className="text-sm text-down">{error}</p>}
+        {data && (
+          <>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Tile label="Running for" value={duration(data.uptimeSec)} />
+              <Tile label="Restarts (24h)" value={data.restarts24h ?? '—'} warn={data.crashes24h != null ? data.crashes24h >= 3 : (data.restarts24h ?? 0) >= 3} sub={data.crashes24h != null ? `${data.crashes24h} crash${data.crashes24h === 1 ? '' : 'es'}, rest = updates` : undefined} />
+              <Tile label="Memory" value={`${data.memory.rssMb} MB`} sub={data.redisMemoryMb !== null ? `Redis ${data.redisMemoryMb} MB` : undefined} />
+              <Tile label="Lag" value={data.eventLoopLagMs !== null ? `${data.eventLoopLagMs} ms` : '—'} warn={(data.eventLoopLagMs ?? 0) > 1000} />
+            </div>
+            <Rows className="mt-4">
+              <Row label="Bot version" value={<span className={botBehind(upd) ? 'text-down' : ''}>{data.version}</span>} sub={botBehind(upd) ? `newest ${upd!.last!.remote}` : versionMismatch(data.version) ? `up to date (site ${SITE_VERSION})` : 'up to date'} />
+              {data.tape && (
+                <Row
+                  label="Tape (replay recording)"
+                  value={data.tape.enabled ? `${data.tape.perMin.toLocaleString()} / min` : 'off'}
+                  tone={data.tape.enabled && data.tape.failed > 0 && data.tape.written === 0 ? 'down' : undefined}
+                  sub={data.tape.enabled ? `${data.tape.daysOnDisk ?? 0} days on disk${data.tape.rowsOnDisk ? ` · ~${(data.tape.rowsOnDisk / 1e6).toFixed(1)}M rows` : ''}${data.tape.dropped ? ` · ${data.tape.dropped.toLocaleString()} dropped` : ''}${data.tape.failed ? ` · ${data.tape.failed.toLocaleString()} failed writes` : ''}` : undefined}
+                />
+              )}
+              {data.walletBook && <Row label="Wallet book" value={data.walletBook.enabled ? `${data.walletBook.wallets.toLocaleString()} wallets` : 'off'} sub={data.walletBook.enabled ? `${data.walletBook.proven} proven · ${data.walletBook.dumpers} known dumpers` : undefined} />}
+              {data.usage && (
+                <Row
+                  label="Usage today"
+                  tone={usageWarn ? 'down' : undefined}
+                  value={`Helius ${data.usage.providers.helius?.used.toLocaleString() ?? 0} / ${data.usage.providers.helius?.budget ? data.usage.providers.helius.budget.toLocaleString() : '∞'}`}
+                  sub={`FluxRPC ${data.usage.providers.flux?.used.toLocaleString() ?? 0} / ${data.usage.providers.flux?.budget ? data.usage.providers.flux.budget.toLocaleString() : '∞'}${usageWarn ? ' — optional lookups paused until midnight UTC' : ''}`}
+                />
+              )}
+              {data.lastExit && <Row label="Last stop" value={<span className={crashed(data.lastExit.reason) ? 'text-down' : 'text-ink-2'}>{data.lastExit.reason}</span>} sub={new Date(data.lastExit.at).toLocaleString()} />}
+            </Rows>
+            {data.recentErrors.length > 0 && (
+              <div className="mt-4">
+                <SectionLabel>Recent errors</SectionLabel>
+                <ul className="space-y-1 text-xs text-muted">
+                  {data.recentErrors.map((e) => (
+                    <li key={e.at + e.message} className="break-words">
+                      <span className="tabular text-ink-2">{new Date(e.at).toLocaleTimeString()}</span> — {e.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
+      </Card>
+      {data?.trading && <WhyNoTrades t={data.trading} />}
     </div>
   );
 }
 
-/** One line per strategy: is it running and how far its coins got (checked → passed rules → buy signal → bought). */
+function WhyNoTrades({ t }: { t: NonNullable<SystemData['trading']> }) {
+  const quiet = t.lastHour.entries === 0;
+  return (
+    <>
+      <Card title="Buying (last hour)" subtitle={t.summary} action={quiet ? <Badge tone="warn">no buys</Badge> : <Badge tone="up">{t.lastHour.entries} bought</Badge>}>
+        <Funnel
+          steps={[
+            { label: 'checked', n: t.lastHour.evaluated },
+            { label: 'buy signals', n: t.lastHour.buySignals },
+            { label: 'bought', n: t.lastHour.entries, tone: t.lastHour.entries > 0 ? 'up' : 'warn' },
+          ]}
+        />
+        {t.lastEntryAt && <p className="mt-3 text-xs text-muted">Last buy {duration(t.minutesSinceEntry * 60)} ago.</p>}
+        {t.strategies && t.strategies.length > 0 && <StrategyFunnels rows={t.strategies} />}
+      </Card>
+      <div className="grid gap-4 lg:grid-cols-2">
+        {t.topSkips.length > 0 && (
+          <Card title="Why coins were skipped" subtitle="The rule each coin failed first, most common on top.">
+            <RankedBars rows={t.topSkips.map((r) => ({ label: r.reason, count: r.count }))} />
+          </Card>
+        )}
+        {t.topRefusals.length > 0 && (
+          <Card title="Why buy signals were refused" subtitle="Coins that passed every rule but the trader said no.">
+            <RankedBars rows={t.topRefusals.map((r) => ({ label: r.reason, count: r.count }))} tone="muted" />
+          </Card>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** One block per strategy: is it running and how far its coins got (checked → passed rules → buy signal → bought). */
 function StrategyFunnels({ rows }: { rows: StrategyFunnel[] }) {
-  const verdict = (r: StrategyFunnel): { text: string; tone: string } => {
-    if (r.on === false) return { text: 'switched off', tone: 'text-muted' };
-    if (r.bought > 0) return { text: 'buying', tone: 'text-up' };
-    if (r.checked === 0) return { text: 'no coins found', tone: 'text-warning' };
-    if (r.rulesOk === 0) return { text: 'every coin fails a rule', tone: 'text-warning' };
-    if (r.signal === 0) return { text: 'score under the bar', tone: 'text-warning' };
-    if (r.refused > 0) return { text: 'signals refused', tone: 'text-warning' };
-    if (r.dipWait + r.confirming > 0) return { text: 'waiting for entries', tone: 'text-ink-2' };
-    return { text: 'signals held back', tone: 'text-warning' };
+  const verdict = (r: StrategyFunnel): { text: string; tone: 'neutral' | 'up' | 'warn' } => {
+    if (r.on === false) return { text: 'switched off', tone: 'neutral' };
+    if (r.bought > 0) return { text: 'buying', tone: 'up' };
+    if (r.checked === 0) return { text: 'no coins found', tone: 'warn' };
+    if (r.rulesOk === 0) return { text: 'every coin fails a rule', tone: 'warn' };
+    if (r.signal === 0) return { text: 'score under the bar', tone: 'warn' };
+    if (r.refused > 0) return { text: 'signals refused', tone: 'warn' };
+    if (r.dipWait + r.confirming > 0) return { text: 'waiting for entries', tone: 'neutral' };
+    return { text: 'signals held back', tone: 'warn' };
   };
   const held = (r: StrategyFunnel) => {
     const parts: string[] = [];
@@ -203,24 +208,31 @@ function StrategyFunnels({ rows }: { rows: StrategyFunnel[] }) {
     return parts.join(' · ');
   };
   return (
-    <div className="mt-3">
-      <div className="mb-1 text-xs text-muted">Strategies — checked → passed rules → buy signal → bought</div>
-      <ul className="divide-y divide-line text-xs">
+    <div className="mt-5">
+      <SectionLabel>Per strategy</SectionLabel>
+      <ul className="divide-y divide-line">
         {rows.map((r) => {
           const v = verdict(r);
           const h = held(r);
           return (
-            <li key={r.strategy} className="py-1.5">
-              <div className="flex items-baseline justify-between gap-2">
+            <li key={r.strategy} className={`py-3 first:pt-0 last:pb-0 ${r.on === false ? 'opacity-60' : ''}`}>
+              <div className="mb-2 flex items-center justify-between gap-2">
                 <span className="font-medium text-ink">{STRATEGY_LABEL[r.strategy] ?? r.strategy}</span>
-                <span className={v.tone}>{v.text}</span>
+                <Badge tone={v.tone}>{v.text}</Badge>
               </div>
-              <div className="tabular-nums text-ink-2">
-                {r.checked} → {r.rulesOk} → {r.signal} → <span className={r.bought ? 'text-up' : ''}>{r.bought}</span>
-              </div>
-              {h && <div className="text-muted">{h}</div>}
+              <Funnel
+                steps={[
+                  { label: 'checked', n: r.checked },
+                  { label: 'rules ok', n: r.rulesOk },
+                  { label: 'signal', n: r.signal },
+                  { label: 'bought', n: r.bought, tone: r.bought ? 'up' : undefined },
+                ]}
+              />
+              {h && <div className="mt-2 text-xs text-muted">{h}</div>}
               {r.topSkips && r.topSkips.length > 0 && r.rulesOk < r.checked && (
-                <div className="truncate text-muted">skipped: {r.topSkips.map((x) => `${x.reason} ×${x.count}`).join(' · ')}</div>
+                <div className="mt-2 text-xs text-muted">
+                  <span className="text-ink-2">Skipped for:</span> {r.topSkips.map((x) => `${x.reason} ×${x.count}`).join(' · ')}
+                </div>
               )}
             </li>
           );
@@ -230,12 +242,12 @@ function StrategyFunnels({ rows }: { rows: StrategyFunnel[] }) {
   );
 }
 
-function Stat({ label, value, sub, warn }: { label: string; value: React.ReactNode; sub?: string; warn?: boolean }) {
+function Tile({ label, value, sub, warn }: { label: string; value: React.ReactNode; sub?: string; warn?: boolean }) {
   return (
-    <div className="min-w-0">
-      <div className="text-muted">{label}</div>
-      <div className={`truncate font-medium tabular-nums ${warn ? 'text-down' : 'text-ink'}`}>{value}</div>
-      {sub && <div className="truncate text-xs text-muted">{sub}</div>}
+    <div className="min-w-0 rounded-xl border border-line bg-surface-2/50 px-3 py-2.5">
+      <div className="truncate text-xs font-medium text-muted">{label}</div>
+      <div className={`tabular mt-1 truncate text-lg font-semibold leading-tight ${warn ? 'text-down' : 'text-ink'}`}>{value}</div>
+      {sub && <div className="mt-0.5 truncate text-xs text-muted">{sub}</div>}
     </div>
   );
 }
