@@ -28,6 +28,7 @@ import { timingNow } from '../learner/timing';
 import type { MarketRaw } from '../evaluator/market-analyzer';
 import type { Executor } from './types';
 import { scaleInPlan } from './scale-in';
+import { sniperSize } from '../evaluator/sniper';
 
 import { getSolUsd } from '../lib/sol-price';
 
@@ -216,9 +217,15 @@ export class Trader {
     if (band?.block) return refuse(band.block);
     const probe = band?.probe === true || rebound || req.probe === true;
 
+    // v11.7 Sniper mode: few trades at the owner's conviction size; no learning / probe trades; its own open limit.
+    const sn = cfg.sniper ?? DEFAULT_CONFIG.sniper;
+    const sniper = sn.enabled === true;
+    if (sniper && open.length >= sn.maxOpen) return refuse(`sniper mode: max ${sn.maxOpen} trades open`);
+    if (sniper && (req.explore === true || probe)) return refuse('sniper mode: only full-conviction setups (no learning / probe trades)');
+
     const strategyOpen = open.filter((p) => p.strategy === req.strategy).reduce((s, p) => s + (p.sizeSol * p.remainingPct) / 100, 0);
     // The allocator shifts budget toward strategies that are proven to make money (×0.5–1.6, 1 until it knows).
-    const budget = capital * allocationShare(cfg.trading.allocation[req.strategy], cfg.trading.minAllocationWhenOn) * (this.allocFactor?.(req.strategy) ?? 1) - strategyOpen;
+    const budget = capital * allocationShare(cfg.trading.allocation[req.strategy], cfg.trading.minAllocationWhenOn) * (sniper ? 1 : (this.allocFactor?.(req.strategy) ?? 1)) - strategyOpen;
     const reserve = cfg.paper.txFeeSol * 4 + 0.01; // keep enough to pay for the exits
     // Market mood scales position size (e.g. ×1.2 when hot, ×0.5 when rug-heavy).
     // …and by time of day: hours that historically produce more winners get bigger size.
@@ -237,13 +244,15 @@ export class Trader {
     const normalCap = Math.min(t.maxPositionSol * Math.max(t.maxConvictionMultiple ?? 1.6, stratMult ?? 0), (capital * (t.maxPositionPctOfCapital ?? 100)) / 100);
     const weakCap = hc?.enabled ? Math.min(hc.normalMaxSol ?? Infinity, req.score < (hc.lowScore ?? 0) ? (hc.lowScoreMaxSol ?? Infinity) : Infinity) : Infinity;
     const cap = highConviction ? Math.max(normalCap, Math.min(hc!.sizeSol, (capital * hc!.maxPctOfCapital) / 100)) : Math.min(normalCap, weakCap);
-    let size = Math.min(highConviction ? cap : sized * (req.sizeMultiplier ?? 1), cap, budget, balance - reserve);
+    let size = sniper
+      ? sniperSize({ sizeSol: hc?.sizeSol ?? t.maxPositionSol, maxPctOfCapital: hc?.maxPctOfCapital ?? 100, capital, budget, balance, reserve })
+      : Math.min(highConviction ? cap : sized * (req.sizeMultiplier ?? 1), cap, budget, balance - reserve);
     // Stacked multipliers (coach × conviction × regime × hour…) can shrink a buy under the minimum
     // and silently stop every entry → the minimum size, if the budget allows it.
     if (size < cfg.trading.minPositionSol && Math.min(cap, budget, balance - reserve) >= cfg.trading.minPositionSol) size = cfg.trading.minPositionSol;
     // Probes and the strategies the owner keeps at the minimum size (new pairs) never go bigger than the minimum.
     const minOnly = (cfg.trading.minSizeStrategies as readonly string[] | undefined)?.includes(req.strategy) === true;
-    if (probe || minOnly) size = Math.min(size, cfg.trading.minPositionSol);
+    if (!sniper && (probe || minOnly)) size = Math.min(size, cfg.trading.minPositionSol);
     // Thin coins: a big position can't get out near the stop (the price gaps through it) → keep our size a small slice
     // of the liquidity; too thin even for the minimum → no buy.
     const maxLiqPct = cfg.trading.maxPositionPctOfLiquidity ?? 0;
@@ -271,7 +280,7 @@ export class Trader {
     }
 
     // Buy in two steps: part now, the rest only when the coin proves itself (sell manager → addLeg).
-    const plan = scaleInPlan(size, cfg.trading.minPositionSol, cfg.trading.scaleIn ?? DEFAULT_CONFIG.trading.scaleIn, probe || req.explore === true);
+    const plan = scaleInPlan(size, cfg.trading.minPositionSol, cfg.trading.scaleIn ?? DEFAULT_CONFIG.trading.scaleIn, probe || req.explore === true || sniper);
     const fill = await this.executor.buy({ mint: req.mint, solAmount: round4(plan ? plan.firstSol : size), maxSlippageBps: req.maxSlippageBps, expectedPriceSol: req.market.priceSol });
     const explanation = req.explain?.(size) ?? null;
     const context = { score: req.score, market: req.market, features: req.features, balanceBefore: balance, explanation };

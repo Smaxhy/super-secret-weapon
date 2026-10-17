@@ -11,6 +11,8 @@ smart money → learning engine → ML → social). See README.md.
 ## FREEZE ENDED (Oct 17 2026 — owner: "the trades are too bad, upgrade everything, make it profitable")
 The Oct 15 freeze below is over; v11 (below, "Current state") is the new setup. Judge it on Performance → Mistakes
 after 200–300 trades, same rule as before: switch losers OFF, don't tweak.
+**v11.7 Sniper mode is the setup to judge now: fewer, bigger trades — judge it after ~100 trades** (Controls → Trading
+→ "Sniper mode" shows the ten rules in force; test any change first with the replay).
 
 ## ⛔ (old) FREEZE (owner's order, Oct 15 2026 — v10.39 was the frozen version)
 **Do NOT push ANY change — no new features, no rule / setting / default tweaks, no tuning, no refactors — unless something
@@ -790,6 +792,33 @@ Diagnosing (reading code, explaining Bot health, diagnose.sh output) is always f
     as banked) and the trail × 0.6 (the trail's own 0.75–1.3 clamp still applies); a known dumper selling ≥50% of its bag
     while we hold → RUG_DETECTED. Editable (Controls → Rules → Wallet engine). Migration v37 (holder clock into the saved
     `exit` row). tests/wallet-engine.test.ts.
+- **v11.7 (Oct 17): Sniper mode + usage guards + pump.fun lists** (owner: "I don't care if it's a few trades, but then each
+  one must be profitable with a big impact"; "don't drain my Helius / FluxRPC"). Migration v38.
+  - **Sniper mode** (`sniper` config, ON by default; `src/config/sniper.ts` `sniperOn()`, `src/evaluator/sniper.ts` pure):
+    a BUY only when everything lines up — 5-min `organicFlow` ≥30 real buyers / ≥12 SOL / buys ≥60% / organic ≥60%,
+    score ≥ bar + 8, momentum gate + entry quality + edge gate + pressure + crowd quality all green, no learning / probe /
+    half-size entries (`sniperEntryFails`, evaluator after the edge gate → SKIP "sniper: …" in Bot health; swing trader
+    too). Trader: size = `trading.highConviction.sizeSol` under the existing caps only (`sniperSize`), allocator /
+    conviction / coach / regime / timing / weak caps / min-size strategies ignored, global `maxOpen` 3, no scale-in.
+    Exits: `sniperExitOverlay` laid over EVERY strategy in `exitRulesFor` (25% at 1.5x / 25% at 2.5x / 20% at 5x, trail
+    25% from 1.5x, break-even from 1.5x, stop ≤12%, time stop 2 min without 1.08x); early bail / no-life / dead coin /
+    spike sell / rug / mirror / holder clock stay on. **Watch-only while on** (they compute + log, change nothing):
+    autopsyTuneFor, coachFor, calibration(), timingNow, brain.allocFactor, aiRuleVerdict, entryStyleFor, TA proven bonus,
+    win-model points + size, strategy-lab auto-apply, exit-tuner (loss exits + timers). Replay `--policy sniper` = the
+    same switch (`--set sniper.enabled=false` on `live` shows the difference). Controls → Trading card "Sniper mode"
+    (switch + the ten rules in plain words), editable group "Sniper mode". Defaults: CURVE_SNIPE + RUNNER OFF
+    (owner's CSV: the worst two), allocation MIGRATION 0.5 / SOON 0.3 / KOL 0.1 / SWING 0.1.
+  - **Usage guards** (`usage` config, `src/lib/usage-budget.ts`): every RPC request counted per provider per UTC day
+    (URL host → helius / flux / other; Redis `usage:<p>:<day>`, mirrored in memory); past `softPct` (80%) of a daily
+    budget (Helius 25k, FluxRPC 300k, 0 = unlimited) the OPTIONAL lookups pause until midnight UTC — funding graph
+    (`lookupFunder`), swing-universe holders (`topHoldersPct`), wallet reports; essential calls always go. Streams aren't
+    requests. X (`x:reads`) and Solscan (`solscan:calls`) keep their own caps. WARN event `usage_soft_limit` once a day;
+    Bot health "Usage today: …"; editable group "Usage limits".
+  - **pump.fun lists**: king-of-the-hill / for-you / top-runners return HTTP 404 (frontend-api-v3 changed) →
+    `trending.pumpUrls.{live,koth,forYou,runners}` (path or full URL, '' = off, logged once at start). OPEN ITEM: the
+    owner finds the new URLs in the browser's network tab on pump.fun; set them (config push) to switch the lists back on.
+  - Tests: tests/sniper.test.ts, tests/usage-budget.test.ts (84 files / 740).
+
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

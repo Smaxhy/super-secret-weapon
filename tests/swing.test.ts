@@ -6,6 +6,9 @@
 import { PublicKey } from '@solana/web3.js';
 import BN from 'bn.js';
 import { describe, expect, it } from 'vitest';
+import { overrideConfig } from '../src/config/runtime-config';
+// v11.7: these pin the per-strategy exits; sniper mode (on by default) lays its own exits over every strategy.
+overrideConfig({ sniper: { enabled: false } });
 import type { Redis } from 'ioredis';
 import { DEFAULT_CONFIG } from '../src/config/default';
 import type { Candle } from '../src/evaluator/chart-reader';

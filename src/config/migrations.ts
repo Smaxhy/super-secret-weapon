@@ -557,6 +557,16 @@ export const MIGRATIONS: ConfigMigration[] = [
     // (`wallets` is a new section: never saved before → it takes the defaults; only the saved `exit` row needs the clock pushed in)
     set: [['exit', ['holderClock'], { enabled: true, minHolderPct: 1.5, expiryShare: 0.8, tightenTrailFactor: 0.6, sellPct: 40, minMultiple: 1.1 }]],
   },
+  {
+    version: 38,
+    note: 'v11.7: Sniper mode (new section → defaults), new pairs + runners OFF (worst two in the owner\'s CSV), budget to migrated / SOON; pump.fun dead lists off until the owner finds the new URLs',
+    set: [
+      ['trading', ['enabledStrategies', 'CURVE_SNIPE'], false],
+      ['trading', ['enabledStrategies', 'RUNNER'], false],
+      ['trading', ['allocation'], { CURVE_SNIPE: 0, MIGRATION_MOMENTUM: 0.5, SOON: 0.3, RUNNER: 0, SMART_MONEY_COPY: 0.1, SWING: 0.1 }],
+      ['trending', ['pumpUrls'], { live: '/coins/currently-live?offset=0&limit=60&includeNsfw=false', koth: '', forYou: '', runners: '' }],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

@@ -34,6 +34,7 @@
  *   rugger:<address>:last   STRING JSON RuggerRecord
  */
 import type { ConfirmedSignatureInfo, ParsedInstruction, ParsedTransactionWithMeta } from '@solana/web3.js';
+import { rpcOptionalAllowed } from '../lib/usage-budget';
 import { PublicKey } from '@solana/web3.js';
 import type { Redis } from 'ioredis';
 import { DEFAULT_CONFIG, LIVE_STATE_TTL_SECONDS, type BotConfigShape } from '../config/default';
@@ -310,7 +311,7 @@ export function findFunder(tx: ParsedTransactionWithMeta | null, wallet: string)
 export async function lookupFunder(redis: Redis, wallet: string, rpc: FundingRpc | null, cacheHours: number): Promise<FunderInfo | null> {
   const cached = await redis.get(insKey.funder(wallet));
   if (cached) return JSON.parse(cached) as FunderInfo;
-  if (!rpc) return null;
+  if (!rpc || !rpcOptionalAllowed()) return null; // v11.7: optional lookup, paused past the usage soft limit
   const info: FunderInfo = { funder: null, ageHours: null, veryActive: false };
   try {
     const sigs = await rpc.getSignaturesForAddress(new PublicKey(wallet), { limit: 1000 });

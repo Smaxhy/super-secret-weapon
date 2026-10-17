@@ -13,6 +13,7 @@
  * page and the AI coach's "otherLearners" section.
  */
 import type { Redis } from 'ioredis';
+import { sniperOn } from '../config/sniper';
 import { getConfig } from '../config/runtime-config';
 import { recentChanges, recordChange } from '../lib/change-log';
 import { moduleLogger } from '../lib/logger';
@@ -76,6 +77,7 @@ export class Brain {
 
   /** Budget multiplier for a strategy (1 until the allocator has enough evidence). */
   allocFactor(strategy: string): number {
+    if (sniperOn()) return 1; // v11.7: watch-only in sniper mode
     const m = this.alloc.multiplierFor(strategy);
     return Number.isFinite(m) && m > 0 ? m : 1;
   }

@@ -11,6 +11,7 @@
  * to "What the bot changed"; the summary goes to the AI coach (`exitsAfterSelling`) and the Brain page.
  */
 import type { Redis } from 'ioredis';
+import { sniperOn } from '../config/sniper';
 import { DEFAULT_CONFIG } from '../config/default';
 import { applyEdit } from '../config/apply-edit';
 import { getConfig } from '../config/runtime-config';
@@ -307,6 +308,7 @@ export class ExitTuner {
       // False alarms → needs a deeper drop before it calls a rug; every one a real rug → may call it a bit sooner.
       const next = Math.min(t.max, Math.max(t.min, cur + (v.verdict === 'false_alarm' ? lc.step : -Math.round(lc.step / 2))));
       if (next === cur) continue;
+      if (sniperOn()) continue; // v11.7: watch-only in sniper mode
       const r = await applyEdit(t.path, next, 'exit-tuner', v.why);
       if (r.ok) {
         await this.redis.set(K.changed(key), String(now), 'EX', 30 * 86_400);
@@ -370,6 +372,7 @@ export class ExitTuner {
         if (!(cur > 0) || !(def > 0)) continue;
         const next = Math.round(Math.min(def * c.maxFactor, Math.max(def * c.minFactor, cur * (v.action === 'longer' ? 1.25 : 0.85))) * 10) / 10;
         if (next === cur) continue;
+        if (sniperOn()) continue; // v11.7: watch-only in sniper mode
         const r = await applyEdit(path, next, 'exit-tuner', v.why);
         if (r.ok) {
           await this.redis.set(K.changed(key), String(now), 'EX', 30 * 86_400);

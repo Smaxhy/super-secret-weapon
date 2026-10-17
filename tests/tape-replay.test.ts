@@ -133,14 +133,11 @@ describe('replay engine on a synthetic tape', () => {
     overrideConfig({ entry: { minCombinedScore: 25 } });
   });
 
-  it('the sniper placeholder policy layers its exits and size over every strategy', () => {
+  it('the sniper policy is the live switch: sniper.enabled + the conviction size', () => {
     const p = policyByName('sniper');
     expect(p.name).toBe('sniper');
-    const o = p.overrides as { trading: { maxPositionSol: number }; exit: { takeProfitTiers: Array<{ multiple: number }>; byStrategy: Record<string, { stopLoss: { maxPct: number } }> } };
+    const o = p.overrides as { trading: { maxPositionSol: number }; sniper: { enabled: boolean } };
     expect(o.trading.maxPositionSol).toBeGreaterThan(0);
-    expect(o.exit.takeProfitTiers.map((x) => x.multiple)).toEqual([1.5, 2.5, 5]);
-    expect(o.exit.byStrategy.SOON.stopLoss.maxPct).toBe(12);
-    expect(p.entry?.({ score: 60, threshold: 65 } as never)).toContain('sniper');
-    expect(p.entry?.({ score: 80, threshold: 65 } as never)).toBeNull();
+    expect(o.sniper.enabled).toBe(true);
   });
 });

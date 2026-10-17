@@ -38,6 +38,8 @@ import type { ExitReason, Position, Prisma } from '@prisma/client';
 import { priceActionFor, type PriceAction } from '../evaluator/price-action';
 import { DEFAULT_CONFIG, type BotConfigShape } from '../config/default';
 import { deepMerge, getConfig, refreshConfig } from '../config/runtime-config';
+import { sniperOn } from '../config/sniper';
+import { sniperExitOverlay, type SniperExits } from '../evaluator/sniper';
 import { getSolUsd } from '../lib/sol-price';
 import { bus } from '../lib/bus';
 import { moduleLogger } from '../lib/logger';
@@ -550,12 +552,34 @@ const strategyRulesCache = new WeakMap<object, Map<string, ExitRules>>();
  */
 export function exitRulesFor(strategy: string | null | undefined, rules: ExitRules): ExitRules {
   const over = strategy ? ((rules as Partial<ExitRules>).byStrategy as Record<string, Record<string, unknown> | undefined> | undefined)?.[strategy] : undefined;
-  if (!over || !Object.keys(over).length) return rules;
+  // v11.7 Sniper mode: its exits (built for big moves) lie over EVERY strategy's rules and win.
+  const sn = sniperExitsNow();
+  if (!sn && (!over || !Object.keys(over).length)) return rules;
   let m = strategyRulesCache.get(rules);
   if (!m) strategyRulesCache.set(rules, (m = new Map()));
-  let r = m.get(strategy!);
-  if (!r) m.set(strategy!, (r = deepMerge(rules, over) as ExitRules));
+  const key = `${strategy ?? ''}${sn ? `|sniper:${sniperKey(sn)}` : ''}`;
+  let r = m.get(key);
+  if (!r) {
+    const base = over && Object.keys(over).length ? (deepMerge(rules, over) as ExitRules) : rules;
+    r = sn ? (deepMerge(base, sniperExitOverlay(sn, rules.stopLoss?.minPct ?? 12)) as ExitRules) : base;
+    m.set(key, r);
+  }
   return r;
+}
+function sniperExitsNow(): SniperExits | null {
+  if (!sniperOn()) return null;
+  try {
+    return (getConfig() as { sniper?: { exits?: SniperExits } }).sniper?.exits ?? null;
+  } catch {
+    return null;
+  }
+}
+const sniperKeys = new WeakMap<object, string>();
+let sniperKeySeq = 0;
+function sniperKey(e: SniperExits): string {
+  let k = sniperKeys.get(e);
+  if (!k) sniperKeys.set(e, (k = String(++sniperKeySeq)));
+  return k;
 }
 
 /**

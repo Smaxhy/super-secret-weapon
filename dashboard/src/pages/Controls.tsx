@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { ResetPaperForm } from '../components/ResetPaper';
 import { BuyRules } from '../components/BuyRules';
 import { DataFeed } from '../components/DataFeed';
+import { SniperMode } from '../components/SniperMode';
 import { Notifications } from '../components/Notifications';
 import { Icon } from '../components/Icon';
 import { UpdateCard } from '../components/UpdateCard';
@@ -129,6 +130,7 @@ export function Controls() {
 
       {tab === 'trading' && (
         <Stack>
+          <SniperMode />
           <Card title="Bot status">
             <div className="mb-4 flex items-center gap-3">
               <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${state.dot}`} aria-hidden="true" />

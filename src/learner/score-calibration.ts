@@ -10,6 +10,7 @@
  * correction is shown in the buy explanation.
  */
 import type { Redis } from 'ioredis';
+import { sniperOn } from '../config/sniper';
 import { getConfig } from '../config/runtime-config';
 import { DEFAULT_CONFIG } from '../config/default';
 import { moduleLogger } from '../lib/logger';
@@ -93,6 +94,7 @@ export function calibrationTable(): Calibration | null {
 
 export function calibration(): Calibration | null {
   // v10.39: off unless entry.autoAdjust.calibration (still computed + shown; it just doesn't move the score / size).
+  if (sniperOn()) return null; // v11.7: watch-only in sniper mode
   try {
     if (getConfig().entry.autoAdjust?.calibration === false) return null;
   } catch {

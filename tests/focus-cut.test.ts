@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../src/config/default';
 import { MIGRATIONS, applyMigration } from '../src/config/migrations';
+import { overrideConfig } from '../src/config/runtime-config';
 import { exitRulesFor } from '../src/executor/sell-manager';
 import { inQuietHours } from '../src/executor/trader';
 
 describe('v10.21 focus cut (owner CSV, 515 trades)', () => {
-  it('SOON, migrated coins, KOL follow, (small) RUNNER and — since v10.27 — new pairs trade; the budget adds up to 1', () => {
+  it('SOON, migrated coins and KOL follow trade; new pairs + runners are off since v11.7; the budget adds up to 1', () => {
     const t = DEFAULT_CONFIG.trading;
-    expect(Object.entries(t.enabledStrategies).filter(([, on]) => on).map(([s]) => s).sort()).toEqual(['CURVE_SNIPE', 'MIGRATION_MOMENTUM', 'RUNNER', 'SMART_MONEY_COPY', 'SOON']);
+    expect(Object.entries(t.enabledStrategies).filter(([, on]) => on).map(([s]) => s).sort()).toEqual(['MIGRATION_MOMENTUM', 'SMART_MONEY_COPY', 'SOON']);
     expect(DEFAULT_CONFIG.trading.quietHours.enabled).toBe(true);
     expect(Object.values(t.allocation).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
   });
@@ -17,7 +18,8 @@ describe('v10.21 focus cut (owner CSV, 515 trades)', () => {
     expect(inQuietHours(23, 22, 2) && inQuietHours(1, 22, 2) && !inQuietHours(2, 22, 2)).toBe(true);
     expect(inQuietHours(5, 3, 3)).toBe(false);
   });
-  it('SOON and migrated coins bank 30% at 1.2x; others keep their own tiers', () => {
+  it('SOON and migrated coins bank 30% at 1.2x; others keep their own tiers (sniper mode off — it lays its own exits over all of them)', () => {
+    overrideConfig({ sniper: { enabled: false } });
     const r = DEFAULT_CONFIG.exit as unknown as Parameters<typeof exitRulesFor>[1];
     expect(exitRulesFor('SOON', r).takeProfitTiers[0]).toEqual({ multiple: 1.15, sellPct: 40 });
     expect(exitRulesFor('MIGRATION_MOMENTUM', r).takeProfitTiers.map((x) => x.multiple)).toEqual([1.15, 1.3, 5]);

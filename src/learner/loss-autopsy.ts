@@ -15,6 +15,7 @@
  * again gets unblocked by the next run. Pure analysis (`runAutopsy`) + Redis store (`autopsy:last`).
  */
 import type { Redis } from 'ioredis';
+import { sniperOn } from '../config/sniper';
 import { prisma } from '../lib/prisma';
 import { learningSince } from './labels';
 import { getConfig } from '../config/runtime-config';
@@ -276,6 +277,7 @@ export function tuneStrategies(trades: readonly ClosedTrade[], minTrades: number
 let tuneCache = new Map<string, StrategyTune>();
 /** The autopsy's current adjustments for a strategy (neutral until the first run). */
 export function autopsyTuneFor(strategy: string): StrategyTune {
+  if (sniperOn()) return NEUTRAL_TUNE(strategy); // v11.7: watch-only in sniper mode
   return tuneCache.get(strategy) ?? NEUTRAL_TUNE(strategy);
 }
 export function setAutopsyTunes(t: readonly StrategyTune[]): void {

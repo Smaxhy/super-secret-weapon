@@ -25,6 +25,7 @@
  * dashboard's Learning page.
  */
 import type { Redis } from 'ioredis';
+import { sniperOn } from '../config/sniper';
 import type { StrategyName } from '../config/types';
 import { getConfig } from '../config/runtime-config';
 import { bus, type BusEvent } from '../lib/bus';
@@ -198,6 +199,7 @@ let cache = new Map<string, CoachState>();
 export function coachFor(strategy: StrategyName): CoachState {
   // v10.39: the coach still reviews every trade (lessons on the History page) but no longer moves the bar / size / exits
   // unless entry.autoAdjust.coach is on.
+  if (sniperOn()) return NEUTRAL(strategy); // v11.7: watch-only in sniper mode
   try {
     if (getConfig().entry.autoAdjust?.coach === false) return NEUTRAL(strategy);
   } catch {

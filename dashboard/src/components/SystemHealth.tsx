@@ -23,6 +23,8 @@ interface SystemData {
   tape?: { enabled: boolean; perMin: number; buffered: number; written: number; dropped: number; failed: number; daysOnDisk: number | null; rowsOnDisk: number | null } | null;
   /** v11.6: the wallet book. */
   walletBook?: { enabled: boolean; wallets: number; proven: number; dumpers: number; losers: number; bots: number } | null;
+  /** v11.7: requests per provider today vs the owner's budgets. */
+  usage?: { day: string; providers: Record<string, { used: number; budget: number; softLimitHit: boolean }> } | null;
   trading?: {
     lastEntryAt: string | null;
     minutesSinceEntry: number;
@@ -119,6 +121,12 @@ export function SystemPanel() {
           {data.walletBook && (
             <p className="mt-1 text-xs text-muted">
               Wallet book: {data.walletBook.enabled ? `${data.walletBook.wallets.toLocaleString()} wallets, ${data.walletBook.proven} proven, ${data.walletBook.dumpers} known dumpers` : 'off'}
+            </p>
+          )}
+          {data.usage && (
+            <p className={`mt-1 text-xs ${Object.values(data.usage.providers).some((p) => p.softLimitHit) ? 'text-warning' : 'text-muted'}`}>
+              Usage today: Helius {data.usage.providers.helius?.used.toLocaleString() ?? 0} / {data.usage.providers.helius?.budget ? data.usage.providers.helius.budget.toLocaleString() : '∞'} · FluxRPC {data.usage.providers.flux?.used.toLocaleString() ?? 0} / {data.usage.providers.flux?.budget ? data.usage.providers.flux.budget.toLocaleString() : '∞'}
+              {Object.values(data.usage.providers).some((p) => p.softLimitHit) ? ' — optional lookups paused until midnight UTC' : ''}
             </p>
           )}
           {data.lastExit && (

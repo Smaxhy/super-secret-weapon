@@ -14,6 +14,7 @@
  * `applyEveryHours`). The owner's stop-loss band is never touched by a variant.
  */
 import type { Redis } from 'ioredis';
+import { sniperOn } from '../config/sniper';
 import { DEFAULT_CONFIG, type BotConfigShape } from '../config/default';
 import { deepMerge, getConfig, updateConfigSection } from '../config/runtime-config';
 import type { StrategyName } from '../config/types';
@@ -242,7 +243,7 @@ export class StrategyLab {
   /** Switch the live exits to the best variant when the evidence is strong (see pickBest). */
   async maybeApply(now = Date.now()): Promise<string | null> {
     const c = this.cfg();
-    if (!c.enabled || !c.autoApply) return null;
+    if (!c.enabled || !c.autoApply || sniperOn()) return null; // v11.7: no auto-apply in sniper mode
     try {
       const applied = await this.appliedVariant();
       if (applied && now - applied.at < c.applyEveryHours * 3_600_000) return null;

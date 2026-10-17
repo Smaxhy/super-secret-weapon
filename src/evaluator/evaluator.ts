@@ -76,6 +76,8 @@ import { entryQuality, DEFAULT_ENTRY_QUALITY } from './entry-quality';
 import { fetchRugCheck, rugCheckVerdict, type RugCheckVerdict } from '../integrations/rugcheck';
 import { adaptiveStopMultiplier, mcAgeStopMultiplier, DEFAULT_ADAPTIVE_STOP } from '../executor/adaptive-stop';
 import { edgeGateVerdict, probeTurn, DEFAULT_EDGE_GATE } from './edge-gate';
+import { sniperEntryFails } from './sniper';
+import { sniperOn } from '../config/sniper';
 import { crowdQuality, type CrowdQuality } from './crowd-quality';
 import type { WalletBook } from '../learner/wallet-book';
 import type { CrowdTrade } from '../scanner/crowd-tracker';
@@ -339,6 +341,7 @@ export class Evaluator {
       if (lt) {
         const fired = runStrategiesTf(this.crowd.candles(mint), tr, lt.pp && lt.pp > 0 ? lt.pp : lt.px, Date.now(), market.raw.ageSec, [...this.ta.provenNow().keys()], { creator: token.creator });
         taBonus = taPoints(fired, this.ta.provenNow(), taCfg);
+        if (sniperOn()) taBonus = { points: 0, notes: taBonus.notes }; // v11.7: watch-only in sniper mode
       }
     }
     // DexScreener: DEX paid / CTO / trending → bonus points (optionally required).
@@ -587,9 +590,9 @@ export class Evaluator {
     // Win-probability model (brain.ts): once it beats the score on newer trades, likely winners get an easier bar,
     // likely losers a harder one (±10). 0 points while it hasn't proven itself.
     const wm = this.brain?.model.predict(aiFlat, STRATEGY.name) ?? null;
-    if (wm?.points) threshold -= wm.points;
+    if (wm?.points && !sniperOn()) threshold -= wm.points; // v11.7: watch-only in sniper mode (feature still stored)
     // …and sizes the trade: ×0.7–1.3 by how much better / worse than usual it expects this one to do.
-    const modelSize = wm?.points ? Math.max(0.7, Math.min(1.3, 1 + (wm.p - wm.baseRate) * 2)) : 1;
+    const modelSize = wm?.points && !sniperOn() ? Math.max(0.7, Math.min(1.3, 1 + (wm.p - wm.baseRate) * 2)) : 1;
     const modelNote = wm?.points ? `win model: ${Math.round(wm.p * 100)}% chance to win vs ${Math.round(wm.baseRate * 100)}% usual → bar ${wm.points > 0 ? '−' : '+'}${Math.abs(wm.points)}${modelSize !== 1 ? `, size ×${modelSize.toFixed(2)}` : ''}` : null;
 
     // Many KOLs still in (owner: "okay if top holders are a bit high when a lot of KOLs are buying"): concentration limits
@@ -650,6 +653,25 @@ export class Evaluator {
         }
       }
     }
+    // Sniper mode (v11.7): a buy only when everything lines up — real 5-min volume, score well over the bar, momentum /
+    // entry quality / edge gate / pressure / crowd green; no learning, probe or half-size entries.
+    const snCfg = cfg.sniper ?? DEFAULT_CONFIG.sniper;
+    let sniperInfo: { fails: string[] } | null = null;
+    if (snCfg.enabled && decision === 'BUY') {
+      const flow5 = this.crowd ? organicFlow(this.crowd.trades(mint), Date.now()) : null;
+      const fails = sniperEntryFails(
+        { flow: flow5, score: result.score, threshold, momentumGateWhy: mgWhy, entryQualityVerdict: eq.verdict, edgeGatePass: egInfo ? egInfo.pass : null, pressureSellersInControl: prWhy !== null, crowd: cq, explore, probe: edgeProbe, risky: risky !== null, dipEntry: job.data.dip === true },
+        snCfg,
+      );
+      sniperInfo = { fails };
+      if (fails.length) {
+        decision = 'SKIP';
+        reasons = fails.map((f) => `sniper: ${f}`);
+        explore = false;
+        risky = null;
+        edgeProbe = false;
+      }
+    }
     // Funnel (Bot health → strategies): did it pass every rule, was it a buy signal before any wait?
     const rulesOk = ruleFails.length === 0 && !token.safetyHardFail;
     const signalled = decision === 'BUY';
@@ -667,7 +689,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, trusted: kolAct.buyers.filter((b) => b.weight >= (kolCfg.trustedMinWeight ?? Infinity)).length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, copied: job.data.wallet ? 1 : 0, owner: { profile: owner.profile, fails: owner.fails }, pressure, wallets: cq, mood: moodNow(), market: market.raw, shape, tf, pa, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, momentumGate: mgWhy ? { blocked: true, reason: mgWhy } : null, edgeGate: egInfo, entryQuality: eq.verdict !== 'ok' ? { verdict: eq.verdict, reason: eq.reason, points: eq.points } : null, rugCheck: rc.result ? { score: rc.score, riskLevel: rc.riskLevel, pass: rc.pass, reasons: rc.reasons } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, trusted: kolAct.buyers.filter((b) => b.weight >= (kolCfg.trustedMinWeight ?? Infinity)).length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, copied: job.data.wallet ? 1 : 0, owner: { profile: owner.profile, fails: owner.fails }, pressure, wallets: cq, mood: moodNow(), market: market.raw, shape, tf, pa, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, momentumGate: mgWhy ? { blocked: true, reason: mgWhy } : null, edgeGate: egInfo, sniper: sniperInfo, entryQuality: eq.verdict !== 'ok' ? { verdict: eq.verdict, reason: eq.reason, points: eq.points } : null, rugCheck: rc.result ? { score: rc.score, riskLevel: rc.riskLevel, pass: rc.pass, reasons: rc.reasons } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },

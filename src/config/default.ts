@@ -59,12 +59,12 @@ export const DEFAULT_CONFIG = {
      * trade vs RUNNER −10.7%, SWING −10%, new pairs −12%): the budget goes to the three that are close to break-even.
      */
     allocation: {
-      // v10.27: new pairs back on under the owner's new-pair filter (≤ 1.5 min old, ≤ $100k MC, no Mayhem / bad words).
-      CURVE_SNIPE: 0.15,
-      MIGRATION_MOMENTUM: 0.35,
-      SOON: 0.25,
-      // v10.23 (owner: "5 trades in 6 hours is way too little"): RUNNER back on, small (size ×0.5 → the minimum).
-      RUNNER: 0.05,
+      // v11.7 (owner's CSV: new pairs −12% / runners −10.7% per trade, the worst two): both OFF, budget to graduated
+      // / near-graduation coins with real volume. Controls → Rules can switch them back on (minAllocationWhenOn).
+      CURVE_SNIPE: 0,
+      MIGRATION_MOMENTUM: 0.5,
+      SOON: 0.3,
+      RUNNER: 0,
       // v8.9: KOL follow (kol.follow) — coins several KOLs / smart wallets bought.
       // v10.37: 0.1 (was 0.2 — no KOL buy signals passed; its 10% went to SWING)
       SMART_MONEY_COPY: 0.1,
@@ -78,9 +78,9 @@ export const DEFAULT_CONFIG = {
       MIGRATION_MOMENTUM: true,
       SOON: true,
       SMART_MONEY_COPY: true,
-      CURVE_SNIPE: true,
+      CURVE_SNIPE: false,
       SWING: false,
-      RUNNER: true,
+      RUNNER: false,
     } satisfies Record<StrategyName, boolean>,
     /**
      * v10.21: no NEW buys between these UTC hours (00–04 UTC: 97 trades, 9% winners, −2.8 SOL). Open trades are still
@@ -645,6 +645,12 @@ export const DEFAULT_CONFIG = {
   trending: {
     enabled: true as boolean,
     pump: { enabled: true as boolean, liveSec: 30, kothSec: 30, forYouSec: 60, runnersSec: 60 },
+    /**
+     * v11.7: pump.fun's king-of-the-hill / for-you / top-runners endpoints started returning 404 (frontend-api-v3
+     * changed). A path (relative to frontend-api-v3.pump.fun) or a full https:// URL per feed; '' = that feed is off
+     * (no requests, no warnings). The owner finds the new URLs in the browser's network tab on pump.fun.
+     */
+    pumpUrls: { live: '/coins/currently-live?offset=0&limit=60&includeNsfw=false', koth: '', forYou: '', runners: '' },
     gecko: { enabled: true as boolean, everySec: 180 },
     dexMetas: { enabled: true as boolean, everySec: 300, maxWords: 10 },
     pointsPerSource: 2,
@@ -875,6 +881,39 @@ export const DEFAULT_CONFIG = {
    * `maxPerMin`: above it trades are dropped (disk guard; ~250 bytes a row before compression).
    */
   tape: { enabled: true as boolean, retentionDays: 5, flushSec: 2, maxBatch: 5000, maxPerMin: 40_000 },
+  /**
+   * v11.7 Sniper mode (owner: "I don't care if it's a few trades, but then each one must be profitable with a big
+   * impact"): a buy only when everything lines up (real 5-min volume, score ≥ bar + margin, momentum / entry quality /
+   * edge gate / pressure / crowd green; no learning, probe or half-size entries), at the high-conviction size
+   * (trading.highConviction.sizeSol under the usual caps), ≤ maxOpen trades, with exits built for big moves laid over
+   * every strategy. Every bar/size-moving learner is watch-only while it's on (src/config/sniper.ts).
+   */
+  sniper: {
+    enabled: true as boolean,
+    maxOpen: 3,
+    minScoreMargin: 8,
+    volume: { minBuyers: 30, minBuySol: 12, minBuySharePct: 60, minOrganicPct: 60 },
+    requireProvenCrowd: false as boolean,
+    exits: {
+      takeProfitTiers: [
+        { multiple: 1.5, sellPct: 25 },
+        { multiple: 2.5, sellPct: 25 },
+        { multiple: 5, sellPct: 20 },
+      ],
+      trailActivateMultiple: 1.5,
+      trailPct: 25,
+      breakEvenFromMultiple: 1.5,
+      stopMaxPct: 12,
+      timeStopMinutes: 2,
+      timeStopMinPeakMultiple: 1.08,
+    },
+  },
+  /**
+   * v11.7 usage guards (owner: "don't drain my Helius / FluxRPC"): requests per provider per UTC day; past softPct%
+   * of a budget the OPTIONAL lookups (funding graph, wallet reports, swing holders, X, Solscan) pause until midnight
+   * UTC. Essential calls (the safety check of a coin about to be bought) always go. 0 = unlimited.
+   */
+  usage: { helius: { dailyBudget: 25_000 }, flux: { dailyBudget: 300_000 }, softPct: 80 },
 
   /**
    * Shadow trades (src/learner/shadow-trades.ts; owner: "speed up the learning"): coins the bot didn't buy

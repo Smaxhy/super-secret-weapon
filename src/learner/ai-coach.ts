@@ -17,6 +17,7 @@
  * counted from each response's real token usage; no call without new trades to read.
  */
 import Anthropic from '@anthropic-ai/sdk';
+import { sniperOn } from '../config/sniper';
 import type { Redis } from 'ioredis';
 import { applyEdit } from '../config/apply-edit';
 import { EDITABLE, getPath } from '../config/editable';
@@ -180,6 +181,7 @@ export function aiRuleVerdict(strategy: string, flat: Readonly<Record<string, nu
   let barDelta = 0;
   const notes: string[] = [];
   let fail: string | null = null;
+  if (sniperOn()) return { fail, barDelta, notes }; // v11.7: rules stay live for the record, change nothing
   for (const r of liveRules) {
     if (!matchRule(r, strategy, flat)) continue;
     if (r.action === 'prefer') {

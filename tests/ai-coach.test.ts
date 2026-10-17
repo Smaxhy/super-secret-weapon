@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { overrideConfig } from '../src/config/runtime-config';
 import { aiRuleVerdict, flattenFeatures, matchRule, nextStatus, ruleStats, setAiRules, type AiRule, type CoachTrade } from '../src/learner/ai-coach';
 
 const C = { minForward: 8, edgePct: 5, probeEvery: 5, preferBarDelta: -4 };
@@ -32,6 +33,7 @@ describe('AI coach rules', () => {
     expect(nextStatus(rule({ backtest: ruleStats(rule(), fine) }), C).status).toBe('retired');
   });
   it('live avoid rules refuse the buy (1 in 5 still goes through as a probe); prefer rules lower the bar', () => {
+    overrideConfig({ sniper: { enabled: false } }); // v11.7: in sniper mode the rules are watch-only
     setAiRules([rule({ status: 'live' }), rule({ id: 'r2', action: 'prefer', status: 'live', conditions: [{ feature: 'entry.kols', op: 'gt', value: 2 }] }), rule({ id: 'r3', status: 'testing' })]);
     const verdicts = Array.from({ length: 5 }, () => aiRuleVerdict('CURVE_SNIPE', { 'crowd.paperHandsPct': 70 }, C));
     expect(verdicts.filter((v) => v.fail).length).toBe(4);

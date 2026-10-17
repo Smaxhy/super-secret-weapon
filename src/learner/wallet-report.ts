@@ -14,6 +14,7 @@
  * Costs ~1 RPC credit per transaction (500 transactions ≈ 500 of Helius' 1M/month).
  */
 import { PublicKey, type VersionedTransactionResponse } from '@solana/web3.js';
+import { rpcOptionalAllowed } from '../lib/usage-budget';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
 import { redis } from '../lib/redis';
@@ -367,6 +368,7 @@ export async function walletReport(address: string, pages = 5, refresh = false):
     const hit = await redis.get(key);
     if (hit) return { ...(JSON.parse(hit) as WalletReport), cached: true };
   }
+  if (!rpcOptionalAllowed()) throw new Error("RPC usage is at today's soft limit — wallet reports pause until midnight UTC (Controls → Usage limits)");
   const symbols: Record<string, string | undefined> = {};
   let swaps: Swap[] | null = null;
   let source: 'solscan' | 'rpc' = 'rpc';

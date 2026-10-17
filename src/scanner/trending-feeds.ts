@@ -27,6 +27,21 @@ const PUMP = 'https://frontend-api-v3.pump.fun';
 const GECKO = 'https://api.geckoterminal.com/api/v2';
 const DEX = 'https://api.dexscreener.com';
 
+/** Pure: a feed's configured value → full URL (a path is relative to frontend-api-v3; '' = off → null). */
+export function pumpFeedUrl(v: string | null | undefined): string {
+  const s = (v ?? '').trim();
+  return /^https?:\/\//i.test(s) ? s : `${PUMP}${s}`;
+}
+/** Pure: which pump.fun lists are on given their configured URLs. */
+export function pumpFeedsOn(u: { live: string; koth: string; forYou: string; runners: string }): TrendSource[] {
+  const out: TrendSource[] = [];
+  if (u.live) out.push('pump_live');
+  if (u.koth) out.push('pump_koth');
+  if (u.forYou) out.push('pump_for_you');
+  if (u.runners) out.push('pump_runners');
+  return out;
+}
+
 export type TrendSource = 'pump_live' | 'pump_koth' | 'pump_for_you' | 'pump_runners' | 'gecko_5m' | 'gecko_1h';
 export const TREND_SOURCES: TrendSource[] = ['pump_live', 'pump_koth', 'pump_for_you', 'pump_runners', 'gecko_5m', 'gecko_1h'];
 
@@ -203,10 +218,12 @@ export class TrendingFeeds {
       this.timers.push(t);
     };
     if (c.pump.enabled) {
-      every(c.pump.liveSec, () => this.pumpFeed('pump_live', `/coins/currently-live?offset=0&limit=60&includeNsfw=false`));
-      every(c.pump.kothSec, () => this.pumpFeed('pump_koth', `/coins/king-of-the-hill?includeNsfw=false`));
-      every(c.pump.forYouSec, () => this.pumpFeed('pump_for_you', `/coins/for-you?offset=0&limit=48&includeNsfw=false`));
-      every(c.pump.runnersSec, () => this.pumpFeed('pump_runners', `/coins/top-runners`));
+      // v11.7: each pump.fun list has a configurable URL ('' = off): king-of-the-hill / for-you / top-runners went 404.
+      const u = c.pumpUrls ?? DEFAULT_CONFIG.trending.pumpUrls;
+      const feeds: Array<[TrendSource, number, string]> = [['pump_live', c.pump.liveSec, u.live], ['pump_koth', c.pump.kothSec, u.koth], ['pump_for_you', c.pump.forYouSec, u.forYou], ['pump_runners', c.pump.runnersSec, u.runners]];
+      const off = feeds.filter(([, , url]) => !url).map(([s]) => s);
+      if (off.length) log.info({ off }, `pump.fun lists off (no URL set — pump.fun changed its API; set trending.pumpUrls): ${off.join(', ')}`);
+      for (const [source, sec, url] of feeds) if (url) every(sec, () => this.pumpFeed(source, url));
     }
     if (c.gecko.enabled) {
       every(c.gecko.everySec, () => this.gecko('gecko_5m', '5m'));
@@ -286,7 +303,7 @@ export class TrendingFeeds {
   }
 
   private async pumpFeed(source: TrendSource, path: string): Promise<void> {
-    const body = await this.fetchJson(source, `${PUMP}${path}`);
+    const body = await this.fetchJson(source, pumpFeedUrl(path));
     if (body !== null) this.update(source, parsePumpFeed(body));
   }
 

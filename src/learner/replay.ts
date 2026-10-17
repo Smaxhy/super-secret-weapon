@@ -20,6 +20,7 @@
  * on dip timing: compare policies against each other on the same days rather than reading one number as gospel.
  */
 import { DEFAULT_CONFIG } from '../config/default';
+import { sniperEntryFails } from '../evaluator/sniper';
 import { getConfig, getWeights } from '../config/runtime-config';
 import type { StrategyName } from '../config/types';
 import { DEFAULT_ENTRY_QUALITY, entryQuality } from '../evaluator/entry-quality';
@@ -172,22 +173,10 @@ const r3 = (x: number) => Math.round(x * 1000) / 1000;
 export const REPLAY_NOTE =
   'Not replayed (neutral): RPC safety checks, holder / dev / bundle guards, socials, KOLs, RugCheck, trending lists, the dip wait and the 15 s confirmation. Optimistic on rugs, pessimistic on dip timing — compare policies on the same days.';
 
-/** The placeholder sniper policy (piece 3 replaces it): high-conviction size, exits built for big moves. */
+/** Sniper mode as a replay policy: exactly the live switch (exit overlay + entry gate + conviction size). */
 export function sniperPolicy(): ReplayPolicy {
   const cfg = getConfig();
-  const exits = {
-    takeProfitTiers: [{ multiple: 1.5, sellPct: 25 }, { multiple: 2.5, sellPct: 25 }, { multiple: 5, sellPct: 20 }],
-    trailingStopActivateMultiple: 1.5,
-    trail: { breakEvenAfterMultiple: 1.5, ladder: [{ fromMultiple: 1.5, pct: 25 }] },
-    stopLoss: { minPct: 12, maxPct: 12 },
-  };
-  const byStrategy: Record<string, unknown> = {};
-  for (const s of ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'SMART_MONEY_COPY', 'SWING', 'RUNNER']) byStrategy[s] = exits;
-  return {
-    name: 'sniper',
-    overrides: { trading: { maxPositionSol: cfg.trading.highConviction?.sizeSol ?? 1 }, exit: { ...exits, byStrategy } },
-    entry: (c) => (c.score < c.threshold + 8 ? `sniper: score ${c.score.toFixed(0)} is not ${8} over the bar ${c.threshold}` : null),
-  };
+  return { name: 'sniper', overrides: { sniper: { enabled: true }, trading: { maxPositionSol: cfg.trading.highConviction?.sizeSol ?? 1 } } };
 }
 
 export function policyByName(name: string): ReplayPolicy {
@@ -493,8 +482,22 @@ export class Replay {
       this.skip(`score under the bar (${threshold})`, strategy);
       return;
     }
+    // v11.7 Sniper mode (the same gate as live; learning / probe / risky entries don't exist in the replay).
+    const snCfg = cfg.sniper ?? DEFAULT_CONFIG.sniper;
+    if (snCfg.enabled) {
+      if (!flow) flow = organicFlow(trades, t);
+      const sf = sniperEntryFails({ flow, score, threshold, momentumGateWhy: mg, entryQualityVerdict: eq.verdict, edgeGatePass: null, pressureSellersInControl: false, crowd: cq, explore: false, probe: false, risky: false, dipEntry: false }, snCfg);
+      if (sf.length) {
+        this.skip(`sniper: ${sf[0]}`, strategy);
+        return;
+      }
+    }
     this.signals++;
     if (this.book.has(coin.mint) || t - coin.lastBuyAt < REBUY_MS) return;
+    if (snCfg.enabled && this.book.size >= snCfg.maxOpen) {
+      this.skip(`refused: sniper mode max ${snCfg.maxOpen} open`, strategy);
+      return;
+    }
     const perStrat = (cfg.trading.maxOpenByStrategy as Partial<Record<string, number>> | undefined)?.[strategy];
     if (perStrat !== undefined && (this.openBy.get(strategy) ?? 0) >= perStrat) {
       this.skip(`refused: max ${perStrat} open`, strategy);

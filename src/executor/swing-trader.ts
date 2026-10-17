@@ -13,6 +13,7 @@
  * learn from them like every other strategy.
  */
 import { paFeatures, priceActionFor } from '../evaluator/price-action';
+import { rpcOptionalAllowed } from '../lib/usage-budget';
 import { timeframeFail, timeframes } from '../evaluator/timeframes';
 import { priceShape } from '../evaluator/price-shape';
 import { autopsyTuneFor } from '../learner/loss-autopsy';
@@ -47,6 +48,8 @@ import type { TrendingHub } from '../scanner/trending-hub';
 import type { Trader } from './trader';
 import type { VampGuard } from '../evaluator/vamp-guard';
 import { crowdQuality } from '../evaluator/crowd-quality';
+import { sniperEntryFails } from '../evaluator/sniper';
+import { organicFlow } from '../scanner/migrated-scanner';
 import type { WalletBook } from '../learner/wallet-book';
 import { exitRulesFor } from './sell-manager';
 
@@ -59,6 +62,7 @@ const STORE_EVERY_MS = 60_000;
  * token vault and the old bonding curve's account don't count. null = lookup failed.
  */
 export async function topHoldersPct(mint: string, pool: string | null): Promise<number | null> {
+  if (!rpcOptionalAllowed()) return null; // v11.7: optional lookup, paused past the usage soft limit
   try {
     const amounts = (await largestHolderAccounts(mint, pool)).map((a) => a.amount);
     const top = amounts.slice(0, 10).reduce((s, x) => s + x, 0);
@@ -245,8 +249,18 @@ export class SwingTrader {
     let decision: 'BUY' | 'SKIP' = !verdict.fails.length && score >= verdict.threshold ? 'BUY' : 'SKIP';
     // Learning trade: passes every rule, just short on score → small size (config explore).
     const ex = cfg.explore ?? DEFAULT_CONFIG.explore;
-    const explore = decision === 'SKIP' && ex.enabled && ex.strategies.includes('SWING') && !verdict.fails.length && score >= verdict.threshold - exploreMargin(ex);
+    const snCfg = cfg.sniper ?? DEFAULT_CONFIG.sniper;
+    const explore = !snCfg.enabled && decision === 'SKIP' && ex.enabled && ex.strategies.includes('SWING') && !verdict.fails.length && score >= verdict.threshold - exploreMargin(ex);
     if (explore) decision = 'BUY';
+    // v11.7 Sniper mode: real 5-min volume + score well over the bar + crowd green, or no swing.
+    if (snCfg.enabled && decision === 'BUY') {
+      const sf = sniperEntryFails({ flow: organicFlow(trades, now), score, threshold: verdict.threshold, momentumGateWhy: null, entryQualityVerdict: 'ok', edgeGatePass: null, pressureSellersInControl: false, crowd: cq, explore: false, probe: false, risky: false, dipEntry: false }, snCfg);
+      if (sf.length) {
+        decision = 'SKIP';
+        coin.last = { at: now, score, decision, why: `sniper: ${sf[0]}` };
+        return null;
+      }
+    }
     const why = verdict.fails[0] ?? (decision === 'BUY' ? setup.why : `score ${score} < ${verdict.threshold}`);
     coin.last = { at: now, score, decision: explore ? 'LEARN' : decision, why };
     noteEvaluation('SWING', { rulesOk: !verdict.fails.length, signal: decision === 'BUY', outcome: decision === 'BUY' ? 'toTrader' : 'none' }, now);

@@ -12,6 +12,7 @@
  * `healthSnapshot()` adds memory, Redis memory and event-loop lag for /api/health.
  */
 import type { TapeStats } from '../learner/tape-recorder';
+import { usageSnapshot, type UsageSnapshot } from './usage-budget';
 import type { WalletBookStats } from '../learner/wallet-book';
 import type { Redis } from 'ioredis';
 import { eventLoopLagMs } from './process-guard';
@@ -90,6 +91,8 @@ export interface HealthSnapshot {
   tape?: TapeStats | null;
   /** v11.6: the wallet book (wallets known, proven, dumpers). */
   walletBook?: WalletBookStats | null;
+  /** v11.7: requests per provider today vs the owner's budgets. */
+  usage?: UsageSnapshot | null;
 }
 
 let tapeSource: (() => TapeStats) | null = null;
@@ -120,6 +123,7 @@ export async function healthSnapshot(now = Date.now()): Promise<HealthSnapshot> 
     trading: blockerSnapshot(now, enabledStrategies()),
     tape: tapeSource?.() ?? null,
     walletBook: walletBookSource?.() ?? null,
+    usage: usageSnapshot(),
   };
   if (!redisRef) return base;
   try {

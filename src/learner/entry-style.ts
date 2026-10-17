@@ -10,6 +10,7 @@
  * A strategy that works again (avg − SE > +2%) gets its style cleared. Recomputed every autopsy run.
  */
 import type { ClosedTrade } from './loss-autopsy';
+import { sniperOn } from '../config/sniper';
 
 export interface EntryStyle {
   strategy: string;
@@ -91,7 +92,7 @@ export function pullbackZone(high: number, minOffHighPct: number): { lo: number;
 }
 
 let styles = new Map<string, EntryStyle>();
-export const entryStyleFor = (strategy: string): EntryStyle | undefined => styles.get(strategy);
+export const entryStyleFor = (strategy: string): EntryStyle | undefined => (sniperOn() ? undefined : styles.get(strategy)); // v11.7: watch-only in sniper mode
 export function setEntryStyles(list: readonly EntryStyle[]): void {
   styles = new Map(list.map((s) => [s.strategy, s]));
 }

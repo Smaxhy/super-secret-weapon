@@ -26,6 +26,7 @@ import { OutcomeTracker } from './learner/outcome-tracker';
 import { ExitTuner } from './learner/exit-tuner';
 import { TapeArchiver } from './learner/tape-archiver';
 import { TapeRecorder } from './learner/tape-recorder';
+import { DEFAULT_USAGE, UsageBudget, setUsageBudget } from './lib/usage-budget';
 import { Brain } from './learner/brain';
 import { startPushNotifier } from './lib/push';
 import { LossAutopsy } from './learner/loss-autopsy';
@@ -236,6 +237,12 @@ async function main(): Promise<void> {
   tapeRecorder.start();
   registry.tape = tapeRecorder;
   setTapeStatsSource(() => tapeRecorder.snapshot());
+  // v11.7: requests per provider per day; optional lookups pause at the soft limit (owner: "don't drain my usage").
+  const usageBudget = new UsageBudget(redis, () => getConfig().usage ?? DEFAULT_USAGE, (provider, used, budget) => {
+    void recordEvent({ level: 'WARN', module: 'usage', type: 'usage_soft_limit', message: `${provider}: ${used.toLocaleString()} of ${budget.toLocaleString()} requests today — optional lookups paused until midnight UTC` });
+  });
+  setUsageBudget(usageBudget);
+  await usageBudget.start();
   // DexScreener: trending coins + DEX paid. A tracked coin that starts trending is checked right away.
   const dex = new DexScreener();
   evaluator.dex = dex;
@@ -706,6 +713,7 @@ async function main(): Promise<void> {
       stopPush();
       obsidian.stop();
       await tapeRecorder.stop();
+      usageBudget.stop();
       taLab.stop();
       trendFeeds.stop();
       trending.stop();

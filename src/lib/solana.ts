@@ -8,6 +8,7 @@ import { Connection } from '@solana/web3.js';
 import { env, rpcEndpoints } from '../config/env';
 import { RateLimiter } from './rate-limiter';
 import { redis } from './redis';
+import { noteUsage, providerOf, setRpcProvider } from './usage-budget';
 
 /** Count RPC calls per UTC day and per method, so usage shows on the dashboard. */
 function countCall(body: unknown): void {
@@ -20,6 +21,7 @@ function countCall(body: unknown): void {
   } catch {
     /* non-JSON body */
   }
+  noteUsage(providerOf(rpcEndpoints().http), n);
   const k = `rpc:calls:${new Date().toISOString().slice(0, 10)}`;
   void redis.multi().hincrby(k, method, n).hincrby(k, '_total', n).expire(k, 40 * 86_400).exec().catch(() => undefined);
 }
@@ -45,6 +47,7 @@ export function getConnection(): Connection {
     countCall(init?.body);
     return fetch(input, init);
   };
+  setRpcProvider(providerOf(http));
   connection = new Connection(http, {
     commitment: 'confirmed',
     wsEndpoint: ws,

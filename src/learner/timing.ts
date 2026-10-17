@@ -14,6 +14,7 @@
  * Pure parts are exported for tests; the class does the Redis / DB work.
  */
 import type { Redis } from 'ioredis';
+import { sniperOn } from '../config/sniper';
 import { prisma } from '../lib/prisma';
 import { moduleLogger } from '../lib/logger';
 
@@ -207,6 +208,7 @@ let profile: TimingProfile | null = null;
 let cfgRef: (() => TimingConfig) | null = null;
 /** What the current hour + day mean for size and the buy bar (neutral until there is data). */
 export function timingNow(atMs = Date.now()): TimingVerdict {
+  if (sniperOn()) return NEUTRAL; // v11.7: watch-only in sniper mode
   return cfgRef ? timingVerdict(profile, atMs, cfgRef()) : NEUTRAL;
 }
 
