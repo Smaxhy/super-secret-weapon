@@ -25,9 +25,10 @@ import { stratFactorFromVerdict, volFactor } from './portfolio';
 import { marketClock } from './calendar';
 import { newSyncReport, type LabOpenTrade } from './practice';
 import { withEnd } from './mtf';
-import { bigChart, evaluateTf, makeSeries, slimTrade, toLabTrade, type BigChart, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
+import { bigChart, evaluateTf, makeSeries, pickedOnInSample, signalIndex, slimTrade, toLabTrade, type BigChart, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
 import type { ExitKind } from './exits';
 import type { FilterKind } from './filters';
+import { agreeCount, boostFor, gradeConviction, maxConfirmations, tierOf, type ConvictionReport, type ConvRow } from './conviction';
 
 const log = moduleLogger('forex-fast');
 export type FastTf = '15m' | '1m';
@@ -74,6 +75,8 @@ export interface FastReport {
   spans: Record<FastTf, { from: number | null; to: number | null; oosFrom: number | null; markets: number }>;
   rows: Row[];
   paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] };
+  /** v15.2: bigger size when more sure, per chart (market checks only: no judge here) */
+  conviction?: Partial<Record<FastTf, ConvictionReport>>;
   note: string;
 }
 
@@ -329,6 +332,7 @@ export class FastLab {
     const open: Trade[] = [];
     const recent: Trade[] = [];
     const spans = { '15m': { from: null, to: null, oosFrom: null, markets: 0 }, '1m': { from: null, to: null, oosFrom: null, markets: 0 } } as FastReport['spans'];
+    const conviction: Partial<Record<FastTf, ConvictionReport>> = {};
     for (const tf of FX_FAST.tfs) {
       let series: Series[] = [];
       let from = Infinity;
@@ -345,7 +349,18 @@ export class FastLab {
       }
       if (!series.length) continue;
       const oosFrom = from + 0.7 * (to - from);
-      const ev = await evaluateTf(series, tf, { oosFrom, since, weeks: Math.max(0.2, (to - from) / (7 * DAY)), prev });
+      // v15.2: closed trades of the strategies picked on the first 70%, with how many market checks backed them
+      const byPair = new Map(series.map((se) => [se.inst.id, se]));
+      const conv: ConvRow[] = [];
+      const ev = await evaluateTf(series, tf, { oosFrom, since, weeks: Math.max(0.2, (to - from) / (7 * DAY)), prev }, (x) => {
+        if (x.s.id === 'random' || !pickedOnInSample(x.ch.inSample)) return;
+        for (const t of x.done) {
+          const se = byPair.get(t.pair);
+          const si = se ? signalIndex(se.ctx.bars, t.entryT, se.ctx.barMin) : -1;
+          if (se && si >= 0) conv.push({ t: t.entryT, r: t.r, conf: agreeCount(se.env, si, t.side) });
+        }
+      });
+      conviction[tf] = gradeConviction(conv, oosFrom, tf, false, { pHi: null, pTop: null });
       rows.push(...ev.rows);
       paperRows.push(...ev.paperRows);
       open.push(...ev.open);
@@ -366,6 +381,7 @@ export class FastLab {
       spans,
       rows,
       paper: { since, rows: paperRows, open: open.slice(0, 200).map(slimTrade), recent: recent.slice(0, 150).map(slimTrade) },
+      conviction,
       note: rows.length
         ? `${rows.length} strategy × chart combinations on the 15-minute (${days('15m')} days of history) and 1-minute (${days('1m')} days) charts, same spreads as everywhere. ${pass} pass on their unseen last 30%. Short histories: the paper results decide.`
         : 'Not enough 15-minute / 1-minute candles yet (the server keeps collecting them).',
@@ -422,7 +438,11 @@ export class FastLab {
             if (t.reason !== 'open') continue;
             openKeys[`${t.strategy}:${tf}:${t.pair}`] = t.entryT;
             const sizeF = stratFactorFromVerdict(row.verdict) * volFactor(t.volRatio) * (rec.proven.has(`${s.id}:${tf}`) ? 1.15 : 1);
-            labOpen.push(toLabTrade(t, { chosen: true, sizeF, prio: row.all.avgR, judge: null }));
+            // v15.2: how many market checks back it, and the size that earns (only once proven on this chart)
+            const si = signalIndex(se.ctx.bars, t.entryT, se.ctx.barMin);
+            const conf = si >= 0 ? agreeCount(se.env, si, t.side) : 0;
+            const b = boostFor(tierOf(conf, false), this.report?.conviction?.[tf]);
+            labOpen.push(toLabTrade(t, { chosen: true, sizeF, prio: row.all.avgR, judge: null, conviction: { tier: b.tier, conf, of: maxConfirmations(tf, false), mult: b.mult, lev: b.lev } }));
           }
         }
         await yieldNow();

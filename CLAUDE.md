@@ -257,6 +257,20 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   first owner exit that qualifies is used. On synthetic candles the 1R trailing stop-loss cost ≈ −0.25R a trade (cuts
   winners in noise) and was picked by 3 of 70 strategies — real data decides. Bot positions carry `trailPx`; the plan
   says "Trailing stop-loss: follows the price N pips behind…". `FX_CONFIG.preferTrailing` (was preferTrailTp).
+- **v15.2 (Oct 18): bigger size + leverage when more sure** (owner: "take bigger leverage trades if it's more sure of
+  its entry"). `src/forex/conviction.ts`: confirmations at the signal close = `agreeCount` (strength gap ≥ 0.15 its
+  way, next bigger chart with it, the chart above with it, clear mood with real risk exposure its way; 4h max 3) + on
+  1h / 4h the judge's score ≥ its first-70% top-30% cut (+1) / top-10% cut (+1) (`judgeCuts`). Tier 'sure' ≥ 3,
+  'very sure' ≥ 5 (≥ 4 on 15m / 1m: no judge). `gradeConviction` (picked-on-first-70% strategies' closed trades):
+  'sure' active only if on the UNSEEN 30% it made ≥ +0.1R a trade over all trades on ≥ 60 trades (no judge: the first
+  70% must point the same way too); 'very sure' must also beat 'sure' by 0.05R. `boostFor` → 'sure' 1.5× risk at 50×,
+  'very sure' 2× at 100× (`CONVICTION.maxRiskPct` 2% cap via `clampRisk(…, maxMult)`), else normal (30×). Hourly lab:
+  Redis `fx:conviction`, report `conviction`, portfolio `convicted` row ("bigger size when sure" at 1%; `PTrade.maxMult`
+  / `lev`); fast lab: `FastReport.conviction['15m' | '1m']`. Bot: `LabOpenTrade.conviction` {tier, conf, of, mult, lev}
+  → `syncBot` risk × mult (cap 2%) at that leverage; positions + weekend resume keep it; the plan's first line says
+  the size decision. The currency cap (2.2%) still applies, so a 2% trade blocks a second bet on the same currency.
+  Dashboard Auto-bot: "Bigger size when it's more sure" card (per chart group: on / off + why, unseen R per tier).
+  Synthetic candles: not proven on any chart (sure trades not clearly better) → normal size; real data decides.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

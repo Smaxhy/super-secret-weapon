@@ -73,7 +73,7 @@ export interface PlanMarket {
 }
 
 export interface PlanLine {
-  k: 'stop' | 'target' | 'trail' | 'be' | 'scale' | 'time' | 'rule' | 'weekend';
+  k: 'size' | 'stop' | 'target' | 'trail' | 'be' | 'scale' | 'time' | 'rule' | 'weekend';
   text: string;
   done?: boolean;
 }
@@ -183,6 +183,17 @@ export function tradeLines(p: PracticePosition & { px: number }, now: number, pn
   const pair = p.pair;
   const tf = p.tf ?? (tfOfRef(p.ref) || '1h');
   const word = TF_WORD[tf] ?? tf;
+  const cv = p.conviction;
+  if (cv) {
+    const risk = p.riskPct !== undefined ? `${p.riskPct}% of the account` : 'its risk';
+    out.push({
+      k: 'size',
+      text:
+        cv.mult > 1
+          ? `Bigger size: ${cv.tier === 'verySure' ? 'very sure' : 'sure'} — ${cv.conf} of ${cv.of} checks agreed, so it risks ${risk} at ${p.leverage}× leverage (${cv.mult}× the normal size; this tier proved itself on unseen history).`
+          : `Normal size: ${cv.conf} of ${cv.of} checks agreed — it risks ${risk} at ${p.leverage}× leverage.`,
+    });
+  }
   if (p.stop !== null) {
     const atStop = pnlAt(p, p.stop);
     if (p.tpHit) out.push({ k: 'stop', text: `Stop locked at ${fmtPx(pair, p.stop)}: if it comes back there it still closes ${usd(atStop)}.` });

@@ -461,3 +461,90 @@ describe("the bot's plan (v15)", () => {
 
 // keep WARMUP referenced: the engine's warm-up must stay below the 260-bar test markets above
 it('test markets are longer than the warm-up', () => expect(WARMUP).toBeLessThan(250));
+
+describe('bigger size when more sure (v15.2)', () => {
+  it('counts the market checks that back a side', async () => {
+    const { agreeCount, confirmations, judgeCuts, maxConfirmations, tierOf } = await import('../src/forex/conviction');
+    const env = (o: Partial<import('../src/forex/filters').FilterEnv> = {}) => ({ tf: '1h' as const, gap: new Float64Array([0.5]), h4: Int8Array.from([1]), d1: Int8Array.from([1]), mood: new Float64Array([0.8]), riskLong: 1, ...o });
+    expect(agreeCount(env(), 0, 1)).toBe(4);
+    expect(agreeCount(env(), 0, -1)).toBe(0);
+    // mood only counts when it is clear AND the trade carries real risk-on / safe-haven exposure
+    expect(agreeCount(env({ riskLong: 0 }), 0, 1)).toBe(3);
+    expect(agreeCount(env({ mood: new Float64Array([0.2]) }), 0, 1)).toBe(3);
+    // 4-hour charts have no next-bigger chart
+    expect(agreeCount(env({ tf: '4h' }), 0, 1)).toBe(3);
+    expect(maxConfirmations('4h', true)).toBe(5);
+    expect(maxConfirmations('15m', false)).toBe(4);
+    const cuts = judgeCuts(Array.from({ length: 100 }, (_, i) => i / 100));
+    expect(cuts.pHi).toBeCloseTo(0.7, 8);
+    expect(cuts.pTop).toBeCloseTo(0.9, 8);
+    expect(confirmations(3, 0.95, cuts)).toBe(5);
+    expect(confirmations(3, 0.75, cuts)).toBe(4);
+    expect(confirmations(3, null, cuts)).toBe(3);
+    expect(tierOf(5, true)).toBe('verySure');
+    expect(tierOf(4, true)).toBe('sure');
+    expect(tierOf(4, false)).toBe('verySure');
+    expect(tierOf(2, false)).toBe('normal');
+  });
+
+  it('only trades bigger once the sure trades made clearly more on unseen data', async () => {
+    const { boostFor, gradeConviction } = await import('../src/forex/conviction');
+    const rows = (sureR: number, veryR: number, n = 80) => [
+      ...Array.from({ length: n }, (_, k) => ({ t: k, r: 0, conf: 1 })),
+      ...Array.from({ length: n }, (_, k) => ({ t: 1000 + k, r: 0, conf: 1 })),
+      ...Array.from({ length: n }, (_, k) => ({ t: 1000 + k, r: sureR, conf: 3 })),
+      ...Array.from({ length: n }, (_, k) => ({ t: 1000 + k, r: veryR, conf: 5 })),
+      ...Array.from({ length: n }, (_, k) => ({ t: k, r: sureR, conf: 3 })),
+    ];
+    const cuts = { pHi: 0.6, pTop: 0.8 };
+    const good = gradeConviction(rows(0.3, 0.6), 1000, 'hourly', true, cuts);
+    expect(good.active).toBe(true);
+    expect(good.tiers.map((t) => t.active)).toEqual([true, true]);
+    expect(boostFor('verySure', good)).toEqual({ tier: 'verySure', mult: 2, lev: 100 });
+    expect(boostFor('sure', good)).toEqual({ tier: 'sure', mult: 1.5, lev: 50 });
+    expect(boostFor('normal', good)).toEqual({ tier: 'normal', mult: 1, lev: null });
+    // 'very sure' no better than 'sure' → it only gets the 'sure' size
+    const flatTop = gradeConviction(rows(0.3, 0.3), 1000, 'hourly', true, cuts);
+    expect(flatTop.tiers.map((t) => t.active)).toEqual([true, false]);
+    expect(boostFor('verySure', flatTop)).toEqual({ tier: 'sure', mult: 1.5, lev: 50 });
+    // sure trades no better on unseen data → normal size for everything
+    const none = gradeConviction(rows(0.02, 0.02), 1000, 'hourly', true, cuts);
+    expect(none.active).toBe(false);
+    expect(none.why).toMatch(/not clearly better/);
+    expect(boostFor('verySure', none).mult).toBe(1);
+    // too few
+    expect(gradeConviction(rows(0.5, 0.8, 20), 1000, 'hourly', true, cuts).active).toBe(false);
+  });
+
+  it('the bot account risks more at higher leverage on a proven sure entry (never above 2%)', async () => {
+    vi.useFakeTimers({ now: WED });
+    const redis = new MiniRedis();
+    redis.m.set('fx:practice:bot', JSON.stringify(newAccount(1000)));
+    const practice = new Practice(asRedis(redis));
+    (practice as unknown as { quotes: () => Promise<Record<string, Quote>> }).quotes = async () => ({
+      EURUSD: { id: 'EURUSD', mid: 1.1, bid: 1.1 - HALF, ask: 1.1 + HALF, t: WED, bars: [[WED - M, 1.1, 1.1, 1.1]], dayChangePct: 0, source: 'yahoo', priceT: WED },
+      GBPUSD: { id: 'GBPUSD', mid: 1.27, bid: 1.27 - 0.00006, ask: 1.27 + 0.00006, t: WED, bars: [[WED - M, 1.27, 1.27, 1.27]], dayChangePct: 0, source: 'yahoo', priceT: WED },
+    });
+    const base = { strategy: 'x', tf: '1h', side: 1 as const, entryT: WED - 60_000, chosen: true, sizeF: 1, prio: 0.2, judge: null };
+    await practice.syncBot(
+      [
+        { ...base, ref: `x:1h:EURUSD:${WED}`, pair: 'EURUSD', stop: 1.098, target: 1.104, conviction: { tier: 'verySure', conf: 5, of: 6, mult: 2, lev: 100 } },
+        // a short: the long EUR/USD already carries 2% against the dollar, a second dollar-short would pass the 2.2% cap
+        { ...base, ref: `y:1h:GBPUSD:${WED}`, strategy: 'y', pair: 'GBPUSD', side: -1, stop: 1.272, target: 1.266, conviction: { tier: 'normal', conf: 2, of: 6, mult: 1, lev: null } },
+      ],
+      () => null,
+      {},
+      { scope: ['1h', '4h'] },
+    );
+    const a = JSON.parse(redis.m.get('fx:practice:bot')!) as PracticeAccount;
+    const eur = a.open.find((p) => p.pair === 'EURUSD')!;
+    const gbp = a.open.find((p) => p.pair === 'GBPUSD')!;
+    expect(eur.leverage).toBe(100);
+    expect(eur.riskPct).toBeCloseTo(2, 1);
+    expect(eur.conviction?.tier).toBe('verySure');
+    expect(gbp.leverage).toBe(30);
+    expect(gbp.riskPct).toBeCloseTo(1, 1);
+    const lines = tradeLines({ ...eur, px: 1.1 }, WED, (q, x) => q.side * q.units * (x - q.entry)).map((l) => l.text).join(' ');
+    expect(lines).toMatch(/Bigger size: very sure — 5 of 6 checks agreed/);
+  });
+});

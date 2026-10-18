@@ -32,7 +32,7 @@ export const ddFactor = (ddPct: number) => (ddPct > 15 ? 0.5 : ddPct > 8 ? 0.75 
 /** Strategy factor from its record (first-70% stats for the honest test, the verdict for the live bot). */
 export const stratFactorFromStats = (avgR: number, pf: number | null) => (avgR >= 0.15 && (pf ?? 99) >= 1.3 ? 1.25 : avgR >= 0.05 ? 1 : 0.6);
 export const stratFactorFromVerdict = (v: 'edge' | 'maybe' | 'no') => (v === 'edge' ? 1.25 : v === 'maybe' ? 1 : 0.6);
-export const clampRisk = (base: number, x: number) => Math.min(base * SIZING.maxMult, Math.max(base * SIZING.minMult, x));
+export const clampRisk = (base: number, x: number, maxMult = SIZING.maxMult) => Math.min(base * maxMult, Math.max(base * SIZING.minMult, x));
 
 /** Signed risk per currency, % of the account. */
 export type Exposure = Record<string, number>;
@@ -68,6 +68,9 @@ export interface PTrade {
   sizeF: number;
   /** when several signals arrive at once, the higher one gets the free slot first (its tested R per trade) */
   prio?: number;
+  /** v15.2: a 'sure' trade may risk up to this multiple of the base (default `SIZING.maxMult`) at this leverage */
+  maxMult?: number;
+  lev?: number;
 }
 
 export interface PortfolioOpts {
@@ -217,7 +220,7 @@ export function simulatePortfolio(trades: readonly PTrade[], o: PortfolioOpts): 
         continue;
       }
       const ddPct = (1 - eq / peak) * 100;
-      let riskPct = o.flatSizing ? o.baseRiskPct : clampRisk(o.baseRiskPct, o.baseRiskPct * tr.sizeF * (o.ddSizing ? ddFactor(ddPct) : 1));
+      let riskPct = o.flatSizing ? o.baseRiskPct : clampRisk(o.baseRiskPct, o.baseRiskPct * tr.sizeF * (o.ddSizing ? ddFactor(ddPct) : 1), tr.maxMult);
       if (o.ccyCapPct !== null) {
         const exp: Exposure = {};
         for (const [t, p] of open) addExposure(exp, t.pair, t.side, (p.riskAbs / eq) * 100);
@@ -228,7 +231,7 @@ export function simulatePortfolio(trades: readonly PTrade[], o: PortfolioOpts): 
       }
       // margin: notional = risk ÷ stop distance; a trade may use at most `marginShare` of the free margin
       let riskAbs = (riskPct / 100) * eq;
-      let marginAbs = riskAbs / (tr.stopPct / 100) / o.leverage;
+      let marginAbs = riskAbs / (tr.stopPct / 100) / (tr.lev ?? o.leverage);
       let used = 0;
       for (const p of open.values()) used += p.marginAbs;
       const free = eq - used;

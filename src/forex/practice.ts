@@ -12,6 +12,7 @@ import { INSTRUMENTS, instrument, type Bar, type Instrument } from './types';
 import { marketClock } from './calendar';
 import { priceShock } from './headlines';
 import { SIZING, addExposure, clampRisk, ddFactor, exposureBlock, type Exposure } from './portfolio';
+import { CONVICTION, type Tier } from './conviction';
 
 const log = moduleLogger('forex-practice');
 export type AcctId = 'me' | 'bot';
@@ -81,6 +82,8 @@ export interface PracticePosition {
   tpTrailPx?: number | null;
   tpFrac?: number;
   tpHit?: boolean;
+  /** bot trades (v15.2): how sure it was of the entry and what size that earned */
+  conviction?: Conviction | null;
   /** bot trades (v15): the strategy's chart and the exit rules still in force (shown as the trade's plan); v15.1:
    * `trailPx` = the trailing stop-loss distance (price) */
   tf?: string;
@@ -107,6 +110,8 @@ export interface ResumeItem {
   scaled?: boolean;
   /** v15: the target had been reached (part may already be off) */
   tpHit?: boolean;
+  /** v15.2: its leverage (a 'sure' trade re-opens at the same size) */
+  lev?: number;
   at: number;
 }
 
@@ -371,6 +376,8 @@ export interface LabOpenTrade {
   prio?: number;
   /** the signal judge: win probability, whether it passes, the bar it needs (null = no judge view) */
   judge?: { p: number; ok: boolean; need: number | null } | null;
+  /** v15.2: how sure the bot is (confirmations out of `of`) and the size multiple + leverage that earns (proven tiers only) */
+  conviction?: Conviction | null;
   beAt?: number | null;
   scaleAt?: number | null;
   scaleFrac?: number | null;
@@ -384,6 +391,17 @@ export interface LabOpenTrade {
   trailAtr?: number | null;
   maxBars?: number | null;
   exitWhen?: string | null;
+}
+
+/** v15.2: how sure the bot was of an entry, and what that earned it. */
+export interface Conviction {
+  tier: Tier;
+  /** confirmations at the signal, out of `of` */
+  conf: number;
+  of: number;
+  /** size multiple and leverage of its tier (1 / null = normal size) */
+  mult: number;
+  lev: number | null;
 }
 
 /** v15: the exit rules a bot position carries (copied from its lab trade). */
@@ -402,7 +420,7 @@ export interface ExitPlan {
   exitWhen?: string | null;
 }
 
-export interface OpenReq extends ExitPlan { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number }
+export interface OpenReq extends ExitPlan { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null }
 
 /** The exit-plan fields of a lab trade, ready for `openIn`. Pure. */
 export function planOf(t: LabOpenTrade): ExitPlan {
@@ -550,7 +568,7 @@ export class Practice {
         for (const p of [...a.open]) {
           const qq = q[p.pair];
           closePos(a, p, qq ? (p.side === 1 ? qq.bid : qq.ask) : exitPx(p, mids[p.pair] ?? p.entry), mids, 'weekend', Date.now());
-          if (p.ref) a.resume = [...(a.resume ?? []), { ref: p.ref, ...(p.strategy ? { strategy: p.strategy } : {}), pair: p.pair, side: p.side, ...(p.riskPct !== undefined ? { riskPct: p.riskPct } : {}), scaled: !!p.scaled, tpHit: !!p.tpHit, at: Date.now() }];
+          if (p.ref) a.resume = [...(a.resume ?? []), { ref: p.ref, ...(p.strategy ? { strategy: p.strategy } : {}), pair: p.pair, side: p.side, ...(p.riskPct !== undefined ? { riskPct: p.riskPct } : {}), scaled: !!p.scaled, tpHit: !!p.tpHit, lev: p.leverage, at: Date.now() }];
         }
         ev.push('weekend: every bot trade closed before the Friday close (re-opened after Monday\'s open if still running)');
       }
@@ -622,6 +640,7 @@ export class Practice {
         ...(req.strategy ? { strategy: req.strategy } : {}),
         ...(req.ref ? { ref: req.ref } : {}),
         ...(req.riskPct !== undefined ? { riskPct: req.riskPct } : {}),
+        ...(req.conviction ? { conviction: req.conviction } : {}),
         ...(req.beAt != null ? { beAt: req.beAt } : {}),
         ...(req.scaleAt != null ? { scaleAt: req.scaleAt, scaleFrac: req.scaleFrac ?? 0.5, scaled: !!req.scaled } : {}),
         ...(req.tpTrailPx != null ? { tpTrailPx: req.tpTrailPx, tpFrac: req.tpFrac ?? 0, tpHit: !!req.tpHit } : {}),
@@ -736,9 +755,10 @@ export class Practice {
           const v = view(a, mids);
           const left = (r.scaled ? 1 - (lab.scaleFrac ?? 0.5) : 1) * (r.tpHit && lab.tpFrac ? 1 - lab.tpFrac : 1);
           const risk = (r.riskPct ?? BOT.riskPct) * left;
-          const margin = Math.min((v.equityUsd * risk) / 100 / (dist / entry) / BOT.leverage, v.freeMarginUsd * SIZING.marginShare);
+          const rlev = r.lev ?? BOT.leverage;
+          const margin = Math.min((v.equityUsd * risk) / 100 / (dist / entry) / rlev, v.freeMarginUsd * SIZING.marginShare);
           if (margin < 1) continue;
-          const res = await this.openIn(a, { pair: r.pair, side: r.side, marginUsd: margin, leverage: BOT.leverage, stop: lab.stop, target: lab.target, ...(r.strategy ? { strategy: r.strategy } : {}), ref: r.ref, riskPct: Math.round(risk * 100) / 100, ...planOf(lab), scaled: !!r.scaled || !!lab.scaled, tpHit: !!r.tpHit || !!lab.tpHit });
+          const res = await this.openIn(a, { pair: r.pair, side: r.side, marginUsd: margin, leverage: rlev, stop: lab.stop, target: lab.target, ...(r.strategy ? { strategy: r.strategy } : {}), ref: r.ref, riskPct: Math.round(risk * 100) / 100, ...planOf(lab), scaled: !!r.scaled || !!lab.scaled, tpHit: !!r.tpHit || !!lab.tpHit });
           events.push(res.ok ? `re-opened ${r.side === 1 ? 'long' : 'short'} ${r.pair} (${r.strategy ?? 'bot'}) after the weekend` : `could not re-open ${r.pair}: ${res.error}`);
         }
         a.resume = keep;
@@ -812,7 +832,10 @@ export class Practice {
           continue;
         }
         const v = view(a, mids);
-        const riskPct = clampRisk(BOT.riskPct, BOT.riskPct * (t.sizeF ?? 1) * ddF);
+        // v15.2: a proven 'sure' / 'very sure' entry risks 1.5× / 2× (at most 2% of the account) at 50× / 100× leverage
+        const conv = t.conviction && t.conviction.mult > 1 ? t.conviction : null;
+        const lev = conv?.lev ?? BOT.leverage;
+        const riskPct = clampRisk(BOT.riskPct, BOT.riskPct * (t.sizeF ?? 1) * ddF * (conv?.mult ?? 1), conv ? CONVICTION.maxRiskPct / BOT.riskPct : undefined);
         const exp = currencyExposure(a.open, mids, v.equityUsd);
         const over = exposureBlock(exp, t.pair, t.side, riskPct, BOT.maxCcyRiskPct);
         if (over) {
@@ -821,15 +844,16 @@ export class Practice {
           continue;
         }
         const notional = (v.equityUsd * riskPct) / 100 / (dist / entry);
-        let margin = notional / BOT.leverage;
+        let margin = notional / lev;
         margin = Math.min(margin, v.freeMarginUsd * SIZING.marginShare);
         if (margin < 1) {
           skip(t, 'not enough free margin');
           continue;
         }
-        const actual = Math.round(((margin * BOT.leverage * (dist / entry)) / v.equityUsd) * 10_000) / 100;
-        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: BOT.leverage, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf });
-        events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}` : `skipped ${t.pair}: ${r.error}`);
+        const actual = Math.round(((margin * lev * (dist / entry)) / v.equityUsd) * 10_000) / 100;
+        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, ...(t.conviction ? { conviction: t.conviction } : {}) });
+        const sure = conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
+        events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${sure}${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}` : `skipped ${t.pair}: ${r.error}`);
         if (r.ok) {
           perStrategy.set(sk, (perStrategy.get(sk) ?? 0) + 1);
           perTf.set(tf, (perTf.get(tf) ?? 0) + 1);

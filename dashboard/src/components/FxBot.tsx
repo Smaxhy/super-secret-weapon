@@ -9,9 +9,10 @@ import { api } from '../lib/api';
 import { ago } from '../lib/format';
 import { Icon } from './Icon';
 import { Badge, Button, Card, Empty, Row, Rows, Stack, StatTile, Tabs, Timeline, useTab } from './ui';
-import { PortfolioCard, RiskCard, type JudgeReport, type PortfolioReport, type RiskSummary } from './FxInsights';
+import { ConvictionCard, PortfolioCard, RiskCard, type ConvictionReport, type JudgeReport, type PortfolioReport, type RiskSummary } from './FxInsights';
 
-interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number; tf?: string }
+interface Conviction { tier: 'normal' | 'sure' | 'verySure'; conf: number; of: number; mult: number; lev: number | null }
+interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number; tf?: string; conviction?: Conviction | null }
 interface Closed { id: string; pair: string; side: 1 | -1; entry: number; exit: number; pnlUsd: number; reason: string; closedAt: number; strategy?: string; tf?: string }
 interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[] }
 interface PlanSignal { tf: string; name: string; side: 1 | -1; verdict: string; tone: 'go' | 'wait' | 'no' }
@@ -20,7 +21,7 @@ interface PlanLine { k: string; text: string; done?: boolean }
 interface PlanTrade { id: string; pair: string; side: 1 | -1; strategy: string; name: string; tf: string; entry: number; px: number; pnlUsd: number; riskPct: number | null; lines: PlanLine[] }
 interface RunNote { t: number; tf: string; signals: number; chosen: number; opened: number; skipped: number; waits: number; holding: number; note: string }
 interface BotPlan { at: number; summary: string; next: Array<{ tf: string; at: number }>; markets: PlanMarket[]; trades: PlanTrade[]; timeline: RunNote[]; trading: Record<string, number> }
-interface Data { plan?: BotPlan | null; account: Acct | null; risk?: RiskSummary | null; portfolio?: PortfolioReport | null; judge?: JudgeReport | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
+interface Data { plan?: BotPlan | null; account: Acct | null; risk?: RiskSummary | null; portfolio?: PortfolioReport | null; judge?: JudgeReport | null; conviction?: Partial<Record<'hourly' | '15m' | '1m', ConvictionReport | null>> | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
 
 const dp = (id: string) => (id.includes('JPY') ? 3 : id === 'XAUUSD' ? 2 : id === 'XAGUSD' ? 3 : 5);
 const usd = (x: number) => `${x < 0 ? '−' : ''}$${Math.abs(x).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -64,6 +65,7 @@ export function FxBot() {
       <TradesCard plan={plan} positions={a?.positions ?? []} onClose={(id) => void close(id)} />
       <MarketsCard plan={plan} />
       <ChecksCard plan={plan} log={data?.log ?? []} />
+      <ConvictionCard c={data?.conviction} />
       <PortfolioCard p={data?.portfolio} judgeOn={!!data?.judge?.active} />
       <RiskCard r={data?.risk} />
       <HowItWorks judgeOn={!!data?.judge?.active} dropped={data?.dropped ?? []} plan={plan} />
@@ -119,6 +121,10 @@ function TradesCard({ plan, positions, onClose }: { plan: BotPlan | null; positi
                 <Badge tone={t.side === 1 ? 'up' : 'down'}>{t.side === 1 ? 'Long' : 'Short'}</Badge>
                 <span className="font-medium text-ink">{t.pair}</span>
                 <Badge tone="neutral">{t.tf}</Badge>
+                {(() => {
+                  const cv = positions.find((p) => p.id === t.id)?.conviction;
+                  return cv && cv.mult > 1 ? <Badge tone="accent">{cv.tier === 'verySure' ? 'very sure' : 'sure'} · {cv.mult}×</Badge> : null;
+                })()}
                 <span className="min-w-0 flex-1 truncate text-xs text-muted">{t.name}</span>
                 <span className={`tabular shrink-0 font-semibold ${tone(t.pnlUsd)}`}>{usd(t.pnlUsd)}</span>
               </div>
@@ -261,7 +267,7 @@ function HowItWorks({ judgeOn, dropped, plan }: { judgeOn: boolean; dropped: str
         Exits: each strategy uses the exit that tested best for it. Where it tests as well, that is a <span className="font-semibold text-ink">trailing stop-loss</span>: the stop moves up with the trade from the start (break-even at +1R, +1R locked at +2R…) and never back, so a winner that turns around still closes in profit — and at the target it keeps trailing instead of closing. Next choice: a <span className="font-semibold text-ink">trailing take-profit</span> (the stop locks in profit at the target and trails from there). Others take half off at the target, use a bigger target, or move the stop to break-even.
       </p>
       <p className="mt-2 text-sm text-ink-2">
-        Size: about <span className="font-semibold text-ink">1% of the account at risk</span> per trade, more for proven strategies, less for unproven ones, half when a market is far wilder than normal, smaller after the account drops 8%+. Never more than 2.2% on one currency, 3 trades per strategy, 3 on the 15-minute chart, 2 on the 1-minute chart, 8 in total. The signal judge {judgeOn ? <span className="font-semibold text-ink">is on</span> : 'is off until it proves itself'} for hourly / 4-hour signals.
+        Size: about <span className="font-semibold text-ink">1% of the account at risk</span> per trade, more for proven strategies, less for unproven ones, half when a market is far wilder than normal, smaller after the account drops 8%+. When it is more sure of an entry (3+ checks agree) it trades <span className="font-semibold text-ink">bigger at higher leverage</span> — 1.5× at 50×, 2× at 100×, never more than 2% of the account — but only once those trades proved themselves on unseen history (see "Bigger size when it's more sure"). Never more than 2.2% on one currency, 3 trades per strategy, 3 on the 15-minute chart, 2 on the 1-minute chart, 8 in total. The signal judge {judgeOn ? <span className="font-semibold text-ink">is on</span> : 'is off until it proves itself'} for hourly / 4-hour signals.
       </p>
       <p className="mt-2 text-sm text-ink-2">It waits around big news and speeches, skips bank holidays, price shocks and the daily rollover, opens nothing in the last 2 hours of the week, pauses everything 30 min before the Friday close and re-opens what is still running after Monday's open. A strategy that lost money over 12+ of its trades on a chart is dropped there.</p>
       <p className="mt-2 text-xs text-muted">On the 1-minute chart the spread is a big part of every move: a strategy only trades there if it still wins after paying it.{plan ? ` Setups in use: ${Object.entries(plan.trading).map(([tf, n]) => `${tf} ${n}`).join(' · ') || 'none yet'}.` : ''}</p>

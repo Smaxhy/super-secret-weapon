@@ -15,7 +15,9 @@ export interface NewsStudy { horizons: number[]; shocks: number; overall: StudyC
 export interface PortfolioResult { label: string; baseRiskPct: number; trades: number; skipped: { full: number; ccy: number; margin: number; strategy?: number }; finalX: number; totalPct: number; weeks: number; avgWeekPct: number; medianWeekPct: number; greenWeeksPct: number; weeks5Pct: number; bigWeeksPct: number; bestWeekPct: number; worstWeekPct: number; months: number; avgMonthPct: number; medianMonthPct: number; greenMonthsPct: number; bigMonthsPct: number; worstMonthPct: number; maxDdPct: number; blown: boolean; mc: { paths: number; quarterP10: number; quarterMedian: number; quarterP90: number; pLoss: number; pDd20: number; pDd40: number } | null; equity: number[] }
 export type ExitKind = 'designed' | 'breakeven' | 'scale' | 'tight' | 'runner' | 'quick' | 'wide' | 'trail_tp' | 'half_trail' | 'trail_sl';
 export interface WalkForward { from: number; to: number; lookbackMonths: number; result: PortfolioResult; months: Array<{ month: string; picked: number; trades: number }> }
-export interface PortfolioReport { from: number; to: number; picked: Array<{ id: string; name: string; tf: string; filter: FilterKind; exit?: ExitKind; inAvgR: number; inN: number; unseenN: number }>; oldPicked: number; levels: PortfolioResult[]; old: PortfolioResult; judged?: PortfolioResult | null; walkForward?: WalkForward | null; note: string }
+export interface TierStats { tier: 'sure' | 'verySure'; label: string; from: number; mult: number; lev: number; inN: number; inAvgR: number; outN: number; outAvgR: number; active: boolean }
+export interface ConvictionReport { scope: string; judge: boolean; all: { inN: number; inAvgR: number; outN: number; outAvgR: number }; tiers: TierStats[]; active: boolean; why: string }
+export interface PortfolioReport { from: number; to: number; picked: Array<{ id: string; name: string; tf: string; filter: FilterKind; exit?: ExitKind; inAvgR: number; inN: number; unseenN: number }>; oldPicked: number; levels: PortfolioResult[]; old: PortfolioResult; judged?: PortfolioResult | null; walkForward?: WalkForward | null; convicted?: PortfolioResult | null; note: string }
 export interface ExitSummary { exit: ExitKind; label: string; chosenBy: number; compared: number; inDeltaR: number; outDeltaR: number; outBetterPct: number }
 export interface JudgeReport { active: boolean; why: string; trainedOn: number; tested: number; auc: number | null; threshold: number | null; keepPct: number; allR: number; keptR: number; skippedR: number; allWinPct: number; keptWinPct: number; importance: Array<{ feature: string; label: string; share: number }> }
 export interface RiskSummary { exposure: Array<{ ccy: string; pct: number }>; capPct: number; ddPct: number; ddFactor: number; baseRiskPct: number; openRiskPct: number }
@@ -266,9 +268,9 @@ export function PortfolioCard({ p, judgeOn }: { p: PortfolioReport | null | unde
               </tr>
             </thead>
             <tbody>
-              {[...p.levels, ...(p.judged ? [p.judged] : []), o].map((k) => (
+              {[...p.levels, ...(p.judged ? [p.judged] : []), ...(p.convicted ? [p.convicted] : []), o].map((k) => (
                 <tr key={k.label} className={`border-t border-line ${k === o ? 'text-muted' : ''}`}>
-                  <td className="py-1.5 text-ink">{k === o ? 'Before the upgrade (1%)' : k === p.judged ? `With the signal judge (1%${judgeOn ? '' : ', judge not on yet'})` : `${k.baseRiskPct}%`}</td>
+                  <td className="py-1.5 text-ink">{k === o ? 'Before the upgrade (1%)' : k === p.judged ? `With the signal judge (1%${judgeOn ? '' : ', judge not on yet'})` : k === p.convicted ? 'Bigger size when sure (1%, sure 1.5×, very sure 2×)' : `${k.baseRiskPct}%`}</td>
                   <td className={`py-1.5 text-right ${tone(k.avgWeekPct)}`}>{signed(k.avgWeekPct)}%</td>
                   <td className={`py-1.5 text-right ${tone(k.medianWeekPct)}`}>{signed(k.medianWeekPct)}%</td>
                   <td className="py-1.5 text-right">{k.greenWeeksPct}%</td>
@@ -374,4 +376,61 @@ export function TrendArrows({ mtf }: { mtf: { h1: number; h4: number; d1: number
 /** Sparkline helper for the equity of a level (exported for reuse). */
 export function EquityLine({ points }: { points: number[] }) {
   return <Sparkline points={points} width={260} height={48} tone={points[points.length - 1]! >= 1 ? 'up' : 'down'} className="w-full" />;
+}
+
+/** v15.2: bigger size + leverage when the bot is more sure — per chart group, only once proven on unseen data. */
+export function ConvictionCard({ c }: { c: Partial<Record<'hourly' | '15m' | '1m', ConvictionReport | null>> | null | undefined }) {
+  const groups = (['hourly', '15m', '1m'] as const).map((k) => [k, c?.[k] ?? null] as const).filter(([, v]) => v);
+  return (
+    <Card
+      title="Bigger size when it's more sure"
+      subtitle="How sure = how many things back the entry at the candle close: the stronger currency, the bigger charts' trend, the market mood, and on the hourly / 4-hour charts the signal judge's score. 'Sure' (3+) trades 1.5× bigger at 50× leverage, 'very sure' 2× (max 2% of the account) at 100× — but only after those trades made clearly more (≥ 0.1R each, 60+ trades) on history the bot never saw."
+    >
+      {!groups.length ? (
+        <p className="text-sm text-ink-2">Measured with the next hourly update.</p>
+      ) : (
+        <Stack>
+          {groups.map(([k, r]) => (
+            <div key={k}>
+              <div className="mb-1 flex flex-wrap items-center gap-2">
+                <span className="font-medium text-ink">{k === 'hourly' ? 'Hourly + 4-hour charts' : k === '15m' ? '15-minute chart' : '1-minute chart'}</span>
+                <Badge tone={r!.active ? 'up' : 'neutral'}>{r!.active ? 'On: bigger size when sure' : 'Off: normal size'}</Badge>
+              </div>
+              <p className="text-sm text-ink-2">{r!.why}.</p>
+              {r!.all.outN > 0 && (
+                <div className="mt-2 overflow-x-auto">
+                  <table className="tabular w-full min-w-[30rem] text-sm">
+                    <thead>
+                      <tr className="text-left text-xs text-muted">
+                        <th className="py-1 font-medium">Trades</th>
+                        <th className="py-1 text-right font-medium">Checks agreeing</th>
+                        <th className="py-1 text-right font-medium">Unseen R / trade</th>
+                        <th className="py-1 text-right font-medium">Size · leverage</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-t border-line">
+                        <td className="py-1.5 text-ink">All</td>
+                        <td className="py-1.5 text-right text-muted">any</td>
+                        <td className={`py-1.5 text-right ${tone(r!.all.outAvgR)}`}>{signed(r!.all.outAvgR, 2)}R <span className="text-xs text-muted">({r!.all.outN})</span></td>
+                        <td className="py-1.5 text-right text-ink-2">1× · 30×</td>
+                      </tr>
+                      {r!.tiers.map((t) => (
+                        <tr key={t.tier} className={`border-t border-line ${t.active ? 'font-semibold' : ''}`}>
+                          <td className="py-1.5 text-ink">{t.label === 'sure' ? 'Sure' : 'Very sure'}{t.active ? ' ✓' : ''}</td>
+                          <td className="py-1.5 text-right text-muted">{t.from}+</td>
+                          <td className={`py-1.5 text-right ${tone(t.outAvgR)}`}>{signed(t.outAvgR, 2)}R <span className="text-xs font-normal text-muted">({t.outN})</span></td>
+                          <td className="py-1.5 text-right text-ink-2">{t.active ? `${t.mult}× · ${t.lev}×` : 'normal'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ))}
+        </Stack>
+      )}
+    </Card>
+  );
 }

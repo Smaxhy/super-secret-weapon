@@ -31,6 +31,7 @@ import { newsStudy, type NewsStudy } from './news-study';
 import { EXITS, EXIT_LABEL, OWNER_EXITS, applyExit, type ExitKind } from './exits';
 import { judgeFeatures, judgeProb, trainJudge, type JudgeModel, type JudgeReport, type JudgeRow } from './judge';
 import { alignAt, mtdSeries, pairRanks, strengthRanks, z24Series, type TimeSeries } from './intermarket';
+import { agreeCount, boostFor, confirmations, CONVICTION, gradeConviction, judgeCuts, maxConfirmations, tierOf, type ConvictionReport } from './conviction';
 
 const log = moduleLogger('forex-lab');
 
@@ -169,6 +170,8 @@ export interface PortfolioReport {
   judged: PortfolioResult | null;
   /** v14: re-picking strategies every month from the months before (raw rules), over the whole history */
   walkForward: WalkForward | null;
+  /** v15.2: the upgraded bot at 1% with bigger size + leverage on the 'sure' trades (null = conviction not proven) */
+  convicted?: PortfolioResult | null;
   note: string;
 }
 
@@ -190,6 +193,8 @@ export interface FxReport {
   news?: NewsStudy | null;
   exits?: ExitSummary[];
   judge?: JudgeReport | null;
+  /** v15.2: bigger size when more sure — the tiers and whether they proved themselves */
+  conviction?: ConvictionReport | null;
 }
 
 export const FX_REPORT = 'fx:report';
@@ -201,6 +206,8 @@ export const FX_FILTERS_CHOSEN = 'fx:filters:chosen';
 export const FX_JUDGE = 'fx:judge';
 /** v15: the bot's check timeline */
 export const FX_BOT_RUNS = 'fx:bot:runs';
+/** v15.2: conviction tiers (hourly charts) */
+export const FX_CONVICTION = 'fx:conviction';
 
 const yieldNow = () => new Promise((r) => setImmediate(r));
 const HOUR = 3_600_000;
@@ -334,7 +341,7 @@ export function slimTrade(t: Trade): Trade {
 export const tradeKey = (t: { strategy: string; tf: string; pair: string; entryT: number }) => `${t.strategy}:${t.tf}:${t.pair}:${t.entryT}`;
 
 /** A lab trade as the bot account takes it (v15: with its trailing take-profit and the exit rules still in force). */
-export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge'] }): LabOpenTrade {
+export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction'] }): LabOpenTrade {
   return {
     ref: tradeKey(t),
     strategy: t.strategy,
@@ -348,6 +355,7 @@ export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: 
     sizeF: Math.round(o.sizeF * 100) / 100,
     prio: o.prio,
     judge: o.judge,
+    conviction: o.conviction ?? null,
     beAt: t.beAt ?? null,
     scaleAt: t.scaleAt ?? null,
     scaleFrac: t.scaleFrac ?? null,
@@ -805,6 +813,9 @@ export class ForexLab {
     /** context of every closed trade of the final variants (judge training); unseen + open ones by key (judge use) */
     const judgeRows: JudgeRow[] = [];
     const judgeX = new Map<string, Float64Array>();
+    /** v15.2 conviction: closed trades of the picked strategies (market checks + judge features), and every open trade's checks */
+    const convPend: Array<{ key: string; t: number; r: number; agree: number; x: Float64Array }> = [];
+    const openAgree = new Map<string, number>();
     const seriesOf = new Map(series.map((se) => [`${se.inst.id}:${se.tf}`, se]));
     const weeks = Math.max(1, (to - from) / (7 * 86_400_000));
     for (const tf of FX_CONFIG.timeframes) {
@@ -825,6 +836,8 @@ export class ForexLab {
           }
           return prefix[lo]! - prefix[Math.max(0, lo - 10)]!;
         };
+        const always = FX_CONFIG.botAlways.includes(x.s.id);
+        const picked = always || pickedOnInSample(x.ch.inSample);
         for (const t of x.trades) {
           const se = seriesOf.get(`${t.pair}:${tf}`);
           if (!se) continue;
@@ -833,17 +846,20 @@ export class ForexLab {
           // the target it was opened with (a trailing take-profit clears the live one: that would leak the outcome)
           const tgt = t.target0 !== undefined ? t.target0 : t.target;
           const fx = judgeFeatures(se.ctx, se.env, si, t.side, t.stop0, tgt, { style: x.style, prior: x.ch.inSample.avgR, form: formAt(t.entryT), tf });
-          if (t.reason === 'open') judgeX.set(tradeKey(t), fx);
-          else {
+          const agree = agreeCount(se.env, si, t.side);
+          if (t.reason === 'open') {
+            judgeX.set(tradeKey(t), fx);
+            openAgree.set(tradeKey(t), agree);
+          } else {
             judgeRows.push({ x: fx, r: t.r, t: t.entryT });
             if (t.entryT >= oosFrom) judgeX.set(tradeKey(t), fx);
+            if (picked) convPend.push({ key: tradeKey(t), t: t.entryT, r: t.r, agree, x: fx });
           }
         }
         // walk-forward pool: the raw rules
         for (const t of x.raw) if (t.reason !== 'open') wfPool.push({ pair: t.pair, side: t.side, entryT: t.entryT, exitT: t.exitT, r: t.r, stopPct: t.stopPct, strategy: t.strategy, tf: t.tf, sizeF: 1, key: x.key, vf: volFactor(t.volRatio) });
         // whole-bot test: picked on the first 70% only, traded on the unseen 30%
-        const always = FX_CONFIG.botAlways.includes(x.s.id);
-        if (always || pickedOnInSample(x.ch.inSample)) {
+        if (picked) {
           const sf = stratFactorFromStats(x.ch.inSample.avgR, x.ch.inSample.pf);
           const unseen = x.done.filter((t) => t.entryT >= oosFrom);
           for (const t of unseen) poolNew.push({ pair: t.pair, side: t.side, entryT: t.entryT, exitT: t.exitT, r: t.r, stopPct: t.stopPct, strategy: t.strategy, tf: t.tf, sizeF: sf * volFactor(t.volRatio), prio: x.ch.inSample.avgR });
@@ -877,6 +893,15 @@ export class ForexLab {
       log.warn({ err: (err as Error).message }, 'signal judge failed');
     }
     judgeRows.length = 0;
+    // ── v15.2 bigger size when more sure: judge cut points from the first 70%, tiers graded on the unseen 30% ──
+    const hasJudge = judgeModel !== null;
+    const pOf = (x: Float64Array | undefined) => (judgeModel && x ? judgeProb(judgeModel, x) : null);
+    const cuts = hasJudge ? judgeCuts(convPend.filter((c) => c.t < oosFrom).map((c) => pOf(c.x)!)) : { pHi: null, pTop: null };
+    const confOf = new Map<string, number>();
+    for (const c of convPend) confOf.set(c.key, confirmations(c.agree, pOf(c.x), cuts));
+    const conviction = gradeConviction(convPend.map((c) => ({ t: c.t, r: c.r, conf: confOf.get(c.key)! })), oosFrom, 'hourly', hasJudge, cuts);
+    convPend.length = 0;
+    await this.redis.set(FX_CONVICTION, JSON.stringify(conviction)).catch(() => undefined);
     rows.sort((a, b) => b.outSample.avgR * Math.min(1, b.outSample.n / 30) - a.outSample.avgR * Math.min(1, a.outSample.n / 30));
     paperRows.sort((a, b) => b.stats.totalR - a.stats.totalR);
     recent.sort((a, b) => b.exitT - a.exitT);
@@ -899,6 +924,16 @@ export class ForexLab {
             { ...base, ...upgraded, label: 'with the signal judge', baseRiskPct: 1 },
           )
         : null;
+      // v15.2: the same bot with bigger size + leverage on the trades it is more sure of (only when proven)
+      const convicted = conviction.active
+        ? simulatePortfolio(
+            poolNew.map((t) => {
+              const b = boostFor(tierOf(confOf.get(tradeKey(t)) ?? 0, hasJudge), conviction);
+              return b.mult > 1 ? { ...t, sizeF: t.sizeF * b.mult, maxMult: CONVICTION.maxRiskPct, lev: b.lev ?? undefined } : t;
+            }),
+            { ...base, ...upgraded, label: 'bigger size when sure', baseRiskPct: 1 },
+          )
+        : null;
       await yieldNow();
       const wf = walkForward(wfPool, {
         ...FX_CONFIG.walkForward,
@@ -914,6 +949,7 @@ export class ForexLab {
         old,
         judged,
         walkForward: wf,
+        convicted,
         note: `Strategies, their checks and their exits were picked on the first 70% of the history only; this is what the whole bot would have done on the last 30%, which it never saw: real spreads, max ${SIZING.maxOpen} trades at once (${SIZING.maxPerStrategy} per strategy), ${SIZING.leverage}× margin, the currency limit and the sizing rules.`,
       };
       await this.redis.set(FX_PORTFOLIO, JSON.stringify(portfolio)).catch(() => undefined);
@@ -1004,6 +1040,7 @@ export class ForexLab {
       judge,
       portfolio,
       news,
+      conviction,
     };
     await this.redis.set(FX_REPORT, JSON.stringify(report)).catch(() => undefined);
     this.marketsNow = markets;
@@ -1020,11 +1057,14 @@ export class ForexLab {
             const x = judgeX.get(tradeKey(t));
             const p = judgeModel && x ? judgeProb(judgeModel, x) : null;
             const judgeOk = !judge?.active || !judgeModel || p === null || p >= judgeModel.threshold;
+            const conf = confirmations(openAgree.get(tradeKey(t)) ?? 0, p, cuts);
+            const b = boostFor(tierOf(conf, hasJudge), conviction);
             return toLabTrade(t, {
               chosen: chosen.has(`${t.strategy}:${t.tf}`),
               sizeF,
               prio: row ? row.all.avgR : -1,
               judge: p === null ? null : { p: Math.round(p * 100) / 100, ok: judgeOk, need: judgeModel ? Math.round(judgeModel.threshold * 100) / 100 : null },
+              conviction: { tier: b.tier, conf, of: maxConfirmations(t.tf, hasJudge), mult: b.mult, lev: b.lev },
             });
           }),
           (pair) => this.calendar?.blockFor(pair) ?? this.headlines?.blockFor(pair) ?? null,
