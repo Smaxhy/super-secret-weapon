@@ -103,7 +103,12 @@ export function studyFromLaunches(launches: readonly Launch[], elite: { minGradu
     band('graduated before, quiet 7+ days', tags.filter((t) => t.quiet === true), bp),
     band('graduated before, launched within 7 days', tags.filter((t) => t.quiet === false), bp),
   ];
-  const eliteBands = [band(`elite dev (${elite.minGraduated}+ graduations, ${elite.minBondRatePct}%+ bond rate)`, tags.filter((t) => t.elite), bp), band('everyone else', tags.filter((t) => !t.elite), bp)];
+  const eliteBands = [
+    band(`elite dev (${elite.minGraduated}+ graduations, ${elite.minBondRatePct}%+ bond rate)`, tags.filter((t) => t.elite), bp),
+    band('elite dev, launched again within 24 h', tags.filter((t) => t.elite && t.within24h === true), bp),
+    band('elite dev, no launch in the 24 h before', tags.filter((t) => t.elite && t.within24h === false), bp),
+    band('everyone else', tags.filter((t) => !t.elite), bp),
+  ];
   const el = eliteBands[0]!;
   const rep = repeat24h[0]!;
   const parts: string[] = [];

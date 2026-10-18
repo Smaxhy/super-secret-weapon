@@ -19,6 +19,7 @@ import { scoreGapReport } from '../tools/score-gap';
 import { moneyMap } from '../learner/money-map';
 import { copyReplayStatus, startCopyReplay } from '../learner/copy-replay-runner';
 import { deployerStudyRunning, lastDeployerStudy, runDeployerStudy } from '../learner/deployer-study';
+import { DEFAULT_ELITE_TEST, eliteTestRunning, lastEliteTest, runEliteTest } from '../learner/elite-test';
 import { DEFAULT_CONFIG as DEFAULTS } from '../config/default';
 import { getConfig as cfgNow } from '../config/runtime-config';
 import { replayStatus, startReplay } from '../learner/replay-runner';
@@ -108,6 +109,22 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       const days = Math.min(30, Math.max(1, Number(req.body?.days ?? 14) || 14));
       const el = (cfgNow().deployers ?? DEFAULTS.deployers).elite ?? DEFAULTS.deployers.elite;
       void runDeployerStudy(days, el).catch(() => undefined);
+      return { ok: true, days };
+    });
+    // v11.20 elite launch test: buy repeat-graduator launches seconds after launch on the tape — does it pay?
+    secured.get('/api/elite-test', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return { running: eliteTestRunning(), last: await lastEliteTest() };
+    });
+    secured.post<{ Body: { days?: number } }>('/api/elite-test/run', async (req, reply) => {
+      if (eliteTestRunning()) {
+        reply.code(409);
+        return { ok: false, error: 'an elite test is already running' };
+      }
+      const days = Math.min(7, Math.max(1, Number(req.body?.days ?? 5) || 5));
+      const el = (cfgNow().deployers ?? DEFAULTS.deployers).elite ?? DEFAULTS.deployers.elite;
+      const now = Date.now();
+      void runEliteTest(now - days * 86_400_000, now, { ...DEFAULT_ELITE_TEST, elite: { minGraduated: el.minGraduated, minBondRatePct: el.minBondRatePct } }).catch(() => undefined);
       return { ok: true, days };
     });
     // v11.18 copy replay: walk the tape, copy wallets once their record qualifies — who is actually making money?
