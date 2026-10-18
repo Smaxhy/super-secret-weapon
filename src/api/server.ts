@@ -15,6 +15,8 @@
  * Disabled (with a warning) unless DASHBOARD_PASSWORD and JWT_SECRET are set.
  */
 import { runBacktest } from '../learner/backtester';
+import { copyReplayStatus, startCopyReplay } from '../learner/copy-replay-runner';
+import { cohortTestRunning, lastCohortTest, runCohortTest } from '../learner/cohort-test';
 import { moneyMap } from '../learner/money-map';
 import { DEFAULT_CONFIG as DEFAULTS } from '../config/default';
 import { getConfig as cfgNow } from '../config/runtime-config';
@@ -91,6 +93,31 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       const h = Number(q.hours ?? 48);
       const source = q.source === 'real' || q.source === 'skipped' || q.source === 'filtered' ? q.source : 'all';
       return moneyMap(redis, { hours: Number.isFinite(h) ? Math.min(168, Math.max(1, h)) : 48, strategy: q.strategy || null, source });
+    });
+    // v11.18 copy replay (back in v11.22 with "method" mode): who is actually making money, walk-forward on the tape.
+    secured.get('/api/copy-replay', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return copyReplayStatus();
+    });
+    secured.post<{ Body: { from?: string; to?: string; sizeSol?: number; method?: boolean } }>('/api/copy-replay/run', async (req, reply) => {
+      const r = startCopyReplay(req.body ?? {});
+      if (!r.ok) reply.code(409);
+      return r;
+    });
+    // v11.22 cohort test: the BOOST trade and the survivor trade on every graduate's PumpSwap tape (child process).
+    secured.get('/api/cohort-test', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return { running: cohortTestRunning(), last: await lastCohortTest() };
+    });
+    secured.post<{ Body: { days?: number } }>('/api/cohort-test/run', async (req, reply) => {
+      if (cohortTestRunning()) {
+        reply.code(409);
+        return { ok: false, error: 'a cohort test is already running' };
+      }
+      const days = Math.min(14, Math.max(1, Number(req.body?.days ?? 5) || 5));
+      const now = Date.now();
+      void runCohortTest(now - days * 86_400_000, now).catch(() => undefined);
+      return { ok: true, days };
     });
     // v11.16 AI meme reader: today's reads, spend, cache hits, last 20 verdicts.
     secured.get('/api/meme', async (_req, reply) => {

@@ -1126,6 +1126,20 @@ December (small wallet in Nov only if paper edge is positive).
   the Money tab already splits results by meme score (narrative fit is a third of it). The honest test is that split on
   "Inside your filters": if coins with a high meme score / narrative fit show a POSITIVE MEDIAN there, build a fast-exit
   narrative entry; the verdict section above says nothing measured so far has. Do not build it before that split says yes.
+- **v11.22 (Oct 18): the two tests the owner asked to run from the phone** (owner: "how do we copy trade faster… is it
+  already implemented, what do I run"). Both on Performance → Money, at the bottom. (1) **Copy replay is BACK** (restored
+  from 6888636) with a **"Method only"** switch (`CopyReplayConfig.method`, `--method` on the CLI, `method` in the POST
+  body, default ON in the card): a wallet's record counts only round trips held ≥ `methodMinHoldSec` 300 and bought ≥
+  `methodMinAgeSec` 60 after the coin's first trade (block snipers and 30-s flips are not a copyable method); report
+  field `method`. (2) **Cohort test** (`src/learner/cohort-test.ts`, in-process with yields, Redis `cohort:test:last`,
+  GET `/api/cohort-test`, POST `/run` {days ≤14}, card "BOOST trade & survivor trade"): every graduate's PumpSwap tape
+  (Token.completedAt in the window, newest `maxGraduates` 600) → BOOST trades (buy 10 / 30 / 60 s after the first
+  PumpSwap trade, sell 1.3 / 1.5 / 2× or at BOOST end 5 min, stop −30%) and survivor trades (≥20 distinct buyers in the
+  hour before 1 h / 2 h, hold ≤ 6 / 12 / 24 h, trail 25% from 1.3×, TP 3×, stop −40%); best rule needs 30+ trades,
+  "It pays" needs PF ≥1.5 and a positive total. Speed answer given to the owner: the v11.18 replay already copied at
+  ZERO delay and lost, so faster plumbing (gRPC, processed commitment, Sender tips, pre-built txs, co-location,
+  ShredStream) cannot rescue copy trading unless the method-only replay finds a consistent wallet first.
+  tests/cohort-test.test.ts, copy-replay.test.ts (method mode). 888 tests.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

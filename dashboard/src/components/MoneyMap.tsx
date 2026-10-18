@@ -9,6 +9,8 @@ import { useApi } from '../hooks/useApi';
 import { ago, STRATEGY_LABEL } from '../lib/format';
 import { Icon } from './Icon';
 import { Badge, Card, Chip, Empty, ErrorBox, HeatRow, Loading, NumberInput, SectionHeader, StatTile, Tabs, useStored } from './ui';
+import { CopyReplay } from './CopyReplay';
+import { CohortTest } from './CohortTest';
 
 interface GroupStat { label: string; n: number; winPct: number; avgPct: number; medianPct: number; robustPct: number; sol: number; reach115Pct: number; reach150Pct: number; reach200Pct: number; perfectPct: number }
 interface Dimension { key: string; label: string; about: string; groups: GroupStat[]; unknown: number }
@@ -224,6 +226,8 @@ export function MoneyMap() {
           <WeekHeat cells={data.week} />
         </>
       )}
+      <CopyReplay />
+      <CohortTest />
     </div>
   );
 }
