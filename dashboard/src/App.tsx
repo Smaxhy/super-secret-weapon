@@ -39,43 +39,109 @@ interface NavItem {
   /** One line for the phone "More" sheet. */
   desc: string;
 }
-/** Pages grouped by what they're for (sidebar sections on desktop, the "More" sheet on phones). */
-const GROUPS: Array<{ label: string; items: NavItem[] }> = [
-  {
+/** Two workspaces, each with its own menu (room for more later). System pages are shared. */
+type Ws = 'forex' | 'crypto';
+type Group = { label: string; items: NavItem[] };
+const SYSTEM: Group = {
+  label: 'System',
+  items: [
+    { to: '/scanner', label: 'Scanner', icon: 'radar', desc: 'Bot health, data feeds, market' },
+    { to: '/controls', label: 'Controls', icon: 'sliders', desc: 'Settings, rules, alerts, data feed' },
+  ],
+};
+const WS: Record<Ws, { label: string; icon: IconName; home: string; groups: Group[]; phone: string[] }> = {
+  forex: {
     label: 'Forex',
-    items: [{ to: '/forex', label: 'Forex', icon: 'globe', desc: 'Currency + gold strategies, tested and paper traded' }],
+    icon: 'globe',
+    home: '/forex',
+    phone: ['/forex', '/forex/practice', '/forex/bot', '/forex/strategies'],
+    groups: [
+      {
+        label: 'Forex',
+        items: [
+          { to: '/forex', label: 'Live', icon: 'chart', desc: 'Every market, the bot\'s lines, signals and trades' },
+          { to: '/forex/practice', label: 'Practice', icon: 'bolt', desc: 'Trade it yourself: $1k fake money, real prices' },
+          { to: '/forex/bot', label: 'Auto-bot', icon: 'cpu', desc: 'The bot trading its own $1k account by itself' },
+          { to: '/forex/strategies', label: 'Strategies', icon: 'flask', desc: 'Every strategy tested on 2 years of history' },
+          { to: '/forex/paper', label: 'Paper results', icon: 'clock', desc: 'Every strategy traded live since the start' },
+          { to: '/forex/setup', label: 'Setup', icon: 'plug', desc: 'Price feed, markets, going live' },
+        ],
+      },
+    ],
   },
-  {
+  crypto: {
     label: 'Crypto',
-    items: [
-      { to: '/', label: 'Crypto', icon: 'home', desc: 'Crypto overview: profit, open trades, latest activity' },
-      { to: '/positions', label: 'Positions', icon: 'layers', desc: 'What it holds right now' },
-      { to: '/history', label: 'History', icon: 'clock', desc: 'Every closed trade' },
-      { to: '/performance', label: 'Performance', icon: 'chart', desc: 'Charts, mistakes, money map, tests' },
+    icon: 'layers',
+    home: '/crypto',
+    phone: ['/crypto', '/positions', '/history', '/performance'],
+    groups: [
+      {
+        label: 'Crypto',
+        items: [
+          { to: '/crypto', label: 'Overview', icon: 'home', desc: 'Profit, open trades, latest activity' },
+          { to: '/positions', label: 'Positions', icon: 'layers', desc: 'What it holds right now' },
+          { to: '/history', label: 'History', icon: 'clock', desc: 'Every closed trade' },
+          { to: '/performance', label: 'Performance', icon: 'chart', desc: 'Charts, mistakes, money map, tests' },
+        ],
+      },
+      {
+        label: 'Lab',
+        items: [
+          { to: '/strategies', label: 'Strategies', icon: 'flask', desc: 'Chart strategies tested live' },
+          { to: '/shadow', label: 'Shadow trades', icon: 'eye', desc: 'Coins it skipped, traded on paper' },
+          { to: '/brain', label: 'Brain', icon: 'cpu', desc: 'Models, rules it found, tips' },
+          { to: '/learning', label: 'Learning', icon: 'sparkles', desc: 'Score weights, coach, lessons' },
+          { to: '/wallets', label: 'Wallets', icon: 'wallet', desc: 'KOLs, smart money, copy wallets' },
+          { to: '/feed', label: 'Live feed', icon: 'bolt', desc: 'New coins as they launch' },
+        ],
+      },
     ],
   },
-  {
-    label: 'Crypto lab',
-    items: [
-      { to: '/strategies', label: 'Strategies', icon: 'flask', desc: 'Chart strategies tested live' },
-      { to: '/shadow', label: 'Shadow trades', icon: 'eye', desc: 'Coins it skipped, traded on paper' },
-      { to: '/brain', label: 'Brain', icon: 'cpu', desc: 'Models, rules it found, tips' },
-      { to: '/learning', label: 'Learning', icon: 'sparkles', desc: 'Score weights, coach, lessons' },
-      { to: '/wallets', label: 'Wallets', icon: 'wallet', desc: 'KOLs, smart money, copy wallets' },
-      { to: '/feed', label: 'Live feed', icon: 'bolt', desc: 'New coins as they launch' },
-    ],
-  },
-  {
-    label: 'System',
-    items: [
-      { to: '/scanner', label: 'Scanner', icon: 'radar', desc: 'Bot health, market, trending' },
-      { to: '/controls', label: 'Controls', icon: 'sliders', desc: 'Settings, rules, alerts, data feed' },
-    ],
-  },
-];
-const NAV = GROUPS.flatMap((g) => g.items);
-/** Phone bottom bar: the four pages you check most; the rest live under "More". */
-const PHONE_MAIN = ['/forex', '/', '/positions', '/performance'];
+};
+const wsOf = (path: string): Ws => (path.startsWith('/forex') ? 'forex' : 'crypto');
+const groupsOf = (ws: Ws): Group[] => [...WS[ws].groups, SYSTEM];
+const NAV = [...WS.forex.groups, ...WS.crypto.groups, SYSTEM].flatMap((g) => g.items);
+const EXACT = new Set(['/forex', '/crypto']);
+
+/** Forex | Crypto switch (remembered per device). */
+function WorkspaceSwitch({ ws, compact = false }: { ws: Ws; compact?: boolean }) {
+  const navigate = useNavigate();
+  return (
+    <div className={`grid grid-cols-2 gap-1 rounded-xl bg-surface-2 p-1 ${compact ? 'text-xs' : 'text-sm'}`} role="tablist" aria-label="Workspace">
+      {(['forex', 'crypto'] as Ws[]).map((k) => (
+        <button
+          key={k}
+          type="button"
+          role="tab"
+          aria-selected={ws === k}
+          onClick={() => {
+            try {
+              localStorage.setItem('ws', k);
+            } catch {
+              // ignore
+            }
+            navigate(WS[k].home);
+          }}
+          className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 font-semibold transition-colors ${ws === k ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'}`}
+        >
+          <Icon name={WS[k].icon} size={compact ? 14 : 16} />
+          <span className={compact ? '' : 'hidden lg:inline'}>{WS[k].label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** "/" opens the workspace used last (Forex by default). */
+function Landing() {
+  let ws: Ws = 'forex';
+  try {
+    if (localStorage.getItem('ws') === 'crypto') ws = 'crypto';
+  } catch {
+    // ignore
+  }
+  return <Navigate to={WS[ws].home} replace />;
+}
 
 type Theme = 'system' | 'light' | 'dark';
 
@@ -156,7 +222,7 @@ function ThemeCycle({ theme, setTheme }: { theme: Theme; setTheme: (t: Theme) =>
 /** Name + one-line purpose per route, for the desktop top bar. */
 function pageMeta(pathname: string): { title: string; desc: string } {
   if (pathname.startsWith('/token/')) return { title: 'Coin', desc: 'One coin: price, safety, score and what the bot did' };
-  const n = NAV.find((x) => (x.to === '/' ? pathname === '/' : pathname.startsWith(x.to)));
+  const n = [...NAV].sort((x, y) => y.to.length - x.to.length).find((x) => (EXACT.has(x.to) ? pathname === x.to : pathname.startsWith(x.to)));
   return n ? { title: n.label, desc: n.desc } : { title: 'Solbot', desc: '' };
 }
 
@@ -264,7 +330,11 @@ function Shell() {
   const ov = useApi<OverviewData>('/api/overview', 60_000, ['trade']);
   const mode = ov.data?.mode;
   const paused = ov.data?.paused || ov.data?.killSwitch;
-  const inMore = NAV.some((n) => n.to !== '/' && !PHONE_MAIN.includes(n.to) && pathname.startsWith(n.to));
+  const ws = wsOf(pathname);
+  const GROUPS = groupsOf(ws);
+  const PHONE_MAIN = WS[ws].phone;
+  const wsNav = GROUPS.flatMap((g) => g.items);
+  const inMore = wsNav.some((n) => !PHONE_MAIN.includes(n.to) && (EXACT.has(n.to) ? pathname === n.to : pathname.startsWith(n.to)));
   const online = status === 'online';
   const meta = pageMeta(pathname);
   const refresh = () => {
@@ -289,6 +359,9 @@ function Shell() {
             <ModePill mode={mode} />
           </span>
         </div>
+        <div className="mb-5 px-0.5">
+          <WorkspaceSwitch ws={ws} />
+        </div>
         <nav className="flex flex-col gap-5" aria-label="Main">
           {GROUPS.map((g) => (
             <div key={g.label}>
@@ -296,7 +369,7 @@ function Shell() {
               <div className="mb-1.5 mx-auto h-px w-6 bg-line lg:hidden" aria-hidden="true" />
               <div className="flex flex-col gap-0.5">
                 {g.items.map((n) => (
-                  <NavLink key={n.to} to={n.to} end={n.to === '/'} className={linkCls} title={n.label}>
+                  <NavLink key={n.to} to={n.to} end={EXACT.has(n.to)} className={linkCls} title={n.label}>
                     {({ isActive }) => (
                       <>
                         {isActive && <span aria-hidden="true" className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-accent" />}
@@ -327,8 +400,7 @@ function Shell() {
       <header className="glass sticky top-0 z-20 h-[var(--hdr)] border-b border-line pt-[env(safe-area-inset-top)] md:hidden">
         <div className="flex h-14 items-center justify-between gap-2 px-4">
           <span className="flex min-w-0 items-center gap-2">
-            <Brand size="sm" />
-            <ModePill mode={mode} />
+            <WorkspaceSwitch ws={ws} compact />
           </span>
           <div className="flex items-center gap-0.5">
             <InstallButton compact />
@@ -369,8 +441,10 @@ function Shell() {
         <main id="main" className="mx-auto w-full max-w-[1400px] flex-1 px-4 pt-4 sm:px-6 md:pt-6 lg:px-8">
           <div key={pathname} className="page-enter">
             <Routes>
-              <Route path="/" element={<Overview />} />
+              <Route path="/" element={<Landing />} />
+              <Route path="/crypto" element={<Overview />} />
               <Route path="/forex" element={<Forex />} />
+              <Route path="/forex/:section" element={<Forex />} />
               <Route path="/feed" element={<LiveFeed />} />
               <Route path="/positions" element={<Positions />} />
               <Route path="/history" element={<History />} />
@@ -394,8 +468,8 @@ function Shell() {
 
       {/* Phone tab bar: 4 main pages + More */}
       <nav className="glass fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-line pb-[env(safe-area-inset-bottom)] md:hidden" aria-label="Main">
-        {NAV.filter((n) => PHONE_MAIN.includes(n.to)).map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => `flex h-16 flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors duration-150 ${isActive && !more ? 'text-accent-text' : 'text-muted'}`}>
+        {PHONE_MAIN.map((to) => wsNav.find((n) => n.to === to)!).map((n) => (
+          <NavLink key={n.to} to={n.to} end={EXACT.has(n.to)} className={({ isActive }) => `flex h-16 flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors duration-150 ${isActive && !more ? 'text-accent-text' : 'text-muted'}`}>
             {({ isActive }) => (
               <>
                 <span className={`grid h-7 w-12 place-items-center rounded-full transition-colors duration-150 ${isActive && !more ? 'bg-accent/15' : ''}`}>

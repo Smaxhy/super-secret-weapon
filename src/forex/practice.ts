@@ -11,7 +11,10 @@ import { oandaCandles, oandaPrices, oandaReady, loadOanda, type Granularity } fr
 import { INSTRUMENTS, instrument, type Bar, type Instrument } from './types';
 
 const log = moduleLogger('forex-practice');
-const KEY = 'fx:practice';
+export type AcctId = 'me' | 'bot';
+const keyFor = (a: AcctId) => (a === 'me' ? 'fx:practice' : 'fx:practice:bot');
+/** Bot account: risk per trade (% of equity), leverage used, most positions at once. */
+export const BOT = { riskPct: 1, leverage: 30, maxOpen: 8, freshMs: 2 * 3_600_000 };
 export const STOP_OUT_PCT = 50;
 export const MAX_LEVERAGE = 500;
 
@@ -47,13 +50,16 @@ export interface PracticePosition {
   openedAt: number;
   /** last 1-minute bar already checked for stop / target */
   checkedT: number;
+  /** bot trades: which strategy, and the lab trade it mirrors */
+  strategy?: string;
+  ref?: string;
 }
 
 export interface ClosedPractice extends PracticePosition {
   exit: number;
   closedAt: number;
   pnlUsd: number;
-  reason: 'manual' | 'stop' | 'target' | 'stop-out';
+  reason: 'manual' | 'stop' | 'target' | 'stop-out' | 'signal';
 }
 
 export interface PracticeAccount {
@@ -201,6 +207,8 @@ async function fetchQuote(inst: Instrument): Promise<Quote | null> {
   return null;
 }
 
+export interface OpenReq { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string }
+
 export class Practice {
   private cache = new Map<string, Quote>();
   private timer: NodeJS.Timeout | null = null;
@@ -272,8 +280,8 @@ export class Practice {
     return out;
   }
 
-  private async load(): Promise<PracticeAccount> {
-    const raw = await this.redis.get(KEY).catch(() => null);
+  private async load(acct: AcctId = 'me'): Promise<PracticeAccount> {
+    const raw = await this.redis.get(keyFor(acct)).catch(() => null);
     if (raw) {
       try {
         return JSON.parse(raw) as PracticeAccount;
@@ -283,8 +291,8 @@ export class Practice {
     }
     return newAccount();
   }
-  private async save(a: PracticeAccount): Promise<void> {
-    await this.redis.set(KEY, JSON.stringify(a));
+  private async save(a: PracticeAccount, acct: AcctId = 'me'): Promise<void> {
+    await this.redis.set(keyFor(acct), JSON.stringify(a));
   }
 
   /** Quotes needed to value the account: its pairs + the USD legs for conversion. */
@@ -304,21 +312,23 @@ export class Practice {
   }
 
   private async checkOpen(): Promise<void> {
-    const a = await this.load();
-    if (!a.open.length) return;
-    const q = await this.quotes(this.neededIds(a));
-    const ev = tick(a, q, Date.now());
-    if (ev.length) {
-      log.info({ ev }, 'practice account event');
-      await this.save(a);
+    for (const acct of ['me', 'bot'] as AcctId[]) {
+      const a = await this.load(acct);
+      if (!a.open.length) continue;
+      const q = await this.quotes(this.neededIds(a));
+      const ev = tick(a, q, Date.now());
+      if (ev.length) {
+        log.info({ acct, ev }, 'practice account event');
+        await this.save(a, acct);
+      }
     }
   }
 
-  async snapshot(): Promise<{ account: AccountView; quotes: Record<string, Quote> }> {
+  async snapshot(acct: AcctId = 'me'): Promise<{ account: AccountView; quotes: Record<string, Quote> }> {
     return this.serial(async () => {
-      const a = await this.load();
+      const a = await this.load(acct);
       const q = await this.quotes(INSTRUMENTS.map((i) => i.id), 20_000);
-      if (tick(a, q, Date.now()).length) await this.save(a);
+      if (tick(a, q, Date.now()).length) await this.save(a, acct);
       const mids: Record<string, number> = {};
       const halves: Record<string, number> = {};
       for (const x of Object.values(q)) {
@@ -329,14 +339,22 @@ export class Practice {
     });
   }
 
-  async open(req: { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null }): Promise<{ ok: boolean; error?: string }> {
+  async open(req: OpenReq, acct: AcctId = 'me'): Promise<{ ok: boolean; error?: string }> {
     return this.serial(async () => {
+      const a = await this.load(acct);
+      const r = await this.openIn(a, req);
+      if (r.ok) await this.save(a, acct);
+      return r;
+    });
+  }
+
+  private async openIn(a: PracticeAccount, req: OpenReq): Promise<{ ok: boolean; error?: string }> {
+    {
       const inst = instrument(req.pair);
       if (!inst) return { ok: false, error: 'unknown market' };
       const lev = Math.round(req.leverage);
       if (!(lev >= 1 && lev <= MAX_LEVERAGE)) return { ok: false, error: `leverage 1–${MAX_LEVERAGE}` };
       if (!(req.marginUsd > 0)) return { ok: false, error: 'amount must be above 0' };
-      const a = await this.load();
       const q = await this.quotes(this.neededIds(a, [inst.id]), 10_000);
       const quote = q[inst.id];
       if (!quote) return { ok: false, error: 'no price right now (market closed or feed down)' };
@@ -352,15 +370,59 @@ export class Practice {
       const target = req.target ?? null;
       if (stop !== null && (req.side === 1 ? stop >= entry : stop <= entry)) return { ok: false, error: 'stop must be on the losing side of the price' };
       if (target !== null && (req.side === 1 ? target <= entry : target >= entry)) return { ok: false, error: 'target must be on the winning side of the price' };
-      a.open.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, pair: inst.id, side: req.side, units, entry, marginUsd: Math.round(req.marginUsd * 100) / 100, leverage: lev, stop, target, openedAt: Date.now(), checkedT: quote.bars[quote.bars.length - 1]?.[0] ?? Date.now() });
-      await this.save(a);
+      a.open.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, pair: inst.id, side: req.side, units, entry, marginUsd: Math.round(req.marginUsd * 100) / 100, leverage: lev, stop, target, openedAt: Date.now(), checkedT: quote.bars[quote.bars.length - 1]?.[0] ?? Date.now(), ...(req.strategy ? { strategy: req.strategy } : {}), ...(req.ref ? { ref: req.ref } : {}) });
       return { ok: true };
+    }
+  }
+
+  /**
+   * Bot account: mirror the lab's live paper trades of the chosen strategies. A trade the lab opened in the last
+   * 2 hours that the bot doesn't hold yet is opened at the current price with the same stop / target, sized so the
+   * stop loses `BOT.riskPct` of equity at `BOT.leverage`×. A held trade the lab no longer has open (its trail / time /
+   * signal exit fired) is closed at the market. Returns what happened.
+   */
+  async syncBot(labOpen: Array<{ ref: string; strategy: string; pair: string; side: 1 | -1; entryT: number; stop: number; target: number | null; chosen: boolean }>): Promise<string[]> {
+    return this.serial(async () => {
+      const a = await this.load('bot');
+      const events: string[] = [];
+      const openRefs = new Set(labOpen.map((t) => t.ref));
+      const q = await this.quotes(this.neededIds(a, [...new Set(labOpen.map((t) => t.pair))]), 10_000);
+      const mids: Record<string, number> = {};
+      for (const x of Object.values(q)) mids[x.id] = x.mid;
+      for (const p of [...a.open]) {
+        if (p.ref && !openRefs.has(p.ref)) {
+          const qq = q[p.pair];
+          closePos(a, p, qq ? (p.side === 1 ? qq.bid : qq.ask) : exitPx(p, mids[p.pair] ?? p.entry), mids, 'signal', Date.now());
+          events.push(`closed ${p.pair} (${p.strategy})`);
+        }
+      }
+      const held = new Set([...a.open.map((p) => p.ref), ...a.closed.slice(0, 200).map((p) => p.ref)]);
+      for (const t of labOpen) {
+        if (!t.chosen || held.has(t.ref) || Date.now() - t.entryT > BOT.freshMs) continue;
+        if (a.open.length >= BOT.maxOpen) break;
+        const qq = q[t.pair];
+        if (!qq || qq.tradeable === false) continue;
+        const entry = t.side === 1 ? qq.ask : qq.bid;
+        const dist = (entry - t.stop) * t.side;
+        if (!(dist > 0)) continue; // price already through the stop
+        const v = view(a, mids);
+        const riskUsd = (v.equityUsd * BOT.riskPct) / 100;
+        const notional = riskUsd / (dist / entry);
+        let margin = notional / BOT.leverage;
+        margin = Math.min(margin, v.freeMarginUsd * 0.25);
+        if (margin < 1) continue;
+        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: BOT.leverage, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref });
+        events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy})` : `skipped ${t.pair}: ${r.error}`);
+      }
+      await this.save(a, 'bot');
+      if (events.length) log.info({ events }, 'forex bot account');
+      return events;
     });
   }
 
-  async close(id: string | 'all'): Promise<{ ok: boolean; error?: string }> {
+  async close(id: string | 'all', acct: AcctId = 'me'): Promise<{ ok: boolean; error?: string }> {
     return this.serial(async () => {
-      const a = await this.load();
+      const a = await this.load(acct);
       const targets = id === 'all' ? [...a.open] : a.open.filter((p) => p.id === id);
       if (!targets.length) return { ok: false, error: 'no such position' };
       const q = await this.quotes(this.neededIds(a), 5_000);
@@ -370,19 +432,19 @@ export class Practice {
         const qq = q[p.pair];
         closePos(a, p, qq ? (p.side === 1 ? qq.bid : qq.ask) : exitPx(p, mids[p.pair] ?? p.entry), mids, 'manual', Date.now());
       }
-      await this.save(a);
+      await this.save(a, acct);
       return { ok: true };
     });
   }
 
-  async edit(id: string, stop: number | null, target: number | null): Promise<{ ok: boolean; error?: string }> {
+  async edit(id: string, stop: number | null, target: number | null, acct: AcctId = 'me'): Promise<{ ok: boolean; error?: string }> {
     return this.serial(async () => {
-      const a = await this.load();
+      const a = await this.load(acct);
       const p = a.open.find((x) => x.id === id);
       if (!p) return { ok: false, error: 'no such position' };
       p.stop = stop;
       p.target = target;
-      await this.save(a);
+      await this.save(a, acct);
       return { ok: true };
     });
   }
@@ -437,7 +499,7 @@ export class Practice {
     return { source: 'yahoo', bars: [] };
   }
 
-  async reset(startUsd: number): Promise<void> {
-    await this.serial(() => this.save(newAccount(Math.min(1_000_000, Math.max(10, startUsd)))));
+  async reset(startUsd: number, acct: AcctId = 'me'): Promise<void> {
+    await this.serial(() => this.save(newAccount(Math.min(1_000_000, Math.max(10, startUsd))), acct));
   }
 }

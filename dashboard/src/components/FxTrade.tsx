@@ -4,6 +4,7 @@ import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 import { ago } from '../lib/format';
 import { TvChart } from './TvChart';
+import { MarketChart, type ChartDrawings } from './MarketChart';
 import { Badge, Button, Card, Chip, NumberInput, Row, Rows, Stack, StatTile, useStored } from './ui';
 
 interface Quote { id: string; mid: number; bid: number; ask: number; t: number; dayChangePct: number | null; source: 'oanda' | 'yahoo'; tradeable?: boolean }
@@ -30,6 +31,8 @@ export function FxTrade() {
   const [tpPips, setTpPips] = useState('40');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [view, setView] = useStored<'tv' | 'bot'>('fx.chartView', 'tv', ['tv', 'bot']);
+  const lab = useApi<{ last: { markets?: Array<{ id: string; bars: number[][]; drawings: ChartDrawings }> } | null }>(view === 'bot' ? '/api/forex' : null, 60_000);
   const a = data?.account ?? null;
   const q = data?.quotes?.[pair];
   const p = pipOf(pair);
@@ -84,6 +87,7 @@ export function FxTrade() {
           <StatTile compact label="Margin level" value={a.marginLevelPct === null ? '—' : `${a.marginLevelPct}%`} sub="margin call at 50%" tone={a.marginLevelPct !== null && a.marginLevelPct < 100 ? 'down' : undefined} />
         </div>
       )}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
       <Card padded={false}>
         <div className="flex gap-1.5 overflow-x-auto px-4 pt-4 pb-2 sm:px-5">
           {PAIRS.map((id) => {
@@ -96,17 +100,33 @@ export function FxTrade() {
             );
           })}
         </div>
-        <div className="flex flex-wrap gap-1.5 px-4 pb-3 sm:px-5">
-          {TFS.map(([k, label]) => (
+        <div className="flex flex-wrap items-center gap-1.5 px-4 pb-3 sm:px-5">
+          <Chip active={view === 'tv'} onClick={() => setView('tv')}>TradingView</Chip>
+          <Chip active={view === 'bot'} onClick={() => setView('bot')}>Bot's view</Chip>
+          {view === 'tv' && <span className="mx-1 h-4 w-px bg-line" />}
+          {view === 'tv' && TFS.map(([k, label]) => (
             <Chip key={k} active={tf === k} onClick={() => setTf(k)}>{label}</Chip>
           ))}
         </div>
         <div className="px-2 pb-2 sm:px-3">
-          <TvChart pair={pair} interval={tf} />
+          {view === 'tv' ? (
+            <TvChart pair={pair} interval={tf} height={typeof window !== 'undefined' && window.innerWidth >= 768 ? Math.max(560, Math.round(window.innerHeight * 0.68)) : 460} />
+          ) : (() => {
+            const m = lab.data?.last?.markets?.find((x) => x.id === pair);
+            if (!m) return <p className="p-4 text-sm text-muted">The bot's chart fills in after its hourly update.</p>;
+            const mine = (a?.positions ?? []).filter((x) => x.pair === pair).map((x) => ({ side: x.side, entryT: x.openedAt, entry: x.entry, stop: x.stop ?? x.entry, target: x.target, strategy: 'you' }));
+            return (
+              <div className="rounded-xl border border-line bg-surface p-2">
+                <MarketChart bars={m.bars} drawings={m.drawings} trades={mine} digits={dp(pair)} />
+                <p className="px-2 pb-1 text-xs text-muted">Hourly candles with the bot's trendlines and levels, and your open trades (blue entry, red stop, green target).</p>
+              </div>
+            );
+          })()}
         </div>
       </Card>
+      <div className="xl:sticky xl:top-20 xl:self-start">
       <Card title={`Trade ${pair}`} subtitle={q ? `Bid ${q.bid.toFixed(dp(pair))} · Ask ${q.ask.toFixed(dp(pair))} · spread ${((q.ask - q.bid) / p).toFixed(1)} pips · ${q.source === 'oanda' ? 'live OANDA price' : 'Yahoo price (slower; connect OANDA data in Setup)'}` : 'Loading price…'}>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
           <NumberInput label="Amount (margin)" value={amount} onChange={setAmount} min={1} step={10} unit="$" />
           <div>
             <div className="mb-1 text-xs font-medium text-ink-2">Leverage</div>
@@ -130,6 +150,9 @@ export function FxTrade() {
         </div>
         {msg && <p className={`mt-2 text-sm ${msg.ok ? 'text-up' : 'text-down'}`}>{msg.text}</p>}
       </Card>
+      </div>
+      </div>
+      <div className="grid gap-4 xl:grid-cols-2">
       <Card title="Open positions" action={a?.positions.length ? <Button size="sm" variant="outline" onClick={() => void close('all')}>Close all</Button> : undefined}>
         {!a?.positions.length ? (
           <p className="text-sm text-ink-2">No open positions.</p>
@@ -170,6 +193,7 @@ export function FxTrade() {
           </Rows>
         )}
       </Card>
+      </div>
     </Stack>
   );
 }

@@ -107,6 +107,78 @@ export function swings(b: readonly Bar[], k = 3): { highs: Swing[]; lows: Swing[
   return { highs, lows };
 }
 
+/** Parabolic SAR (0.02 step, 0.2 max): value + direction (1 up / −1 down). */
+export function psar(b: readonly Bar[], step = 0.02, max = 0.2): { sar: number[]; dir: number[] } {
+  const sar: number[] = [];
+  const dir: number[] = [];
+  if (!b.length) return { sar, dir };
+  let d = 1;
+  let af = step;
+  let ep = b[0]!.h;
+  let s = b[0]!.l;
+  for (let i = 0; i < b.length; i++) {
+    if (i > 0) {
+      s = s + af * (ep - s);
+      if (d === 1) {
+        s = Math.min(s, b[i - 1]!.l, b[i - 2]?.l ?? b[i - 1]!.l);
+        if (b[i]!.l < s) {
+          d = -1;
+          s = ep;
+          ep = b[i]!.l;
+          af = step;
+        } else if (b[i]!.h > ep) {
+          ep = b[i]!.h;
+          af = Math.min(max, af + step);
+        }
+      } else {
+        s = Math.max(s, b[i - 1]!.h, b[i - 2]?.h ?? b[i - 1]!.h);
+        if (b[i]!.h > s) {
+          d = 1;
+          s = ep;
+          ep = b[i]!.h;
+          af = step;
+        } else if (b[i]!.l < ep) {
+          ep = b[i]!.l;
+          af = Math.min(max, af + step);
+        }
+      }
+    }
+    sar.push(s);
+    dir.push(d);
+  }
+  return { sar, dir };
+}
+
+/** Stochastic %K (n) smoothed (k) and %D (d). */
+export function stochastic(b: readonly Bar[], n = 14, k = 3, d = 3): { k: number[]; d: number[] } {
+  const raw = b.map((_, i) => {
+    if (i < n - 1) return NaN;
+    let hi = -Infinity;
+    let lo = Infinity;
+    for (let j = i - n + 1; j <= i; j++) {
+      hi = Math.max(hi, b[j]!.h);
+      lo = Math.min(lo, b[j]!.l);
+    }
+    return hi > lo ? ((b[i]!.c - lo) / (hi - lo)) * 100 : 50;
+  });
+  const kk = sma(raw.map((x) => (Number.isFinite(x) ? x : 50)), k).map((x, i) => (i >= n + k - 2 ? x : NaN));
+  const dd = sma(kk.map((x) => (Number.isFinite(x) ? x : 50)), d).map((x, i) => (i >= n + k + d - 3 ? x : NaN));
+  return { k: kk, d: dd };
+}
+
+/** Commodity Channel Index. */
+export function cci(b: readonly Bar[], n = 20): number[] {
+  const tp = b.map((x) => (x.h + x.l + x.c) / 3);
+  const m = sma(tp, n);
+  return tp.map((v, i) => {
+    if (i < n - 1) return NaN;
+    let md = 0;
+    for (let j = i - n + 1; j <= i; j++) md += Math.abs(tp[j]! - m[i]!);
+    md /= n;
+    return md > 0 ? (v - m[i]!) / (0.015 * md) : 0;
+  });
+}
+
 /** Everything a strategy may read at bar i, computed once per series. */
 export interface Ctx {
   bars: Bar[];
@@ -141,9 +213,14 @@ export interface Ctx {
   hour: number[];
   /** minutes per bar */
   barMin: number;
+  /** instrument id (EURUSD…) — for session / currency rules */
+  pair: string;
+  psar: { sar: number[]; dir: number[] };
+  stoch: { k: number[]; d: number[] };
+  cci20: number[];
 }
 
-export function buildCtx(bars: Bar[], barMin: number): Ctx {
+export function buildCtx(bars: Bar[], barMin: number, pair = ''): Ctx {
   const sw = swings(bars, 3);
   const ptr = (xs: Swing[]) => {
     const out: number[] = [];
@@ -213,6 +290,10 @@ export function buildCtx(bars: Bar[], barMin: number): Ctx {
     asia,
     hour: bars.map((b) => new Date(b.t).getUTCHours()),
     barMin,
+    pair,
+    psar: psar(bars),
+    stoch: stochastic(bars),
+    cci20: cci(bars, 20),
   };
 }
 

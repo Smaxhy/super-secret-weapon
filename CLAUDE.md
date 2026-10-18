@@ -62,6 +62,38 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   ticket with amount / leverage chips / SL + TP in pips, position size, pip value, risk % of the account; open positions
   with live P&L and Close; history; reset). Forex → Setup → "Live price feed" (`components/OandaCard.tsx`).
   tests/forex-practice.test.ts. Real money later = on-chain perps from the owner's own wallet (no broker, no payouts).
+- **v12.2 (Oct 19)** (owner: "see live charts of what it's looking at, the bot drawing trendlines, more strategies, better
+  layout, research online"). `src/forex/drawings.ts` `drawingsFor(ctx)`: active trendlines through ≥2 respected confirmed
+  swing lows (rising support) / highs (falling resistance) with touches + broken flag, horizontal levels where ≥3 swing
+  points cluster (0.35 ATR), yesterday's H/L, Asian range. Lab report `markets[]` (per instrument, 1h): price, 24h %,
+  72 closes, trend (EMA50 vs 200), RSI, ATR pips, strategies firing on the last closed bar (1h + 4h), open paper trades,
+  last 150 bars + drawings. Trades now carry `stop` / `stop0` / `target`. Dashboard: Forex tabs **Live** (default; market
+  cards → drawer with `components/MarketChart.tsx`, an SVG chart of candles + trendlines + levels + ranges + the bot's
+  open trades, toggles, "what it sees" list, "Trade this yourself") / Practice (TradingView ⇄ "Bot's view" switch, your
+  own trades drawn with SL/TP) / Strategies / Paper / Setup. **10 researched strategies** (research report in this
+  session; sources: Moskowitz-Ooi-Pedersen TSMOM, SNB WP 2011-04 local hours, BoC SWP 2021-48 fix, Connors-Raschke):
+  `tsmom` (120 bars), `tsmom_long` (480), `local_hours`, `fix_flow` (long USD 14–16 UTC), `turtle_soup`, `asian_fade`,
+  `psar_adx`, `stoch_trend`, `cci_break`, `williams_r` (36 total + random). Ichimoku skipped (the one FX test found no
+  edge). New indicators: PSAR, Stochastic, CCI; `Ctx.pair`. **Going live without a broker** = on-chain perps from the
+  owner's wallet: gTrade first (FX 10–1000×, ~0.034% round trip, MIT SDK github.com/GainsNetwork-org), Ostium riskier
+  ($23.8M oracle exploit 2026-07-15), Hyperliquid HIP-3 possible. Nothing wired yet; geo / terms unverified.
+- **v12.3 (Oct 19)** (owner: "the bot should trade automatically when it sees openings / fixes; crypto layout much cleaner
+  in case I add other things; lower the crypto rules so it trades and learns a lot without wasting money; prettier;
+  TradingView bigger"). (1) **Forex auto-bot**: `Practice` now holds two accounts (`AcctId` 'me' → Redis `fx:practice`,
+  'bot' → `fx:practice:bot`). `ForexLab` runs 90 s after every full hour (candle just closed) and calls
+  `practice.syncBot(open lab paper trades)`: chosen = strategies with verdict edge/maybe + `FX_CONFIG.botAlways`
+  (tsmom, tsmom_long, local_hours, fix_flow); a chosen lab trade opened ≤2 h ago and not yet held → opened at the live
+  bid/ask with the lab's stop / target, size = 1% equity risk at 30× (`BOT`), ≤25% of free margin, max 8 open; a held
+  trade the lab no longer has open → closed at market (reason 'signal'); stops / targets between runs by the 15 s
+  practice tick. Redis `fx:bot:log` (100) / `fx:bot:chosen`. API GET `/api/forex/bot`; `?acct=bot` / body `acct` on
+  practice close / reset. (2) **Crypto = paper data collector**: migration v52 — Sniper off, CURVE_SNIPE / SWING / RUNNER
+  on (copy stays off), quiet hours off, dip-only off, score bar 55, edge gate off, maxPositionSol 0.2, 20 positions,
+  learning trades margin 15 / 10 open / 40 an hour; guards + owner filters unchanged. (3) **App = two workspaces**
+  (`App.tsx` `WS`): a Forex | Crypto switch (sidebar top; phone header), each with its own menu + phone bar, System
+  (Scanner, Controls) shared; `/` → last workspace (default Forex, localStorage `ws`); crypto overview moved to
+  `/crypto`. Forex routes `/forex` (Live), `/forex/practice`, `/forex/bot` (`components/FxBot.tsx`), `/forex/strategies`,
+  `/forex/paper`, `/forex/setup` (page reads `:section`, no inner tabs). Practice: chart + order ticket side by side on
+  wide screens, TradingView ≈ 68% of the screen height (≥560 px).
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

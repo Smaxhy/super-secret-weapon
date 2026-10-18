@@ -363,6 +363,7 @@ async function main(): Promise<void> {
   forex.start();
   const practice = new Practice(redis);
   practice.start();
+  forex.practice = practice;
   // Shadow trades: pretend trades on coins it didn't buy (refused / just under the bar / skipped by a rule).
   const shadow = new ShadowTrades(redis, crowd);
   evaluator.shadow = shadow;

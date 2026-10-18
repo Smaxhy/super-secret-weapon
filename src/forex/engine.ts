@@ -44,6 +44,9 @@ export function runSeries(inst: Instrument, tf: Timeframe, c: Ctx, s: Strategy):
       stopPct: (risk / p.entry) * 100,
       reason,
       bars: i - p.entryIdx + 1,
+      stop: p.stop,
+      stop0: p.stop0,
+      target: p.target,
     });
     pos = null;
   };

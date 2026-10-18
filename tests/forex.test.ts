@@ -31,7 +31,7 @@ function market(n: number, seed = 7): Bar[] {
 
 describe('forex lab v12', () => {
   it('every strategy runs on 1h and 4h without crashing and the library is big', () => {
-    expect(STRATEGIES.length).toBeGreaterThanOrEqual(25);
+    expect(STRATEGIES.length).toBeGreaterThanOrEqual(35);
     const bars = market(4000);
     const c1 = buildCtx(bars, 60);
     const c4 = buildCtx(to4h(bars), 240);
@@ -76,7 +76,7 @@ describe('forex lab v12', () => {
   });
 
   it('equity: risk per trade scales results; leverage is capped; a wipe-out is flagged', () => {
-    const mk = (k: number, r: number): Trade => ({ strategy: 's', tf: '1h', pair: 'EURUSD', side: 1, entryT: T0 + k * 6 * H, exitT: T0 + k * 6 * H + 3 * H, entry: 1, exit: 1, r, stopPct: 0.2, reason: r > 0 ? 'target' : 'stop', bars: 3 });
+    const mk = (k: number, r: number): Trade => ({ strategy: 's', tf: '1h', pair: 'EURUSD', side: 1, entryT: T0 + k * 6 * H, exitT: T0 + k * 6 * H + 3 * H, entry: 1, exit: 1, r, stopPct: 0.2, reason: r > 0 ? 'target' : 'stop', bars: 3, stop: 0.998, stop0: 0.998, target: null });
     const win = Array.from({ length: 60 }, (_, k) => mk(k, k % 2 ? 2 : -1));
     const a = equityCurve(win, 1, 50);
     const b = equityCurve(win, 2, 50);
@@ -106,5 +106,22 @@ describe('forex lab v12', () => {
     expect(merged).toHaveLength(3);
     expect(merged[1]!.c).toBe(2);
     expect(to4h(market(9)).length).toBe(2);
+  });
+});
+
+describe('forex drawings', () => {
+  it('finds a rising support line through rising swing lows and flags the break', async () => {
+    const { drawingsFor } = await import('../src/forex/drawings');
+    const bars: Bar[] = [];
+    // zig-zag uptrend: lows rise by 0.001 every 10 bars
+    for (let i = 0; i < 300; i++) {
+      const base = 1 + i * 0.0001 + (i % 10 < 5 ? (i % 10) * 0.0004 : (10 - (i % 10)) * 0.0004);
+      bars.push({ t: T0 + i * H, o: base, h: base + 0.0002, l: base - 0.0002, c: base + 0.00005 });
+    }
+    const d = drawingsFor(buildCtx(bars, 60));
+    const sup = d.lines.find((l) => l.kind === 'support');
+    expect(sup).toBeTruthy();
+    expect(sup!.p2).toBeGreaterThan(sup!.p1);
+    expect(sup!.broken).toBe(false);
   });
 });

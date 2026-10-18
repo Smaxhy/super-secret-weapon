@@ -135,10 +135,22 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       return { ok: true };
     });
     // v12.1 forex practice account
-    secured.get('/api/forex/practice', async (_req, reply) => {
+    secured.get('/api/forex/practice', async (req, reply) => {
       reply.header('Cache-Control', 'no-store');
       if (!deps.practice) return { account: null, quotes: {} };
-      return deps.practice.snapshot();
+      return deps.practice.snapshot((req.query as { acct?: string }).acct === 'bot' ? 'bot' : 'me');
+    });
+    secured.get('/api/forex/bot', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      const [snap, logRaw, chosenRaw] = await Promise.all([deps.practice ? deps.practice.snapshot('bot') : null, redis.get('fx:bot:log').catch(() => null), redis.get('fx:bot:chosen').catch(() => null)]);
+      const parse = <T,>(x: string | null, d: T): T => {
+        try {
+          return x ? (JSON.parse(x) as T) : d;
+        } catch {
+          return d;
+        }
+      };
+      return { account: snap?.account ?? null, log: parse(logRaw, [] as Array<{ t: number; e: string }>), chosen: parse(chosenRaw, [] as string[]) };
     });
     secured.post<{ Body: { pair?: string; side?: number; marginUsd?: number; leverage?: number; stop?: number | null; target?: number | null } }>('/api/forex/practice/open', async (req, reply) => {
       const b = req.body ?? {};
@@ -146,8 +158,8 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       if (!r.ok) reply.code(400);
       return r;
     });
-    secured.post<{ Body: { id?: string } }>('/api/forex/practice/close', async (req, reply) => {
-      const r = deps.practice ? await deps.practice.close(req.body?.id === 'all' ? 'all' : String(req.body?.id ?? '')) : { ok: false, error: 'not running' };
+    secured.post<{ Body: { id?: string; acct?: string } }>('/api/forex/practice/close', async (req, reply) => {
+      const r = deps.practice ? await deps.practice.close(req.body?.id === 'all' ? 'all' : String(req.body?.id ?? ''), req.body?.acct === 'bot' ? 'bot' : 'me') : { ok: false, error: 'not running' };
       if (!r.ok) reply.code(400);
       return r;
     });
@@ -190,8 +202,8 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       await saveOanda(next);
       return { ok: true };
     });
-    secured.post<{ Body: { startUsd?: number } }>('/api/forex/practice/reset', async (req) => {
-      await deps.practice?.reset(Number(req.body?.startUsd ?? 1000) || 1000);
+    secured.post<{ Body: { startUsd?: number; acct?: string } }>('/api/forex/practice/reset', async (req) => {
+      await deps.practice?.reset(Number(req.body?.startUsd ?? 1000) || 1000, req.body?.acct === 'bot' ? 'bot' : 'me');
       return { ok: true };
     });
     // v11.16 AI meme reader: today's reads, spend, cache hits, last 20 verdicts.

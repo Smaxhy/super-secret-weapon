@@ -663,6 +663,25 @@ export const MIGRATIONS: ConfigMigration[] = [
     note: 'v11.20: copy trading OFF — the 5-day copy replay (2,966 copies, 13% won, −134 SOL, 0 consistent wallets; the owner\'s tracked wallets 1% won) matches the research: a 1–3 s-late copier is the leader\'s exit',
     set: [['trading', ['enabledStrategies', 'SMART_MONEY_COPY'], false]],
   },
+  {
+    version: 52,
+    note: 'v12.3 (owner: "lower the crypto rules so it can actually trade and learn A LOT in the background without wasting my money"): crypto is a paper data collector now — Sniper mode off, every strategy but copy-trading on, smaller trades, more of them; rug / bundle / vamp guards and the owner filters stay',
+    set: [
+      ['sniper', ['enabled'], false],
+      ['trading', ['enabledStrategies', 'CURVE_SNIPE'], true],
+      ['trading', ['enabledStrategies', 'SWING'], true],
+      ['trading', ['enabledStrategies', 'RUNNER'], true],
+      ['trading', ['quietHours', 'enabled'], false],
+      ['trading', ['maxPositionSol'], 0.2],
+      ['trading', ['maxConcurrentPositions'], 20],
+      ['chart', ['dip', 'dipOnly', 'enabled'], false],
+      ['entry', ['minCombinedScore'], 55],
+      ['entry', ['edgeGate', 'enabled'], false],
+      ['explore', ['scoreMargin'], 15],
+      ['explore', ['maxOpen'], 10],
+      ['explore', ['maxPerHour'], 40],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

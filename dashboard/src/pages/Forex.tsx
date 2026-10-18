@@ -3,37 +3,45 @@
  * (in-sample / unseen split, real spreads) and paper traded live from the day the lab started. No real orders.
  */
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { FxBot } from '../components/FxBot';
 import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 import { ago } from '../lib/format';
 import { Icon } from '../components/Icon';
 import { FxTrade } from '../components/FxTrade';
 import { OandaCard } from '../components/OandaCard';
-import { Badge, Button, Card, Chip, Drawer, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Stack, StatTile, Tabs, useStored, useTab } from '../components/ui';
+import { MarketChart, type ChartDrawings } from '../components/MarketChart';
+import { Badge, Button, Card, Chip, Drawer, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Sparkline, Stack, StatTile, useStored } from '../components/ui';
 
 interface RStats { n: number; winPct: number; avgR: number; medianR: number; pf: number | null; totalR: number; maxDdR: number }
 interface Risk { riskPct: number; finalX: number; avgWeekPct: number; medianWeekPct: number; greenWeeksPct: number; bigWeeksPct: number; bestWeekPct: number; worstWeekPct: number; maxDdPct: number; blown: boolean; medianLeverage: number; weeks: number }
 interface RowT { id: string; name: string; family: string; desc: string; tf: '1h' | '4h'; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string }
-interface Trade { strategy: string; tf: string; pair: string; side: 1 | -1; entryT: number; exitT: number; entry: number; exit: number; r: number; reason: string }
+interface Trade { strategy: string; tf: string; pair: string; side: 1 | -1; entryT: number; exitT: number; entry: number; exit: number; r: number; reason: string; stop: number; stop0: number; target: number | null }
+interface MarketNow { id: string; label: string; price: number; t: number; change24hPct: number; closes: number[]; trend: 'up' | 'down' | 'flat'; rsi: number; atrPips: number; firing: Array<{ id: string; name: string; tf: string; side: 1 | -1 }>; openPaper: number; bars: number[][]; drawings: ChartDrawings }
 interface PaperRow { id: string; name: string; tf: string; stats: RStats; risk1: Risk; open: number }
-interface Report { at: number; durationMs: number; feed: Array<{ id: string; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string }
+interface Report { at: number; durationMs: number; feed: Array<{ id: string; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; markets?: MarketNow[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string }
 interface Data { running: boolean; last: Report | null }
 
 const signed = (x: number, dp = 1) => `${x >= 0 ? '+' : ''}${x.toFixed(dp)}`;
 const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink-2');
 const day = (t: number | null) => (t ? new Date(t).toISOString().slice(0, 10) : '—');
 const VERDICT: Record<RowT['verdict'], { label: string; tone: 'up' | 'warn' | 'neutral' }> = { edge: { label: 'Edge', tone: 'up' }, maybe: { label: 'Maybe', tone: 'warn' }, no: { label: 'No edge', tone: 'neutral' } };
-const SECTIONS = [
-  { key: 'trade', label: 'Practice' },
-  { key: 'strategies', label: 'Strategies' },
-  { key: 'paper', label: 'Paper' },
-  { key: 'setup', label: 'Setup' },
-] as const;
-type Section = (typeof SECTIONS)[number]['key'];
+type Section = 'live' | 'practice' | 'bot' | 'strategies' | 'paper' | 'setup';
+const TITLES: Record<Section, { title: string; sub: string }> = {
+  live: { title: 'Forex · Live', sub: "Every market the bot watches: its trendlines, levels, signals and open trades." },
+  practice: { title: 'Practice', sub: 'Trade it yourself with $1,000 of fake money, real prices and leverage.' },
+  bot: { title: 'Auto-bot', sub: 'The bot trades its own $1,000 account by itself whenever a chosen strategy fires.' },
+  strategies: { title: 'Strategies', sub: 'Every strategy tested on 2 years of hourly candles with real spreads; the last 30% kept unseen.' },
+  paper: { title: 'Paper results', sub: 'Every strategy traded live on paper since the lab started: the real test.' },
+  setup: { title: 'Setup', sub: 'Price feed, markets and the road to real money.' },
+};
 
 export function Forex() {
+  const params = useParams();
+  const section = ((['practice', 'bot', 'strategies', 'paper', 'setup'] as const).find((x) => x === params.section) ?? 'live') as Section;
+  const navigate = useNavigate();
   const { data, error, reload } = useApi<Data>('/api/forex', 60_000);
-  const [section, setSection] = useTab<Section>('forex', SECTIONS.map((s) => s.key), 'trade');
   const [busy, setBusy] = useState(false);
   const running = !!data?.running;
   useEffect(() => {
@@ -51,32 +59,130 @@ export function Forex() {
     }
   };
   const r = data?.last ?? null;
+  const labNeeded = section === 'live' || section === 'strategies' || section === 'paper';
   return (
     <>
       <PageHeader
-        title="Forex"
-        subtitle="Practice trading with fake money and real prices, plus every strategy tested on 2 years of history and paper traded live."
-        action={
-          <Button size="sm" disabled={busy || running} onClick={() => void run()}>
-            <Icon name="refresh" size={14} />
-            {running ? 'Running…' : 'Update now'}
+        title={TITLES[section].title}
+        subtitle={TITLES[section].sub}
+        action={labNeeded ? (
+          <Button size="sm" variant="outline" disabled={busy || running} onClick={() => void run()}>
+            <Icon name="refresh" size={14} className={running ? 'animate-spin' : ''} />
+            {running ? 'Updating…' : 'Update now'}
           </Button>
-        }
+        ) : undefined}
       />
       {error && <ErrorBox message={error} />}
-      <Tabs sticky tabs={SECTIONS.map((x) => ({ key: x.key, label: x.label }))} value={section} onChange={setSection} label="Forex sections" className="mb-4" />
-      {section === 'trade' && <FxTrade />}
+      {section === 'practice' && <FxTrade />}
+      {section === 'bot' && <FxBot />}
       {section === 'setup' && <Stack><OandaCard />{r && <Setup r={r} />}</Stack>}
-      {(section === 'strategies' || section === 'paper') && !data && !error && <Loading kind="tiles" />}
-      {(section === 'strategies' || section === 'paper') && data && !r && <Empty icon={<Icon name="globe" size={20} />}>{running ? 'First run: downloading 2 years of candles for 12 markets. About a minute.' : 'Not run yet. It starts by itself a minute after the bot starts, or press Update now.'}</Empty>}
-      {r && (section === 'strategies' || section === 'paper') && (
+      {labNeeded && !data && !error && <Loading kind="tiles" />}
+      {labNeeded && data && !r && <Empty icon={<Icon name="globe" size={20} />}>{running ? 'First run: downloading 2 years of candles for 12 markets. About a minute.' : 'Not run yet. It starts by itself a minute after the bot starts, or press Update now.'}</Empty>}
+      {labNeeded && r && (
         <Stack>
           <Summary r={r} />
+          {section === 'live' && <Markets r={r} onTrade={(id) => { try { localStorage.setItem('fx.pair', id); } catch { /* ignore */ } navigate('/forex/practice'); }} />}
           {section === 'strategies' && <Strategies r={r} />}
           {section === 'paper' && <Paper r={r} />}
         </Stack>
       )}
     </>
+  );
+}
+
+const DIGITS = (id: string) => (id.includes('JPY') ? 3 : id === 'XAUUSD' ? 2 : id === 'XAGUSD' ? 3 : 5);
+const STRAT_NAME = (r: Report, id: string) => r.rows.find((x) => x.id === id)?.name ?? id;
+
+function Markets({ r, onTrade }: { r: Report; onTrade: (id: string) => void }) {
+  const [open, setOpen] = useState<MarketNow | null>(null);
+  const ms = r.markets ?? [];
+  if (!ms.length) return <Empty icon={<Icon name="globe" size={20} />}>No market data yet. It fills in after the first hourly update.</Empty>;
+  return (
+    <Stack>
+      <p className="text-sm text-ink-2">What the bot is watching right now, on the hourly chart. Updated {ago(new Date(r.at).toISOString())}. Tap a market to see its lines and trades.</p>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {ms.map((m) => (
+          <button key={m.id} type="button" onClick={() => setOpen(m)} className="card card-lift p-4 text-left">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <div className="font-semibold text-ink">{m.label}</div>
+                <div className="tabular text-lg font-semibold text-ink">{m.price.toFixed(DIGITS(m.id))}</div>
+              </div>
+              <div className="text-right">
+                <div className={`tabular text-sm font-semibold ${m.change24hPct >= 0 ? 'text-up' : 'text-down'}`}>{m.change24hPct >= 0 ? '+' : ''}{m.change24hPct}%</div>
+                <div className="text-xs text-muted">24 h</div>
+              </div>
+            </div>
+            <Sparkline points={m.closes} width={260} height={44} tone={m.change24hPct >= 0 ? 'up' : 'down'} className="mt-2 w-full" />
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+              <Badge tone={m.trend === 'up' ? 'up' : m.trend === 'down' ? 'down' : 'neutral'}>{m.trend === 'up' ? 'Uptrend' : m.trend === 'down' ? 'Downtrend' : 'Sideways'}</Badge>
+              <Badge tone={m.rsi >= 70 || m.rsi <= 30 ? 'warn' : 'neutral'}>RSI {m.rsi}</Badge>
+              <Badge tone="neutral">{m.atrPips} pips/h</Badge>
+              {m.openPaper > 0 && <Badge tone="accent">{m.openPaper} bot trade{m.openPaper > 1 ? 's' : ''}</Badge>}
+              {m.drawings.lines.length > 0 && <Badge tone="neutral">{m.drawings.lines.length} trendline{m.drawings.lines.length > 1 ? 's' : ''}</Badge>}
+            </div>
+            {m.firing.length > 0 && (
+              <div className="mt-2 text-xs text-ink-2">
+                <span className="font-medium text-ink">Firing now:</span> {m.firing.slice(0, 3).map((f) => `${f.side === 1 ? '▲' : '▼'} ${f.name} (${f.tf})`).join(' · ')}{m.firing.length > 3 ? ` +${m.firing.length - 3}` : ''}
+              </div>
+            )}
+          </button>
+        ))}
+      </div>
+      <Drawer open={!!open} onClose={() => setOpen(null)} title={open?.label ?? ''} subtitle={open ? `${open.price.toFixed(DIGITS(open.id))} · hourly chart, last ${open.bars.length} hours` : ''} wide>
+        {open && <MarketDetail m={open} r={r} onTrade={() => onTrade(open.id)} />}
+      </Drawer>
+    </Stack>
+  );
+}
+
+function MarketDetail({ m, r, onTrade }: { m: MarketNow; r: Report; onTrade: () => void }) {
+  const [show, setShow] = useState({ lines: true, levels: true, ranges: true, trades: true });
+  const trades = r.paper.open.filter((t) => t.pair === m.id && t.tf === '1h');
+  const trades4h = r.paper.open.filter((t) => t.pair === m.id && t.tf === '4h');
+  const all = [...trades, ...trades4h];
+  const toggle = (k: keyof typeof show) => setShow({ ...show, [k]: !show[k] });
+  return (
+    <Stack>
+      <div className="flex flex-wrap gap-1.5">
+        <Chip active={show.lines} onClick={() => toggle('lines')}>Trendlines</Chip>
+        <Chip active={show.levels} onClick={() => toggle('levels')}>Support / resistance</Chip>
+        <Chip active={show.ranges} onClick={() => toggle('ranges')}>Yesterday + Asia range</Chip>
+        <Chip active={show.trades} onClick={() => toggle('trades')}>Bot trades</Chip>
+      </div>
+      <div className="rounded-xl border border-line bg-surface p-2">
+        <MarketChart bars={m.bars} drawings={m.drawings} trades={all.map((t) => ({ side: t.side, entryT: t.entryT, entry: t.entry, stop: t.stop, target: t.target, strategy: t.strategy }))} digits={DIGITS(m.id)} show={show} />
+      </div>
+      <p className="text-xs text-muted">Green lines = support (rising trendline or a floor price kept bouncing off), red = resistance; dashed = broken. Purple dots = yesterday's high / low, blue band = today's Asian session range. Blue line = a bot entry, dashed red / green = its stop / target.</p>
+      <Button onClick={onTrade}>Trade {m.label} yourself</Button>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Bot's open paper trades</div>
+          {!all.length ? <p className="text-sm text-ink-2">None on this market.</p> : (
+            <Rows>
+              {all.map((t) => (
+                <Row key={`${t.strategy}:${t.tf}:${t.entryT}`} label={`${t.side === 1 ? 'Long' : 'Short'} · ${STRAT_NAME(r, t.strategy)} (${t.tf})`} sub={`in ${t.entry.toFixed(DIGITS(m.id))} · stop ${t.stop.toFixed(DIGITS(m.id))}${t.target !== null ? ` · target ${t.target.toFixed(DIGITS(m.id))}` : ' · trailing'} · ${ago(new Date(t.entryT).toISOString())}`} value={<span className={t.r >= 0 ? 'text-up' : 'text-down'}>{t.r >= 0 ? '+' : ''}{t.r.toFixed(2)}R</span>} />
+              ))}
+            </Rows>
+          )}
+        </div>
+        <div>
+          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">What it sees</div>
+          <Rows>
+            {m.drawings.lines.map((l, k) => (
+              <Row key={`l${k}`} label={`${l.kind === 'support' ? 'Rising support' : 'Falling resistance'} trendline`} sub={`${l.touches} touches · ${l.broken ? 'just broken' : 'holding'}`} value={l.pNow.toFixed(DIGITS(m.id))} />
+            ))}
+            {m.drawings.levels.map((l, k) => (
+              <Row key={`v${k}`} label={l.kind === 'support' ? 'Support level' : 'Resistance level'} sub={`${l.touches} swing points`} value={l.price.toFixed(DIGITS(m.id))} />
+            ))}
+            {m.firing.map((f) => (
+              <Row key={`${f.id}:${f.tf}`} label={`${f.side === 1 ? 'Buy' : 'Sell'} signal: ${f.name}`} sub={`${f.tf} candle close`} value={<span className={f.side === 1 ? 'text-up' : 'text-down'}>{f.side === 1 ? '▲' : '▼'}</span>} />
+            ))}
+            {!m.drawings.lines.length && !m.drawings.levels.length && !m.firing.length && <Row label="Nothing notable" value="—" />}
+          </Rows>
+        </div>
+      </div>
+    </Stack>
   );
 }
 
@@ -269,11 +375,17 @@ function Setup({ r }: { r: Report }) {
           ))}
         </Rows>
       </Card>
-      <Card title="Going live" subtitle="Not connected yet, on purpose.">
-        <ol className="list-decimal space-y-1.5 pl-5 text-sm text-ink-2">
-          <li>Let the paper results run for at least 2–4 weeks.</li>
-          <li>Only strategies marked Edge that also make money on paper are candidates.</li>
-          <li>Then connect an account (on-chain perps like Hyperliquid / Ostium, or a broker API) and start at the smallest size.</li>
+      <Card title="Going live with your own money (no broker)" subtitle="On-chain perps: you trade from your own crypto wallet in USDC, nobody holds your money, you withdraw yourself. Not connected yet, on purpose.">
+        <Rows>
+          <Row label="gTrade (Gains Network)" sub="Arbitrum / Base / Polygon · USDC · forex 10–1000× · about 0.034% round trip + a borrowing fee · public TypeScript SDK · closed at weekends" value={<Badge tone="up">first choice</Badge>} />
+          <Row label="Ostium (Arbitrum)" sub="USDC · forex 100–200× · 3–5 bps to open · Python SDK · July 2026: $23.8M drained via fake oracle prices; trading reopened" value={<Badge tone="warn">riskier</Badge>} />
+          <Row label="Hyperliquid (HIP-3 markets)" sub="USDC · EUR/USD, GBP/USD, USD/JPY, gold from third-party deployers · ~0.07–0.09% taker" value={<Badge tone="neutral">possible</Badge>} />
+        </Rows>
+        <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm text-ink-2">
+          <li>Practice here first, and let the paper results run 2–4 weeks.</li>
+          <li>Only strategies marked Edge that also win on paper are candidates for the bot.</li>
+          <li>Then: a NEW wallet with a small amount of USDC, the bot connected to gTrade, smallest size, leverage capped.</li>
+          <li>Check each venue's terms for your country first. No position held over the weekend (prices gap at the open).</li>
         </ol>
       </Card>
     </Stack>

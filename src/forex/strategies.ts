@@ -457,6 +457,174 @@ export const STRATEGIES: Strategy[] = [
       return null;
     },
   },
+  // ── researched (v12.2: rules with published FX evidence first, then well-known ones tested against random) ──
+  {
+    id: 'tsmom',
+    name: 'Time-series momentum (5 days)',
+    family: 'trend',
+    desc: 'Evidence-backed (Moskowitz et al.): hold the direction of the last ~120-bar return; enter when it flips; 3 ATR stop, 4 ATR trail.',
+    signal(c, i) {
+      const n = 120;
+      if (i < n + 1) return null;
+      const now = c.close[i]! - c.close[i - n]!;
+      const prev = c.close[i - 1]! - c.close[i - 1 - n]!;
+      if (now > 0 && prev <= 0) return atrSig(c, i, 1, 3, null, { trailAtr: 4 });
+      if (now < 0 && prev >= 0) return atrSig(c, i, -1, 3, null, { trailAtr: 4 });
+      return null;
+    },
+  },
+  {
+    id: 'tsmom_long',
+    name: 'Time-series momentum (20 days)',
+    family: 'trend',
+    desc: 'Same rule on a ~480-bar lookback (closer to the 1-month horizon in the papers); 3 ATR stop, 5 ATR trail.',
+    signal(c, i) {
+      const n = 480;
+      if (i < n + 1) return null;
+      const now = c.close[i]! - c.close[i - n]!;
+      const prev = c.close[i - 1]! - c.close[i - 1 - n]!;
+      if (now > 0 && prev <= 0) return atrSig(c, i, 1, 3, null, { trailAtr: 5 });
+      if (now < 0 && prev >= 0) return atrSig(c, i, -1, 3, null, { trailAtr: 5 });
+      return null;
+    },
+  },
+  {
+    id: 'local_hours',
+    name: 'Local-hours effect',
+    family: 'session',
+    desc: "Evidence-backed (SNB working paper): a currency tends to weaken in its own trading hours. Sell EUR/GBP/CHF 07–12 UTC, sell JPY/AUD/NZD 00–06 UTC; out at the session end.",
+    onlyHourly: true,
+    signal(c, i) {
+      const p = c.pair;
+      if (p.length < 6 || p.startsWith('XA')) return null;
+      const base = p.slice(0, 3);
+      const quote = p.slice(3, 6);
+      const closeHour = (c.hour[i]! + 1) % 24; // this bar closes at the next hour
+      const sess = (ccy: string): [number, number] | null => (['EUR', 'GBP', 'CHF'].includes(ccy) ? [7, 12] : ['JPY', 'AUD', 'NZD'].includes(ccy) ? [0, 6] : null);
+      const bs = sess(base);
+      const qs = sess(quote);
+      if (bs && qs) return null; // both in the same kind of session (crosses): skip
+      if (bs && closeHour === bs[0]) return atrSig(c, i, -1, 2, null, { maxBars: bs[1] - bs[0] });
+      if (qs && closeHour === qs[0]) return atrSig(c, i, 1, 2, null, { maxBars: qs[1] - qs[0] });
+      return null;
+    },
+  },
+  {
+    id: 'fix_flow',
+    name: 'London fix dollar flow',
+    family: 'session',
+    desc: 'Evidence-backed (Journal of Finance 2024): the dollar tends to rise into the 16:00 London fix. Long USD from 14:00 to 16:00 UTC.',
+    onlyHourly: true,
+    signal(c, i) {
+      const p = c.pair;
+      if (!p.includes('USD') || p.startsWith('XA')) return null;
+      if ((c.hour[i]! + 1) % 24 !== 14) return null;
+      return atrSig(c, i, p.startsWith('USD') ? 1 : -1, 1.5, null, { maxBars: 2 });
+    },
+  },
+  {
+    id: 'turtle_soup',
+    name: 'Turtle Soup (false breakout)',
+    family: 'reversion',
+    desc: 'Connors & Raschke: a new 20-bar low when the previous one is 4+ bars old, then a close back above it → buy; stop under the new low, 2R.',
+    signal(c, i) {
+      if (i < 30) return null;
+      const b = c.bars[i]!;
+      const look = (from: number, n: number, hi: boolean) => {
+        let best = hi ? -Infinity : Infinity;
+        let at = from;
+        for (let j = from - n + 1; j <= from; j++) {
+          const v = hi ? c.bars[j]!.h : c.bars[j]!.l;
+          if (hi ? v > best : v < best) {
+            best = v;
+            at = j;
+          }
+        }
+        return { v: best, at };
+      };
+      const prevLow = look(i - 1, 20, false);
+      if (i - 1 - prevLow.at >= 4 && b.l < prevLow.v && b.c > prevLow.v) return levelSig(c, i, 1, b.l - 0.2 * c.atr14[i]!, 2);
+      const prevHigh = look(i - 1, 20, true);
+      if (i - 1 - prevHigh.at >= 4 && b.h > prevHigh.v && b.c < prevHigh.v) return levelSig(c, i, -1, b.h + 0.2 * c.atr14[i]!, 2);
+      return null;
+    },
+  },
+  {
+    id: 'asian_fade',
+    name: 'Asian range fade',
+    family: 'session',
+    desc: 'London (07–10 UTC) pokes outside the Asian range and the next close is back inside → fade it toward the other side; stop past the poke.',
+    onlyHourly: true,
+    signal(c, i) {
+      const r = c.asia[i];
+      const h = c.hour[i]!;
+      if (!r || h < 7 || h > 10) return null;
+      const p = c.bars[i - 1]!;
+      const b = c.bars[i]!;
+      if (p.h > r.h && b.c < r.h && b.c > r.l) {
+        const s = levelSig(c, i, -1, Math.max(p.h, b.h) + 0.1 * c.atr14[i]!, null, { maxBars: 20 - h });
+        return s ? { ...s, target: r.l } : null;
+      }
+      if (p.l < r.l && b.c > r.l && b.c < r.h) {
+        const s = levelSig(c, i, 1, Math.min(p.l, b.l) - 0.1 * c.atr14[i]!, null, { maxBars: 20 - h });
+        return s ? { ...s, target: r.h } : null;
+      }
+      return null;
+    },
+  },
+  {
+    id: 'psar_adx',
+    name: 'Parabolic SAR flip + ADX',
+    family: 'trend',
+    desc: 'SAR flips with ADX above 20 (a trend, not chop); stop at the SAR, trail 2.5 ATR.',
+    signal(c, i) {
+      const d = c.psar.dir;
+      if (!ok(c.adx.adx[i]!) || c.adx.adx[i]! < 20) return null;
+      if (d[i - 1] === -1 && d[i] === 1) return levelSig(c, i, 1, c.psar.sar[i]!, null, { trailAtr: 2.5 });
+      if (d[i - 1] === 1 && d[i] === -1) return levelSig(c, i, -1, c.psar.sar[i]!, null, { trailAtr: 2.5 });
+      return null;
+    },
+  },
+  {
+    id: 'stoch_trend',
+    name: 'Stochastic cross with the trend',
+    family: 'reversion',
+    desc: 'Above the 200 EMA, Stochastic %K crosses %D up from under 20 (mirror for shorts); 1.5 ATR stop, 2R.',
+    signal(c, i) {
+      const { k, d } = c.stoch;
+      if (!ok(k[i]!, d[i]!, k[i - 1]!, d[i - 1]!, c.ema200[i]!)) return null;
+      if (c.close[i]! > c.ema200[i]! && k[i - 1]! < 20 && crossUp(k, d, i)) return atrSig(c, i, 1, 1.5, 2);
+      if (c.close[i]! < c.ema200[i]! && k[i - 1]! > 80 && crossDn(k, d, i)) return atrSig(c, i, -1, 1.5, 2);
+      return null;
+    },
+  },
+  {
+    id: 'cci_break',
+    name: 'CCI ±100 breakout',
+    family: 'breakout',
+    desc: 'CCI(20) crosses above +100 in an uptrend (below −100 in a downtrend); 2 ATR stop, trail 2.5 ATR.',
+    signal(c, i) {
+      const x = c.cci20;
+      if (!ok(x[i]!, x[i - 1]!, c.ema50[i]!)) return null;
+      if (x[i - 1]! <= 100 && x[i]! > 100 && c.close[i]! > c.ema50[i]!) return atrSig(c, i, 1, 2, null, { trailAtr: 2.5 });
+      if (x[i - 1]! >= -100 && x[i]! < -100 && c.close[i]! < c.ema50[i]!) return atrSig(c, i, -1, 2, null, { trailAtr: 2.5 });
+      return null;
+    },
+  },
+  {
+    id: 'williams_r',
+    name: 'Williams %R reversal',
+    family: 'reversion',
+    desc: 'Above the 200 EMA, %R(14) leaves the bottom zone (crosses −80 upward); out at the 20 EMA or 1.5R.',
+    signal(c, i) {
+      const wr = (j: number) => c.stoch.k[j]! - 100;
+      if (!ok(c.stoch.k[i]!, c.stoch.k[i - 1]!, c.ema200[i]!)) return null;
+      // %R = %K − 100 (same range math); using the smoothed %K keeps it from flickering
+      if (c.close[i]! > c.ema200[i]! && wr(i - 1) < -80 && wr(i) >= -80) return atrSig(c, i, 1, 1.5, 1.5, { exitWhen: 'ema20' });
+      if (c.close[i]! < c.ema200[i]! && wr(i - 1) > -20 && wr(i) <= -20) return atrSig(c, i, -1, 1.5, 1.5, { exitWhen: 'ema20' });
+      return null;
+    },
+  },
   // ── control ──
   {
     id: 'random',

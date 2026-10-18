@@ -8,15 +8,19 @@
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
 import { refreshInstrument, loadBars, type FeedStatus } from './data';
+import type { Practice } from './practice';
 import { equityCurve, rStats, runSeries, type RiskResult, type RStats } from './engine';
 import { STRATEGIES, type Family } from './strategies';
 import { buildCtx, to4h, type Ctx } from './ta';
+import { drawingsFor, type Drawings } from './drawings';
 import { INSTRUMENTS, type Timeframe, type Trade } from './types';
 
 const log = moduleLogger('forex-lab');
 
 export const FX_CONFIG = {
   timeframes: ['1h', '4h'] as Timeframe[],
+  /** the bot account always trades these (published evidence) on top of whatever the lab marks edge / maybe */
+  botAlways: ['tsmom', 'tsmom_long', 'local_hours', 'fix_flow'],
   riskLevelsPct: [0.5, 1, 2, 5],
   /** leverage cap per trade (retail brokers 30–50×; on-chain perps allow more — we don't) */
   maxLeverage: 50,
@@ -51,6 +55,26 @@ export interface PaperRow {
   open: number;
 }
 
+export interface MarketNow {
+  id: string;
+  label: string;
+  price: number;
+  t: number;
+  change24hPct: number;
+  /** last 72 hourly closes for a sparkline */
+  closes: number[];
+  trend: 'up' | 'down' | 'flat';
+  rsi: number;
+  /** average hourly range in pips */
+  atrPips: number;
+  /** strategies whose rule fired on the last closed bar */
+  firing: Array<{ id: string; name: string; tf: Timeframe; side: 1 | -1 }>;
+  openPaper: number;
+  /** last 150 hourly bars [t,o,h,l,c] for the chart */
+  bars: number[][];
+  drawings: Drawings;
+}
+
 export interface FxReport {
   at: number;
   durationMs: number;
@@ -59,6 +83,7 @@ export interface FxReport {
   to: number | null;
   oosFrom: number | null;
   rows: Row[];
+  markets: MarketNow[];
   paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] };
   note: string;
 }
@@ -82,14 +107,26 @@ export function verdictFor(row: Pick<Row, 'inSample' | 'outSample' | 'all'>, ran
 export class ForexLab {
   private timer: NodeJS.Timeout | null = null;
   private running: Promise<FxReport | null> | null = null;
+  /** set by index.ts: the account the bot auto-trades */
+  practice: Practice | null = null;
+  botLog: Array<{ t: number; e: string }> = [];
   constructor(private readonly redis: Redis) {}
 
   start(): void {
     setTimeout(() => void this.run().catch(() => undefined), 45_000);
-    this.timer = setInterval(() => void this.run().catch(() => undefined), FX_CONFIG.refreshMinutes * 60_000);
+    // then 90 s after every full hour: the hourly candle has just closed (Yahoo / OANDA publish it within a minute)
+    const next = () => {
+      const now = Date.now();
+      const at = Math.ceil((now - 90_000) / 3_600_000) * 3_600_000 + 90_000;
+      this.timer = setTimeout(() => {
+        void this.run().catch(() => undefined);
+        next();
+      }, Math.max(5_000, at - now));
+    };
+    next();
   }
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
+    if (this.timer) clearTimeout(this.timer);
   }
   isRunning(): boolean {
     return this.running !== null;
@@ -139,12 +176,12 @@ export class ForexLab {
       for (const tf of FX_CONFIG.timeframes) {
         const bars = tf === '1h' ? h1 : to4h(h1);
         if (bars.length < 400) continue;
-        series.push({ inst, tf, ctx: buildCtx(bars, tf === '1h' ? 60 : 240) });
+        series.push({ inst, tf, ctx: buildCtx(bars, tf === '1h' ? 60 : 240, inst.id) });
       }
       await yieldNow();
     }
     if (!series.length) {
-      const empty: FxReport = { at: Date.now(), durationMs: Date.now() - t0, feed, from: null, to: null, oosFrom: null, rows: [], paper: { since, rows: [], open: [], recent: [] }, note: 'No forex candles yet. The server pulls them from Yahoo Finance; check the feed errors above.' };
+      const empty: FxReport = { at: Date.now(), durationMs: Date.now() - t0, feed, from: null, to: null, oosFrom: null, rows: [], markets: [], paper: { since, rows: [], open: [], recent: [] }, note: 'No forex candles yet. The server pulls them from Yahoo Finance; check the feed errors above.' };
       await this.redis.set(FX_REPORT, JSON.stringify(empty)).catch(() => undefined);
       return empty;
     }
@@ -205,6 +242,39 @@ export class ForexLab {
     paperRows.sort((a, b) => b.stats.totalR - a.stats.totalR);
     recent.sort((a, b) => b.exitT - a.exitT);
     open.sort((a, b) => b.entryT - a.entryT);
+    const markets: MarketNow[] = [];
+    for (const inst of INSTRUMENTS) {
+      const se = series.find((x) => x.inst.id === inst.id && x.tf === '1h');
+      if (!se) continue;
+      const c = se.ctx;
+      const n = c.bars.length;
+      const last = c.bars[n - 1]!;
+      const firing: MarketNow['firing'] = [];
+      for (const x of series.filter((y) => y.inst.id === inst.id)) {
+        for (const s of STRATEGIES) {
+          if (s.id === 'random' || (s.onlyHourly && x.tf !== '1h')) continue;
+          const sig = s.signal(x.ctx, x.ctx.bars.length - 1);
+          if (sig) firing.push({ id: s.id, name: s.name, tf: x.tf, side: sig.side });
+        }
+      }
+      const e50 = c.ema50[n - 1]!;
+      const e200 = c.ema200[n - 1]!;
+      markets.push({
+        id: inst.id,
+        label: inst.label,
+        price: last.c,
+        t: last.t,
+        change24hPct: n > 24 ? Math.round((last.c / c.bars[n - 25]!.c - 1) * 10000) / 100 : 0,
+        closes: c.close.slice(-72),
+        trend: e50 > e200 * 1.0005 ? 'up' : e50 < e200 * 0.9995 ? 'down' : 'flat',
+        rsi: Math.round(c.rsi14[n - 1]!),
+        atrPips: Math.round((c.atr14[n - 1]! / inst.pip) * 10) / 10,
+        firing,
+        openPaper: open.filter((t) => t.pair === inst.id).length,
+        bars: c.bars.slice(-150).map((b) => [b.t, b.o, b.h, b.l, b.c]),
+        drawings: drawingsFor(c),
+      });
+    }
     const edges = rows.filter((r) => r.verdict === 'edge').length;
     const report: FxReport = {
       at: Date.now(),
@@ -214,10 +284,21 @@ export class ForexLab {
       to,
       oosFrom,
       rows,
-      paper: { since, rows: paperRows, open: open.slice(0, 100), recent: recent.slice(0, 100) },
+      markets,
+      paper: { since, rows: paperRows, open: open.slice(0, 300), recent: recent.slice(0, 150) },
       note: `${rows.length} strategy × timeframe combinations on ${INSTRUMENTS.length} markets. ${edges} pass on unseen data. Many were tested at once, so expect a few to pass by luck: the paper results decide.`,
     };
     await this.redis.set(FX_REPORT, JSON.stringify(report)).catch(() => undefined);
+    if (this.practice) {
+      const chosen = new Set(rows.filter((x) => x.verdict !== 'no' || FX_CONFIG.botAlways.includes(x.id)).map((x) => `${x.id}:${x.tf}`));
+      const ev = await this.practice
+        .syncBot(open.map((t) => ({ ref: `${t.strategy}:${t.tf}:${t.pair}:${t.entryT}`, strategy: t.strategy, pair: t.pair, side: t.side, entryT: t.entryT, stop: t.stop, target: t.target, chosen: chosen.has(`${t.strategy}:${t.tf}`) })))
+        .catch((err: Error) => [`bot sync failed: ${err.message}`]);
+      for (const e of ev) this.botLog.unshift({ t: Date.now(), e });
+      this.botLog = this.botLog.slice(0, 100);
+      await this.redis.set('fx:bot:log', JSON.stringify(this.botLog)).catch(() => undefined);
+      await this.redis.set('fx:bot:chosen', JSON.stringify([...chosen])).catch(() => undefined);
+    }
     log.info({ rows: rows.length, edges, ms: report.durationMs }, 'forex lab run done');
     return report;
   }

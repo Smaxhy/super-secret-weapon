@@ -69,4 +69,8 @@ export interface Trade {
   stopPct: number;
   reason: 'stop' | 'target' | 'trail' | 'time' | 'exit' | 'open';
   bars: number;
+  /** stop at the end (trailed) / at entry, and the target */
+  stop: number;
+  stop0: number;
+  target: number | null;
 }
