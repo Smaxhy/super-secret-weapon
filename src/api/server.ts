@@ -16,6 +16,7 @@
  */
 import { runBacktest } from '../learner/backtester';
 import { scoreGapReport } from '../tools/score-gap';
+import { moneyMap } from '../learner/money-map';
 import { replayStatus, startReplay } from '../learner/replay-runner';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
@@ -82,6 +83,14 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       return deps.autopsy?.snapshot() ?? null;
     });
     secured.post('/api/autopsy/run', async () => (await deps.autopsy?.run()) ?? null);
+    // v11.17 "Where's the money": every coin it checked (bought / shadow / outcome), split by feature, with what it did next.
+    secured.get('/api/money-map', async (req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      const q = req.query as { hours?: string; strategy?: string; source?: string };
+      const h = Number(q.hours ?? 48);
+      const source = q.source === 'real' || q.source === 'skipped' ? q.source : 'all';
+      return moneyMap(redis, { hours: Number.isFinite(h) ? Math.min(168, Math.max(1, h)) : 48, strategy: q.strategy || null, source });
+    });
     // Coins held back only by the score: how far under the bar, and what they did next (read-only, Performance → Mistakes).
     secured.get('/api/score-gap', async (req, reply) => {
       reply.header('Cache-Control', 'no-store');

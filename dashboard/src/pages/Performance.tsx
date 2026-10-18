@@ -12,6 +12,7 @@ import { BotChanges } from '../components/BotChanges';
 import { PnlChart, SignedBars } from '../components/Charts';
 import { Icon } from '../components/Icon';
 import { LossAutopsy } from '../components/LossAutopsy';
+import { MoneyMap } from '../components/MoneyMap';
 import { MoonshotCard } from '../components/MoonshotCard';
 import { Replay } from '../components/Replay';
 import { ScoreGap } from '../components/ScoreGap';
@@ -25,6 +26,7 @@ import type { Overview, PerformanceData } from '../lib/types';
 const SECTIONS = [
   { key: 'results', label: 'Results', icon: <Icon name="chart" size={16} /> },
   { key: 'mistakes', label: 'Mistakes', icon: <Icon name="alert" size={16} /> },
+  { key: 'money', label: 'Money', icon: <Icon name="radar" size={16} /> },
   { key: 'timing', label: 'Timing', icon: <Icon name="clock" size={16} /> },
   { key: 'tests', label: 'Tests', icon: <Icon name="flask" size={16} /> },
   { key: 'ai', label: 'AI', icon: <Icon name="sparkles" size={16} /> },
@@ -64,6 +66,7 @@ export function Performance() {
             <BotChanges />
           </div>
         )}
+        {section === 'money' && <MoneyMap />}
         {section === 'timing' && <BestTimes />}
         {section === 'tests' && (
           <div className="flex flex-col gap-6">

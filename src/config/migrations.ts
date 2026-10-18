@@ -630,6 +630,14 @@ export const MIGRATIONS: ConfigMigration[] = [
     note: 'v11.16: AI meme-reading for serious candidates (Sonnet, cached, capped, never blocks); the tournament tests meme score 6 / 7.5 gates',
     set: [['tournament', ['variants'], structuredClone(DEFAULT_CONFIG.tournament.variants) as unknown]],
   },
+  {
+    version: 48,
+    note: 'v11.17 (owner: "raise the trading amount to 0.5 if it\'s going to be this few trades"): normal trade size 0.5 SOL (ceiling 1); Sniper trades already use the 1 SOL big-trade size',
+    set: [
+      ['trading', ['maxPositionSol'], 0.5],
+      ['trading', ['maxPositionSolCeiling'], 1],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

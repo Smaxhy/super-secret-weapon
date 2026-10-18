@@ -12,7 +12,9 @@ smart money → learning engine → ML → social). See README.md.
 The Oct 15 freeze below is over; v11 (below, "Current state") is the new setup. Judge it on Performance → Mistakes
 after 200–300 trades, same rule as before: switch losers OFF, don't tweak.
 **v11.7 Sniper mode is the setup to judge now: fewer, bigger trades — judge it after ~100 trades** (Controls → Trading
-→ "Sniper mode" shows the ten rules in force; test any change first with the replay).
+→ "Sniper mode" shows the ten rules in force; test any change first with the replay). **Oct 18: 0 signals for 14 h and
+every near-miss lost (score-gap card) → the question is which KIND of coin pays at all: read Performance → Money (v11.17)
+before touching any bar or rule.**
 
 ## ⛔ (old) FREEZE (owner's order, Oct 15 2026 — v10.39 was the frozen version)
 **Do NOT push ANY change — no new features, no rule / setting / default tweaks, no tuning, no refactors — unless something
@@ -1025,6 +1027,25 @@ December (small wallet in Nov only if paper edge is positive).
   7.5 as variants `meme6` / `meme75`, and a winner goes to the self-loop like any other). Buy note "meme: 7.2 — …";
   Obsidian coin notes `meme_score` + a "Meme read" section. GET `/api/meme`; Bot health tile "Meme reader". Text only
   — reading the coin image is a possible later add (costs more). tests/meme-reader.test.ts (Anthropic call mocked).
+- **v11.17 (Oct 18): "Where's the money?" + score-gap check + 0.5 SOL trades** (owner: 14 h with 0 signals; the score-gap
+  card showed every near-miss LOST → the bar is right, the coins are wrong; "make it as cool as you can, add more fun
+  features, raise the trading amount to 0.5"). Migration v48: `trading.maxPositionSol` 0.5 (ceiling 1); Sniper trades
+  still use `highConviction.sizeSol` 1. **Score gap** (`src/tools/score-gap.ts`, GET `/api/score-gap?hours=`, CLI
+  `node dist/tools/score-gap.js [hours]`): coins held back only by the score (shadow `near` + outcome rows), banded by
+  distance to the bar with what they did next + a plain-words verdict (bar too high / bar is right / too few) →
+  Performance → Mistakes card "Coins the score held back". **Money map** (`src/learner/money-map.ts`, pure
+  `buildMoneyMap` + `loadMoneyRows`; GET `/api/money-map?hours=24–168&strategy=&source=all|skipped|real`, cached 2 min):
+  one pool = real closed PAPER trades + shadow trades + outcome-tracker rows, each with the flat entry features →
+  19 dimensions (strategy, MC, age, hour, weekday, score vs bar, active wallets, buy pressure, 3-min run, off the high,
+  proven wallets, KOLs, Telegram, holders, fees, curve stage, meme score, deployer record); per band n / win % / avg /
+  median / SOL at 1 SOL each / reached 1.15× (break-even) 1.5× 2× / perfect-exit % (peak capped 10×, −7% costs);
+  per-strategy **verdict** picks vs exits (≥30 coins: avg >0 working; ≥30% reached 1.5× yet avg <0 → exits; <40%
+  reached 1.15× → picks; else both); best / worst groups (≥15 coins, avg shrunk ×n/(n+20)); two-rule combos of the
+  12 best groups; exits table live vs `outcomes.altVariants` ['S','R','W'] vs perfect (the outcome tracker now replays
+  every checked coin through those lab variants too → `OutcomeResult.alt`, new rows only); week heat (UTC cells, the
+  dashboard shifts to the viewer's clock); "the ones that got away" (skipped runners ≥1.5× with why, linked to the coin
+  page). Dashboard: Performance → **Money** tab (`components/MoneyMap.tsx`: range / source / strategy chips, SOL-per-
+  trade input re-prices every group, "Split it yourself" explorer). tests/money-map.test.ts, tests/score-gap.test.ts.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

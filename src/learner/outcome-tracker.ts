@@ -39,6 +39,8 @@ export interface OutcomeResult extends Omit<OutcomeSignal, 'onAmm' | 'marketCapS
   peakX: number;
   holdSec: number;
   exitReason: string;
+  /** v11.17: the same coin through other exit-lab variants (id → % after costs) — "Where's the money" compares exits. */
+  alt?: Record<string, number>;
 }
 
 export type OutcomeConfig = (typeof DEFAULT_CONFIG)['outcomes'];
@@ -51,14 +53,28 @@ const compact = (flat: Record<string, number>): Record<string, number> => {
   return out;
 };
 
-/** Pure: replay one remembered check on the trades that followed it. */
-export function outcomeOf(sig: OutcomeSignal, trades: readonly CrowdTrade[], watchMs: number, roundTripCostPct: number): Omit<OutcomeResult, keyof OutcomeSignal | never> & { pnlPct: number; peakX: number; holdSec: number; exitReason: string } {
+/** Other exit settings to try on the same coin (exit-lab variant ids, `outcomes.altVariants`), as replay variants. */
+export function altVariantsFor(ids: readonly string[], lab: ReadonlyArray<{ id: string; exit: Record<string, unknown> }>): Array<{ id: string; exit: Record<string, unknown> }> {
+  return ids.flatMap((id) => {
+    const v = lab.find((x) => x.id === id);
+    // chart-reading exits off here too (CPU); the variant's own exit settings layer over that
+    return v && id !== 'L' ? [{ id, exit: { priceAction: { enabled: false }, ...v.exit } }] : [];
+  });
+}
+
+/** Pure: replay one remembered check on the trades that followed it (live exits, plus `alt` exit variants when given). */
+export function outcomeOf(sig: OutcomeSignal, trades: readonly CrowdTrade[], watchMs: number, roundTripCostPct: number, alt: ReadonlyArray<{ id: string; exit: Record<string, unknown> }> = []): Omit<OutcomeResult, keyof OutcomeSignal | never> & { pnlPct: number; peakX: number; holdSec: number; exitReason: string; alt?: Record<string, number> } {
   const tape = trades.filter((t) => t.t >= sig.atMs && t.t <= sig.atMs + watchMs);
-  if (tape.length < 2) return { pnlPct: r1(-roundTripCostPct), peakX: 1, holdSec: Math.round(watchMs / 1000), exitReason: 'no trades after the check (dead coin)' };
+  const dead = r1(-roundTripCostPct);
+  const deadAlt = alt.length ? Object.fromEntries(alt.map((v) => [v.id, dead])) : undefined;
+  if (tape.length < 2) return { pnlPct: dead, peakX: 1, holdSec: Math.round(watchMs / 1000), exitReason: 'no trades after the check (dead coin)', ...(deadAlt ? { alt: deadAlt } : {}) };
   // (chart-reading exits off in the replay: they re-read the chart every simulated second — too much CPU for thousands of coins)
-  const res = replayTape(sig.mint, tape, [{ id: 'o', mint: sig.mint, symbol: sig.symbol, strategy: sig.strategy, openedAtMs: sig.atMs, onAmm: sig.onAmm, actualPnlPct: 0 }], [{ id: 'O', exit: { priceAction: { enabled: false } } }]).get('o:O');
-  if (!res) return { pnlPct: r1(-roundTripCostPct), peakX: 1, holdSec: 0, exitReason: 'not replayable' };
-  return { pnlPct: r1(res.pnlPct), peakX: Math.round(res.peakX * 100) / 100, holdSec: Math.round(res.holdSec), exitReason: res.reason.slice(0, 80) };
+  const all = replayTape(sig.mint, tape, [{ id: 'o', mint: sig.mint, symbol: sig.symbol, strategy: sig.strategy, openedAtMs: sig.atMs, onAmm: sig.onAmm, actualPnlPct: 0 }], [{ id: 'O', exit: { priceAction: { enabled: false } } }, ...alt]);
+  const res = all.get('o:O');
+  if (!res) return { pnlPct: dead, peakX: 1, holdSec: 0, exitReason: 'not replayable', ...(deadAlt ? { alt: deadAlt } : {}) };
+  const altOut: Record<string, number> = {};
+  for (const v of alt) altOut[v.id] = r1(all.get(`o:${v.id}`)?.pnlPct ?? dead);
+  return { pnlPct: r1(res.pnlPct), peakX: Math.round(res.peakX * 100) / 100, holdSec: Math.round(res.holdSec), exitReason: res.reason.slice(0, 80), ...(alt.length ? { alt: altOut } : {}) };
 }
 
 export class OutcomeTracker {
@@ -114,11 +130,12 @@ export class OutcomeTracker {
     try {
       const watchMs = c.watchMin * 60_000;
       const p = getConfig().paper;
+      const alt = altVariantsFor(c.altVariants ?? [], (getConfig().lab?.variants ?? DEFAULT_CONFIG.lab.variants) as Array<{ id: string; exit: Record<string, unknown> }>);
       const rows: string[] = [];
       while (this.pending.length && this.pending[0]!.atMs <= now - watchMs && n < c.maxPerTick) {
         const sig = this.pending.shift()!;
         const cost = (2 * poolFeeBps(p, sig.onAmm, sig.marketCapSol)) / 100 + 2 * p.slippagePct;
-        const o = outcomeOf(sig, this.trades(sig.mint), watchMs, cost);
+        const o = outcomeOf(sig, this.trades(sig.mint), watchMs, cost, alt);
         const { onAmm: _a, marketCapSol: _m, ...rest } = sig;
         rows.push(JSON.stringify({ ...rest, ...o } satisfies OutcomeResult));
         n++;

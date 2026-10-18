@@ -12,9 +12,9 @@ import type { MarketRegime, SnapshotInterval, StrategyName } from './types';
 export const DEFAULT_CONFIG = {
   trading: {
     mode: 'PAPER' as const,
-    maxPositionSol: 0.2,
+    maxPositionSol: 0.5, // v11.17 (owner: "raise the trading amount to 0.5 if it's going to be this few trades")
     minPositionSol: 0.1, // v9.9: 0.05 lost ~6% to gas + tips per round trip; 0.1 halves that
-    maxPositionSolCeiling: 0.3, // the dashboard slider can't go above this
+    maxPositionSolCeiling: 1, // the dashboard slider can't go above this
     /** v7: 8 (owner: trade more often so the bot learns; swing trades on bigger coins add up to 3). */
     maxConcurrentPositions: 14,
     /**
@@ -901,7 +901,8 @@ export const DEFAULT_CONFIG = {
    * cooldownMin) is replayed `watchMin` later on its real trades with the bot's own exits → a training row for the brain at
    * `weight` (real trade 1, shadow 0.5). Thousands of examples a day instead of a handful. No AI, no RPC.
    */
-  outcomes: { enabled: true as boolean, watchMin: 45, cooldownMin: 20, maxPending: 4000, maxPerTick: 120, keep: 6000, weight: 0.5 },
+  /** `altVariants` (v11.17): exit-lab variant ids also replayed on every checked coin → Performance → Money "other exits". */
+  outcomes: { enabled: true as boolean, watchMin: 45, cooldownMin: 20, maxPending: 4000, maxPerTick: 120, keep: 6000, weight: 0.5, altVariants: ['S', 'R', 'W'] as string[] },
   /**
    * v11.5: record every trade on every followed coin (curve + PumpSwap) to Postgres `TradeTape` — the replay engine's
    * recording of the market (`npm run replay`, Performance → Tests → Replay). Batched writes, pruned hourly.
