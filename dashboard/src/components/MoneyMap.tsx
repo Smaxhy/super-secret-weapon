@@ -10,7 +10,7 @@ import { ago, STRATEGY_LABEL } from '../lib/format';
 import { Icon } from './Icon';
 import { Badge, Card, Chip, Empty, ErrorBox, HeatRow, Loading, NumberInput, SectionHeader, StatTile, Tabs, useStored } from './ui';
 
-interface GroupStat { label: string; n: number; winPct: number; avgPct: number; medianPct: number; sol: number; reach115Pct: number; reach150Pct: number; reach200Pct: number; perfectPct: number }
+interface GroupStat { label: string; n: number; winPct: number; avgPct: number; medianPct: number; robustPct: number; sol: number; reach115Pct: number; reach150Pct: number; reach200Pct: number; perfectPct: number }
 interface Dimension { key: string; label: string; about: string; groups: GroupStat[]; unknown: number }
 interface Ranked extends GroupStat { dim: string; dimLabel: string; rank: number }
 interface Combo extends GroupStat { a: { dim: string; dimLabel: string; label: string }; b: { dim: string; dimLabel: string; label: string }; rank: number }
@@ -20,6 +20,7 @@ interface Data {
   at: number;
   hours: number;
   rows: number;
+  dropped: number;
   bySource: { real: number; shadow: number; outcome: number };
   overall: GroupStat | null;
   verdicts: Verdict[];
@@ -91,8 +92,8 @@ export function MoneyMap() {
       {data?.overall && (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-            <StatTile compact label="Coins followed" value={data.rows.toLocaleString()} sub={`${data.bySource.real} bought · ${(data.bySource.shadow + data.bySource.outcome).toLocaleString()} skipped`} />
-            <StatTile compact label="Buy-anything yardstick" value={`${signed(data.overall.avgPct)}%`} sub={`${data.overall.winPct}% won · median ${signed(data.overall.medianPct)}%`} tone={data.overall.avgPct > 0 ? 'up' : 'down'} />
+            <StatTile compact label="Coins followed" value={data.rows.toLocaleString()} sub={`${data.bySource.real} bought · ${(data.bySource.shadow + data.bySource.outcome).toLocaleString()} skipped${data.dropped ? ` · ${data.dropped} broken prices left out` : ''}`} />
+            <StatTile compact label="Buy-anything yardstick" value={`${signed(data.overall.robustPct)}%`} sub={`${data.overall.winPct}% won · median ${signed(data.overall.medianPct)}%`} tone={data.overall.robustPct > 0 ? 'up' : 'down'} />
             <StatTile compact label="Reached break-even" value={`${data.overall.reach115Pct}%`} sub="went 1.15× or more at some point" tone={data.overall.reach115Pct < 40 ? 'down' : undefined} />
             <StatTile compact label="Reached 2×" value={`${data.overall.reach200Pct}%`} sub={`${data.overall.reach150Pct}% reached 1.5×`} />
             <StatTile compact label="Perfect exits" value={`${signed(data.overall.perfectPct)}%`} sub="sold at the peak, after costs" tone={data.overall.perfectPct > 0 ? 'up' : undefined} />
@@ -146,8 +147,8 @@ export function MoneyMap() {
                     </span>
                     <span className="tabular flex shrink-0 items-baseline gap-3 text-right">
                       <span className="text-muted">{c.n} coins</span>
-                      <span className="text-muted">{c.winPct}% won</span>
-                      <span className={`font-semibold ${tone(c.avgPct)}`}>{signed(c.avgPct)}%</span>
+                      <span className="text-muted">{c.winPct}% won · median {signed(c.medianPct)}%</span>
+                      <span className={`font-semibold ${tone(c.robustPct)}`}>{signed(c.robustPct)}%</span>
                       <span className={`text-xs ${tone(c.sol)}`}>{signed(c.sol * sizeSol, 2)} SOL</span>
                     </span>
                   </li>
@@ -239,7 +240,7 @@ const shortExit = (id: string, name?: string) => (name ? name.split(':')[0]!.spl
 
 function GroupList({ rows, sizeSol, empty }: { rows: Ranked[]; sizeSol: number; empty: string }) {
   if (!rows.length) return <p className="text-sm text-ink-2">{empty}</p>;
-  const max = Math.max(1, ...rows.map((r) => Math.abs(r.avgPct)));
+  const max = Math.max(1, ...rows.map((r) => Math.abs(r.robustPct)));
   return (
     <ul className="flex flex-col gap-2.5">
       {rows.map((r) => (
@@ -250,13 +251,13 @@ function GroupList({ rows, sizeSol, empty }: { rows: Ranked[]; sizeSol: number; 
               <span className="font-medium text-ink">{r.label}</span>
             </span>
             <span className="tabular flex shrink-0 items-baseline gap-2.5">
-              <span className="text-xs text-muted">{r.n} coins · {r.winPct}% won</span>
-              <span className={`font-semibold ${tone(r.avgPct)}`}>{signed(r.avgPct)}%</span>
+              <span className="text-xs text-muted">{r.n} coins · {r.winPct}% won · median {signed(r.medianPct)}%</span>
+              <span className={`font-semibold ${tone(r.robustPct)}`}>{signed(r.robustPct)}%</span>
             </span>
           </div>
           <div className="mt-1 flex items-center gap-2">
             <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
-              <div className={`h-full rounded-full ${r.avgPct >= 0 ? 'bg-good' : 'bg-critical'}`} style={{ width: `${Math.max(3, (Math.abs(r.avgPct) / max) * 100)}%` }} />
+              <div className={`h-full rounded-full ${r.robustPct >= 0 ? 'bg-good' : 'bg-critical'}`} style={{ width: `${Math.max(3, (Math.abs(r.robustPct) / max) * 100)}%` }} />
             </div>
             <span className={`tabular w-24 shrink-0 text-right text-xs ${tone(r.sol)}`} title={`at ${sizeSol} SOL per coin`}>{signed(r.sol * sizeSol, 2)} SOL</span>
           </div>
@@ -271,10 +272,10 @@ function Explorer({ dims, sizeSol }: { dims: Dimension[]; sizeSol: number }) {
   const [dimKey, setDimKey] = useStored<string>('money.dim', keys[0] ?? 'mc');
   const dim = dims.find((d) => d.key === dimKey) ?? dims[0];
   if (!dim) return null;
-  const max = Math.max(1, ...dim.groups.map((g) => Math.abs(g.avgPct)));
+  const max = Math.max(1, ...dim.groups.map((g) => Math.abs(g.robustPct)));
   const biggest = Math.max(1, ...dim.groups.map((g) => g.n));
   return (
-    <Card title="Split it yourself" subtitle={dim.about}>
+    <Card title="Split it yourself" subtitle={`${dim.about} Average = each coin capped at +300% so one freak print can't carry a group.`}>
       <div className="mb-4 flex flex-wrap gap-1.5">
         {dims.map((d) => (
           <Chip key={d.key} active={d.key === dim.key} onClick={() => setDimKey(d.key)}>{d.label}</Chip>
@@ -290,6 +291,7 @@ function Explorer({ dims, sizeSol }: { dims: Dimension[]; sizeSol: number }) {
                 <th className="py-2 font-medium">{dim.label}</th>
                 <th className="py-2 text-right font-medium">Coins</th>
                 <th className="py-2 pl-3 font-medium">Average</th>
+                <th className="py-2 text-right font-medium">Median</th>
                 <th className="py-2 text-right font-medium">Won</th>
                 <th className="py-2 text-right font-medium">→ 1.5×</th>
                 <th className="py-2 text-right font-medium">Perfect</th>
@@ -307,11 +309,12 @@ function Explorer({ dims, sizeSol }: { dims: Dimension[]; sizeSol: number }) {
                   <td className="py-2 pl-3">
                     <div className="flex items-center gap-2">
                       <div className="relative h-2 w-28 overflow-hidden rounded-full bg-surface-2">
-                        <div className={`absolute top-0 h-full ${g.avgPct >= 0 ? 'left-1/2 bg-good' : 'right-1/2 bg-critical'}`} style={{ width: `${(Math.abs(g.avgPct) / max) * 50}%` }} />
+                        <div className={`absolute top-0 h-full ${g.robustPct >= 0 ? 'left-1/2 bg-good' : 'right-1/2 bg-critical'}`} style={{ width: `${(Math.abs(g.robustPct) / max) * 50}%` }} />
                       </div>
-                      <span className={`font-semibold ${tone(g.avgPct)}`}>{signed(g.avgPct)}%</span>
+                      <span className={`font-semibold ${tone(g.robustPct)}`}>{signed(g.robustPct)}%</span>
                     </div>
                   </td>
+                  <td className={`py-2 text-right ${tone(g.medianPct)}`}>{signed(g.medianPct)}%</td>
                   <td className="py-2 text-right text-ink-2">{g.winPct}%</td>
                   <td className="py-2 text-right text-ink-2">{g.reach150Pct}%</td>
                   <td className="py-2 text-right text-ink-2">{signed(g.perfectPct)}%</td>

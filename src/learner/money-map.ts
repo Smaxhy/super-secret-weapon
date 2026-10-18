@@ -53,6 +53,8 @@ export interface GroupStat {
   winPct: number;
   avgPct: number;
   medianPct: number;
+  /** Average with each coin capped at +300% — rankings and verdicts use this one. */
+  robustPct: number;
   /** Sum of results at 1 SOL per coin. */
   sol: number;
   /** Share that reached 1.15× (≈ break-even after costs) / 1.5× / 2× at some point. */
@@ -76,7 +78,7 @@ export interface Dimension {
 export interface RankedGroup extends GroupStat {
   dim: string;
   dimLabel: string;
-  /** Avg shrunk toward 0 by n/(n+20) — what the ranking sorts by. */
+  /** Robust avg (each coin capped at +300%) shrunk toward 0 by n/(n+20) — what the ranking sorts by. */
   rank: number;
 }
 
@@ -112,6 +114,8 @@ export interface MoneyMap {
   hours: number;
   filter: { strategy: string | null; source: 'all' | 'skipped' | 'real' };
   rows: number;
+  /** Rows with an impossible result (beyond their own peak / past 10×) — broken prices, left out. */
+  dropped: number;
   bySource: Record<MoneySource, number>;
   overall: GroupStat | null;
   verdicts: StrategyVerdict[];
@@ -129,12 +133,32 @@ export interface MoneyMap {
 
 /** Costs a round trip eats (≈ paper fees + slippage at the usual size). */
 const COST_PCT = 7;
+/** A single coin counts at most this much in the rankings / verdicts (a 4× is real; a +80,000% fake print is not). */
+const RANK_CAP_PCT = 300;
+/** Results beyond this are broken prices (a 10× is the most any exit here could bank). */
+const MAX_PNL_PCT = 900;
 /** A group needs this many coins to be ranked. */
 const MIN_N = 15;
 const SHRINK = 20;
 
 const r1 = (x: number) => Math.round(x * 10) / 10;
 const r2 = (x: number) => Math.round(x * 100) / 100;
+
+/**
+ * Pure: is this row's result physically possible? A result can't beat the coin's own peak (minus nothing — costs only
+ * lower it), can't lose more than everything, and anything past 10× is a fake print (sandwich / wrong pool). Such rows
+ * would swing every average by hundreds of points, so they are dropped before anything is counted.
+ */
+export function saneRow(r: Pick<MoneyRow, 'pnlPct' | 'peakX'>): boolean {
+  if (!Number.isFinite(r.pnlPct) || !Number.isFinite(r.peakX)) return false;
+  if (r.pnlPct < -100 || r.pnlPct > MAX_PNL_PCT) return false;
+  if (r.peakX > 1000) return false;
+  // +2 pts of slack: the peak is a settled level, a fill can print a hair above it
+  return r.pnlPct <= (Math.max(1, r.peakX) - 1) * 100 + 2;
+}
+
+/** Pure: average with each coin capped at RANK_CAP_PCT — what rankings and verdicts use. */
+const robustAvg = (rs: readonly MoneyRow[]) => (rs.length ? rs.reduce((a, r) => a + Math.min(RANK_CAP_PCT, r.pnlPct), 0) / rs.length : 0);
 
 /** Pure: label of `v` in ordered `edges` (label i = below edges[i]; last label = above the last edge). */
 export function band(v: number, edges: readonly number[], labels: readonly string[]): string {
@@ -197,6 +221,7 @@ export function statsOf(label: string, rs: readonly MoneyRow[]): GroupStat {
     winPct: n ? Math.round((xs.filter((x) => x > 0).length / n) * 100) : 0,
     avgPct: r1(avg),
     medianPct: r1(n ? xs[Math.floor(n / 2)]! : 0),
+    robustPct: r1(robustAvg(rs)),
     sol: r2(xs.reduce((a, b) => a + b / 100, 0)),
     reach115Pct: reach(1.15),
     reach150Pct: reach(1.5),
@@ -235,35 +260,37 @@ export function verdictFor(strategy: string, rs: readonly MoneyRow[]): StrategyV
   let verdict: StrategyVerdict['verdict'] = 'unclear';
   let text = `Only ${s.n} coins — not enough to judge (need ${MIN_N * 2}).`;
   if (s.n >= MIN_N * 2) {
-    if (s.avgPct > 0) {
+    if (s.robustPct > 0 && s.reach115Pct >= 25) {
       verdict = 'working';
-      text = `Working: these coins made ${s.avgPct >= 0 ? '+' : ''}${s.avgPct}% on average with the current exits (${s.winPct}% won).`;
+      text = `Working: these coins made ${s.robustPct >= 0 ? '+' : ''}${s.robustPct}% on average with the current exits (${s.winPct}% won, median ${s.medianPct}%).`;
     } else if (s.reach150Pct >= 30) {
       verdict = s.reach115Pct < 50 ? 'both' : 'exits';
-      text = `Exits are the problem: ${s.reach150Pct}% of these coins reached 1.5× after the check, yet the exits ended ${s.avgPct}% on average. Selling at the peak would have made ${s.perfectPct >= 0 ? '+' : ''}${s.perfectPct}%.${verdict === 'both' ? ` Picks too: ${100 - s.reach115Pct}% never reached break-even.` : ''}`;
+      text = `Exits are the problem: ${s.reach150Pct}% of these coins reached 1.5× after the check, yet the exits ended ${s.robustPct}% on average. Selling at the peak would have made ${s.perfectPct >= 0 ? '+' : ''}${s.perfectPct}%.${verdict === 'both' ? ` Picks too: ${100 - s.reach115Pct}% never reached break-even.` : ''}`;
     } else if (s.reach115Pct < 40) {
       verdict = 'picks';
       text = `Picks are the problem: ${100 - s.reach115Pct}% of these coins never even reached 1.15× (break-even after costs). No exit rule fixes a coin that never goes up — the filters are letting the wrong coins through.`;
     } else {
       verdict = 'both';
-      text = `A bit of both: ${s.reach115Pct}% reached break-even and ${s.reach150Pct}% reached 1.5×, but the exits still ended ${s.avgPct}% on average (perfect exits: ${s.perfectPct >= 0 ? '+' : ''}${s.perfectPct}%).`;
+      text = `A bit of both: ${s.reach115Pct}% reached break-even and ${s.reach150Pct}% reached 1.5×, but the exits still ended ${s.robustPct}% on average (perfect exits: ${s.perfectPct >= 0 ? '+' : ''}${s.perfectPct}%).`;
     }
   }
-  return { strategy, n: s.n, real, avgPct: s.avgPct, winPct: s.winPct, reach115Pct: s.reach115Pct, reach150Pct: s.reach150Pct, perfectPct: s.perfectPct, verdict, text };
+  return { strategy, n: s.n, real, avgPct: s.robustPct, winPct: s.winPct, reach115Pct: s.reach115Pct, reach150Pct: s.reach150Pct, perfectPct: s.perfectPct, verdict, text };
 }
 
 /** Pure: the whole map from the rows. */
 export function buildMoneyMap(rows: readonly MoneyRow[], opts: { hours: number; strategy?: string | null; source?: 'all' | 'skipped' | 'real'; exitNames?: Record<string, string>; now?: number } = { hours: 48 }): MoneyMap {
   const now = opts.now ?? Date.now();
   const source = opts.source ?? 'all';
-  const all = rows.filter((r) => (!opts.strategy || r.strategy === opts.strategy) && (source === 'all' || (source === 'real' ? r.source === 'real' : r.source !== 'real')));
+  const scoped = rows.filter((r) => (!opts.strategy || r.strategy === opts.strategy) && (source === 'all' || (source === 'real' ? r.source === 'real' : r.source !== 'real')));
+  const all = scoped.filter(saneRow);
+  const dropped = scoped.length - all.length;
   const bySource: Record<MoneySource, number> = { real: 0, shadow: 0, outcome: 0 };
   for (const r of all) bySource[r.source]++;
   const dims = DIMENSIONS.filter((d) => d.key !== 'strategy' || !opts.strategy).map((d) => splitBy(d, all));
   // Ranked groups: any dimension but strategy (the verdicts cover that), ≥ MIN_N coins, shrunk toward 0.
   const ranked: RankedGroup[] = dims
     .filter((d) => d.key !== 'strategy')
-    .flatMap((d) => d.groups.filter((g) => g.n >= MIN_N).map((g) => ({ ...g, dim: d.key, dimLabel: d.label, rank: shrink(g.avgPct, g.n) })));
+    .flatMap((d) => d.groups.filter((g) => g.n >= MIN_N).map((g) => ({ ...g, dim: d.key, dimLabel: d.label, rank: shrink(g.robustPct, g.n) })));
   const best = [...ranked].sort((a, b) => b.rank - a.rank).slice(0, 8);
   const worst = [...ranked].sort((a, b) => a.rank - b.rank).slice(0, 8);
   // Combos: pairs of the 12 best single groups from different dimensions.
@@ -280,7 +307,7 @@ export function buildMoneyMap(rows: readonly MoneyRow[], opts: { hours: number; 
       const rs = all.filter((r) => da.of(r) === a.label && db.of(r) === b.label);
       if (rs.length < MIN_N) continue;
       const s = statsOf(`${a.label} + ${b.label}`, rs);
-      combos.push({ ...s, a: { dim: a.dim, dimLabel: a.dimLabel, label: a.label }, b: { dim: b.dim, dimLabel: b.dimLabel, label: b.label }, rank: shrink(s.avgPct, s.n) });
+      combos.push({ ...s, a: { dim: a.dim, dimLabel: a.dimLabel, label: a.label }, b: { dim: b.dim, dimLabel: b.dimLabel, label: b.label }, rank: shrink(s.robustPct, s.n) });
     }
   }
   combos.sort((x, y) => y.rank - x.rank);
@@ -294,7 +321,8 @@ export function buildMoneyMap(rows: readonly MoneyRow[], opts: { hours: number; 
     .map((s) => {
       const rs = withAlt.filter((r) => r.strategy === s);
       const avg = (f: (r: MoneyRow) => number) => r1(rs.reduce((a, r) => a + f(r), 0) / rs.length);
-      return { strategy: s, n: rs.length, live: avg((r) => r.pnlPct), alt: Object.fromEntries(altIds.map((id) => [id, avg((r) => r.alt![id] ?? r.pnlPct)])), perfect: avg((r) => (Math.min(10, Math.max(1, r.peakX)) - 1) * 100 - COST_PCT) };
+      const cap = (x: number) => Math.min(RANK_CAP_PCT, x);
+      return { strategy: s, n: rs.length, live: avg((r) => cap(r.pnlPct)), alt: Object.fromEntries(altIds.map((id) => [id, avg((r) => cap(r.alt![id] ?? r.pnlPct))])), perfect: avg((r) => (Math.min(10, Math.max(1, r.peakX)) - 1) * 100 - COST_PCT) };
     })
     .sort((a, b) => b.n - a.n);
   // Week heat (UTC cells).
@@ -306,7 +334,7 @@ export function buildMoneyMap(rows: readonly MoneyRow[], opts: { hours: number; 
     const k = `${Math.round(d)}:${Math.round(h)}`;
     const c = cells.get(k) ?? { n: 0, sum: 0 };
     c.n++;
-    c.sum += r.pnlPct;
+    c.sum += Math.min(RANK_CAP_PCT, r.pnlPct);
     cells.set(k, c);
   }
   const week = [...cells].map(([k, c]) => { const [d, h] = k.split(':').map(Number); return { dow: d!, hour: h!, n: c.n, avgPct: r1(c.sum / c.n) }; });
@@ -321,6 +349,7 @@ export function buildMoneyMap(rows: readonly MoneyRow[], opts: { hours: number; 
     hours: opts.hours,
     filter: { strategy: opts.strategy ?? null, source },
     rows: all.length,
+    dropped,
     bySource,
     overall: all.length ? statsOf('all', all) : null,
     verdicts,
@@ -332,7 +361,7 @@ export function buildMoneyMap(rows: readonly MoneyRow[], opts: { hours: number; 
     exitNames: opts.exitNames ?? {},
     week,
     gotAway,
-    note: all.length < MIN_N * 2 ? 'fewer than 30 coins — wait for more data' : `${all.length.toLocaleString()} coins: ${bySource.real} bought, ${bySource.shadow + bySource.outcome} skipped and followed with the bot's own exits`,
+    note: (all.length < MIN_N * 2 ? 'fewer than 30 coins — wait for more data' : `${all.length.toLocaleString()} coins: ${bySource.real} bought, ${bySource.shadow + bySource.outcome} skipped and followed with the bot's own exits`) + (dropped ? ` · ${dropped} with a broken price left out` : ''),
   };
 }
 

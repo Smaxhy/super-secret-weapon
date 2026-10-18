@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { band, buildMoneyMap, splitBy, statsOf, verdictFor, DIMENSIONS, type MoneyRow } from '../src/learner/money-map';
+import { band, buildMoneyMap, saneRow, splitBy, statsOf, verdictFor, DIMENSIONS, type MoneyRow } from '../src/learner/money-map';
 import { altVariantsFor, outcomeOf, type OutcomeSignal } from '../src/learner/outcome-tracker';
 import type { CrowdTrade } from '../src/scanner/crowd-tracker';
 
@@ -68,6 +68,24 @@ describe('money map — where is the money', () => {
     const score = m.dimensions.find((d) => d.key === 'score')!;
     expect(score.groups.find((g) => g.label === 'over the bar')?.n).toBe(1);
     expect(score.groups.find((g) => g.label === '10–20 under')?.n).toBe(80); // exactly 10 under = the 10–20 band
+  });
+  it('drops impossible results (beyond the peak / past 10×) and caps freak coins in rankings', () => {
+    expect(saneRow({ pnlPct: 80_000, peakX: 801 })).toBe(false); // past 10×
+    expect(saneRow({ pnlPct: 50, peakX: 1.2 })).toBe(false); // can't beat its own peak
+    expect(saneRow({ pnlPct: 18, peakX: 1.2 })).toBe(true);
+    expect(saneRow({ pnlPct: -8, peakX: 1.0 })).toBe(true);
+    const rows = [
+      ...Array.from({ length: 20 }, (_, i) => row({ mint: `m${i}`, pnlPct: -6, peakX: 1.02, flat: { 'entry.mcUsd': 30e3 } })),
+      row({ mint: 'freak', pnlPct: 850, peakX: 9.9, flat: { 'entry.mcUsd': 30e3 } }), // a real 9.5× — counts, capped at +300
+      row({ mint: 'broken', pnlPct: 80_000, peakX: 900, flat: { 'entry.mcUsd': 30e3 } }), // a fake print — dropped
+    ];
+    const m = buildMoneyMap(rows, { hours: 48 });
+    expect(m.dropped).toBe(1);
+    expect(m.rows).toBe(21);
+    const mc = m.dimensions.find((d) => d.key === 'mc')!.groups[0]!;
+    expect(mc.avgPct).toBeCloseTo((-6 * 20 + 850) / 21, 0);
+    expect(mc.robustPct).toBeCloseTo((-6 * 20 + 300) / 21, 0);
+    expect(m.verdicts[0]!.verdict).not.toBe('working'); // 1 of 21 reached break-even
   });
   it('filters by strategy and source', () => {
     const rows = [row({ strategy: 'SOON' }), row({ strategy: 'SOON', source: 'shadow' }), row({ strategy: 'SOON', source: 'real', why: 'bought' }), row()];
