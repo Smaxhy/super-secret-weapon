@@ -1147,7 +1147,12 @@ December (small wallet in Nov only if paper edge is positive).
   needs a POSITIVE MEDIAN. **Re-run (fixed): NOT AN EDGE** — best BOOST rule 489 trades, 43% won, median −5.1%, PF 1.03
   (220 hard stops avg −51%, 192 BOOST-end exits avg +9.5%, 76 take-profits); every 60-s entry negative; survivors 12% won,
   median −6%, PF 0.31 (28 broken prints dropped). The BOOST buy-and-burn does not lift graduates against their sellers.
-  That was the last untested mechanical flow on pump.fun. Remaining: the method-only copy replay (owner running it).
+  That was the last untested mechanical flow on pump.fun. **Method-only copy replay (5 d, 10.8M trades): also NO** —
+  399 qualified wallets copied → 1,372 copies, 19% won, −123 SOL; owner's 22 tracked wallets 1,081 copies, 1% won,
+  −76 SOL; mirror sells −100 SOL (the winner's own sell lands on the copier); 1 "consistent" wallet = 10 copies, 1.8-min
+  holds, +0.76 SOL = noise. Every reachable edge is now tested and lost. Owner declined the perps / liquid-coin pivot
+  (wants weekly returns, which no honest bot gives) and was told so. Bot stays on paper as a free watch; nothing new
+  gets built unless Performance → Money shows a group with a positive median on "Inside your filters".
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).
