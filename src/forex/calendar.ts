@@ -10,6 +10,8 @@ import { moduleLogger } from '../lib/logger';
 
 const log = moduleLogger('forex-calendar');
 const KEY = 'fx:cal';
+/** v13: every high-impact release + central-bank speech seen so far (≤ 400 days) — the "after big moves" study uses it */
+const HIST_KEY = 'fx:cal:hist';
 const URLS = ['https://nfs.faireconomy.media/ff_calendar_thisweek.json', 'https://nfs.faireconomy.media/ff_calendar_nextweek.json'];
 
 export interface CalEvent {
@@ -84,8 +86,17 @@ export function marketClock(t: number): MarketClock {
   return { open, minutesToChange: toChange, noNewTrades: !open || toChange <= 120, flattenNow: open && toChange <= 30, sessions: open ? sessions : [] };
 }
 
+/** Merge new events into the kept history (high impact + speeches, newest 400 days, deduped). Pure. */
+export function mergeHistory(hist: readonly CalEvent[], fresh: readonly CalEvent[], now: number): CalEvent[] {
+  const keep = (e: CalEvent) => e.impact === 'High' || (e.impact === 'Medium' && /speaks|testif|press conference|remarks|statement/i.test(e.title));
+  const m = new Map<string, CalEvent>();
+  for (const e of [...hist, ...fresh]) if (keep(e) && e.t >= now - 400 * 86_400_000 && e.t <= now + 8 * 86_400_000) m.set(`${e.t}:${e.ccy}:${e.title}`, e);
+  return [...m.values()].sort((a, b) => a.t - b.t).slice(-4_000);
+}
+
 export class ForexCalendar {
   private events: CalEvent[] = [];
+  private hist: CalEvent[] = [];
   private fetchedAt = 0;
   private timer: NodeJS.Timeout | null = null;
   constructor(private readonly redis: Redis) {}
@@ -101,6 +112,15 @@ export class ForexCalendar {
         // refetch
       }
     }
+    const h = await this.redis.get(HIST_KEY).catch(() => null);
+    if (h) {
+      try {
+        this.hist = JSON.parse(h) as CalEvent[];
+      } catch {
+        this.hist = [];
+      }
+    }
+    if (this.events.length && !this.hist.length) this.hist = mergeHistory([], this.events, Date.now());
     void this.refresh();
     this.timer = setInterval(() => void this.refresh(), 60 * 60_000);
   }
@@ -129,6 +149,13 @@ export class ForexCalendar {
     });
     this.fetchedAt = Date.now();
     await this.redis.set(KEY, JSON.stringify({ at: this.fetchedAt, events: this.events })).catch(() => undefined);
+    this.hist = mergeHistory(this.hist, this.events, this.fetchedAt);
+    await this.redis.set(HIST_KEY, JSON.stringify(this.hist)).catch(() => undefined);
+  }
+
+  /** Released events kept so far (for the "after big moves" study). */
+  history(now = Date.now()): CalEvent[] {
+    return this.hist.filter((e) => e.t <= now);
   }
 
   get(): { at: number; events: CalEvent[] } {

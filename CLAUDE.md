@@ -118,6 +118,46 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   New `ConfigMigration.create` (missing section → partial row, deep-merged over defaults; upsert) + migration v54 = the
   v52 + v53 values again with create. Lesson: a migration that must change a never-saved section needs `create: true`.
   tests/migration-create.test.ts.
+- **v13 (Oct 19): the forex bot thinks wider** (owner: "do it all … make it work": currency strength, bigger-chart
+  agreement, market mood, one bet per currency, safer sizing, news drift). All in `src/forex/`, all causal, all tested.
+  - **Data**: `STRENGTH_PAIRS` (10 crosses AUDJPY CADJPY NZDJPY CHFJPY EURAUD EURCHF EURCAD GBPCHF GBPAUD AUDNZD, read
+    ONLY for the meter, not traded) + `MOOD_SYMBOLS` (DX-Y.NYB, ^TNX, ES=F, ^VIX, CL=F → Redis `fx:bars:mood:<id>`);
+    `refreshSeries` (data.ts) generalises `refreshInstrument`; feed rows carry `role` traded / strength / mood.
+  - `strength.ts`: per currency the average vol-normalised return of its pairs (24 + 120 bars, ≈ z units) →
+    `pairGap` (base − quote; metals = −USD), `gapSeries` per bar at its close. `mtf.ts`: `toDaily` (22:00 UTC days,
+    slivers < 6 h dropped), `trendSeries` (close & EMA20 vs EMA50), `alignTrend` (only bigger bars FINISHED by the
+    decision). `mood.ts`: risk score = avg(S&P 24 h % ÷ 1, −VIX 24 h % ÷ 7) clamped ±3, ≥ 0.5 risk-on / ≤ −0.5
+    risk-off; `RISK_CLASS` AUD/NZD +1, CAD .6, GBP .2, EUR 0, USD −.5, CHF/JPY/XAU −1 → `riskOfLong(pair)`.
+  - `filters.ts`: strength (gap ≥ 0.15 the trade's way), mtf (1h: 4h trend with it AND daily not against; 4h: daily
+    with it), mood (no risk-on trade in risk-off / haven trade in risk-on, |exposure| > 0.4), all. Engine refactor:
+    `signalsFor` once + `simulate(…, allow)` per filter (identical trades to the old runSeries — tested); trades carry
+    `volRatio` (ATR ÷ 100-bar median). Lab runs every strategy × tf raw + 4 filters; `chooseFilter` picks on the
+    FIRST 70% only (score avgR × √n, must beat raw by max(0.5, 10%), keep ≥ 40 / 25% of trades; last hour's pick
+    kept through near-ties, Redis `fx:filters:chosen`); verdict / paper / bot use the chosen variant. `summarizeFilters`
+    → report `filters` (Δ R/trade first 70% / unseen, % improved, trades kept, random + filter yardstick).
+  - **News drift**: `shockDir` (range ≥ 2.2 ATR, body ≥ 60%, close in the outer quarter) → strategies `news_drift`
+    (follow, stop mid-candle, 2R / 24 h) and `news_fade` (shock then a ≥ 35% give-back → target the shock open);
+    family 'news'. `news-study.ts` → report `news` (move in ATRs after 1/4/12/24 h + % still past the close, by hour
+    bucket, pair and — from the calendar history `fx:cal:hist` (high impact + speeches, 400 days, `mergeHistory`) —
+    by kind: rates / CPI / jobs / GDP / PMI / retail / speeches).
+  - **Sizing + one bet per currency** (`portfolio.ts` `SIZING`): risk = 1% × strategy factor (edge 1.25 / maybe 1 /
+    unproven 0.6; in the honest test from first-70% stats) × wildness (`volFactor`: ratio > 1.4 → .75, > 1.8 → .5) ×
+    drawdown (`ddFactor`: > 8% → .75, > 15% → .5; account `peakUsd`), clamped 0.25–1.5%; bot record ≥ 12 trades in
+    profit ×1.15. Exposure: each trade = +risk on the bought currency, −risk on the sold one; > 2.2% one way on a
+    currency → skip (`exposureBlock`, only when it ADDS to the concentration). Max 8 open, 3 per strategy, best-tested
+    signal (`prio`) first. Practice `syncBot` applies all of it, follows the lab's trailing stop (only tighter, only
+    while on the losing side), stores `riskPct` per position; `riskSummary` → `/api/forex/bot` `risk`.
+  - **Honest whole-bot test** (`simulatePortfolio` + `monteCarlo`): strategies picked on the first 70%
+    (`pickedOnInSample`: n ≥ 40, avgR ≥ 0.05, PF ≥ 1.15, + botAlways) traded together on the unseen 30% with margin
+    (30×, ≤ 25% of free margin a trade), caps and sizing, at 0.5 / 1 / 2 / 3% base risk, vs the pre-v13 bot (raw
+    strategies, flat 1%, no caps); weekly + monthly stats, 13-week block-bootstrap Monte Carlo (seeded). Redis
+    `fx:portfolio` → `/api/forex/bot` `portfolio`.
+  - Dashboard (`components/FxInsights.tsx`): Live = Currency strength + Market mood cards, market cards show 1h/4h/1D
+    arrows, strength line and "held back" signals; Strategies = "Do the new checks help?" + filter badge per row +
+    "Checks tried" table in the drawer + "After big moves"; Auto-bot = account tiles → "Honest test" (risk table, old
+    vs new, Monte Carlo) → "Risk right now" (exposure vs cap). Setup lists the extra feeds. Lab run ≈ 10 s / hour.
+  tests/forex-v13.test.ts (15). Numbers so far were only checked on SYNTHETIC candles (sandbox can't reach Yahoo):
+  read the real "Honest test" card on the VPS before trusting anything.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

@@ -71,23 +71,30 @@ async function saveBars(redis: Redis, id: string, bars: readonly Bar[]): Promise
 
 export interface FeedStatus {
   id: string;
+  /** v13: traded market, strength-meter cross, or market-mood input */
+  role?: 'traded' | 'strength' | 'mood';
   bars: number;
   firstT: number | null;
   lastT: number | null;
   error: string | null;
 }
 
-/** Refresh one instrument: full 730-day pull when we hold little, else the last 7 days merged in. */
-export async function refreshInstrument(redis: Redis, inst: Instrument, now = Date.now()): Promise<FeedStatus> {
-  const have = await loadBars(redis, inst.id);
-  const full = have.length < 2_000 || now - (have[have.length - 1]?.t ?? 0) > 6 * 86_400_000;
+/** Refresh one series: a full 730-day pull when we hold little, else the last 7 days merged in. */
+export async function refreshSeries(redis: Redis, id: string, yahoo: string, now = Date.now(), minBars = 2_000): Promise<FeedStatus> {
+  const have = await loadBars(redis, id);
+  const full = have.length < minBars || now - (have[have.length - 1]?.t ?? 0) > 6 * 86_400_000;
   try {
-    const fresh = parseYahoo(await fetchYahoo(inst.yahoo, full ? '730d' : '7d'), now);
+    const fresh = parseYahoo(await fetchYahoo(yahoo, full ? '730d' : '7d'), now);
     const merged = mergeBars(have, fresh).filter((b) => b.t >= now - 740 * 86_400_000);
-    if (merged.length) await saveBars(redis, inst.id, merged);
-    return { id: inst.id, bars: merged.length, firstT: merged[0]?.t ?? null, lastT: merged[merged.length - 1]?.t ?? null, error: null };
+    if (merged.length) await saveBars(redis, id, merged);
+    return { id, bars: merged.length, firstT: merged[0]?.t ?? null, lastT: merged[merged.length - 1]?.t ?? null, error: null };
   } catch (err) {
-    log.warn({ id: inst.id, err: (err as Error).message }, 'forex data refresh failed');
-    return { id: inst.id, bars: have.length, firstT: have[0]?.t ?? null, lastT: have[have.length - 1]?.t ?? null, error: (err as Error).message };
+    log.warn({ id, err: (err as Error).message }, 'forex data refresh failed');
+    return { id, bars: have.length, firstT: have[0]?.t ?? null, lastT: have[have.length - 1]?.t ?? null, error: (err as Error).message };
   }
+}
+
+/** Refresh one traded instrument. */
+export function refreshInstrument(redis: Redis, inst: Instrument, now = Date.now()): Promise<FeedStatus> {
+  return refreshSeries(redis, inst.id, inst.yahoo, now);
 }

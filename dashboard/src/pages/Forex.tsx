@@ -13,15 +13,17 @@ import { Icon } from '../components/Icon';
 import { FxTrade } from '../components/FxTrade';
 import { OandaCard } from '../components/OandaCard';
 import { MarketChart, type ChartDrawings } from '../components/MarketChart';
+import { FILTER_SHORT, FiltersCard, MoodCard, NewsStudyCard, StrengthCard, TrendArrows, type FilterKind, type FilterSummary, type MoodNow, type NewsStudy, type PortfolioReport, type StrengthNow } from '../components/FxInsights';
 import { Badge, Button, Card, Chip, Drawer, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Sparkline, Stack, StatTile, useStored } from '../components/ui';
 
 interface RStats { n: number; winPct: number; avgR: number; medianR: number; pf: number | null; totalR: number; maxDdR: number }
 interface Risk { riskPct: number; finalX: number; avgWeekPct: number; medianWeekPct: number; greenWeeksPct: number; bigWeeksPct: number; bestWeekPct: number; worstWeekPct: number; maxDdPct: number; blown: boolean; medianLeverage: number; weeks: number }
-interface RowT { id: string; name: string; family: string; desc: string; tf: '1h' | '4h'; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string }
+interface VariantRow { filter: FilterKind; inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number }
+interface RowT { id: string; name: string; family: string; desc: string; tf: '1h' | '4h'; filter?: FilterKind; variants?: VariantRow[]; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string }
 interface Trade { strategy: string; tf: string; pair: string; side: 1 | -1; entryT: number; exitT: number; entry: number; exit: number; r: number; reason: string; stop: number; stop0: number; target: number | null }
-interface MarketNow { id: string; label: string; price: number; t: number; change24hPct: number; closes: number[]; trend: 'up' | 'down' | 'flat'; rsi: number; atrPips: number; firing: Array<{ id: string; name: string; tf: string; side: 1 | -1 }>; openPaper: number; bars: number[][]; drawings: ChartDrawings }
+interface MarketNow { id: string; label: string; price: number; t: number; change24hPct: number; closes: number[]; trend: 'up' | 'down' | 'flat'; rsi: number; atrPips: number; firing: Array<{ id: string; name: string; tf: string; side: 1 | -1; allowed?: boolean; why?: string | null }>; openPaper: number; bars: number[][]; drawings: ChartDrawings; mtf?: { h1: number; h4: number; d1: number }; strength?: { base: string; quote: string; baseScore: number | null; quoteScore: number | null; gap: number | null }; risk?: number }
 interface PaperRow { id: string; name: string; tf: string; stats: RStats; risk1: Risk; open: number }
-interface Report { at: number; durationMs: number; feed: Array<{ id: string; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; markets?: MarketNow[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string }
+interface Report { at: number; durationMs: number; feed: Array<{ id: string; role?: 'traded' | 'strength' | 'mood'; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; markets?: MarketNow[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string; strength?: StrengthNow; mood?: MoodNow; filters?: FilterSummary[]; portfolio?: PortfolioReport | null; news?: NewsStudy | null }
 interface Data { running: boolean; last: Report | null }
 
 const signed = (x: number, dp = 1) => `${x >= 0 ? '+' : ''}${x.toFixed(dp)}`;
@@ -83,9 +85,17 @@ export function Forex() {
       {labNeeded && r && (
         <Stack>
           <Summary r={r} />
+          {section === 'live' && (
+            <div className="grid gap-4 lg:grid-cols-2">
+              <StrengthCard s={r.strength} pairs={(r.markets ?? []).map((m) => m.id)} />
+              <MoodCard m={r.mood} />
+            </div>
+          )}
           {section === 'live' && <FxNews />}
           {section === 'live' && <Markets r={r} onTrade={(id) => { try { localStorage.setItem('fx.pair', id); } catch { /* ignore */ } navigate('/forex/practice'); }} />}
+          {section === 'strategies' && <FiltersCard f={r.filters} />}
           {section === 'strategies' && <Strategies r={r} />}
+          {section === 'strategies' && <NewsStudyCard n={r.news} />}
           {section === 'paper' && <Paper r={r} />}
         </Stack>
       )}
@@ -118,15 +128,20 @@ function Markets({ r, onTrade }: { r: Report; onTrade: (id: string) => void }) {
             </div>
             <Sparkline points={m.closes} width={260} height={44} tone={m.change24hPct >= 0 ? 'up' : 'down'} className="mt-2 w-full" />
             <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
-              <Badge tone={m.trend === 'up' ? 'up' : m.trend === 'down' ? 'down' : 'neutral'}>{m.trend === 'up' ? 'Uptrend' : m.trend === 'down' ? 'Downtrend' : 'Sideways'}</Badge>
+              <TrendArrows mtf={m.mtf} />
               <Badge tone={m.rsi >= 70 || m.rsi <= 30 ? 'warn' : 'neutral'}>RSI {m.rsi}</Badge>
               <Badge tone="neutral">{m.atrPips} pips/h</Badge>
               {m.openPaper > 0 && <Badge tone="accent">{m.openPaper} bot trade{m.openPaper > 1 ? 's' : ''}</Badge>}
               {m.drawings.lines.length > 0 && <Badge tone="neutral">{m.drawings.lines.length} trendline{m.drawings.lines.length > 1 ? 's' : ''}</Badge>}
             </div>
-            {m.firing.length > 0 && (
+            {m.strength && m.strength.quoteScore !== null && (
               <div className="mt-2 text-xs text-ink-2">
-                <span className="font-medium text-ink">Firing now:</span> {m.firing.slice(0, 3).map((f) => `${f.side === 1 ? '▲' : '▼'} ${f.name} (${f.tf})`).join(' · ')}{m.firing.length > 3 ? ` +${m.firing.length - 3}` : ''}
+                <StrengthLine m={m} />
+              </div>
+            )}
+            {m.firing.length > 0 && (
+              <div className="mt-1 text-xs text-ink-2">
+                <span className="font-medium text-ink">Firing now:</span> {m.firing.slice(0, 3).map((f) => `${f.side === 1 ? '▲' : '▼'} ${f.name} (${f.tf})${f.allowed === false ? ', held back' : ''}`).join(' · ')}{m.firing.length > 3 ? ` · +${m.firing.length - 3} more` : ''}
               </div>
             )}
           </button>
@@ -136,6 +151,19 @@ function Markets({ r, onTrade }: { r: Report; onTrade: (id: string) => void }) {
         {open && <MarketDetail m={open} r={r} onTrade={() => onTrade(open.id)} />}
       </Drawer>
     </Stack>
+  );
+}
+
+function StrengthLine({ m }: { m: MarketNow }) {
+  const st = m.strength!;
+  const f = (x: number | null) => (x === null ? '—' : `${x >= 0 ? '+' : ''}${x.toFixed(2)}`);
+  const gap = st.gap ?? 0;
+  const metal = m.id.startsWith('XA');
+  const verdict = Math.abs(gap) < 0.15 ? 'no clear side' : gap > 0 ? `favours buying` : `favours selling`;
+  return (
+    <span>
+      {metal ? <>USD strength <span className={tone(-(st.quoteScore ?? 0))}>{f(st.quoteScore)}</span></> : <>{st.base} <span className={tone(st.baseScore ?? 0)}>{f(st.baseScore)}</span> vs {st.quote} <span className={tone(st.quoteScore ?? 0)}>{f(st.quoteScore)}</span></>} · <span className={gap >= 0.15 ? 'text-up' : gap <= -0.15 ? 'text-down' : 'text-muted'}>{verdict}</span>
+    </span>
   );
 }
 
@@ -178,8 +206,11 @@ function MarketDetail({ m, r, onTrade }: { m: MarketNow; r: Report; onTrade: () 
             {m.drawings.levels.map((l, k) => (
               <Row key={`v${k}`} label={l.kind === 'support' ? 'Support level' : 'Resistance level'} sub={`${l.touches} swing points`} value={l.price.toFixed(DIGITS(m.id))} />
             ))}
+            {m.mtf && <Row label="Trend on the bigger charts" sub="1-hour · 4-hour · daily (close and 20 EMA vs the 50 EMA)" value={<TrendArrows mtf={m.mtf} />} />}
+            {m.strength && m.strength.quoteScore !== null && <Row label="Currency strength" sub="buy the stronger currency, sell the weaker" value={<span className="text-xs"><StrengthLine m={m} /></span>} />}
+            {m.risk !== undefined && r.mood && <Row label="Market mood fit" sub={`buying ${m.label} is ${m.risk > 0.4 ? 'a risk-on trade' : m.risk < -0.4 ? 'a safe-haven trade' : 'mood-neutral'}`} value={<span className={r.mood.label === 'risk-off' ? 'text-down' : r.mood.label === 'risk-on' ? 'text-up' : 'text-muted'}>{r.mood.label}</span>} />}
             {m.firing.map((f) => (
-              <Row key={`${f.id}:${f.tf}`} label={`${f.side === 1 ? 'Buy' : 'Sell'} signal: ${f.name}`} sub={`${f.tf} candle close`} value={<span className={f.side === 1 ? 'text-up' : 'text-down'}>{f.side === 1 ? '▲' : '▼'}</span>} />
+              <Row key={`${f.id}:${f.tf}`} label={`${f.side === 1 ? 'Buy' : 'Sell'} signal: ${f.name}`} sub={`${f.tf} candle close${f.allowed === false && f.why ? ` · held back: ${f.why}` : ''}`} value={<span className={f.allowed === false ? 'text-muted' : f.side === 1 ? 'text-up' : 'text-down'}>{f.side === 1 ? '▲' : '▼'}</span>} />
             ))}
             {!m.drawings.lines.length && !m.drawings.levels.length && !m.firing.length && <Row label="Nothing notable" value="—" />}
           </Rows>
@@ -195,12 +226,13 @@ function Summary({ r }: { r: Report }) {
   const pTrades = r.paper.rows.reduce((a, x) => a + x.stats.n, 0);
   const pR = r.paper.rows.reduce((a, x) => a + x.stats.totalR, 0);
   const feedErr = r.feed.filter((f) => f.error).length;
+  const traded = r.feed.filter((f) => (f.role ?? 'traded') === 'traded');
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <StatTile compact label="Pass on unseen data" value={`${edges}`} sub={`${maybes} maybe · ${r.rows.length} tested`} tone={edges ? 'up' : undefined} />
       <StatTile compact label="History tested" value={`${day(r.from)} → ${day(r.to)}`} sub={`last 30% unseen from ${day(r.oosFrom)}`} />
       <StatTile compact label="Paper since" value={day(r.paper.since)} sub={`${pTrades} closed · ${r.paper.open.length} open · ${signed(pR, 1)}R`} tone={pR > 0 ? 'up' : pR < 0 ? 'down' : undefined} />
-      <StatTile compact label="Data" value={`${r.feed.filter((f) => f.bars > 0).length}/${r.feed.length} markets`} sub={feedErr ? `${feedErr} failed to update` : `updated ${ago(new Date(r.at).toISOString())}`} tone={feedErr ? 'warn' : undefined} />
+      <StatTile compact label="Data" value={`${traded.filter((f) => f.bars > 0).length}/${traded.length} markets`} sub={feedErr ? `${feedErr} feeds failed to update` : `+ ${r.feed.length - traded.length} inputs · updated ${ago(new Date(r.at).toISOString())}`} tone={feedErr ? 'warn' : undefined} />
     </div>
   );
 }
@@ -236,6 +268,7 @@ function Strategies({ r }: { r: Report }) {
                   <div className="flex items-center gap-2">
                     <span className="truncate font-medium text-ink">{x.name}</span>
                     <Badge tone="neutral">{x.tf}</Badge>
+                    {x.filter && x.filter !== 'none' && <Badge tone="accent">{FILTER_SHORT[x.filter]}</Badge>}
                     <Badge tone={VERDICT[x.verdict].tone}>{VERDICT[x.verdict].label}</Badge>
                   </div>
                   <div className="mt-0.5 truncate text-xs text-muted">
@@ -303,6 +336,33 @@ function Detail({ x }: { x: RowT }) {
         </div>
         <p className="mt-1 text-xs text-muted">Leverage in brackets = the typical position size needed for that risk. Over 2 years, compounded, with every losing streak included.</p>
       </div>
+      {x.variants && x.variants.length > 1 && (
+        <div>
+          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Checks tried (picked on the first 70% only)</div>
+          <div className="overflow-x-auto">
+            <table className="tabular w-full min-w-[30rem] text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted">
+                  <th className="py-1 font-medium">Check</th>
+                  <th className="py-1 text-right font-medium">First 70%</th>
+                  <th className="py-1 text-right font-medium">Unseen 30%</th>
+                  <th className="py-1 text-right font-medium">Trades</th>
+                </tr>
+              </thead>
+              <tbody>
+                {x.variants.map((v) => (
+                  <tr key={v.filter} className={`border-t border-line ${v.filter === (x.filter ?? 'none') ? 'font-semibold' : ''}`}>
+                    <td className="py-1.5 text-ink">{v.filter === 'none' ? 'No check' : FILTER_SHORT[v.filter]}{v.filter === (x.filter ?? 'none') ? ' ✓' : ''}</td>
+                    <td className={`py-1.5 text-right ${tone(v.inAvgR)}`}>{signed(v.inAvgR, 2)}R <span className="text-xs font-normal text-muted">({v.inN})</span></td>
+                    <td className={`py-1.5 text-right ${tone(v.outAvgR)}`}>{signed(v.outAvgR, 2)}R <span className="text-xs font-normal text-muted">({v.outN})</span></td>
+                    <td className="py-1.5 text-right text-ink-2">{v.allN}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
       <div>
         <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">By market</div>
         <Rows>
@@ -371,10 +431,10 @@ function TradeList({ ts, open = false }: { ts: Trade[]; open?: boolean }) {
 function Setup({ r }: { r: Report }) {
   return (
     <Stack>
-      <Card title="Markets and costs" subtitle="Hourly candles from Yahoo Finance (free, about 2 years back). Spreads are typical retail costs, charged on every trade.">
+      <Card title="Markets and costs" subtitle="Hourly candles from Yahoo Finance (free, about 2 years back). Spreads are typical retail costs, charged on every trade. The 10 extra crosses only feed the strength meter; the dollar index, yields, S&P futures, VIX and oil feed the market mood.">
         <Rows>
           {r.feed.map((f) => (
-            <Row key={f.id} label={f.id} value={f.error ? <span className="text-down">failed</span> : `${f.bars.toLocaleString()} bars`} sub={f.error ? f.error : `${day(f.firstT)} → ${day(f.lastT)}`} />
+            <Row key={`${f.role ?? 'traded'}:${f.id}`} label={<>{f.id} {f.role === 'strength' ? <Badge tone="neutral">strength meter</Badge> : f.role === 'mood' ? <Badge tone="neutral">market mood</Badge> : null}</>} value={f.error ? <span className="text-down">failed</span> : `${f.bars.toLocaleString()} bars`} sub={f.error ? f.error : `${day(f.firstT)} → ${day(f.lastT)}`} />
           ))}
         </Rows>
       </Card>

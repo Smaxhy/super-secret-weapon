@@ -6,7 +6,23 @@
 import type { Ctx } from './ta';
 import type { Signal } from './types';
 
-export type Family = 'trend' | 'breakout' | 'session' | 'reversion' | 'pattern' | 'control';
+/**
+ * v13: a "shock" candle = what a big news release looks like on an hourly chart: range ≥ 2.2× the normal hourly range
+ * (ATR before it), a solid body (≥ 60% of the range) closing in the outer quarter. +1 up, −1 down, 0 none. Pure.
+ */
+export function shockDir(c: Ctx, i: number, k = 2.2): 1 | -1 | 0 {
+  if (i < 15) return 0;
+  const b = c.bars[i]!;
+  const a = c.atr14[i - 1]!;
+  const range = b.h - b.l;
+  if (!Number.isFinite(a) || a <= 0 || range < k * a) return 0;
+  if (Math.abs(b.c - b.o) < 0.6 * range) return 0;
+  if (b.c > b.o && b.c >= b.h - 0.25 * range) return 1;
+  if (b.c < b.o && b.c <= b.l + 0.25 * range) return -1;
+  return 0;
+}
+
+export type Family = 'trend' | 'breakout' | 'session' | 'reversion' | 'pattern' | 'news' | 'control';
 
 export interface Strategy {
   id: string;
@@ -622,6 +638,44 @@ export const STRATEGIES: Strategy[] = [
       // %R = %K − 100 (same range math); using the smoothed %K keeps it from flickering
       if (c.close[i]! > c.ema200[i]! && wr(i - 1) < -80 && wr(i) >= -80) return atrSig(c, i, 1, 1.5, 1.5, { exitWhen: 'ema20' });
       if (c.close[i]! < c.ema200[i]! && wr(i - 1) > -20 && wr(i) <= -20) return atrSig(c, i, -1, 1.5, 1.5, { exitWhen: 'ema20' });
+      return null;
+    },
+  },
+  // ── news (v13): what happens AFTER a big release, read from the candle itself ──
+  {
+    id: 'news_drift',
+    name: 'News drift (follow the shock)',
+    family: 'news',
+    desc: 'After a shock candle (2.2× the normal hourly range, closing near its extreme) the move often keeps going: enter its way on the next open, stop at the candle middle, 2R target or out after 24 hours.',
+    onlyHourly: true,
+    signal(c, i) {
+      const d = shockDir(c, i);
+      if (!d) return null;
+      const b = c.bars[i]!;
+      return levelSig(c, i, d, (b.h + b.l) / 2, 2, { maxBars: 24 });
+    },
+  },
+  {
+    id: 'news_fade',
+    name: 'News fade (shock that fails)',
+    family: 'news',
+    desc: 'A shock candle followed by a candle that gives back over a third of it: bet on the full give-back. Stop past the shock extreme, target the shock candle open.',
+    onlyHourly: true,
+    signal(c, i) {
+      const d = shockDir(c, i - 1);
+      if (!d) return null;
+      const s0 = c.bars[i - 1]!;
+      const b = c.bars[i]!;
+      const range = s0.h - s0.l;
+      const a = c.atr14[i]!;
+      if (d === 1 && b.c < s0.c - 0.35 * range) {
+        const sig = levelSig(c, i, -1, Math.max(s0.h, b.h) + 0.15 * a, null, { maxBars: 12 });
+        return sig && s0.o < b.c ? { ...sig, target: s0.o } : null;
+      }
+      if (d === -1 && b.c > s0.c + 0.35 * range) {
+        const sig = levelSig(c, i, 1, Math.min(s0.l, b.l) - 0.15 * a, null, { maxBars: 12 });
+        return sig && s0.o > b.c ? { ...sig, target: s0.o } : null;
+      }
       return null;
     },
   },

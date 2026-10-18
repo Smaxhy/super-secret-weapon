@@ -38,6 +38,32 @@ export const INSTRUMENTS: Instrument[] = [
 
 export const instrument = (id: string) => INSTRUMENTS.find((x) => x.id === id) ?? null;
 
+/** v13: extra crosses read ONLY for the currency strength meter (not traded). */
+export const STRENGTH_PAIRS: Array<{ id: string; yahoo: string }> = [
+  { id: 'AUDJPY', yahoo: 'AUDJPY=X' },
+  { id: 'CADJPY', yahoo: 'CADJPY=X' },
+  { id: 'NZDJPY', yahoo: 'NZDJPY=X' },
+  { id: 'CHFJPY', yahoo: 'CHFJPY=X' },
+  { id: 'EURAUD', yahoo: 'EURAUD=X' },
+  { id: 'EURCHF', yahoo: 'EURCHF=X' },
+  { id: 'EURCAD', yahoo: 'EURCAD=X' },
+  { id: 'GBPCHF', yahoo: 'GBPCHF=X' },
+  { id: 'GBPAUD', yahoo: 'GBPAUD=X' },
+  { id: 'AUDNZD', yahoo: 'AUDNZD=X' },
+];
+
+/** v13: the wider market the bot reads for its "mood" (risk-on / risk-off). Stored as `fx:bars:mood:<id>`. */
+export const MOOD_SYMBOLS: Array<{ id: 'DXY' | 'US10Y' | 'SPX' | 'VIX' | 'OIL'; yahoo: string; label: string }> = [
+  { id: 'DXY', yahoo: 'DX-Y.NYB', label: 'US dollar index' },
+  { id: 'US10Y', yahoo: '^TNX', label: 'US 10-year yield' },
+  { id: 'SPX', yahoo: 'ES=F', label: 'S&P 500 futures' },
+  { id: 'VIX', yahoo: '^VIX', label: 'VIX fear index' },
+  { id: 'OIL', yahoo: 'CL=F', label: 'Oil (WTI)' },
+];
+
+/** The two sides of a market for exposure / strength (metals: XAU or XAG against USD). */
+export const legsOf = (pair: string): [string, string] => [pair.slice(0, 3), pair.slice(3, 6)];
+
 export type Timeframe = '1h' | '4h';
 
 export interface Signal {
@@ -73,4 +99,6 @@ export interface Trade {
   stop: number;
   stop0: number;
   target: number | null;
+  /** v13: ATR at the signal ÷ its median over the 100 bars before (1 = normal, 2 = twice as wild) */
+  volRatio?: number;
 }

@@ -11,12 +11,13 @@ import { oandaCandles, oandaPrices, oandaReady, loadOanda, type Granularity } fr
 import { INSTRUMENTS, instrument, type Bar, type Instrument } from './types';
 import { marketClock } from './calendar';
 import { priceShock } from './headlines';
+import { SIZING, addExposure, clampRisk, ddFactor, exposureBlock, type Exposure } from './portfolio';
 
 const log = moduleLogger('forex-practice');
 export type AcctId = 'me' | 'bot';
 const keyFor = (a: AcctId) => (a === 'me' ? 'fx:practice' : 'fx:practice:bot');
-/** Bot account: risk per trade (% of equity), leverage used, most positions at once. */
-export const BOT = { riskPct: 1, leverage: 30, maxOpen: 8, freshMs: 2 * 3_600_000 };
+/** Bot account: base risk per trade (% of equity), leverage used, most positions at once, most risk on one currency. */
+export const BOT = { riskPct: SIZING.baseRiskPct, leverage: SIZING.leverage, maxOpen: SIZING.maxOpen, freshMs: 2 * 3_600_000, maxCcyRiskPct: SIZING.ccyCapPct };
 export const STOP_OUT_PCT = 50;
 export const MAX_LEVERAGE = 500;
 
@@ -55,6 +56,8 @@ export interface PracticePosition {
   /** bot trades: which strategy, and the lab trade it mirrors */
   strategy?: string;
   ref?: string;
+  /** bot trades (v13): % of the account it risked at the stop */
+  riskPct?: number;
 }
 
 export interface ClosedPractice extends PracticePosition {
@@ -67,6 +70,8 @@ export interface ClosedPractice extends PracticePosition {
 export interface PracticeAccount {
   startUsd: number;
   balanceUsd: number;
+  /** v13: highest equity seen (the bot trades smaller after a drop) */
+  peakUsd?: number;
   open: PracticePosition[];
   closed: ClosedPractice[];
   createdAt: number;
@@ -106,6 +111,52 @@ export function pnlUsd(p: Pick<PracticePosition, 'pair' | 'side' | 'units' | 'en
 export function exitPx(p: Pick<PracticePosition, 'pair' | 'side'>, mid: number, half?: number): number {
   const inst = instrument(p.pair)!;
   return mid - p.side * (half ?? (inst.spreadPips * inst.pip) / 2);
+}
+
+/** Risk (USD lost if the stop is hit) of an open position; 0 when the stop already locks in a profit. Pure. */
+export function positionRiskUsd(p: Pick<PracticePosition, 'pair' | 'side' | 'units' | 'entry' | 'stop'>, mids: Record<string, number>): number {
+  if (p.stop === null) return 0;
+  return Math.max(0, -pnlUsd(p, p.stop, mids));
+}
+
+/** Signed risk per currency, % of equity (buying EUR/USD = +EUR, −USD). Pure. */
+export function currencyExposure(open: ReadonlyArray<Pick<PracticePosition, 'pair' | 'side' | 'units' | 'entry' | 'stop'>>, mids: Record<string, number>, equityUsd: number): Exposure {
+  const exp: Exposure = {};
+  if (!(equityUsd > 0)) return exp;
+  for (const p of open) addExposure(exp, p.pair, p.side, (positionRiskUsd(p, mids) / equityUsd) * 100);
+  return exp;
+}
+
+export interface RiskSummary {
+  /** signed risk per currency, % of equity, biggest first */
+  exposure: Array<{ ccy: string; pct: number }>;
+  capPct: number;
+  /** equity under its peak, % */
+  ddPct: number;
+  /** size multiplier that drop applies to new trades */
+  ddFactor: number;
+  baseRiskPct: number;
+  /** total risk if every stop were hit, % of equity */
+  openRiskPct: number;
+}
+
+/** The bot account's risk picture (for the dashboard). Pure. */
+export function riskSummary(a: Pick<PracticeAccount, 'open' | 'peakUsd' | 'startUsd'>, mids: Record<string, number>, equityUsd: number): RiskSummary {
+  const exp = currencyExposure(a.open, mids, equityUsd);
+  const peak = Math.max(a.peakUsd ?? a.startUsd, equityUsd);
+  const ddPct = peak > 0 ? Math.max(0, (1 - equityUsd / peak) * 100) : 0;
+  const openRisk = equityUsd > 0 ? a.open.reduce((s, p) => s + positionRiskUsd(p, mids), 0) / equityUsd * 100 : 0;
+  return {
+    exposure: Object.entries(exp)
+      .filter(([, v]) => Math.abs(v) >= 0.01)
+      .map(([ccy, v]) => ({ ccy, pct: Math.round(v * 100) / 100 }))
+      .sort((x, y) => Math.abs(y.pct) - Math.abs(x.pct)),
+    capPct: BOT.maxCcyRiskPct,
+    ddPct: Math.round(ddPct * 10) / 10,
+    ddFactor: ddFactor(ddPct),
+    baseRiskPct: BOT.riskPct,
+    openRiskPct: Math.round(openRisk * 100) / 100,
+  };
 }
 
 export interface AccountView extends PracticeAccount {
@@ -209,7 +260,7 @@ async function fetchQuote(inst: Instrument): Promise<Quote | null> {
   return null;
 }
 
-export interface OpenReq { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string }
+export interface OpenReq { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number }
 
 export class Practice {
   private cache = new Map<string, Quote>();
@@ -381,42 +432,73 @@ export class Practice {
       const target = req.target ?? null;
       if (stop !== null && (req.side === 1 ? stop >= entry : stop <= entry)) return { ok: false, error: 'stop must be on the losing side of the price' };
       if (target !== null && (req.side === 1 ? target <= entry : target >= entry)) return { ok: false, error: 'target must be on the winning side of the price' };
-      a.open.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, pair: inst.id, side: req.side, units, entry, marginUsd: Math.round(req.marginUsd * 100) / 100, leverage: lev, stop, target, openedAt: Date.now(), checkedT: quote.bars[quote.bars.length - 1]?.[0] ?? Date.now(), ...(req.strategy ? { strategy: req.strategy } : {}), ...(req.ref ? { ref: req.ref } : {}) });
+      a.open.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, pair: inst.id, side: req.side, units, entry, marginUsd: Math.round(req.marginUsd * 100) / 100, leverage: lev, stop, target, openedAt: Date.now(), checkedT: quote.bars[quote.bars.length - 1]?.[0] ?? Date.now(), ...(req.strategy ? { strategy: req.strategy } : {}), ...(req.ref ? { ref: req.ref } : {}), ...(req.riskPct !== undefined ? { riskPct: req.riskPct } : {}) });
       return { ok: true };
     }
   }
 
   /**
    * Bot account: mirror the lab's live paper trades of the chosen strategies. A trade the lab opened in the last
-   * 2 hours that the bot doesn't hold yet is opened at the current price with the same stop / target, sized so the
-   * stop loses `BOT.riskPct` of equity at `BOT.leverage`×. A held trade the lab no longer has open (its trail / time /
-   * signal exit fired) is closed at the market. Returns what happened.
+   * 2 hours that the bot doesn't hold yet is opened at the current price with the same stop / target. Size (v13):
+   * base risk × the lab's size factor (strategy record × how wild the market is) × a drawdown factor, never more than
+   * `BOT.maxCcyRiskPct` of the account on one currency in one direction. Held trades follow the lab's trailing stop;
+   * one the lab no longer has open (its trail / time / signal exit fired) is closed at the market.
    */
-  async syncBot(labOpen: Array<{ ref: string; strategy: string; pair: string; side: 1 | -1; entryT: number; stop: number; target: number | null; chosen: boolean }>, blockFor: (pair: string) => string | null = () => null, atr1h: Record<string, number> = {}): Promise<string[]> {
+  async syncBot(labOpen: Array<{ ref: string; strategy: string; tf?: string; pair: string; side: 1 | -1; entryT: number; stop: number; target: number | null; chosen: boolean; sizeF?: number; prio?: number }>, blockFor: (pair: string) => string | null = () => null, atr1h: Record<string, number> = {}): Promise<string[]> {
     return this.serial(async () => {
       const a = await this.load('bot');
       const events: string[] = [];
-      const openRefs = new Set(labOpen.map((t) => t.ref));
+      const byRef = new Map(labOpen.map((t) => [t.ref, t]));
       const q = await this.quotes(this.neededIds(a, [...new Set(labOpen.map((t) => t.pair))]), 10_000);
       const mids: Record<string, number> = {};
       for (const x of Object.values(q)) mids[x.id] = x.mid;
+      let moved = 0;
       for (const p of [...a.open]) {
-        if (p.ref && !openRefs.has(p.ref)) {
+        if (!p.ref) continue;
+        const lab = byRef.get(p.ref);
+        if (!lab) {
           const qq = q[p.pair];
           closePos(a, p, qq ? (p.side === 1 ? qq.bid : qq.ask) : exitPx(p, mids[p.pair] ?? p.entry), mids, 'signal', Date.now());
           events.push(`closed ${p.pair} (${p.strategy})`);
+          continue;
+        }
+        // follow the lab's trailing stop: only ever tighter, and only while it is still on the losing side of the price
+        if (p.stop !== null && (p.side === 1 ? lab.stop > p.stop : lab.stop < p.stop)) {
+          const qq = q[p.pair];
+          const px = qq ? (p.side === 1 ? qq.bid : qq.ask) : null;
+          if (px === null || (p.side === 1 ? lab.stop < px : lab.stop > px)) {
+            p.stop = lab.stop;
+            moved++;
+          }
         }
       }
+      if (moved) events.push(`trailed the stop on ${moved} open trade${moved > 1 ? 's' : ''}`);
+      const v0 = view(a, mids);
+      a.peakUsd = Math.max(a.peakUsd ?? a.startUsd, v0.equityUsd);
+      const ddPct = a.peakUsd > 0 ? Math.max(0, (1 - v0.equityUsd / a.peakUsd) * 100) : 0;
+      const ddF = ddFactor(ddPct);
       const held = new Set([...a.open.map((p) => p.ref), ...a.closed.slice(0, 200).map((p) => p.ref)]);
       const clock = marketClock(Date.now());
       const noted = new Set<string>();
-      for (const t of labOpen) {
-        if (!t.chosen || held.has(t.ref) || Date.now() - t.entryT > BOT.freshMs) continue;
+      const note = (key: string, e: string) => {
+        if (!noted.has(key)) events.push(e);
+        noted.add(key);
+      };
+      // best-tested signals get the free slots first; one strategy holds at most `maxPerStrategy` trades
+      const stratKey = (ref: string) => ref.split(':').slice(0, 2).join(':');
+      const perStrategy = new Map<string, number>();
+      for (const p of a.open) if (p.ref) perStrategy.set(stratKey(p.ref), (perStrategy.get(stratKey(p.ref)) ?? 0) + 1);
+      const candidates = labOpen.filter((t) => t.chosen && !held.has(t.ref) && Date.now() - t.entryT <= BOT.freshMs).sort((x, y) => (y.prio ?? 0) - (x.prio ?? 0));
+      for (const t of candidates) {
+        const sk = stratKey(t.ref);
+        if ((perStrategy.get(sk) ?? 0) >= SIZING.maxPerStrategy) {
+          note(`${t.ref}:strat`, `skipped ${t.pair} (${t.strategy}): it already has ${SIZING.maxPerStrategy} trades open`);
+          continue;
+        }
         const qs = q[t.pair];
         const why = clock.noNewTrades ? (clock.open ? 'weekly close is near' : 'market closed') : blockFor(t.pair) ?? (qs && priceShock(qs.bars, atr1h[t.pair] ?? 0) ? 'price shock: unusually big move in the last 15 min' : null);
         if (why) {
-          if (!noted.has(`${t.pair}:${why}`)) events.push(`waited on ${t.pair} (${t.strategy}): ${why}`);
-          noted.add(`${t.pair}:${why}`);
+          note(`${t.pair}:${why}`, `waited on ${t.pair} (${t.strategy}): ${why}`);
           continue;
         }
         if (a.open.length >= BOT.maxOpen) break;
@@ -426,13 +508,21 @@ export class Practice {
         const dist = (entry - t.stop) * t.side;
         if (!(dist > 0)) continue; // price already through the stop
         const v = view(a, mids);
-        const riskUsd = (v.equityUsd * BOT.riskPct) / 100;
-        const notional = riskUsd / (dist / entry);
+        const riskPct = clampRisk(BOT.riskPct, BOT.riskPct * (t.sizeF ?? 1) * ddF);
+        const exp = currencyExposure(a.open, mids, v.equityUsd);
+        const over = exposureBlock(exp, t.pair, t.side, riskPct, BOT.maxCcyRiskPct);
+        if (over) {
+          note(`${t.ref}:ccy`, `skipped ${t.pair} (${t.strategy}): already ${Math.abs(exp[over] ?? 0).toFixed(1)}% of the account riding on ${over}`);
+          continue;
+        }
+        const notional = (v.equityUsd * riskPct) / 100 / (dist / entry);
         let margin = notional / BOT.leverage;
-        margin = Math.min(margin, v.freeMarginUsd * 0.25);
+        margin = Math.min(margin, v.freeMarginUsd * SIZING.marginShare);
         if (margin < 1) continue;
-        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: BOT.leverage, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref });
-        events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy})` : `skipped ${t.pair}: ${r.error}`);
+        const actual = Math.round(((margin * BOT.leverage * (dist / entry)) / v.equityUsd) * 10_000) / 100;
+        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: BOT.leverage, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual });
+        events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}), risking ${actual}% of the account${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}` : `skipped ${t.pair}: ${r.error}`);
+        if (r.ok) perStrategy.set(sk, (perStrategy.get(sk) ?? 0) + 1);
       }
       await this.save(a, 'bot');
       if (events.length) log.info({ events }, 'forex bot account');

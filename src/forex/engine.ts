@@ -6,11 +6,38 @@
  */
 import type { Ctx } from './ta';
 import type { Strategy } from './strategies';
-import type { Instrument, Timeframe, Trade } from './types';
+import type { Instrument, Signal, Timeframe, Trade } from './types';
 
 export const WARMUP = 210;
 
-export function runSeries(inst: Instrument, tf: Timeframe, c: Ctx, s: Strategy): Trade[] {
+/** Every bar's signal (null = none), computed once and reused by every filter variant. Strategies are pure. */
+export function signalsFor(c: Ctx, s: Strategy): Array<Signal | null> {
+  const n = c.bars.length;
+  const out: Array<Signal | null> = new Array(n).fill(null);
+  for (let i = WARMUP; i < n - 1; i++) out[i] = s.signal(c, i);
+  return out;
+}
+
+/** ATR at bar i ÷ the median ATR of the 100 bars before it (how wild the market is right now vs normal). */
+export function volRatioAt(c: Ctx, i: number): number | undefined {
+  const a = c.atr14[i]!;
+  if (!Number.isFinite(a)) return undefined;
+  const xs: number[] = [];
+  for (let j = Math.max(0, i - 100); j < i; j++) if (Number.isFinite(c.atr14[j]!)) xs.push(c.atr14[j]!);
+  if (xs.length < 30) return undefined;
+  xs.sort((x, y) => x - y);
+  const med = xs[Math.floor(xs.length / 2)]!;
+  return med > 0 ? Math.round((a / med) * 100) / 100 : undefined;
+}
+
+/** `allow(i, side)` = false vetoes the entry signalled at bar i (filters); exits are never touched. */
+export type Allow = (i: number, side: 1 | -1) => boolean;
+
+export function runSeries(inst: Instrument, tf: Timeframe, c: Ctx, s: Strategy, allow?: Allow): Trade[] {
+  return simulate(inst, tf, c, s.id, signalsFor(c, s), allow);
+}
+
+export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: string, sigs: ReadonlyArray<Signal | null>, allow?: Allow): Trade[] {
   const bars = c.bars;
   const n = bars.length;
   const spread = inst.spreadPips * inst.pip;
@@ -26,13 +53,14 @@ export function runSeries(inst: Instrument, tf: Timeframe, c: Ctx, s: Strategy):
     maxBars: number | null;
     exitWhen: string | null;
     best: number;
+    volRatio: number | undefined;
   } | null = null;
   const close = (i: number, px: number, reason: Trade['reason']) => {
     const p = pos!;
     const fill = px - (p.side * spread) / 2 - (reason === 'stop' || reason === 'trail' ? p.side * spread * 0.25 : 0);
     const risk = Math.abs(p.entry - p.stop0);
     out.push({
-      strategy: s.id,
+      strategy: strategyId,
       tf,
       pair: inst.id,
       side: p.side,
@@ -47,6 +75,7 @@ export function runSeries(inst: Instrument, tf: Timeframe, c: Ctx, s: Strategy):
       stop: p.stop,
       stop0: p.stop0,
       target: p.target,
+      ...(p.volRatio !== undefined ? { volRatio: p.volRatio } : {}),
     });
     pos = null;
   };
@@ -76,8 +105,8 @@ export function runSeries(inst: Instrument, tf: Timeframe, c: Ctx, s: Strategy):
       }
     }
     if (!pos && i < n - 1) {
-      const sig = s.signal(c, i);
-      if (sig) {
+      const sig = sigs[i];
+      if (sig && (!allow || allow(i, sig.side))) {
         const entry = bars[i + 1]!.o + (sig.side * spread) / 2;
         const ok = sig.side === 1 ? sig.stop < entry && (sig.target === null || sig.target > entry) : sig.stop > entry && (sig.target === null || sig.target < entry);
         // the stop must be worth more than the spread, else the trade is all cost
@@ -93,6 +122,7 @@ export function runSeries(inst: Instrument, tf: Timeframe, c: Ctx, s: Strategy):
             maxBars: sig.maxBars ?? null,
             exitWhen: sig.exitWhen ?? null,
             best: entry,
+            volRatio: volRatioAt(c, i),
           };
         }
       }

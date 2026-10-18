@@ -3,11 +3,12 @@ import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 import { ago } from '../lib/format';
 import { Badge, Button, Card, Row, Rows, Stack, StatTile } from './ui';
+import { PortfolioCard, RiskCard, type PortfolioReport, type RiskSummary } from './FxInsights';
 
-interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string }
+interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number }
 interface Closed { id: string; pair: string; side: 1 | -1; entry: number; exit: number; pnlUsd: number; reason: string; closedAt: number; strategy?: string }
 interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[] }
-interface Data { account: Acct | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
+interface Data { account: Acct | null; risk?: RiskSummary | null; portfolio?: PortfolioReport | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
 
 const dp = (id: string) => (id.includes('JPY') ? 3 : id === 'XAUUSD' ? 2 : id === 'XAGUSD' ? 3 : 5);
 const usd = (x: number) => `${x < 0 ? '−' : ''}$${Math.abs(x).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -28,14 +29,6 @@ export function FxBot() {
   };
   return (
     <Stack>
-      <Card accent>
-        <p className="text-sm text-ink-2">
-          Every hour, right after the candle closes, the bot checks all strategies on all 12 markets. When a chosen strategy fires, it opens the trade here with that strategy's stop and target, risking <span className="font-semibold text-ink">1% of the account</span> at 30× leverage (max 8 trades at once). It closes when the stop, target, trail or time exit hits. Fake money, real prices.
-        </p>
-        <p className="mt-2 text-sm text-ink-2">It also waits 30 min either side of big news, skips bank holidays, opens nothing in the last 2 hours of the week and closes everything 30 min before the Friday close. And it learns from itself: a strategy that has lost money over 12+ of its trades is dropped.</p>
-        {!!data?.dropped?.length && <p className="mt-2 text-xs text-down">Dropped for losing: {data.dropped.join(', ')}</p>}
-        <p className="mt-2 text-xs text-muted">Chosen: strategies marked Edge or Maybe on unseen data, plus the four with published evidence (time-series momentum ×2, local-hours effect, London fix flow). {data?.chosen.length ? `${data.chosen.length} strategy × timeframe combinations right now.` : ''}</p>
-      </Card>
       {a && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatTile compact label="Equity" value={usd(a.equityUsd)} sub={`started ${usd(a.startUsd)}`} tone={a.equityUsd > a.startUsd ? 'up' : a.equityUsd < a.startUsd ? 'down' : undefined} />
@@ -44,6 +37,8 @@ export function FxBot() {
           <StatTile compact label="Open" value={`${a.positions.length}`} sub={`margin ${usd(a.marginUsedUsd)}`} />
         </div>
       )}
+      <PortfolioCard p={data?.portfolio} />
+      <RiskCard r={data?.risk} />
       <div className="grid gap-4 xl:grid-cols-2">
         <Card title="Open trades">
           {!a?.positions.length ? <p className="text-sm text-ink-2">Nothing open. It waits for a signal on an hourly close.</p> : (
@@ -56,7 +51,7 @@ export function FxBot() {
                       <span className="font-medium text-ink">{x.pair}</span>
                       <span className="truncate text-xs text-muted">{x.strategy}</span>
                     </div>
-                    <div className="mt-0.5 text-xs text-muted">{x.entry.toFixed(dp(x.pair))} → {x.px.toFixed(dp(x.pair))}{x.stop !== null ? ` · SL ${x.stop.toFixed(dp(x.pair))}` : ''}{x.target !== null ? ` · TP ${x.target.toFixed(dp(x.pair))}` : ''} · {ago(new Date(x.openedAt).toISOString())}</div>
+                    <div className="mt-0.5 text-xs text-muted">{x.entry.toFixed(dp(x.pair))} → {x.px.toFixed(dp(x.pair))}{x.stop !== null ? ` · SL ${x.stop.toFixed(dp(x.pair))}` : ''}{x.target !== null ? ` · TP ${x.target.toFixed(dp(x.pair))}` : ''}{x.riskPct !== undefined ? ` · risk ${x.riskPct}%` : ''} · {ago(new Date(x.openedAt).toISOString())}</div>
                   </div>
                   <div className={`tabular shrink-0 text-right font-semibold ${tone(x.pnlUsd)}`}>{usd(x.pnlUsd)}</div>
                   <Button size="sm" variant="ghost" onClick={() => void close(x.id)}>Close</Button>
@@ -75,6 +70,17 @@ export function FxBot() {
           )}
         </Card>
       </div>
+      <Card accent>
+        <p className="text-sm text-ink-2">
+          Every hour, right after the candle closes, the bot checks all strategies on all 12 markets. When a chosen strategy fires and its checks agree (stronger currency, bigger chart, market mood — whichever that strategy proved it needs), it opens the trade here with that strategy's stop and target and follows its trailing stop. Fake money, real prices.
+        </p>
+        <p className="mt-2 text-sm text-ink-2">
+          Size: about <span className="font-semibold text-ink">1% of the account at risk</span> per trade, a bit more for strategies with a proven record, less for unproven ones, half when a market is far wilder than normal, and smaller after the account drops 8%+. Never more than 2.2% riding on one currency, 3 trades per strategy or 8 in total; the best-tested signal gets a free slot first.
+        </p>
+        <p className="mt-2 text-sm text-ink-2">It waits 30 min either side of big news and speeches, skips bank holidays and sudden price shocks, opens nothing in the last 2 hours of the week and closes everything 30 min before the Friday close. A strategy that has lost money over 12+ of its trades is dropped.</p>
+        {!!data?.dropped?.length && <p className="mt-2 text-xs text-down">Dropped for losing: {data.dropped.join(', ')}</p>}
+        <p className="mt-2 text-xs text-muted">Chosen: strategies marked Edge or Maybe on unseen data, plus the four with published evidence (time-series momentum ×2, local-hours effect, London fix flow). {data?.chosen.length ? `${data.chosen.length} strategy × timeframe combinations right now.` : ''}</p>
+      </Card>
       <Card title="Closed trades" action={<Button size="sm" variant="ghost" onClick={() => void reset()}>Reset to $1,000</Button>}>
         {!a?.closed.length ? <p className="text-sm text-ink-2">None yet.</p> : (
           <Rows>
