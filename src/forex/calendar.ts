@@ -53,6 +53,16 @@ export function newsBlock(pair: string, now: number, events: readonly CalEvent[]
   return null;
 }
 
+/** v15: the next high-impact releases, speeches and bank holidays for a pair's currencies (from 30 min ago to
+ * `hours` ahead), soonest first. Pure. */
+export function upcomingFor(pair: string, now: number, events: readonly CalEvent[], hours = 6): CalEvent[] {
+  const ccys = currenciesOf(pair);
+  return events.filter((e) => {
+    if (!ccys.includes(e.ccy) || e.t < now - 30 * 60_000 || e.t > now + hours * 3_600_000) return false;
+    return e.impact === 'High' || e.impact === 'Holiday' || (e.impact === 'Medium' && /speaks|testif|press conference|remarks|statement/i.test(e.title));
+  });
+}
+
 /** New York weekday (0 = Sun) + minutes since NY midnight. */
 function nyClock(t: number): { dow: number; min: number } {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }).formatToParts(new Date(t));
@@ -169,5 +179,9 @@ export class ForexCalendar {
   }
   blockFor(pair: string, now = Date.now()): string | null {
     return newsBlock(pair, now, this.events);
+  }
+  /** v15: what's coming up for a pair (the bot's plan). */
+  upcoming(pair: string, now = Date.now(), hours = 6): CalEvent[] {
+    return upcomingFor(pair, now, this.events, hours);
   }
 }

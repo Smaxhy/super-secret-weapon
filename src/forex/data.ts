@@ -98,3 +98,52 @@ export async function refreshSeries(redis: Redis, id: string, yahoo: string, now
 export function refreshInstrument(redis: Redis, inst: Instrument, now = Date.now()): Promise<FeedStatus> {
   return refreshSeries(redis, inst.id, inst.yahoo, now);
 }
+
+// ── v15: 15-minute and 1-minute candles ──
+
+/** Redis key of a fast series (`fx:bars:15m:EURUSD`). */
+export const fastBarsKey = (tf: '15m' | '1m', id: string) => `fx:bars:${tf}:${id}`;
+const px7 = (x: number) => Number(x.toPrecision(7));
+
+export async function loadFastBars(redis: Redis, tf: '15m' | '1m', id: string): Promise<Bar[]> {
+  const raw = await redis.get(fastBarsKey(tf, id)).catch(() => null);
+  if (!raw) return [];
+  try {
+    return (JSON.parse(raw) as number[][]).map(([t, o, h, l, c]) => ({ t: t!, o: o!, h: h!, l: l!, c: c! }));
+  } catch {
+    return [];
+  }
+}
+export async function saveFastBars(redis: Redis, tf: '15m' | '1m', id: string, bars: readonly Bar[]): Promise<void> {
+  await redis.set(fastBarsKey(tf, id), JSON.stringify(bars.map((b) => [b.t, px7(b.o), px7(b.h), px7(b.l), px7(b.c)]))).catch(() => undefined);
+}
+
+/**
+ * Yahoo chart bars for any interval between two times (`period1` / `period2`, seconds) or a range. Yahoo serves
+ * 15-minute bars for the last 60 days and 1-minute bars for the last ~30 days, at most 7 days per 1-minute request.
+ */
+export async function fetchYahooBars(symbol: string, interval: '1m' | '15m', q: { range: string } | { from: number; to: number }, now = Date.now()): Promise<Bar[]> {
+  const barMs = interval === '1m' ? 60_000 : 15 * 60_000;
+  const span = 'range' in q ? `range=${q.range}` : `period1=${Math.floor(q.from / 1000)}&period2=${Math.ceil(q.to / 1000)}`;
+  let last: Error | null = null;
+  for (const host of ['query1.finance.yahoo.com', 'query2.finance.yahoo.com']) {
+    try {
+      const url = `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&${span}&includePrePost=false`;
+      const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64)' }, signal: AbortSignal.timeout(15_000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return parseYahoo(await res.json(), now, barMs);
+    } catch (err) {
+      last = err as Error;
+    }
+  }
+  throw last ?? new Error('yahoo failed');
+}
+
+/** Keep a fast series to its window: newest `keepMs` of history, at most `maxBars` bars. Pure. */
+export function trimBars(bars: readonly Bar[], now: number, keepMs: number, maxBars: number): Bar[] {
+  const from = now - keepMs;
+  let k = 0;
+  while (k < bars.length && bars[k]!.t < from) k++;
+  const out = bars.slice(k);
+  return out.length > maxBars ? out.slice(out.length - maxBars) : out;
+}

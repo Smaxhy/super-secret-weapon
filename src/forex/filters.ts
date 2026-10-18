@@ -29,9 +29,9 @@ export interface FilterEnv {
   tf: Timeframe;
   /** strength gap base − quote (NaN = unknown) */
   gap: Float64Array;
-  /** 4h trend (1h series only; zeros on 4h series) */
+  /** 4h trend (1h series only; zeros on 4h series). v15: on 15m series the 1h trend, on 1m series the 15m trend */
   h4: Int8Array;
-  /** daily trend */
+  /** daily trend. v15: on 15m series the 4h trend, on 1m series the 1h trend */
   d1: Int8Array;
   /** market mood score (NaN = unknown) */
   mood: Float64Array;
@@ -46,6 +46,8 @@ const passStrength = (e: FilterEnv, i: number, side: 1 | -1) => {
   return !Number.isFinite(g) || side * g >= STRENGTH_MIN;
 };
 const passMtf = (e: FilterEnv, i: number, side: 1 | -1) => (e.tf === '4h' ? e.d1[i] === side : e.h4[i] === side && e.d1[i] !== -side);
+/** v15: the charts `h4` / `d1` hold for each timeframe (the next bigger chart must agree, the one above not be against) */
+export const BIGGER_CHARTS: Record<Timeframe, [string, string]> = { '1m': ['15-minute', '1-hour'], '15m': ['1-hour', '4-hour'], '1h': ['4-hour', 'daily'], '4h': ['daily', 'daily'] };
 const passMood = (e: FilterEnv, i: number, side: 1 | -1) => {
   const m = e.mood[i]!;
   if (!Number.isFinite(m)) return true;
@@ -107,6 +109,26 @@ export function chooseVariant<K extends string>(v: ReadonlyArray<{ key: K; inSam
   const kept = prev ? v.find((x) => x.key === prev) : undefined;
   if (kept && kept !== pick && valid(kept) && (kept === raw || score(kept.inSample) >= score(raw.inSample) + margin) && score(pick.inSample) < score(kept.inSample) + margin) return kept.key;
   return pick.key;
+}
+
+/**
+ * v15 owner preference: switch from `chosen` to the best of the `preferred` variants when that one scores at least as
+ * well on the FIRST 70% (within 5% of the score, or 0.1) and keeps enough trades. Selection still sees the first 70%
+ * only, so the unseen 30% stays a fair test. Pure.
+ */
+export function preferVariant<K extends string>(v: ReadonlyArray<{ key: K; inSample: RStats }>, chosen: K, preferred: ReadonlySet<K>, baseKey: K, minN = 40): K {
+  if (preferred.has(chosen)) return chosen;
+  const cur = v.find((x) => x.key === chosen);
+  const raw = v.find((x) => x.key === baseKey);
+  if (!cur || !raw) return chosen;
+  let best: { key: K; inSample: RStats } | null = null;
+  for (const x of v) {
+    if (!preferred.has(x.key) || x.inSample.n < Math.max(minN, raw.inSample.n * 0.25)) continue;
+    if (!best || score(x.inSample) > score(best.inSample)) best = x;
+  }
+  if (!best) return chosen;
+  const sc = score(cur.inSample);
+  return score(best.inSample) >= sc - Math.max(0.1, Math.abs(sc) * 0.05) ? best.key : chosen;
 }
 
 /** Filter pick (see `chooseVariant`). */

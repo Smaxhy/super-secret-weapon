@@ -66,9 +66,9 @@ export async function oandaPrices(s: OandaSettings, ids: readonly string[]): Pro
 
 export type Granularity = 'S5' | 'M1' | 'M5' | 'M15' | 'H1' | 'H4' | 'D';
 
-/** Candles (mid prices). Includes the still-forming last candle (flag `complete`). */
-export async function oandaCandles(s: OandaSettings, id: string, g: Granularity, count = 300): Promise<Array<Bar & { v: number; complete: boolean }>> {
-  const j = await get<{ candles?: Array<{ time: string; volume: number; complete: boolean; mid?: { o: string; h: string; l: string; c: string } }> }>(s, `/v3/instruments/${toOanda(id)}/candles?granularity=${g}&count=${Math.min(5000, count)}&price=M`);
+/** Candles (mid prices). Includes the still-forming last candle (flag `complete`). v15: `to` (ms) pages back in time. */
+export async function oandaCandles(s: OandaSettings, id: string, g: Granularity, count = 300, to?: number): Promise<Array<Bar & { v: number; complete: boolean }>> {
+  const j = await get<{ candles?: Array<{ time: string; volume: number; complete: boolean; mid?: { o: string; h: string; l: string; c: string } }> }>(s, `/v3/instruments/${toOanda(id)}/candles?granularity=${g}&count=${Math.min(5000, count)}&price=M${to ? `&to=${Math.floor(to / 1000)}` : ''}`);
   return (j.candles ?? []).filter((c) => c.mid).map((c) => ({ t: Math.round(Number(c.time) * 1000), o: Number(c.mid!.o), h: Number(c.mid!.h), l: Number(c.mid!.l), c: Number(c.mid!.c), v: c.volume, complete: c.complete }));
 }
 

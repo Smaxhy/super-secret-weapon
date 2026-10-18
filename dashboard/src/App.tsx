@@ -54,16 +54,16 @@ const WS: Record<Ws, { label: string; icon: IconName; home: string; groups: Grou
     label: 'Forex',
     icon: 'globe',
     home: '/forex',
-    phone: ['/forex', '/forex/practice', '/forex/bot', '/forex/strategies'],
+    phone: ['/forex', '/forex/live', '/forex/strategies', '/forex/paper'],
     groups: [
       {
         label: 'Forex',
         items: [
-          { to: '/forex', label: 'Live', icon: 'chart', desc: 'Every market, the bot\'s lines, signals and trades' },
-          { to: '/forex/practice', label: 'Practice', icon: 'bolt', desc: 'Trade it yourself: $1k fake money, real prices' },
-          { to: '/forex/bot', label: 'Auto-bot', icon: 'cpu', desc: 'The bot trading its own $1k account by itself' },
-          { to: '/forex/strategies', label: 'Strategies', icon: 'flask', desc: 'Every strategy tested on 2 years of history' },
+          { to: '/forex', label: 'Auto-bot', icon: 'cpu', desc: 'The bot trades by itself: its trades, its plan, what it waits for' },
+          { to: '/forex/live', label: 'Markets', icon: 'chart', desc: 'Every market, the bot\'s lines, signals and trades' },
+          { to: '/forex/strategies', label: 'Strategies', icon: 'flask', desc: 'Every strategy tested on 1m, 15m, 1h and 4h charts' },
           { to: '/forex/paper', label: 'Paper results', icon: 'clock', desc: 'Every strategy traded live since the start' },
+          { to: '/forex/practice', label: 'Trade by hand', icon: 'bolt', desc: 'Optional: your own $1k practice account' },
           { to: '/forex/setup', label: 'Setup', icon: 'plug', desc: 'Price feed, markets, going live' },
         ],
       },
@@ -444,6 +444,7 @@ function Shell() {
               <Route path="/" element={<Landing />} />
               <Route path="/crypto" element={<Overview />} />
               <Route path="/forex" element={<Forex />} />
+              <Route path="/forex/bot" element={<Navigate to="/forex" replace />} />
               <Route path="/forex/:section" element={<Forex />} />
               <Route path="/feed" element={<LiveFeed />} />
               <Route path="/positions" element={<Positions />} />

@@ -19,7 +19,9 @@ import { copyReplayStatus, startCopyReplay } from '../learner/copy-replay-runner
 import { cohortTestRunning, lastCohortTest, runCohortTest } from '../learner/cohort-test';
 import { marketClock } from '../forex/calendar';
 import { loadOanda, maskToken, oandaReady, saveOanda, testOanda } from '../forex/oanda';
-import { riskSummary } from '../forex/practice';
+import { pnlUsd, riskSummary } from '../forex/practice';
+import { buildPlan } from '../forex/plan';
+import { STRATEGIES } from '../forex/strategies';
 import { moneyMap } from '../learner/money-map';
 import { DEFAULT_CONFIG as DEFAULTS } from '../config/default';
 import { getConfig as cfgNow } from '../config/runtime-config';
@@ -125,7 +127,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     // v12 forex lab: last report (backtest + paper) and a Run button.
     secured.get('/api/forex', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
-      return { running: deps.forex?.isRunning() ?? false, last: deps.forex ? await deps.forex.last() : null };
+      return { running: (deps.forex?.isRunning() ?? false) || (deps.fastFx?.isRunning() ?? false), last: deps.forex ? await deps.forex.last() : null, fast: deps.fastFx?.report ?? null };
     });
     secured.post<{ Body: { refresh?: boolean } }>('/api/forex/run', async (req, reply) => {
       if (!deps.forex) {
@@ -133,7 +135,11 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         return { ok: false, error: 'forex lab not running' };
       }
       if (deps.forex.isRunning()) return { ok: true, already: true };
-      void deps.forex.run(req.body?.refresh !== false).catch(() => undefined);
+      // the hourly lab first (it builds the market read the 15m / 1m test needs), then the 15m / 1m test
+      void deps.forex
+        .run(req.body?.refresh !== false)
+        .then(() => deps.fastFx?.evaluate())
+        .catch(() => undefined);
       return { ok: true };
     });
     // v12.1 forex practice account
@@ -154,7 +160,31 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       };
       const mids: Record<string, number> = {};
       for (const x of Object.values(snap?.quotes ?? {})) mids[x.id] = x.mid;
+      const now = Date.now();
+      const plan =
+        deps.forex && snap
+          ? buildPlan({
+              now,
+              clock: marketClock(now),
+              oanda: oandaReady(await loadOanda()),
+              markets: deps.forex.marketsNow,
+              mood: deps.forex.moodNow,
+              fastFiring: deps.fastFx?.firing ?? {},
+              chosen: [...deps.forex.chosen, ...(deps.fastFx?.chosen ?? [])],
+              names: Object.fromEntries(STRATEGIES.map((x) => [x.id, x.name])),
+              positions: snap.account.positions,
+              resume: snap.account.resume ?? [],
+              equityUsd: snap.account.equityUsd,
+              lastSync: deps.forex.lastSync,
+              labOpen: Object.assign({}, deps.forex.labOpen, ...Object.values(deps.fastFx?.labOpen ?? {})),
+              runs: deps.forex.runs,
+              upcoming: (pair) => deps.fxCalendar?.upcoming(pair, now) ?? [],
+              blockNow: (pair) => deps.fxCalendar?.blockFor(pair, now) ?? deps.fxNews?.blockFor(pair) ?? null,
+              pnlAt: (p, price) => pnlUsd(p, price, mids),
+            })
+          : null;
       return {
+        plan,
         account: snap?.account ?? null,
         risk: snap ? riskSummary(snap.account, mids, snap.account.equityUsd) : null,
         portfolio: parse(portfolioRaw, null as unknown),

@@ -17,7 +17,19 @@ const log = moduleLogger('forex-practice');
 export type AcctId = 'me' | 'bot';
 const keyFor = (a: AcctId) => (a === 'me' ? 'fx:practice' : 'fx:practice:bot');
 /** Bot account: base risk per trade (% of equity), leverage used, most positions at once, most risk on one currency. */
-export const BOT = { riskPct: SIZING.baseRiskPct, leverage: SIZING.leverage, maxOpen: SIZING.maxOpen, freshMs: 2 * 3_600_000, maxCcyRiskPct: SIZING.ccyCapPct };
+export const BOT = {
+  riskPct: SIZING.baseRiskPct,
+  leverage: SIZING.leverage,
+  maxOpen: SIZING.maxOpen,
+  freshMs: 2 * 3_600_000,
+  maxCcyRiskPct: SIZING.ccyCapPct,
+  /** v15: how old a lab trade may be when the bot first sees it, per chart (a 1-minute signal is stale in 2 minutes) */
+  freshMsByTf: { '1m': 2 * 60_000, '15m': 20 * 60_000, '1h': 2 * 3_600_000, '4h': 2 * 3_600_000 } as Record<string, number>,
+  /** v15: most open bot trades per chart, so the fast charts can't take every slot */
+  maxOpenByTf: { '1m': 2, '15m': 3 } as Record<string, number>,
+};
+/** The chart of a bot trade from its lab ref (`strategy:tf:pair:entryT`). */
+export const tfOfRef = (ref: string | undefined) => (ref ? ref.split(':')[1] ?? '' : '');
 export const STOP_OUT_PCT = 50;
 export const MAX_LEVERAGE = 500;
 
@@ -64,6 +76,16 @@ export interface PracticePosition {
   scaleFrac?: number;
   scaled?: boolean;
   be?: boolean;
+  /** bot trades (v15): trailing take-profit — at the target the stop locks this far behind it (price) after taking
+   * `tpFrac` off, and the trade carries on with the lab's trailing stop; `tpHit` once that happened */
+  tpTrailPx?: number | null;
+  tpFrac?: number;
+  tpHit?: boolean;
+  /** bot trades (v15): the strategy's chart and the exit rules still in force (shown as the trade's plan) */
+  tf?: string;
+  trailAtr?: number | null;
+  maxBars?: number | null;
+  exitWhen?: string | null;
 }
 
 export interface ClosedPractice extends PracticePosition {
@@ -81,6 +103,8 @@ export interface ResumeItem {
   side: 1 | -1;
   riskPct?: number;
   scaled?: boolean;
+  /** v15: the target had been reached (part may already be off) */
+  tpHit?: boolean;
   at: number;
 }
 
@@ -216,7 +240,9 @@ function closePart(a: PracticeAccount, p: PracticePosition, frac: number, px: nu
   a.balanceUsd = Math.round((a.balanceUsd + pl) * 100) / 100;
   p.units -= units;
   p.marginUsd = Math.round(p.marginUsd * (1 - frac) * 100) / 100;
-  a.closed.unshift({ ...part, id: `${p.id}-part`, exit: px, closedAt: at, pnlUsd: pl, reason: 'partial' });
+  // one id per part (a trade can take part off at +1R and again at its target)
+  const n = a.closed.filter((c) => c.id.startsWith(`${p.id}-part`)).length;
+  a.closed.unshift({ ...part, id: `${p.id}-part${n ? n + 1 : ''}`, exit: px, closedAt: at, pnlUsd: pl, reason: 'partial' });
   a.closed = a.closed.slice(0, 200);
   return pl;
 }
@@ -235,7 +261,7 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
     if (!q) continue;
     const inst = instrument(p.pair)!;
     const half = halves[p.pair] ?? (inst.spreadPips * inst.pip) / 2;
-    for (const [t, h, l] of q.bars) {
+    for (const [t, h, l, cl] of q.bars) {
       if (t <= p.checkedT || t < p.openedAt - 60_000) continue;
       // exit side of the book: a long sells at the bid (mid − half), a short buys at the ask (mid + half)
       const worst = p.side === 1 ? l - half : h + half;
@@ -246,6 +272,28 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
         break;
       }
       if (p.target !== null && (p.side === 1 ? best >= p.target : best <= p.target)) {
+        if (p.tpTrailPx != null && !p.tpHit) {
+          // v15 trailing take-profit: not the end — part off (if any), stop locked behind the target, keep riding
+          const tgt = p.target;
+          const frac = Math.min(0.9, Math.max(0, p.tpFrac ?? 0));
+          if (frac > 0) closePart(a, p, frac, tgt, mids, now);
+          const lock = tgt - p.side * p.tpTrailPx;
+          const ns = p.side === 1 ? Math.max(lock, p.entry) : Math.min(lock, p.entry);
+          if (p.stop === null || (p.side === 1 ? ns > p.stop : ns < p.stop)) p.stop = ns;
+          p.tpHit = true;
+          p.be = true;
+          p.target = null;
+          events.push(`${p.pair} reached its target${frac > 0 ? `: took ${Math.round(frac * 100)}% off` : ''}, stop locked at ${p.stop.toPrecision(6)}, now trailing`);
+          // the rest of this minute: only its close is left to judge
+          const exitClose = cl - p.side * half;
+          if (p.side === 1 ? exitClose <= p.stop : exitClose >= p.stop) {
+            closePos(a, p, p.stop, mids, 'stop', now);
+            events.push(`${p.pair} trailing stop hit`);
+            break;
+          }
+          p.checkedT = t;
+          continue;
+        }
         closePos(a, p, p.target, mids, 'target', now);
         events.push(`${p.pair} target hit`);
         break;
@@ -325,9 +373,63 @@ export interface LabOpenTrade {
   scaleAt?: number | null;
   scaleFrac?: number | null;
   scaled?: boolean;
+  /** v15: trailing take-profit (lock distance behind the target, share taken there, whether the target was reached) */
+  tpTrailPx?: number | null;
+  tpFrac?: number | null;
+  tpHit?: boolean;
+  /** v15: exit rules still in force (for the trade's plan) */
+  trailAtr?: number | null;
+  maxBars?: number | null;
+  exitWhen?: string | null;
 }
 
-export interface OpenReq { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; beAt?: number | null; scaleAt?: number | null; scaleFrac?: number | null; scaled?: boolean }
+/** v15: the exit rules a bot position carries (copied from its lab trade). */
+export interface ExitPlan {
+  beAt?: number | null;
+  scaleAt?: number | null;
+  scaleFrac?: number | null;
+  scaled?: boolean;
+  tpTrailPx?: number | null;
+  tpFrac?: number | null;
+  tpHit?: boolean;
+  tf?: string;
+  trailAtr?: number | null;
+  maxBars?: number | null;
+  exitWhen?: string | null;
+}
+
+export interface OpenReq extends ExitPlan { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number }
+
+/** The exit-plan fields of a lab trade, ready for `openIn`. Pure. */
+export function planOf(t: LabOpenTrade): ExitPlan {
+  return {
+    beAt: t.beAt ?? null,
+    scaleAt: t.scaleAt ?? null,
+    scaleFrac: t.scaleFrac ?? null,
+    scaled: !!t.scaled,
+    tpTrailPx: t.tpTrailPx ?? null,
+    tpFrac: t.tpFrac ?? null,
+    tpHit: !!t.tpHit,
+    ...(t.tf ? { tf: t.tf } : {}),
+    trailAtr: t.trailAtr ?? null,
+    maxBars: t.maxBars ?? null,
+    exitWhen: t.exitWhen ?? null,
+  };
+}
+
+/** v15: what one bot sync saw (for the plan's timeline and "held back" lists). */
+export interface SyncReport {
+  at: number;
+  /** fresh signals of chosen strategies it could act on */
+  candidates: number;
+  opened: number;
+  /** bot trades open in this call's charts */
+  heldOpen: number;
+  skipped: Array<{ pair: string; strategy: string; tf: string; side: 1 | -1; why: string }>;
+  /** skipped only for now (news, rollover, full slots): the trade may still be taken while it is fresh */
+  waits: Array<{ pair: string; strategy: string; tf: string; side: 1 | -1; why: string }>;
+}
+export const newSyncReport = (): SyncReport => ({ at: Date.now(), candidates: 0, opened: 0, heldOpen: 0, skipped: [], waits: [] });
 
 export class Practice {
   private cache = new Map<string, Quote>();
@@ -443,7 +545,7 @@ export class Practice {
         for (const p of [...a.open]) {
           const qq = q[p.pair];
           closePos(a, p, qq ? (p.side === 1 ? qq.bid : qq.ask) : exitPx(p, mids[p.pair] ?? p.entry), mids, 'weekend', Date.now());
-          if (p.ref) a.resume = [...(a.resume ?? []), { ref: p.ref, ...(p.strategy ? { strategy: p.strategy } : {}), pair: p.pair, side: p.side, ...(p.riskPct !== undefined ? { riskPct: p.riskPct } : {}), scaled: !!p.scaled, at: Date.now() }];
+          if (p.ref) a.resume = [...(a.resume ?? []), { ref: p.ref, ...(p.strategy ? { strategy: p.strategy } : {}), pair: p.pair, side: p.side, ...(p.riskPct !== undefined ? { riskPct: p.riskPct } : {}), scaled: !!p.scaled, tpHit: !!p.tpHit, at: Date.now() }];
         }
         ev.push('weekend: every bot trade closed before the Friday close (re-opened after Monday\'s open if still running)');
       }
@@ -500,19 +602,45 @@ export class Practice {
       const target = req.target ?? null;
       if (stop !== null && (req.side === 1 ? stop >= entry : stop <= entry)) return { ok: false, error: 'stop must be on the losing side of the price' };
       if (target !== null && (req.side === 1 ? target <= entry : target >= entry)) return { ok: false, error: 'target must be on the winning side of the price' };
-      a.open.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, pair: inst.id, side: req.side, units, entry, marginUsd: Math.round(req.marginUsd * 100) / 100, leverage: lev, stop, target, openedAt: Date.now(), checkedT: quote.bars[quote.bars.length - 1]?.[0] ?? Date.now(), ...(req.strategy ? { strategy: req.strategy } : {}), ...(req.ref ? { ref: req.ref } : {}), ...(req.riskPct !== undefined ? { riskPct: req.riskPct } : {}), ...(req.beAt != null ? { beAt: req.beAt } : {}), ...(req.scaleAt != null ? { scaleAt: req.scaleAt, scaleFrac: req.scaleFrac ?? 0.5, scaled: !!req.scaled } : {}) });
+      a.open.push({
+        id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+        pair: inst.id,
+        side: req.side,
+        units,
+        entry,
+        marginUsd: Math.round(req.marginUsd * 100) / 100,
+        leverage: lev,
+        stop,
+        target,
+        openedAt: Date.now(),
+        checkedT: quote.bars[quote.bars.length - 1]?.[0] ?? Date.now(),
+        ...(req.strategy ? { strategy: req.strategy } : {}),
+        ...(req.ref ? { ref: req.ref } : {}),
+        ...(req.riskPct !== undefined ? { riskPct: req.riskPct } : {}),
+        ...(req.beAt != null ? { beAt: req.beAt } : {}),
+        ...(req.scaleAt != null ? { scaleAt: req.scaleAt, scaleFrac: req.scaleFrac ?? 0.5, scaled: !!req.scaled } : {}),
+        ...(req.tpTrailPx != null ? { tpTrailPx: req.tpTrailPx, tpFrac: req.tpFrac ?? 0, tpHit: !!req.tpHit } : {}),
+        ...(req.tf ? { tf: req.tf } : {}),
+        ...(req.trailAtr != null ? { trailAtr: req.trailAtr } : {}),
+        ...(req.maxBars != null ? { maxBars: req.maxBars } : {}),
+        ...(req.exitWhen ? { exitWhen: req.exitWhen } : {}),
+      });
       return { ok: true };
     }
   }
 
   /**
-   * Bot account: mirror the lab's live paper trades of the chosen strategies. A trade the lab opened in the last
-   * 2 hours that the bot doesn't hold yet is opened at the current price with the same stop / target. Size (v13):
-   * base risk × the lab's size factor (strategy record × how wild the market is) × a drawdown factor, never more than
-   * `BOT.maxCcyRiskPct` of the account on one currency in one direction. Held trades follow the lab's trailing stop;
-   * one the lab no longer has open (its trail / time / signal exit fired) is closed at the market.
+   * Bot account: mirror the lab's live paper trades of the chosen strategies. A trade the lab opened moments ago
+   * (`BOT.freshMsByTf`) that the bot doesn't hold yet is opened at the current price with the same stop / target. Size
+   * (v13): base risk × the lab's size factor (strategy record × how wild the market is) × a drawdown factor, never more
+   * than `BOT.maxCcyRiskPct` of the account on one currency in one direction. Held trades follow the lab's trailing
+   * stop; one the lab no longer has open (its trail / time / signal exit fired) is closed at the market. v15: `scope` =
+   * the charts this call manages (the hourly lab passes 1h + 4h, the fast lab 15m or 1m), so one never closes the
+   * other's trades; `report` collects what it saw for the bot's plan.
    */
-  async syncBot(labOpen: LabOpenTrade[], blockFor: (pair: string) => string | null = () => null, atr1h: Record<string, number> = {}): Promise<string[]> {
+  async syncBot(labOpen: LabOpenTrade[], blockFor: (pair: string) => string | null = () => null, atr1h: Record<string, number> = {}, opts: { scope?: readonly string[]; report?: SyncReport } = {}): Promise<string[]> {
+    const inScope = (ref: string | undefined) => !opts.scope || opts.scope.includes(tfOfRef(ref));
+    const rep = opts.report;
     return this.serial(async () => {
       const a = await this.load('bot');
       const events: string[] = [];
@@ -520,20 +648,36 @@ export class Practice {
       const q = await this.quotes(this.neededIds(a, [...new Set(labOpen.map((t) => t.pair))]), 10_000);
       const mids: Record<string, number> = {};
       for (const x of Object.values(q)) mids[x.id] = x.mid;
+      const pxNow = (pair: string, side: 1 | -1) => {
+        const qq = q[pair];
+        return qq ? (side === 1 ? qq.bid : qq.ask) : null;
+      };
       let moved = 0;
       for (const p of [...a.open]) {
-        if (!p.ref) continue;
+        if (!p.ref || !inScope(p.ref)) continue;
         const lab = byRef.get(p.ref);
         if (!lab) {
-          const qq = q[p.pair];
-          closePos(a, p, qq ? (p.side === 1 ? qq.bid : qq.ask) : exitPx(p, mids[p.pair] ?? p.entry), mids, 'signal', Date.now());
-          events.push(`closed ${p.pair} (${p.strategy})`);
+          closePos(a, p, pxNow(p.pair, p.side) ?? exitPx(p, mids[p.pair] ?? p.entry), mids, 'signal', Date.now());
+          events.push(`closed ${p.pair} (${p.strategy}): its strategy's exit fired`);
           continue;
         }
+        // v15: the lab's trade reached its target on the strategy's chart → trailing take-profit here too
+        if (lab.tpHit && !p.tpHit && p.tpTrailPx != null) {
+          const px = pxNow(p.pair, p.side);
+          const frac = Math.min(0.9, Math.max(0, p.tpFrac ?? 0));
+          if (frac > 0 && px !== null) closePart(a, p, frac, px, mids, Date.now());
+          p.tpHit = true;
+          p.be = true;
+          p.target = null;
+          events.push(`${p.pair} (${p.strategy}) reached its target on the ${lab.tf ?? ''} chart${frac > 0 ? `: took ${Math.round(frac * 100)}% off` : ''}, now trailing`);
+        }
+        // the exit rules still in force (for the plan)
+        p.trailAtr = lab.trailAtr ?? null;
+        p.maxBars = lab.maxBars ?? null;
+        p.exitWhen = lab.exitWhen ?? null;
         // follow the lab's trailing stop: only ever tighter, and only while it is still on the losing side of the price
         if (p.stop !== null && (p.side === 1 ? lab.stop > p.stop : lab.stop < p.stop)) {
-          const qq = q[p.pair];
-          const px = qq ? (p.side === 1 ? qq.bid : qq.ask) : null;
+          const px = pxNow(p.pair, p.side);
           if (px === null || (p.side === 1 ? lab.stop < px : lab.stop > px)) {
             p.stop = lab.stop;
             moved++;
@@ -557,6 +701,10 @@ export class Practice {
       if (a.resume?.length) {
         const keep: ResumeItem[] = [];
         for (const r of a.resume) {
+          if (!inScope(r.ref)) {
+            keep.push(r);
+            continue;
+          }
           if (Date.now() - r.at > 4 * 86_400_000) continue;
           const lab = byRef.get(r.ref);
           if (!lab) {
@@ -579,27 +727,51 @@ export class Practice {
             continue;
           }
           const v = view(a, mids);
-          const risk = (r.riskPct ?? BOT.riskPct) * (r.scaled ? 1 - (lab.scaleFrac ?? 0.5) : 1);
+          const left = (r.scaled ? 1 - (lab.scaleFrac ?? 0.5) : 1) * (r.tpHit && lab.tpFrac ? 1 - lab.tpFrac : 1);
+          const risk = (r.riskPct ?? BOT.riskPct) * left;
           const margin = Math.min((v.equityUsd * risk) / 100 / (dist / entry) / BOT.leverage, v.freeMarginUsd * SIZING.marginShare);
           if (margin < 1) continue;
-          const res = await this.openIn(a, { pair: r.pair, side: r.side, marginUsd: margin, leverage: BOT.leverage, stop: lab.stop, target: lab.target, ...(r.strategy ? { strategy: r.strategy } : {}), ref: r.ref, riskPct: Math.round(risk * 100) / 100, beAt: lab.beAt ?? null, scaleAt: lab.scaleAt ?? null, scaleFrac: lab.scaleFrac ?? null, scaled: !!r.scaled });
+          const res = await this.openIn(a, { pair: r.pair, side: r.side, marginUsd: margin, leverage: BOT.leverage, stop: lab.stop, target: lab.target, ...(r.strategy ? { strategy: r.strategy } : {}), ref: r.ref, riskPct: Math.round(risk * 100) / 100, ...planOf(lab), scaled: !!r.scaled || !!lab.scaled, tpHit: !!r.tpHit || !!lab.tpHit });
           events.push(res.ok ? `re-opened ${r.side === 1 ? 'long' : 'short'} ${r.pair} (${r.strategy ?? 'bot'}) after the weekend` : `could not re-open ${r.pair}: ${res.error}`);
         }
         a.resume = keep;
       }
-      // best-tested signals get the free slots first; one strategy holds at most `maxPerStrategy` trades
+      // best-tested signals get the free slots first; one strategy holds at most `maxPerStrategy` trades, one chart its cap
       const stratKey = (ref: string) => ref.split(':').slice(0, 2).join(':');
       const perStrategy = new Map<string, number>();
-      for (const p of a.open) if (p.ref) perStrategy.set(stratKey(p.ref), (perStrategy.get(stratKey(p.ref)) ?? 0) + 1);
-      const candidates = labOpen.filter((t) => t.chosen && !held.has(t.ref) && Date.now() - t.entryT <= BOT.freshMs).sort((x, y) => (y.prio ?? 0) - (x.prio ?? 0));
+      const perTf = new Map<string, number>();
+      for (const p of a.open) {
+        if (!p.ref) continue;
+        perStrategy.set(stratKey(p.ref), (perStrategy.get(stratKey(p.ref)) ?? 0) + 1);
+        perTf.set(tfOfRef(p.ref), (perTf.get(tfOfRef(p.ref)) ?? 0) + 1);
+      }
+      const fresh = (t: LabOpenTrade) => Date.now() - t.entryT <= (BOT.freshMsByTf[t.tf ?? tfOfRef(t.ref)] ?? BOT.freshMs);
+      const candidates = labOpen.filter((t) => t.chosen && !held.has(t.ref) && fresh(t)).sort((x, y) => (y.prio ?? 0) - (x.prio ?? 0));
+      if (rep) {
+        rep.at = Date.now();
+        rep.candidates += candidates.length;
+        rep.heldOpen = a.open.filter((p) => inScope(p.ref)).length;
+      }
+      const skip = (t: LabOpenTrade, why: string, wait = false) => {
+        if (rep) (wait ? rep.waits : rep.skipped).push({ pair: t.pair, strategy: t.strategy, tf: t.tf ?? tfOfRef(t.ref), side: t.side, why });
+      };
       for (const t of candidates) {
         const sk = stratKey(t.ref);
+        const tf = t.tf ?? tfOfRef(t.ref);
         if ((perStrategy.get(sk) ?? 0) >= SIZING.maxPerStrategy) {
           note(`${t.ref}:strat`, `skipped ${t.pair} (${t.strategy}): it already has ${SIZING.maxPerStrategy} trades open`);
+          skip(t, `its strategy already has ${SIZING.maxPerStrategy} trades open`);
+          continue;
+        }
+        const tfCap = BOT.maxOpenByTf[tf];
+        if (tfCap !== undefined && (perTf.get(tf) ?? 0) >= tfCap) {
+          note(`${t.ref}:tf`, `skipped ${t.pair} (${t.strategy}): already ${tfCap} ${tf} trades open`);
+          skip(t, `already ${tfCap} ${tf} trades open`);
           continue;
         }
         if (t.judge && !t.judge.ok) {
           note(`${t.ref}:judge`, `skipped ${t.pair} (${t.strategy}): the signal judge gives it a ${Math.round(t.judge.p * 100)}% chance (needs ${Math.round((t.judge.need ?? 0) * 100)}%)`);
+          skip(t, `the signal judge gives it ${Math.round(t.judge.p * 100)}% (needs ${Math.round((t.judge.need ?? 0) * 100)}%)`);
           continue;
         }
         const qs = q[t.pair];
@@ -614,30 +786,48 @@ export class Practice {
               : blockFor(t.pair) ?? (qs && priceShock(qs.bars, atr1h[t.pair] ?? 0) ? 'price shock: unusually big move in the last 15 min' : null);
         if (why) {
           note(`${t.pair}:${why}`, `waited on ${t.pair} (${t.strategy}): ${why}`);
+          skip(t, why, true);
           continue;
         }
-        if (a.open.length >= BOT.maxOpen) break;
+        if (a.open.length >= BOT.maxOpen) {
+          skip(t, `all ${BOT.maxOpen} slots are full`, true);
+          continue;
+        }
         const qq = q[t.pair];
-        if (!qq || qq.tradeable === false) continue;
+        if (!qq || qq.tradeable === false) {
+          skip(t, 'no live price', true);
+          continue;
+        }
         const entry = t.side === 1 ? qq.ask : qq.bid;
         const dist = (entry - t.stop) * t.side;
-        if (!(dist > 0)) continue; // price already through the stop
+        if (!(dist > 0)) {
+          skip(t, 'price already past its stop');
+          continue;
+        }
         const v = view(a, mids);
         const riskPct = clampRisk(BOT.riskPct, BOT.riskPct * (t.sizeF ?? 1) * ddF);
         const exp = currencyExposure(a.open, mids, v.equityUsd);
         const over = exposureBlock(exp, t.pair, t.side, riskPct, BOT.maxCcyRiskPct);
         if (over) {
           note(`${t.ref}:ccy`, `skipped ${t.pair} (${t.strategy}): already ${Math.abs(exp[over] ?? 0).toFixed(1)}% of the account riding on ${over}`);
+          skip(t, `already ${Math.abs(exp[over] ?? 0).toFixed(1)}% of the account riding on ${over}`);
           continue;
         }
         const notional = (v.equityUsd * riskPct) / 100 / (dist / entry);
         let margin = notional / BOT.leverage;
         margin = Math.min(margin, v.freeMarginUsd * SIZING.marginShare);
-        if (margin < 1) continue;
+        if (margin < 1) {
+          skip(t, 'not enough free margin');
+          continue;
+        }
         const actual = Math.round(((margin * BOT.leverage * (dist / entry)) / v.equityUsd) * 10_000) / 100;
-        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: BOT.leverage, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, beAt: t.beAt ?? null, scaleAt: t.scaleAt ?? null, scaleFrac: t.scaleFrac ?? null, scaled: !!t.scaled });
-        events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}), risking ${actual}% of the account${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}` : `skipped ${t.pair}: ${r.error}`);
-        if (r.ok) perStrategy.set(sk, (perStrategy.get(sk) ?? 0) + 1);
+        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: BOT.leverage, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf });
+        events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}` : `skipped ${t.pair}: ${r.error}`);
+        if (r.ok) {
+          perStrategy.set(sk, (perStrategy.get(sk) ?? 0) + 1);
+          perTf.set(tf, (perTf.get(tf) ?? 0) + 1);
+          if (rep) rep.opened++;
+        } else skip(t, r.error ?? 'could not open');
       }
       await this.save(a, 'bot');
       if (events.length) log.info({ events }, 'forex bot account');
@@ -645,13 +835,13 @@ export class Practice {
     });
   }
 
-  /** Per-strategy results of the bot account (to drop strategies that lose in real time). */
+  /** Results of the bot account per strategy and chart (`ema_cross:1h`), to drop what loses in real time. */
   async botResults(): Promise<Record<string, { n: number; pnlUsd: number }>> {
     const a = await this.load('bot');
     const out: Record<string, { n: number; pnlUsd: number }> = {};
     for (const c of a.closed) {
       if (!c.strategy) continue;
-      const k = c.strategy;
+      const k = `${c.strategy}:${c.tf ?? (tfOfRef(c.ref) || '1h')}`;
       out[k] = out[k] ?? { n: 0, pnlUsd: 0 };
       // a scale-out or a weekend pause is part of one trade: its money counts, not as an extra trade
       if (c.reason !== 'partial' && c.reason !== 'weekend') out[k].n++;

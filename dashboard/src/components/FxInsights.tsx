@@ -13,7 +13,7 @@ export interface FilterSummary { filter: FilterKind; label: string; chosenBy: nu
 interface StudyCell { n: number; avgAtr: number[]; contPct: number[] }
 export interface NewsStudy { horizons: number[]; shocks: number; overall: StudyCell; byHour: Array<{ key: string; label: string } & StudyCell>; byPair: Array<{ pair: string } & StudyCell>; byEvent: Array<{ key: string; label: string } & StudyCell>; recent: Array<{ pair: string; t: number; dir: 1 | -1; sizeAtr: number; moves: Array<number | null>; event: string | null }>; eventsKnown: number }
 export interface PortfolioResult { label: string; baseRiskPct: number; trades: number; skipped: { full: number; ccy: number; margin: number; strategy?: number }; finalX: number; totalPct: number; weeks: number; avgWeekPct: number; medianWeekPct: number; greenWeeksPct: number; weeks5Pct: number; bigWeeksPct: number; bestWeekPct: number; worstWeekPct: number; months: number; avgMonthPct: number; medianMonthPct: number; greenMonthsPct: number; bigMonthsPct: number; worstMonthPct: number; maxDdPct: number; blown: boolean; mc: { paths: number; quarterP10: number; quarterMedian: number; quarterP90: number; pLoss: number; pDd20: number; pDd40: number } | null; equity: number[] }
-export type ExitKind = 'designed' | 'breakeven' | 'scale' | 'tight' | 'runner' | 'quick';
+export type ExitKind = 'designed' | 'breakeven' | 'scale' | 'tight' | 'runner' | 'quick' | 'wide' | 'trail_tp' | 'half_trail';
 export interface WalkForward { from: number; to: number; lookbackMonths: number; result: PortfolioResult; months: Array<{ month: string; picked: number; trades: number }> }
 export interface PortfolioReport { from: number; to: number; picked: Array<{ id: string; name: string; tf: string; filter: FilterKind; exit?: ExitKind; inAvgR: number; inN: number; unseenN: number }>; oldPicked: number; levels: PortfolioResult[]; old: PortfolioResult; judged?: PortfolioResult | null; walkForward?: WalkForward | null; note: string }
 export interface ExitSummary { exit: ExitKind; label: string; chosenBy: number; compared: number; inDeltaR: number; outDeltaR: number; outBetterPct: number }
@@ -21,7 +21,7 @@ export interface JudgeReport { active: boolean; why: string; trainedOn: number; 
 export interface RiskSummary { exposure: Array<{ ccy: string; pct: number }>; capPct: number; ddPct: number; ddFactor: number; baseRiskPct: number; openRiskPct: number }
 
 export const FILTER_SHORT: Record<FilterKind | 'regime', string> = { none: 'no filter', strength: '+ strength', mtf: '+ bigger chart', mood: '+ mood', regime: '+ regime', all: '+ all 3 checks' };
-export const EXIT_SHORT: Record<ExitKind, string> = { designed: 'exits as designed', breakeven: 'break-even at +1R', scale: 'half off at +1R', tight: 'closer target', runner: 'runner exit', quick: 'quick exit' };
+export const EXIT_SHORT: Record<ExitKind, string> = { designed: 'exits as designed', breakeven: 'break-even at +1R', scale: 'half off at +1R', tight: 'closer target', runner: 'runner exit', quick: 'quick exit', wide: 'bigger target', trail_tp: 'trailing take-profit', half_trail: 'half at target, rest trails' };
 const signed = (x: number, dp = 1) => {
   const v = Number(x.toFixed(dp));
   return v === 0 ? (0).toFixed(dp) : `${v > 0 ? '+' : ''}${v.toFixed(dp)}`;
@@ -120,7 +120,7 @@ export function FiltersCard({ f }: { f: FilterSummary[] | undefined }) {
 export function ExitsCard({ e }: { e: ExitSummary[] | undefined }) {
   if (!e?.length) return null;
   return (
-    <Card title="Do other exits help?" subtitle="Same entries, different ways out: stop to break-even once +1R up, half off at +1R, a closer target, no target with a trailing stop, or a shorter time limit. Each strategy keeps the exit that did best on the first 70% only.">
+    <Card title="Do other exits help?" subtitle="Same entries, different ways out: stop to break-even once +1R up, half off at +1R, a closer or bigger target, no target with a trailing stop, a shorter time limit, or a trailing take-profit (at the target the stop locks in profit and trails instead of closing; or half off there and the rest trails). Each strategy keeps the exit that did best on the first 70% only; a trailing take-profit wins ties.">
       <div className="overflow-x-auto">
         <table className="tabular w-full min-w-[34rem] text-sm">
           <thead>

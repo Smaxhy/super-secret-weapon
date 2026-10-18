@@ -202,6 +202,52 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     judge + rolling-test rows in the Honest test, half-off / break-even on open trades, explanation updated.
     Report trimmed (`slimTrade`, 7-digit prices, slim per-pair stats): ~410 KB. Lab ≈ 12 s per hourly run (sandbox).
   tests/forex-v14.test.ts (20). Again: verified on SYNTHETIC candles only — read the real cards on the VPS.
+- **v15 (Oct 18): more pips, 15m + 1m charts, the bot's plan, auto-bot = home** (owner: "more pips, trailing take
+  profit"; "I want to know what the bot is looking to trade and what the plan is"; "I don't wanna make the trades, the
+  bot makes them"; "trade on a 15 min timer, 1 min too").
+  - **Trailing take-profit** (engine `simulate`): `Signal.tpTrail` (ATR) + `tpFrac`: at the target the trade is NOT
+    closed — `tpFrac` of what is left is banked there, the stop locks `tpDist` (= tpTrail × ATR at the signal bar) behind
+    the target (never under entry + costs), target / exitWhen / maxBars are cleared, then it trails behind the best
+    close. Same candle: green → only its close can hit the new stop, red → its low can. Trades carry `tpTrailPx`,
+    `tpFrac`, `tpHit`, `target0` (the judge uses `target0`: the live target would leak the outcome); open trades carry
+    `trailAtr` / `maxBars` / `exitWhen` (the plan shows them). Exit lab variants `wide` (target ×1.6 / trail ×1.5 /
+    maxBars ×2), `trail_tp` (tpTrail 1.5), `half_trail` (tpTrail 2, half off); a variant that changes nothing for a
+    strategy reuses the designed trades; `FX_CONFIG.preferTrailTp`: `preferVariant` (filters.ts) switches to the best
+    trailing take-profit when it scores within 5% (or 0.1) of the pick on the FIRST 70% only.
+  - **Live edge** (`SimOpts.liveEdge`, default on; `signalsFor` now includes the last bar): a signal on the LAST closed
+    bar is an 'open' trade filled at that close (entryT = bar t + bar length). Before, a lab trade only existed after the
+    next bar closed → the bot entered a whole bar late. `signalIndex` finds the signal bar of such trades.
+  - **Lab refactor** (lab.ts): `evaluateTf` (filters → exits → verdict vs random → paper) is shared with the fast lab;
+    `makeSeries(inst, tf, bars, book, big1, big2)`; `ForexLab.book` = the hourly market read (`MarketBook`: strength,
+    mood, ranks, z-series, h1 bars). Bot results / `dropped` are keyed `strategy:tf`. `runsOn(s, tf)` (strategies.ts):
+    session rules 1h only, `slow` rules (ccy_momentum) 1h / 4h only.
+  - **15-minute + 1-minute charts** (`src/forex/fast.ts` `FastLab`, started in index.ts): candles from OANDA when a
+    token is saved (paged back with `to`), else Yahoo (15m ≤ 60 days, 1m ≤ 30 days in 7-day pieces), kept in memory +
+    Redis `fx:bars:15m:<id>` / `fx:bars:1m:<id>` (210 / 21 days, persisted every 10 min). Hourly test at :31
+    (`evaluateTf`, each chart's own 70/30 split, ≤ 20k bars a market) → Redis `fx:fast:report`, `fx:fast:chosen`, paper
+    since `fx:fast:since`; the signal judge and the whole-bot test stay 1h / 4h. Live pass `decide(tf)` every 15m close
+    + 40 s and every minute + 20 s (OANDA) / 2 minutes (Yahoo), market open only: newest 2,000 bars → what fired (all
+    strategies, for the plan) + the chosen strategies' open trades (filter + exit as tested) → `syncBot(…, { scope: [tf] })`.
+    Bigger charts: 15m checks 1h + 4h, 1m checks 15m + 1h (`BIGGER_CHARTS`). Same spreads everywhere: on 1m they eat
+    most of a move, the test shows what is left. Sandbox can't reach Yahoo / OANDA: verified on SYNTHETIC candles only.
+  - **Bot account** (practice.ts): `syncBot(labOpen, blockFor, atr, { scope, report })` only manages positions whose
+    ref's chart is in `scope` (the hourly lab passes 1h + 4h) → one chart never closes another's trades; per-chart
+    freshness `BOT.freshMsByTf` (1m 2 min, 15m 20 min, 1h / 4h 2 h) and caps `BOT.maxOpenByTf` (1m 2, 15m 3, total 8);
+    `SyncReport` (candidates / opened / skipped / waits). `tick`: trailing take-profit at the target (part off, stop
+    locked, target null); `syncBot` converts a position when the lab's trade reached its target first (`lab.tpHit`).
+    Positions carry `tf`, `tpTrailPx`, `tpFrac`, `tpHit`, `trailAtr`, `maxBars`, `exitWhen` (`planOf`).
+  - **The bot's plan** (`src/forex/plan.ts` `buildPlan`, pure; GET `/api/forex/bot` → `plan`): summary line, next check
+    per chart (`nextChecks`), per market status (in a trade / waiting / watching / paused), `leanOf` (strength gap,
+    4h + daily trend, mood fit: 2+ on one side = a lean), the signals on the newest 1m / 15m / 1h / 4h closes with what
+    happened to each (in the trade, waiting: why, held back: which check, already in a trade, not one it trades), news
+    coming up (`ForexCalendar.upcoming`), per open trade every exit rule in words (`tradeLines`), and the check timeline
+    (`ForexLab.runs`, Redis `fx:bot:runs`, 40 per chart, incl. "nothing fired"). `ForexLab.marketsNow / moodNow /
+    labOpen / lastSync / chosen` + `FastLab.firing / chosen / labOpen` feed it.
+  - Dashboard: Forex home `/forex` = **Auto-bot** (`FxBot.tsx`: "The bot trades by itself", summary + next checks,
+    trades with their plan, "What it's watching and waiting for" (tap a market), "What it did" (Checks / Decisions),
+    honest test, risk, how it trades, closed trades); `/forex/live` = Markets; Practice renamed "Trade by hand" (More
+    menu); `/forex/bot` redirects home. Strategies / Paper merge the fast rows (chips 1m / 15m / 1h / 4h); Setup shows
+    the 15m / 1m candle feed. tests/forex-v15.test.ts (21).
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

@@ -10,6 +10,7 @@ import { boost, cutPoints, DEFAULT_TREE_OPTIONS, sigmoid, treeValue, type Matrix
 import type { FilterEnv } from './filters';
 import type { Ctx } from './ta';
 import { volRatioAt } from './engine';
+import { TF_MIN, type Timeframe } from './types';
 
 export const JUDGE_FEATURES = [
   'side',
@@ -83,7 +84,7 @@ const fin = (x: number | undefined) => (x !== undefined && Number.isFinite(x) ? 
 const STYLE_CODE: Record<string, number> = { trend: 1, pullback: 0.5, neutral: 0, revert: -1 };
 
 /** Context of one signal at bar i (the bar whose close made it). NaN = unknown. Pure. */
-export function judgeFeatures(c: Ctx, env: FilterEnv | null, i: number, side: 1 | -1, stop: number, target: number | null, extra: { style: string; prior: number; form: number; tf: '1h' | '4h' }): Float64Array {
+export function judgeFeatures(c: Ctx, env: FilterEnv | null, i: number, side: 1 | -1, stop: number, target: number | null, extra: { style: string; prior: number; form: number; tf: Timeframe }): Float64Array {
   const x = new Float64Array(JUDGE_FEATURES.length).fill(NaN);
   const a = c.atr14[i]!;
   const px = c.close[i]!;
@@ -94,7 +95,7 @@ export function judgeFeatures(c: Ctx, env: FilterEnv | null, i: number, side: 1 
   set('side', side);
   if (env) {
     set('strength', side * fin(env.gap[i]));
-    set('trend4h', env.tf === '1h' ? side * (env.h4[i] ?? 0) : NaN);
+    set('trend4h', env.tf !== '4h' ? side * (env.h4[i] ?? 0) : NaN);
     set('trendD', side * (env.d1[i] ?? 0));
     set('mood', side * env.riskLong * fin(env.mood[i]));
     set('er', fin(env.er?.[i]));
@@ -121,7 +122,7 @@ export function judgeFeatures(c: Ctx, env: FilterEnv | null, i: number, side: 1 
   set('form', extra.form);
   set('jpy', c.pair.includes('JPY') ? 1 : 0);
   set('metal', c.pair.startsWith('XA') ? 1 : 0);
-  set('tf', extra.tf === '1h' ? 1 : 4);
+  set('tf', TF_MIN[extra.tf] / 60);
   const risk = Math.abs(px - stop);
   set('targetR', target === null || !(risk > 0) ? 0 : Math.abs(target - px) / risk);
   return x;

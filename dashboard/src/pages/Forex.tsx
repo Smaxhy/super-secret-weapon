@@ -1,6 +1,7 @@
 /**
- * Forex lab (v12): every forex strategy on 10 currency pairs + gold + silver, tested on ~2 years of hourly candles
- * (in-sample / unseen split, real spreads) and paper traded live from the day the lab started. No real orders.
+ * Forex (v12 → v15): the auto-bot (home), every market, every strategy on 10 currency pairs + gold + silver tested on
+ * 1-minute, 15-minute, hourly and 4-hour candles (in-sample / unseen split, real spreads) and paper traded live from
+ * the day the lab started. No real orders.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -20,12 +21,14 @@ interface RStats { n: number; winPct: number; avgR: number; medianR: number; pf:
 interface Risk { riskPct: number; finalX: number; avgWeekPct: number; medianWeekPct: number; greenWeeksPct: number; bigWeeksPct: number; bestWeekPct: number; worstWeekPct: number; maxDdPct: number; blown: boolean; medianLeverage: number; weeks: number }
 interface VariantRow { filter: FilterKind; inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number }
 interface ExitVariantRow extends Omit<VariantRow, 'filter'> { exit: ExitKind }
-interface RowT { id: string; name: string; family: string; desc: string; tf: '1h' | '4h'; filter?: FilterKind; variants?: VariantRow[]; exit?: ExitKind; exitVariants?: ExitVariantRow[]; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string }
+interface RowT { id: string; name: string; family: string; desc: string; tf: string; filter?: FilterKind; variants?: VariantRow[]; exit?: ExitKind; exitVariants?: ExitVariantRow[]; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string }
 interface Trade { strategy: string; tf: string; pair: string; side: 1 | -1; entryT: number; exitT: number; entry: number; exit: number; r: number; reason: string; stop: number; stop0: number; target: number | null }
 interface MarketNow { id: string; label: string; price: number; t: number; change24hPct: number; closes: number[]; trend: 'up' | 'down' | 'flat'; rsi: number; atrPips: number; firing: Array<{ id: string; name: string; tf: string; side: 1 | -1; allowed?: boolean; why?: string | null }>; openPaper: number; bars: number[][]; drawings: ChartDrawings; mtf?: { h1: number; h4: number; d1: number }; strength?: { base: string; quote: string; baseScore: number | null; quoteScore: number | null; gap: number | null }; risk?: number }
 interface PaperRow { id: string; name: string; tf: string; stats: RStats; risk1: Risk; open: number }
 interface Report { at: number; durationMs: number; feed: Array<{ id: string; role?: 'traded' | 'strength' | 'mood'; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; markets?: MarketNow[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string; strength?: StrengthNow; mood?: MoodNow; filters?: FilterSummary[]; exits?: ExitSummary[]; judge?: JudgeReport | null; portfolio?: PortfolioReport | null; news?: NewsStudy | null }
-interface Data { running: boolean; last: Report | null }
+interface FastFeed { id: string; tf: '15m' | '1m'; bars: number; firstT: number | null; lastT: number | null; source: 'oanda' | 'yahoo' | null; error: string | null }
+interface FastReport { at: number; durationMs: number; feed: FastFeed[]; spans: Record<'15m' | '1m', { from: number | null; to: number | null; oosFrom: number | null; markets: number }>; rows: RowT[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string }
+interface Data { running: boolean; last: Report | null; fast?: FastReport | null }
 
 const signed = (x: number, dp = 1) => `${x >= 0 ? '+' : ''}${x.toFixed(dp)}`;
 const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink-2');
@@ -33,17 +36,17 @@ const day = (t: number | null) => (t ? new Date(t).toISOString().slice(0, 10) : 
 const VERDICT: Record<RowT['verdict'], { label: string; tone: 'up' | 'warn' | 'neutral' }> = { edge: { label: 'Edge', tone: 'up' }, maybe: { label: 'Maybe', tone: 'warn' }, no: { label: 'No edge', tone: 'neutral' } };
 type Section = 'live' | 'practice' | 'bot' | 'strategies' | 'paper' | 'setup';
 const TITLES: Record<Section, { title: string; sub: string }> = {
-  live: { title: 'Forex · Live', sub: "Every market the bot watches: its trendlines, levels, signals and open trades." },
-  practice: { title: 'Practice', sub: 'Trade it yourself with $1,000 of fake money, real prices and leverage.' },
-  bot: { title: 'Auto-bot', sub: 'The bot trades its own $1,000 account by itself whenever a chosen strategy fires.' },
-  strategies: { title: 'Strategies', sub: 'Every strategy tested on 2 years of hourly candles with real spreads; the last 30% kept unseen.' },
+  live: { title: 'Markets', sub: "Every market the bot watches: its trendlines, levels, signals and open trades." },
+  practice: { title: 'Trade by hand', sub: 'Optional: your own $1,000 practice account. The auto-bot trades without you.' },
+  bot: { title: 'Auto-bot', sub: 'Its own $1,000 account, traded by itself on 1-minute, 15-minute, hourly and 4-hour charts.' },
+  strategies: { title: 'Strategies', sub: 'Every strategy tested on each chart with real spreads; the last 30% of each history kept unseen.' },
   paper: { title: 'Paper results', sub: 'Every strategy traded live on paper since the lab started: the real test.' },
   setup: { title: 'Setup', sub: 'Price feed, markets and the road to real money.' },
 };
 
 export function Forex() {
   const params = useParams();
-  const section = ((['practice', 'bot', 'strategies', 'paper', 'setup'] as const).find((x) => x === params.section) ?? 'live') as Section;
+  const section = ((['live', 'practice', 'strategies', 'paper', 'setup'] as const).find((x) => x === params.section) ?? 'bot') as Section;
   const navigate = useNavigate();
   const { data, error, reload } = useApi<Data>('/api/forex', 60_000);
   const [busy, setBusy] = useState(false);
@@ -62,7 +65,10 @@ export function Forex() {
       setBusy(false);
     }
   };
-  const r = data?.last ?? null;
+  const r0 = data?.last ?? null;
+  const fast = data?.fast ?? null;
+  // v15: the 15-minute / 1-minute lab's rows and paper trades sit next to the hourly ones
+  const r = useMemo<Report | null>(() => (r0 ? mergeFast(r0, fast) : null), [r0, fast]);
   const labNeeded = section === 'live' || section === 'strategies' || section === 'paper';
   return (
     <>
@@ -80,7 +86,7 @@ export function Forex() {
       {(section === 'live' || section === 'practice' || section === 'bot') && <div className="mb-4"><MarketClockBar /></div>}
       {section === 'practice' && <FxTrade />}
       {section === 'bot' && <FxBot />}
-      {section === 'setup' && <Stack><OandaCard />{r && <Setup r={r} />}</Stack>}
+      {section === 'setup' && <Stack><OandaCard />{r && <Setup r={r} fast={fast} />}</Stack>}
       {labNeeded && !data && !error && <Loading kind="tiles" />}
       {labNeeded && data && !r && <Empty icon={<Icon name="globe" size={20} />}>{running ? 'First run: downloading 2 years of candles for 12 markets. About a minute.' : 'Not run yet. It starts by itself a minute after the bot starts, or press Update now.'}</Empty>}
       {labNeeded && r && (
@@ -104,6 +110,17 @@ export function Forex() {
       )}
     </>
   );
+}
+
+/** Hourly report + the fast charts' rows and paper trades (one list per page). */
+function mergeFast(r: Report, f: FastReport | null): Report {
+  if (!f) return r;
+  return {
+    ...r,
+    rows: [...r.rows, ...f.rows],
+    paper: { since: r.paper.since, rows: [...r.paper.rows, ...f.paper.rows].sort((a, b) => b.stats.totalR - a.stats.totalR), open: [...r.paper.open, ...f.paper.open].sort((a, b) => b.entryT - a.entryT), recent: [...r.paper.recent, ...f.paper.recent].sort((a, b) => b.exitT - a.exitT) },
+    note: `${r.note} ${f.note}`,
+  };
 }
 
 const DIGITS = (id: string) => (id.includes('JPY') ? 3 : id === 'XAUUSD' ? 2 : id === 'XAGUSD' ? 3 : 5);
@@ -241,7 +258,7 @@ function Summary({ r }: { r: Report }) {
 }
 
 function Strategies({ r }: { r: Report }) {
-  const [tf, setTf] = useStored<'all' | '1h' | '4h'>('fx.tf', 'all', ['all', '1h', '4h']);
+  const [tf, setTf] = useStored<'all' | '1m' | '15m' | '1h' | '4h'>('fx.tf', 'all', ['all', '1m', '15m', '1h', '4h']);
   const [risk, setRisk] = useStored<'0.5' | '1' | '2' | '5'>('fx.risk', '1', ['0.5', '1', '2', '5']);
   const [open, setOpen] = useState<RowT | null>(null);
   const rows = useMemo(() => r.rows.filter((x) => tf === 'all' || x.tf === tf), [r, tf]);
@@ -253,7 +270,7 @@ function Strategies({ r }: { r: Report }) {
       padded={false}
     >
       <div className="flex flex-wrap gap-1.5 px-4 pb-3 sm:px-5">
-        {(['all', '1h', '4h'] as const).map((k) => (
+        {(['all', '1m', '15m', '1h', '4h'] as const).map((k) => (
           <Chip key={k} active={tf === k} onClick={() => setTf(k)}>{k === 'all' ? 'All' : k}</Chip>
         ))}
         <span className="mx-1 self-center text-xs text-muted">risk / trade</span>
@@ -459,9 +476,21 @@ function TradeList({ ts, open = false }: { ts: Trade[]; open?: boolean }) {
   );
 }
 
-function Setup({ r }: { r: Report }) {
+function Setup({ r, fast }: { r: Report; fast: FastReport | null }) {
   return (
     <Stack>
+      {fast && (
+        <Card title="15-minute and 1-minute candles" subtitle={`From OANDA when connected (deeper history, 1-minute checks every minute), else Yahoo (60 days of 15-minute, up to 3 weeks of 1-minute, checked every 2 minutes). The server keeps collecting them. Last test ${ago(new Date(fast.at).toISOString())}.`}>
+          <Rows>
+            {(['15m', '1m'] as const).map((tf) => {
+              const fs = fast.feed.filter((x) => x.tf === tf);
+              const err = fs.filter((x) => x.error).length;
+              const sp = fast.spans[tf];
+              return <Row key={tf} label={`${tf} chart`} value={err ? <span className="text-down">{err} failed</span> : `${fs.reduce((a, x) => a + x.bars, 0).toLocaleString()} bars`} sub={sp.from !== null ? `${day(sp.from)} → ${day(sp.to)} · unseen from ${day(sp.oosFrom)} · ${sp.markets} markets · ${fs[0]?.source ?? 'no source yet'}` : 'not enough candles yet'} />;
+            })}
+          </Rows>
+        </Card>
+      )}
       <Card title="Markets and costs" subtitle="Hourly candles from Yahoo Finance (free, about 2 years back). Spreads are typical retail costs, charged on every trade. The 10 extra crosses only feed the strength meter; the dollar index, yields, S&P futures, VIX and oil feed the market mood.">
         <Rows>
           {r.feed.map((f) => (

@@ -61,6 +61,7 @@ import { DipWatcher } from './executor/dip-watcher';
 import { StrategyLab } from './learner/strategy-lab';
 import { Tournament } from './learner/tournament';
 import { ForexLab } from './forex/lab';
+import { FastLab } from './forex/fast';
 import { Practice } from './forex/practice';
 import { ForexCalendar } from './forex/calendar';
 import { ForexHeadlines } from './forex/headlines';
@@ -372,6 +373,9 @@ async function main(): Promise<void> {
   const fxNews = new ForexHeadlines(redis);
   void fxNews.start();
   forex.headlines = fxNews;
+  // v15: the same strategies on 15-minute and 1-minute candles (tested hourly, checked live at every close)
+  const fastFx = new FastLab(redis, forex);
+  fastFx.start();
   // Shadow trades: pretend trades on coins it didn't buy (refused / just under the bar / skipped by a rule).
   const shadow = new ShadowTrades(redis, crowd);
   evaluator.shadow = shadow;
@@ -758,7 +762,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament, meme: memeReader, forex, practice, fxCalendar, fxNews }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament, meme: memeReader, forex, fastFx, practice, fxCalendar, fxNews }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -842,6 +846,7 @@ async function main(): Promise<void> {
       lab.stop();
       tournament.stop();
       forex.stop();
+      fastFx.stop();
       practice.stop();
       fxCalendar.stop();
       fxNews.stop();

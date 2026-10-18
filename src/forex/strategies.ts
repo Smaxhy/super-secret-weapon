@@ -37,6 +37,8 @@ export interface Strategy {
   desc: string;
   /** session strategies need hourly bars */
   onlyHourly?: boolean;
+  /** v15: a multi-day rule — 1h / 4h charts only (not run on 15m / 1m) */
+  slow?: boolean;
   /** v14: the market it needs (defaults from the family) */
   style?: Style;
   signal(c: Ctx, i: number): Signal | null;
@@ -736,6 +738,7 @@ export const STRATEGIES: Strategy[] = [
     name: 'Strongest vs weakest currency',
     family: 'trend',
     style: 'trend',
+    slow: true,
     desc: 'Evidence-backed (Menkhoff et al. 2012, currency momentum): when the pair becomes one of the 2 strongest currencies against one of the 2 weakest (5-day strength, all 20 pairs), go with it; 2.5 ATR stop, 3.5 ATR trail, out after about 5 days.',
     signal(c, i) {
       const e = c.ext;
@@ -900,3 +903,10 @@ export const STRATEGIES: Strategy[] = [
 ];
 
 export const strategyById = (id: string) => STRATEGIES.find((s) => s.id === id) ?? null;
+
+/** v15: does a strategy run on this chart? Session rules need hourly bars; multi-day rules skip 15m / 1m. Pure. */
+export function runsOn(s: Pick<Strategy, 'onlyHourly' | 'slow'>, tf: string): boolean {
+  if (s.onlyHourly) return tf === '1h';
+  if (s.slow) return tf === '1h' || tf === '4h';
+  return true;
+}

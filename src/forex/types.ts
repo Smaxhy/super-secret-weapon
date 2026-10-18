@@ -64,7 +64,9 @@ export const MOOD_SYMBOLS: Array<{ id: 'DXY' | 'US10Y' | 'SPX' | 'VIX' | 'OIL'; 
 /** The two sides of a market for exposure / strength (metals: XAU or XAG against USD). */
 export const legsOf = (pair: string): [string, string] => [pair.slice(0, 3), pair.slice(3, 6)];
 
-export type Timeframe = '1h' | '4h';
+export type Timeframe = '1m' | '15m' | '1h' | '4h';
+/** v15: minutes per bar */
+export const TF_MIN: Record<Timeframe, number> = { '1m': 1, '15m': 15, '1h': 60, '4h': 240 };
 
 export interface Signal {
   side: 1 | -1;
@@ -83,6 +85,10 @@ export interface Signal {
   /** v14: take `scaleFrac` of the position off at this many R in profit, then stop to break-even */
   scaleAtR?: number | null;
   scaleFrac?: number;
+  /** v15: trailing take-profit — when the target is reached the trade is not closed: `tpFrac` of it is taken off
+   * (0 = none), the stop locks `tpTrail` ATR behind the target and then trails that far behind the best close */
+  tpTrail?: number | null;
+  tpFrac?: number;
 }
 
 export interface Trade {
@@ -111,4 +117,15 @@ export interface Trade {
   scaleAt?: number;
   scaleFrac?: number;
   scaled?: boolean;
+  /** v15: trailing take-profit — the stop's distance behind the target at the switch (price), the share taken off at
+   * the target, and whether the target was reached (then `target` is null and the stop trails) */
+  tpTrailPx?: number;
+  tpFrac?: number;
+  tpHit?: boolean;
+  /** v15: the target at entry, kept once a trailing take-profit replaced it */
+  target0?: number | null;
+  /** v15: the exit rules still in force on an OPEN trade (for the bot's plan): trail ATR, bar limit, indicator exit */
+  trailAtr?: number;
+  maxBars?: number;
+  exitWhen?: string;
 }

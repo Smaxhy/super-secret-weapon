@@ -14,7 +14,8 @@ export const WARMUP = 210;
 export function signalsFor(c: Ctx, s: Strategy): Array<Signal | null> {
   const n = c.bars.length;
   const out: Array<Signal | null> = new Array(n).fill(null);
-  for (let i = WARMUP; i < n - 1; i++) out[i] = s.signal(c, i);
+  // v15: the last closed bar too — its signal is a trade the live bot takes right now (see `simulate`)
+  for (let i = WARMUP; i < n; i++) out[i] = s.signal(c, i);
   return out;
 }
 
@@ -60,8 +61,11 @@ export interface SimOpts {
   weekendPause?: boolean;
   /** charge the wider rollover / weekly-open spreads */
   sessionSpreads?: boolean;
+  /** v15: a signal on the LAST closed bar becomes an open trade filled at that close (the next bar's open is not
+   * known yet). Without it the live bot only saw a trade one bar after its signal and entered a whole bar late. */
+  liveEdge?: boolean;
 }
-export const DEFAULT_SIM: Required<SimOpts> = { weekendPause: true, sessionSpreads: true };
+export const DEFAULT_SIM: Required<SimOpts> = { weekendPause: true, sessionSpreads: true, liveEdge: true };
 
 export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: string, sigs: ReadonlyArray<Signal | null>, allow?: Allow, opts: SimOpts = DEFAULT_SIM): Trade[] {
   const o = { ...DEFAULT_SIM, ...opts };
@@ -96,6 +100,14 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
     scaled: boolean;
     be: boolean;
     trailed: boolean;
+    /** v15 trailing take-profit: ATR multiple to trail after the target, the lock distance (price, set at entry), the
+     * share taken off at the target, and whether the target was reached */
+    tpTrail: number | null;
+    tpDist: number | null;
+    tpFrac: number;
+    tpHit: boolean;
+    /** the target at entry (the live one becomes null once a trailing take-profit takes over) */
+    target0: number | null;
   };
   let pos: Pos | null = null;
   const finish = (i: number, fill: number, reason: Trade['reason']) => {
@@ -120,6 +132,9 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
       ...(p.volRatio !== undefined ? { volRatio: p.volRatio } : {}),
       ...(p.beAt !== null ? { beAt: p.beAt } : {}),
       ...(p.scaleAt !== null ? { scaleAt: p.scaleAt, scaleFrac: p.scaleFrac, scaled: p.scaled } : {}),
+      ...(p.tpDist !== null ? { tpTrailPx: p.tpDist, tpFrac: p.tpFrac, tpHit: p.tpHit, ...(p.tpHit ? { target0: p.target0 } : {}) } : {}),
+      // an open trade carries the exit rules still in force (the bot's plan shows them)
+      ...(reason === 'open' ? { ...(p.trailAtr !== null ? { trailAtr: p.trailAtr } : {}), ...(p.maxBars !== null ? { maxBars: p.maxBars } : {}), ...(p.exitWhen ? { exitWhen: p.exitWhen } : {}) } : {}),
     });
     pos = null;
   };
@@ -145,7 +160,33 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
       const hitStop = p.side === 1 ? b.l <= p.stop : b.h >= p.stop;
       const hitTgt = p.target !== null && (p.side === 1 ? b.h >= p.target : b.l <= p.target);
       if (hitStop) finish(i, exitFill(i, p.side, p.side === 1 ? Math.min(b.o, p.stop) : Math.max(b.o, p.stop), true), stopReason(p));
-      else if (hitTgt) finish(i, exitFill(i, p.side, p.side === 1 ? Math.max(b.o, p.target!) : Math.min(b.o, p.target!), false), 'target');
+      else if (hitTgt && p.tpDist !== null && !p.tpHit) {
+        // v15 trailing take-profit: the target is not the end. Part off (if any), the stop locks behind the target
+        // (never under break-even + costs), then it trails behind the best close; the strategy's own time / indicator
+        // exits stop counting — only the trailing stop closes it from here.
+        const at = p.side === 1 ? Math.max(b.o, p.target!) : Math.min(b.o, p.target!);
+        if (p.tpFrac > 0) {
+          const part = p.frac * p.tpFrac;
+          p.realized += (part * p.side * (exitFill(i, p.side, at, false) - p.legEntry)) / p.risk;
+          p.frac -= part;
+        }
+        p.tpHit = true;
+        p.target = null;
+        p.exitWhen = null;
+        p.maxBars = null;
+        p.trailAtr = p.tpTrail;
+        p.best = p.side === 1 ? Math.max(p.best, at) : Math.min(p.best, at);
+        const lock = at - p.side * p.tpDist;
+        const be = p.entry + p.side * spr(i);
+        const ns = p.side === 1 ? Math.max(lock, be) : Math.min(lock, be);
+        if (p.side === 1 ? ns > p.stop : ns < p.stop) p.stop = ns;
+        p.trailed = true;
+        p.be = true;
+        // rest of the candle: open → low → high → close on a green candle, open → high → low → close on a red one
+        // (a long's target is touched at the high: a red candle still has its low to come, a green one only its close)
+        const back = p.side === 1 ? (b.c < b.o ? b.l : b.c) <= p.stop : (b.c > b.o ? b.h : b.c) >= p.stop;
+        if (back) finish(i, exitFill(i, p.side, p.stop, true), 'trail');
+      } else if (hitTgt) finish(i, exitFill(i, p.side, p.side === 1 ? Math.max(b.o, p.target!) : Math.min(b.o, p.target!), false), 'target');
       else {
         // take part off / move the stop to break-even (checked after the stop: the pessimistic order)
         let toBe = false;
@@ -214,12 +255,59 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
             scaled: false,
             be: false,
             trailed: false,
+            tpTrail: sig.tpTrail && sig.target !== null ? sig.tpTrail : null,
+            tpDist: sig.tpTrail && sig.target !== null ? sig.tpTrail * (Number.isFinite(c.atr14[i]!) && c.atr14[i]! > 0 ? c.atr14[i]! : risk) : null,
+            tpFrac: Math.min(0.9, Math.max(0, sig.tpFrac ?? 0)),
+            tpHit: false,
+            target0: sig.target,
           };
         }
       }
     }
   }
   if (pos) finish(n - 1, bars[n - 1]!.c, 'open');
+  else if (o.liveEdge && n > WARMUP) {
+    // the bar that just closed fired: an open trade from the next bar's open (≈ this close), so the bot can take it now
+    const i = n - 1;
+    const sig = sigs[i];
+    if (sig && (!allow || allow(i, sig.side))) {
+      const entry = bars[i]!.c + (sig.side * spr(i)) / 2;
+      const valid = sig.side === 1 ? sig.stop < entry && (sig.target === null || sig.target > entry) : sig.stop > entry && (sig.target === null || sig.target < entry);
+      const risk = Math.abs(entry - sig.stop);
+      if (valid && risk > 2 * spr(i)) {
+        const t = bars[i]!.t + c.barMin * 60_000;
+        const a = c.atr14[i]!;
+        const tp = sig.tpTrail && sig.target !== null ? sig.tpTrail : null;
+        out.push({
+          strategy: strategyId,
+          tf,
+          pair: inst.id,
+          side: sig.side,
+          entryT: t,
+          exitT: t,
+          entry,
+          exit: entry,
+          r: 0,
+          stopPct: (risk / entry) * 100,
+          reason: 'open',
+          bars: 0,
+          stop: sig.stop,
+          stop0: sig.stop,
+          target: sig.target,
+          ...(() => {
+            const v = volRatioAt(c, i);
+            return v !== undefined ? { volRatio: v } : {};
+          })(),
+          ...(sig.beAtR ? { beAt: entry + sig.side * sig.beAtR * risk } : {}),
+          ...(sig.scaleAtR ? { scaleAt: entry + sig.side * sig.scaleAtR * risk, scaleFrac: Math.min(0.9, Math.max(0.1, sig.scaleFrac ?? 0.5)), scaled: false } : {}),
+          ...(tp !== null ? { tpTrailPx: tp * (Number.isFinite(a) && a > 0 ? a : risk), tpFrac: Math.min(0.9, Math.max(0, sig.tpFrac ?? 0)), tpHit: false } : {}),
+          ...(sig.trailAtr ? { trailAtr: sig.trailAtr } : {}),
+          ...(sig.maxBars ? { maxBars: sig.maxBars } : {}),
+          ...(sig.exitWhen ? { exitWhen: sig.exitWhen } : {}),
+        });
+      }
+    }
+  }
   return out;
 }
 
