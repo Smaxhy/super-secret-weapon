@@ -36,7 +36,10 @@ export interface DeployerConfig {
   maxLaunchesPerDay: number;
   /** a proven creator whose previous launch was ≥ this many days ago gets `points.quietProven` on top */
   quietDays: number;
-  points: { proven: number; quietProven: number };
+  points: { proven: number; quietProven: number; elite?: number };
+  /** v11.19: repeat graduators — the one selection signal with (vendor) evidence of a large effect; verified on our own
+   *  data by the deployer study (Money tab). */
+  elite?: { minGraduated: number; minBondRatePct: number; tradeWhenStrategyOff: boolean };
 }
 
 /** Compact per-creator record (short keys: stored as JSON per creator). */
@@ -59,7 +62,7 @@ export interface DeployerRec {
   f: string;
 }
 
-export type DeployerClass = 'serial' | 'rugger' | 'proven' | 'new' | 'mixed';
+export type DeployerClass = 'serial' | 'rugger' | 'elite' | 'proven' | 'new' | 'mixed';
 
 export interface DeployerView {
   class: DeployerClass;
@@ -89,14 +92,20 @@ export function deployerConfig(): DeployerConfig {
 export const diedFastPct = (r: Pick<DeployerRec, 'l' | 'df'>): number => (r.l > 0 ? (r.df / r.l) * 100 : 0);
 
 /** Pure: what kind of deployer is this? A rugger stays a rugger whatever else it did. */
-export function classifyDeployer(r: DeployerRec | undefined | null, inRugMemory: boolean, c: Pick<DeployerConfig, 'serialMinLaunches' | 'serialDiedFastPct' | 'provenMaxDiedFastPct'>): DeployerClass {
+export function classifyDeployer(r: DeployerRec | undefined | null, inRugMemory: boolean, c: Pick<DeployerConfig, 'serialMinLaunches' | 'serialDiedFastPct' | 'provenMaxDiedFastPct' | 'elite'>): DeployerClass {
   if (inRugMemory || (r && r.rugs >= 1)) return 'rugger';
   if (!r || r.l < 2) return 'new';
   const df = diedFastPct(r);
   if (r.l >= c.serialMinLaunches && r.g === 0 && df >= c.serialDiedFastPct) return 'serial';
+  const el = c.elite;
+  // elite = repeat graduator: ≥ minGraduated graduations AND a bond rate ≥ minBondRatePct (one lucky bond among 40 launches is not it)
+  if (el && r.g >= el.minGraduated && (r.g / Math.max(1, r.l)) * 100 >= el.minBondRatePct && df <= c.provenMaxDiedFastPct) return 'elite';
   if (r.g >= 1 && df <= c.provenMaxDiedFastPct) return 'proven';
   return 'mixed';
 }
+
+/** Pure: bond rate of a record, % of launches that graduated. */
+export const bondRatePct = (r: DeployerRec | undefined | null): number => (r && r.l > 0 ? Math.round((r.g / r.l) * 1000) / 10 : 0);
 
 /** Pure: other launches in the last 24 h and the gap to the launch before this coin. */
 export function launchTiming(r: DeployerRec | undefined | null, currentMint: string | null, nowMs: number): { launchesToday: number; daysSinceLastLaunch: number | null } {
@@ -133,9 +142,11 @@ export function deployerView(r: DeployerRec | undefined | null, o: { inRugMemory
     points = c.points.proven;
     if (timing.daysSinceLastLaunch !== null && timing.daysSinceLastLaunch >= c.quietDays) points += c.points.quietProven;
   }
+  if (cls === 'elite' && !fails.length) points = c.points.elite ?? c.points.proven + 4;
   const quiet = cls === 'proven' && timing.daysSinceLastLaunch !== null && timing.daysSinceLastLaunch >= c.quietDays ? `, quiet for ${Math.round(timing.daysSinceLastLaunch)} days` : '';
   const note =
     fails.length ? fails[0]!
+    : cls === 'elite' ? `deployer: repeat graduator (${launches} launches, ${graduated} graduated, ${bondRatePct(r)}% bond rate)`
     : cls === 'proven' ? `deployer: proven (${launches} launches, ${graduated} graduated${quiet})`
     : cls === 'new' ? `deployer: ${launches === 0 ? 'first launch' : 'new'}`
     : `deployer: mixed record (${launches} launches, ${graduated} graduated, ${df}% died fast)`;
@@ -380,10 +391,10 @@ export class DeployerBook {
   }
 
   /** Best proven creators (by graduations, then peak MC) / worst serial launchers (by launches). */
-  top(kind: 'proven' | 'serial' | 'rugger', n = 10): Array<{ creator: string; rec: DeployerRec; class: DeployerClass }> {
+  top(kind: 'proven' | 'serial' | 'rugger' | 'elite', n = 10): Array<{ creator: string; rec: DeployerRec; class: DeployerClass }> {
     const c = deployerConfig();
     const xs = [...this.recs.entries()].map(([creator, rec]) => ({ creator, rec, class: classifyDeployer(rec, this.rugFlagged.has(creator), c) })).filter((x) => x.class === kind);
-    xs.sort((a, b) => (kind === 'proven' ? b.rec.g - a.rec.g || Math.max(...b.rec.mcs, 0) - Math.max(...a.rec.mcs, 0) : kind === 'serial' ? b.rec.l - a.rec.l : b.rec.rugs - a.rec.rugs));
+    xs.sort((a, b) => (kind === 'proven' || kind === 'elite' ? b.rec.g - a.rec.g || Math.max(...b.rec.mcs, 0) - Math.max(...a.rec.mcs, 0) : kind === 'serial' ? b.rec.l - a.rec.l : b.rec.rugs - a.rec.rugs));
     return xs.slice(0, n);
   }
 

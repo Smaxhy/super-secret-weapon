@@ -73,11 +73,12 @@ describe('v11.11 first buyers still holding', () => {
   const cfg = { ...DEFAULT_CONFIG.wallets.entry };
   const run = (c: typeof cfg) => crowdQuality({ trades, now: T0 + 70_000, windowMs: 120_000, launchMs: T0, creator: 'dev', supply: 1e9 }, () => undefined, () => null, book, c)!;
 
-  it('off by default: a feature only', () => {
+  it('on by default since v11.19 (50%): launch buyers still holding 75% of a 6%-of-supply bag → no buy; 0 switches it off', () => {
     const q = run(cfg);
     expect(q.firstBuyersHoldingPct).toBe(75);
     expect(q.firstBuyersBagPct).toBe(6);
-    expect(q.fails.some((f) => f.startsWith('launch buyers'))).toBe(false);
+    expect(q.fails.some((f) => f.startsWith('launch buyers'))).toBe(true);
+    expect(run({ ...cfg, maxFirstBuyersHoldingPct: 0 }).fails.some((f) => f.startsWith('launch buyers'))).toBe(false);
   });
 
   it('the owner can switch the rule on (holding share AND bag size)', () => {

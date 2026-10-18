@@ -647,6 +647,17 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['sniper', ['exemptCopies'], true],
     ],
   },
+  {
+    version: 50,
+    note: 'v11.19 (Oct 18 research): elite repeat-graduator deployers (+10 pts, half Sniper volume minimums, tradeable while the strategy is off); launch buyers still holding >50% of their bags → no buy; 3+ known dumpers among the first 20 buyers → no buy',
+    set: [
+      ['deployers', ['elite'], { minGraduated: 2, minBondRatePct: 20, tradeWhenStrategyOff: true }],
+      ['deployers', ['points', 'elite'], 10],
+      ['sniper', ['eliteVolumeFactor'], 0.5],
+      ['wallets', ['entry', 'maxFirstBuyersHoldingPct'], 50],
+      ['wallets', ['entry', 'maxDumpersInFirst20'], 3],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

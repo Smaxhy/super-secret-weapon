@@ -37,6 +37,8 @@ import { getSolUsd } from '../lib/sol-price';
 const log = moduleLogger('trader');
 
 export interface EntryRequest {
+  /** v11.19: the coin's creator is a repeat graduator (deployers.elite) — may trade even while its strategy is switched off. */
+  eliteDeployer?: boolean;
   mint: string;
   symbol: string;
   strategy: Strategy;
@@ -153,7 +155,8 @@ export class Trader {
 
     if (cfg.state.killSwitch) return refuse('kill switch active');
     if (cfg.state.paused) return refuse('bot paused');
-    if (!cfg.trading.enabledStrategies[req.strategy]) return refuse(`strategy ${req.strategy} disabled`);
+    const eliteOk = req.eliteDeployer === true && (cfg.deployers ?? DEFAULT_CONFIG.deployers).elite?.tradeWhenStrategyOff === true;
+    if (!cfg.trading.enabledStrategies[req.strategy] && !eliteOk) return refuse(`strategy ${req.strategy} disabled`);
     const qh = cfg.trading.quietHours ?? DEFAULT_CONFIG.trading.quietHours;
     if (qh?.enabled && inQuietHours(new Date().getUTCHours(), qh.fromUtc, qh.toUtc)) return refuse(`quiet hours (${String(qh.fromUtc).padStart(2, '0')}–${String(qh.toUtc).padStart(2, '0')} UTC) — no new buys`);
 

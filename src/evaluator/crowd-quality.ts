@@ -22,6 +22,8 @@ export interface CrowdQualityConfig {
   loserSolPct: number;
   loserPoints: number;
   fails: boolean;
+  /** v11.19: ≥ this many known dumpers among the first 20 buyers → no buy (0 = off). */
+  maxDumpersInFirst20?: number;
   /** v11.8: a deployer-funded launch-block buyer still holding ≥ this % of the supply → no buy. */
   deployerSniperHoldPct?: number;
   /** v11.11: launch buyers (first 15 s) still holding more than this % of what they bought → no buy (0 = off). */
@@ -39,6 +41,8 @@ export interface CrowdQuality {
   botSolPct: number;
   provenCount: number;
   dumpersInside: number;
+  /** v11.19: known dumper wallets among the coin's first 20 distinct buyers (creator excluded). */
+  dumpersInFirst20: number;
   /** the biggest bag a dumper still holds, % of supply */
   dumperHoldPct: number;
   crewPct: number;
@@ -186,6 +190,17 @@ export function crowdQuality(
       }
     }
   }
+  // The first 20 distinct buyers (creator excluded) — a dump crew shows up at the start.
+  let dumpersInFirst20 = 0;
+  {
+    const seen = new Set<string>();
+    for (const t of i.trades) {
+      if (!t.buy || t.w === creator || seen.has(t.w)) continue;
+      seen.add(t.w);
+      if (kindOf(t.w) === 'dumper') dumpersInFirst20++;
+      if (seen.size >= 20) break;
+    }
+  }
   const pct = (x: number) => (total > 0 ? (x / total) * 100 : 0);
   const q: CrowdQuality = {
     buyers: buySol.size,
@@ -196,6 +211,7 @@ export function crowdQuality(
     botSolPct: r1(pct(bot)),
     provenCount,
     dumpersInside,
+    dumpersInFirst20,
     dumperHoldPct: Math.round(dumperHold * 100) / 100,
     crewPct: r1(crewPct),
     deployerSnipers: sniperWallets.length,
@@ -218,6 +234,8 @@ export function crowdQuality(
     if (fb && maxFb > 0 && fb.holdingPct > maxFb && fb.bagPct >= (c.firstBuyersMinBagPct ?? 5)) q.fails.push(`launch buyers still hold ${fb.holdingPct}% of their bags (${fb.bagPct}% of the supply)`);
     if (dumpersInside >= 1 && dumperHold >= c.dumperHoldPct) q.fails.push(`dump crew inside: ${dumpersInside} known dumper${dumpersInside > 1 ? 's' : ''} still holding ${q.dumperHoldPct}% of the supply`);
     if (q.dumperSolPct >= c.maxDumperSolPct) q.fails.push(`known dumpers are ${q.dumperSolPct}% of the buying`);
+    const maxD20 = c.maxDumpersInFirst20 ?? 0;
+    if (maxD20 > 0 && dumpersInFirst20 >= maxD20) q.fails.push(`dump crew at the start: ${dumpersInFirst20} of the first 20 buyers are known dumpers`);
     const minHold = c.deployerSniperHoldPct ?? 1;
     const inside = sniperWallets.filter((w) => ((net.get(w) ?? 0) / supply) * 100 >= minHold).length;
     if (inside > 0) q.fails.push(`deployer-funded launch sniper inside (exit-liquidity machine): ${inside} wallet${inside > 1 ? 's' : ''} funded by the dev bought at launch and still hold${inside > 1 ? '' : 's'} ${q.deployerSniperHoldPct}% of the supply`);

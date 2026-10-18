@@ -197,6 +197,9 @@ async function main(): Promise<void> {
     const { OWNER_COPY_WALLETS } = await import('./config/kol-wallets');
     await prisma.trackedWallet.updateMany({ where: { address: { in: OWNER_COPY_WALLETS } }, data: { kind: 'KOL', weight: 1.5 } });
   });
+  await oneTimeUpgrade('retract-launch-priors', async () => {
+    await aiCoach.remember('Research check (Oct 18 2026): the Telegram 8.9× and launch-size 4.5× graduation multipliers were withdrawn by their author, and the deployer-history multipliers (second launch of the day dies, quiet proven dev) have no source. Treat launch.* and deployer.* as features to test on our own data, never as known effects. No public study shows a positive after-cost strategy for a bot buying 1–3 s late; measured winners are launch-block snipers and sandwich bots.');
+  });
   await oneTimeUpgrade('fee-rule-by-mc', async () => {
     const ids = await aiCoach.removeFeeTips();
     log.info({ tips: ids }, 'owner fee tips replaced by the market-cap fee rule');

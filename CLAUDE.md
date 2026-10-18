@@ -881,9 +881,8 @@ December (small wallet in Nov only if paper edge is positive).
   log since the last entry, results since the previous review), `90 Brain/Tip replies.md`, `_Dashboard.md` (Dataview
   queries), `_Index.md`, `_How to read this vault.md` (incl. graph colour groups). Editable group "Obsidian".
   tests/obsidian-brain.test.ts, tests/obsidian.test.ts. Zero RPC / API; never writes `.obsidian/*` or `00 Inbox/*`.
-- **v11.10 (Oct 17): deployer history + holder-growth exits** (owner: "game changers"; research: the creator's record is the
-  strongest predictor on pump.fun; a live sniper's data: 64–78% of a creator's second launch of the day dies; a study: a
-  creator with a prior graduation who stayed quiet ≥7 days graduates 12% vs 1.7% base). Migration v41. Zero new RPC.
+- **v11.10 (Oct 17): deployer history + holder-growth exits** (owner: "game changers"; research claims at the time — RETRACTED Oct 18 (v11.19): no source for "64–78% of a
+  creator's second launch of the day dies" or "quiet proven dev 12% vs 1.7%"; measure them with the deployer study). Migration v41. Zero new RPC.
   - **Deployer book** (`src/learner/deployer-book.ts`, `deployers` config): per creator — launches, graduations (curve
     complete), died fast (the dead-launch sweep: forgotten with <10 holders inside 30 min), rugs (RUG_DETECTED on its coin,
     sell manager), peak MCs, newest 24 mints + launch times, funder (funding-graph cache `wfund:<creator>`, read by the
@@ -913,7 +912,7 @@ December (small wallet in Nov only if paper edge is positive).
     growth exit", Sniper mode. tests/deployer-book.test.ts, tests/holder-growth.test.ts.
 - **v11.11 (Oct 18): research ports** (Oct 17 deep research; migration v42; zero new RPC). (1) **Launch covariates**
   (`src/evaluator/launch-features.ts`, arXiv 2607.02823: Telegram link 8.9×, launch MC above the 30 SOL default 4.5×
-  graduation hazard) → `features.launch` {telegram 0/1 (`hasTelegramLink`: socials / website / description),
+  graduation hazard — WITHDRAWN by the author Sep 2026, see v11.19; features kept, magnitudes dropped) → `features.launch` {telegram 0/1 (`hasTelegramLink`: socials / website / description),
   initialBuySol, initialMcSol, devSelfBuyPct} on every evaluation, AI / rule-search / win-model section `launch` — NO rule,
   NO points. The creator's launch buy is captured by live-state (`devFirstBuyLam` / `devFirstBuyTok`, creator buy ≤2 s after
   create; no creator buy = the default launch; older / adopted coins → null). Obsidian coin notes get `telegram`.
@@ -1065,6 +1064,29 @@ December (small wallet in Nov only if paper edge is positive).
   Sniper volume / score gate skips SMART_MONEY_COPY entries with a wallet; owner filters, rug / bundle guards, mirror sells
   unchanged). tests/copy-replay.test.ts. Next: owner runs it (≈6 min per day of tape); if `copyable` wallets exist,
   press the button and watch Performance → Mistakes per strategy "Smart money".
+- **v11.19 (Oct 18): acting on the deep research** (report: `docs/research/2026-10-18-pumpfun-edges.md`; six research
+  agents, ~29 sources, mostly search-engine extracts — the sandbox could only open github.com). Verdict: NO public
+  study / backtest / bot log shows a positive after-cost strategy for a 1–3 s-late bot at 5–8% round trip; the measured
+  winners are launch-block snipers (87% profitable, out <5 min) and sandwich bots; the one rigorous OOS backtest
+  (apchhui/pump-research, 26k launches, Oct 2026) had every family losing on holdout and its "winner" was a Mayhem
+  pricing artefact (ours prices from the trade event's own reserves → not affected). RETRACTED beliefs: the Telegram
+  8.9× / launch-MC 4.5× multipliers (author withdrew them, Sep 2026; features kept, no rule / points), the deployer
+  "second launch of the day dies 64–78%" and "quiet proven dev 12% vs 1.7%" claims (no source), "dev sold out = safer"
+  (a 3-day sample says the opposite), bundle = rug (no difference). No measured effect: terminal presets (snipers / dev /
+  top-10 %), Dex paid, narrative fit, KOL count, hour of day. Evidence exists only for RULE-OUT signals: first-5-min
+  flow, deployer-funded launch buyers, dumper clusters among the first buyers, SOL-weighted organic flow. Migration v50:
+  **elite deployers** (`deployers.elite` {minGraduated 2, minBondRatePct 20, tradeWhenStrategyOff true}; class `elite`
+  in `classifyDeployer`, `points.elite` 10, note "repeat graduator"; Sniper volume minimums × `sniper.eliteVolumeFactor`
+  0.5; `EntryRequest.eliteDeployer` lets the trader buy an elite creator's launch while its strategy is OFF);
+  `wallets.entry.maxFirstBuyersHoldingPct` 0 → 50 (ON); new `wallets.entry.maxDumpersInFirst20` 3 (crowd-quality
+  `dumpersInFirst20` → "dump crew at the start"). **Deployer study** (`src/learner/deployer-study.ts`, pure
+  `studyFromLaunches`: every launch in the Token table banded by what its creator had done BEFORE it — prior graduations,
+  nth launch, launched again within 24 h, quiet ≥7 d after a graduation, elite definition — vs graduation; coins <2 h old
+  excluded; Redis `dstudy:last`; GET `/api/deployers/study`, POST `/run` {days ≤30}; Money tab card). Money tab: new
+  splits `devHold` (`market.devHoldingPct`) / `devSold` (`market.devSoldFraction`) to re-test the v10.31 dev-sold
+  relaxation on our data, deployer split marks "elite". One-time `retract-launch-priors` → one AI-memory bullet.
+  tests/research-actions.test.ts. NEXT: owner runs the copy replay + the deployer study; read elite / dev-holding bands
+  on "Inside your filters" before any further rule change. If none shows an edge: speed (paid stream + fast sender) or stop.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

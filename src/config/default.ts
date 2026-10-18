@@ -619,11 +619,17 @@ export const DEFAULT_CONFIG = {
     halfLifeDays: 30,
     backfillDays: 30,
     linkedSerialFail: 3,
-    /** a creator that already launched this many OTHER coins in the last 24 h → no buy (a live sniper's data: 64–78% of those die) */
+    /** a creator that already launched this many OTHER coins in the last 24 h → no buy. (Oct 18 2026 research: the
+     *  "64–78% die" figure has no traceable source — the deployer study (Money tab) measures it on our own data.) */
     maxLaunchesPerDay: 1,
-    /** a proven creator whose previous launch was ≥ this many days ago → extra points (12% graduate vs 1.7% base) */
+    /** a proven creator whose previous launch was ≥ this many days ago → extra points. (The "12% vs 1.7%" claim traces
+     *  to a vendor blog with no methodology — see the deployer study.) */
     quietDays: 7,
-    points: { proven: 6, quietProven: 4 },
+    points: { proven: 6, quietProven: 4, elite: 10 },
+    /** v11.19 elite = repeat graduator (≥ minGraduated graduations, bond rate ≥ minBondRatePct, no rugs): +points.elite,
+     *  Sniper volume minimums × sniper.eliteVolumeFactor, and (tradeWhenStrategyOff) its launches may be bought as new
+     *  pairs even while CURVE_SNIPE is switched off — the one selection signal with evidence of a large effect. */
+    elite: { minGraduated: 2, minBondRatePct: 20, tradeWhenStrategyOff: true as boolean },
   },
   wallets: {
     enabled: true as boolean,
@@ -640,8 +646,13 @@ export const DEFAULT_CONFIG = {
       minProvenSolPct: 20,
       /** v11.8: a deployer-funded launch-block buyer still holding ≥ this % of the supply → no buy (exit-liquidity machine). */
       deployerSniperHoldPct: 1,
-      /** v11.11: launch buyers (first 15 s) still holding more than this % of what they bought → no buy (0 = off). */
-      maxFirstBuyersHoldingPct: 0,
+      /** v11.11: launch buyers (first 15 s) still holding more than this % of what they bought → no buy (0 = off).
+       *  v11.19: ON at 50 — research: deployer-funded launch buyers exit within 5 min; a launch crowd still sitting on
+       *  ≥5% of the supply is the dump that hasn't happened yet. */
+      maxFirstBuyersHoldingPct: 50,
+      /** v11.19: ≥ this many known dumper wallets among the coin's first 20 buyers → no buy (vendor data: 94% of such
+       *  coins dump vs 61% base). 0 = off. */
+      maxDumpersInFirst20: 3,
       /** …only when those bags are at least this % of the supply. */
       firstBuyersMinBagPct: 5,
       minProvenCount: 3,
@@ -927,6 +938,8 @@ export const DEFAULT_CONFIG = {
     /** v11.18: copy trades (a tracked COPY wallet just bought) skip the Sniper volume / score gate — the copy replay
      *  tests them as "buy when they buy"; the rest of the pipeline (owner filters, rug / bundle guards) still applies. */
     exemptCopies: true as boolean,
+    /** v11.19: a repeat-graduator (elite) deployer's coin needs only this × the volume minimums (its demand comes later). */
+    eliteVolumeFactor: 0.5,
     exits: {
       takeProfitTiers: [
         { multiple: 1.5, sellPct: 25 },

@@ -1,6 +1,8 @@
 /**
- * Launch covariates (v11.11) — arXiv 2607.02823 (832k pump.fun launches): a Telegram link graduated 8.9× more often and a
- * launch market cap above the 30 SOL default (creator self-buy) carried 4.5× the hazard. Stored on every evaluation as
+ * Launch covariates (v11.11) — arXiv 2607.02823 (832k pump.fun launches) reported a Telegram link graduating 8.9× more
+ * often and a launch market cap above the 30 SOL default (creator self-buy) carrying 4.5× the hazard. RETRACTED by the
+ * author in v4 (Sep 2026): the collector's labels were biased and the model failed a 14-day holdout — direction
+ * plausible, magnitude unknown. These stay FEATURES for the learners to test; no rule, no points. Stored on every evaluation as
  * `features.launch` so the win model / rule search / AI coach can weigh them — NO rule and NO points here.
  */
 

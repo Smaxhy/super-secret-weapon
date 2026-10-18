@@ -18,6 +18,9 @@ import { runBacktest } from '../learner/backtester';
 import { scoreGapReport } from '../tools/score-gap';
 import { moneyMap } from '../learner/money-map';
 import { copyReplayStatus, startCopyReplay } from '../learner/copy-replay-runner';
+import { deployerStudyRunning, lastDeployerStudy, runDeployerStudy } from '../learner/deployer-study';
+import { DEFAULT_CONFIG as DEFAULTS } from '../config/default';
+import { getConfig as cfgNow } from '../config/runtime-config';
 import { replayStatus, startReplay } from '../learner/replay-runner';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
@@ -91,6 +94,21 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       const h = Number(q.hours ?? 48);
       const source = q.source === 'real' || q.source === 'skipped' || q.source === 'filtered' ? q.source : 'all';
       return moneyMap(redis, { hours: Number.isFinite(h) ? Math.min(168, Math.max(1, h)) : 48, strategy: q.strategy || null, source });
+    });
+    // v11.19 deployer study: does a creator's past predict the next launch — on OUR Token table (no peeking).
+    secured.get('/api/deployers/study', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return { running: deployerStudyRunning(), last: await lastDeployerStudy() };
+    });
+    secured.post<{ Body: { days?: number } }>('/api/deployers/study/run', async (req, reply) => {
+      if (deployerStudyRunning()) {
+        reply.code(409);
+        return { ok: false, error: 'a deployer study is already running' };
+      }
+      const days = Math.min(30, Math.max(1, Number(req.body?.days ?? 14) || 14));
+      const el = (cfgNow().deployers ?? DEFAULTS.deployers).elite ?? DEFAULTS.deployers.elite;
+      void runDeployerStudy(days, el).catch(() => undefined);
+      return { ok: true, days };
     });
     // v11.18 copy replay: walk the tape, copy wallets once their record qualifies — who is actually making money?
     secured.get('/api/copy-replay', async (_req, reply) => {

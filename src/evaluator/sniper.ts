@@ -24,6 +24,8 @@ export interface SniperConfig {
   requireProvenCrowd: boolean;
   /** v11.10: refuse serial launchers / deployers that rugged before (absent in old saved rows = on). */
   requireDeployerNotSerial?: boolean;
+  /** v11.19: elite (repeat-graduator) deployers' coins need only this × the volume minimums. */
+  eliteVolumeFactor?: number;
   exits: SniperExits;
 }
 
@@ -50,7 +52,8 @@ export interface SniperEntryInput {
 export function sniperEntryFails(i: SniperEntryInput, c: SniperConfig): string[] {
   if (!c.enabled) return [];
   const out: string[] = [];
-  const v = c.volume;
+  const ef = i.deployerClass === 'elite' ? Math.min(1, Math.max(0.1, c.eliteVolumeFactor ?? 1)) : 1;
+  const v = { ...c.volume, minBuyers: Math.ceil(c.volume.minBuyers * ef), minBuySol: c.volume.minBuySol * ef };
   if (!i.flow) out.push('not enough real trading in the last 5 min');
   else {
     if (i.flow.buyers < v.minBuyers) out.push(`${i.flow.buyers} real buyers in 5 min < ${v.minBuyers}`);

@@ -1005,6 +1005,7 @@ export class Evaluator {
         copiedWallet: job.data.wallet,
         kols: kolsIn,
         kolFollow,
+        eliteDeployer: deployer?.class === 'elite',
         sizeMultiplier: tune.sizeFactor * (explore
           ? ex.sizeMultiplier * coach.sizeFactor * (trend?.sizeFactor ?? 1)
           : (risky ? re.sizeMultiplier : 1) * (focusRules?.sizeMultiplier ?? (STRATEGY.name === 'CURVE_SNIPE' ? npCfg.sizeMultiplier : STRATEGY.name === 'RUNNER' ? (cfg.runner ?? DEFAULT_CONFIG.runner).sizeMultiplier : 1)) * coach.sizeFactor * conv.factor * copyMult * (trend?.sizeFactor ?? 1) * modelSize),
