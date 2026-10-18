@@ -94,6 +94,16 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   `/crypto`. Forex routes `/forex` (Live), `/forex/practice`, `/forex/bot` (`components/FxBot.tsx`), `/forex/strategies`,
   `/forex/paper`, `/forex/setup` (page reads `:section`, no inner tabs). Practice: chart + order ticket side by side on
   wide screens, TradingView ≈ 68% of the screen height (≥560 px).
+- **v12.4 (Oct 19)** (owner: "does it learn; crypto usage a lot less; forex should know news, holidays, banks; it's the
+  weekend"). `src/forex/calendar.ts`: ForexFactory free weekly JSON (`nfs.faireconomy.media/ff_calendar_thisweek.json` +
+  `nextweek`, hourly at most, Redis `fx:cal`) → `newsBlock(pair)` (High impact ±30 min for either currency, metals = USD;
+  Holiday = whole day) + `marketClock()` (open Sun 17:00 → Fri 17:00 New York, sessions, `noNewTrades` last 2 h, `flattenNow`
+  last 30 min). Auto-bot: no opens when blocked / near the close (logged "waited on …"), all bot trades closed at
+  `flattenNow` (reason 'weekend'), and **self-pruning**: a strategy with ≥12 closed bot trades and a net loss is dropped
+  (`practice.botResults`, Redis `fx:bot:dropped`). GET `/api/forex/calendar`; Forex Live / Practice / Auto-bot show the
+  market clock bar (`components/FxNews.tsx` `MarketClockBar`), Live shows "News, central banks and holidays". Crypto costs:
+  migration v53 — AI coach + AI meme reader off (Anthropic credits), live dry-run off (RPC), Helius 5k / FluxRPC 50k a day.
+  The Chainstack Yellowstone add-on ($49) is the owner's call (free feed works for paper). tests/forex-calendar.test.ts.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

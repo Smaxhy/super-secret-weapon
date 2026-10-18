@@ -9,6 +9,7 @@ import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
 import { oandaCandles, oandaPrices, oandaReady, loadOanda, type Granularity } from './oanda';
 import { INSTRUMENTS, instrument, type Bar, type Instrument } from './types';
+import { marketClock } from './calendar';
 
 const log = moduleLogger('forex-practice');
 export type AcctId = 'me' | 'bot';
@@ -59,7 +60,7 @@ export interface ClosedPractice extends PracticePosition {
   exit: number;
   closedAt: number;
   pnlUsd: number;
-  reason: 'manual' | 'stop' | 'target' | 'stop-out' | 'signal';
+  reason: 'manual' | 'stop' | 'target' | 'stop-out' | 'signal' | 'weekend';
 }
 
 export interface PracticeAccount {
@@ -317,6 +318,15 @@ export class Practice {
       if (!a.open.length) continue;
       const q = await this.quotes(this.neededIds(a));
       const ev = tick(a, q, Date.now());
+      if (acct === 'bot' && marketClock(Date.now()).flattenNow && a.open.length) {
+        const mids: Record<string, number> = {};
+        for (const x of Object.values(q)) mids[x.id] = x.mid;
+        for (const p of [...a.open]) {
+          const qq = q[p.pair];
+          closePos(a, p, qq ? (p.side === 1 ? qq.bid : qq.ask) : exitPx(p, mids[p.pair] ?? p.entry), mids, 'weekend', Date.now());
+        }
+        ev.push('weekend: every bot trade closed before the Friday close');
+      }
       if (ev.length) {
         log.info({ acct, ev }, 'practice account event');
         await this.save(a, acct);
@@ -381,7 +391,7 @@ export class Practice {
    * stop loses `BOT.riskPct` of equity at `BOT.leverage`×. A held trade the lab no longer has open (its trail / time /
    * signal exit fired) is closed at the market. Returns what happened.
    */
-  async syncBot(labOpen: Array<{ ref: string; strategy: string; pair: string; side: 1 | -1; entryT: number; stop: number; target: number | null; chosen: boolean }>): Promise<string[]> {
+  async syncBot(labOpen: Array<{ ref: string; strategy: string; pair: string; side: 1 | -1; entryT: number; stop: number; target: number | null; chosen: boolean }>, blockFor: (pair: string) => string | null = () => null): Promise<string[]> {
     return this.serial(async () => {
       const a = await this.load('bot');
       const events: string[] = [];
@@ -397,8 +407,16 @@ export class Practice {
         }
       }
       const held = new Set([...a.open.map((p) => p.ref), ...a.closed.slice(0, 200).map((p) => p.ref)]);
+      const clock = marketClock(Date.now());
+      const noted = new Set<string>();
       for (const t of labOpen) {
         if (!t.chosen || held.has(t.ref) || Date.now() - t.entryT > BOT.freshMs) continue;
+        const why = clock.noNewTrades ? (clock.open ? 'weekly close is near' : 'market closed') : blockFor(t.pair);
+        if (why) {
+          if (!noted.has(`${t.pair}:${why}`)) events.push(`waited on ${t.pair} (${t.strategy}): ${why}`);
+          noted.add(`${t.pair}:${why}`);
+          continue;
+        }
         if (a.open.length >= BOT.maxOpen) break;
         const qq = q[t.pair];
         if (!qq || qq.tradeable === false) continue;
@@ -418,6 +436,20 @@ export class Practice {
       if (events.length) log.info({ events }, 'forex bot account');
       return events;
     });
+  }
+
+  /** Per-strategy results of the bot account (to drop strategies that lose in real time). */
+  async botResults(): Promise<Record<string, { n: number; pnlUsd: number }>> {
+    const a = await this.load('bot');
+    const out: Record<string, { n: number; pnlUsd: number }> = {};
+    for (const c of a.closed) {
+      if (!c.strategy) continue;
+      const k = c.strategy;
+      out[k] = out[k] ?? { n: 0, pnlUsd: 0 };
+      out[k].n++;
+      out[k].pnlUsd += c.pnlUsd;
+    }
+    return out;
   }
 
   async close(id: string | 'all', acct: AcctId = 'me'): Promise<{ ok: boolean; error?: string }> {

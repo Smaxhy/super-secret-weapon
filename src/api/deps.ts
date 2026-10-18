@@ -12,6 +12,7 @@ import type { StrategyLab } from '../learner/strategy-lab';
 import type { Tournament } from '../learner/tournament';
 import type { ForexLab } from '../forex/lab';
 import type { Practice } from '../forex/practice';
+import type { ForexCalendar } from '../forex/calendar';
 import type { MemeReader } from '../evaluator/meme-reader';
 import type { TaLab } from '../learner/ta-lab';
 import type { TrendingHub } from '../scanner/trending-hub';
@@ -63,6 +64,8 @@ export interface ApiDeps {
   forex?: ForexLab | null;
   /** v12.1: forex practice account (manual trades, fake money, leverage). */
   practice?: Practice | null;
+  /** v12.4: economic calendar + market clock. */
+  fxCalendar?: ForexCalendar | null;
 }
 
 /** Classify a token for the live feed colour code. */

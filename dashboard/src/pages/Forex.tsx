@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { FxBot } from '../components/FxBot';
+import { FxNews, MarketClockBar } from '../components/FxNews';
 import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 import { ago } from '../lib/format';
@@ -73,6 +74,7 @@ export function Forex() {
         ) : undefined}
       />
       {error && <ErrorBox message={error} />}
+      {(section === 'live' || section === 'practice' || section === 'bot') && <div className="mb-4"><MarketClockBar /></div>}
       {section === 'practice' && <FxTrade />}
       {section === 'bot' && <FxBot />}
       {section === 'setup' && <Stack><OandaCard />{r && <Setup r={r} />}</Stack>}
@@ -81,6 +83,7 @@ export function Forex() {
       {labNeeded && r && (
         <Stack>
           <Summary r={r} />
+          {section === 'live' && <FxNews />}
           {section === 'live' && <Markets r={r} onTrade={(id) => { try { localStorage.setItem('fx.pair', id); } catch { /* ignore */ } navigate('/forex/practice'); }} />}
           {section === 'strategies' && <Strategies r={r} />}
           {section === 'paper' && <Paper r={r} />}

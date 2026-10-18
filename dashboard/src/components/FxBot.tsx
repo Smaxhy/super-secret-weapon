@@ -7,7 +7,7 @@ import { Badge, Button, Card, Row, Rows, Stack, StatTile } from './ui';
 interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string }
 interface Closed { id: string; pair: string; side: 1 | -1; entry: number; exit: number; pnlUsd: number; reason: string; closedAt: number; strategy?: string }
 interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[] }
-interface Data { account: Acct | null; log: Array<{ t: number; e: string }>; chosen: string[] }
+interface Data { account: Acct | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
 
 const dp = (id: string) => (id.includes('JPY') ? 3 : id === 'XAUUSD' ? 2 : id === 'XAGUSD' ? 3 : 5);
 const usd = (x: number) => `${x < 0 ? '−' : ''}$${Math.abs(x).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -32,6 +32,8 @@ export function FxBot() {
         <p className="text-sm text-ink-2">
           Every hour, right after the candle closes, the bot checks all strategies on all 12 markets. When a chosen strategy fires, it opens the trade here with that strategy's stop and target, risking <span className="font-semibold text-ink">1% of the account</span> at 30× leverage (max 8 trades at once). It closes when the stop, target, trail or time exit hits. Fake money, real prices.
         </p>
+        <p className="mt-2 text-sm text-ink-2">It also waits 30 min either side of big news, skips bank holidays, opens nothing in the last 2 hours of the week and closes everything 30 min before the Friday close. And it learns from itself: a strategy that has lost money over 12+ of its trades is dropped.</p>
+        {!!data?.dropped?.length && <p className="mt-2 text-xs text-down">Dropped for losing: {data.dropped.join(', ')}</p>}
         <p className="mt-2 text-xs text-muted">Chosen: strategies marked Edge or Maybe on unseen data, plus the four with published evidence (time-series momentum ×2, local-hours effect, London fix flow). {data?.chosen.length ? `${data.chosen.length} strategy × timeframe combinations right now.` : ''}</p>
       </Card>
       {a && (

@@ -17,6 +17,7 @@
 import { runBacktest } from '../learner/backtester';
 import { copyReplayStatus, startCopyReplay } from '../learner/copy-replay-runner';
 import { cohortTestRunning, lastCohortTest, runCohortTest } from '../learner/cohort-test';
+import { marketClock } from '../forex/calendar';
 import { loadOanda, maskToken, oandaReady, saveOanda, testOanda } from '../forex/oanda';
 import { moneyMap } from '../learner/money-map';
 import { DEFAULT_CONFIG as DEFAULTS } from '../config/default';
@@ -142,7 +143,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     });
     secured.get('/api/forex/bot', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
-      const [snap, logRaw, chosenRaw] = await Promise.all([deps.practice ? deps.practice.snapshot('bot') : null, redis.get('fx:bot:log').catch(() => null), redis.get('fx:bot:chosen').catch(() => null)]);
+      const [snap, logRaw, chosenRaw, droppedRaw] = await Promise.all([deps.practice ? deps.practice.snapshot('bot') : null, redis.get('fx:bot:log').catch(() => null), redis.get('fx:bot:chosen').catch(() => null), redis.get('fx:bot:dropped').catch(() => null)]);
       const parse = <T,>(x: string | null, d: T): T => {
         try {
           return x ? (JSON.parse(x) as T) : d;
@@ -150,7 +151,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
           return d;
         }
       };
-      return { account: snap?.account ?? null, log: parse(logRaw, [] as Array<{ t: number; e: string }>), chosen: parse(chosenRaw, [] as string[]) };
+      return { account: snap?.account ?? null, log: parse(logRaw, [] as Array<{ t: number; e: string }>), chosen: parse(chosenRaw, [] as string[]), dropped: parse(droppedRaw, [] as string[]), clock: marketClock(Date.now()) };
     });
     secured.post<{ Body: { pair?: string; side?: number; marginUsd?: number; leverage?: number; stop?: number | null; target?: number | null } }>('/api/forex/practice/open', async (req, reply) => {
       const b = req.body ?? {};
@@ -175,6 +176,12 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       const tf = (['S5', 'M1', 'M5', 'M15', 'H1', 'H4', 'D'] as const).find((x) => x === q.tf) ?? 'M5';
       if (!deps.practice) return { source: 'yahoo', bars: [] };
       return deps.practice.candles(String(q.pair ?? 'EURUSD'), tf, Math.min(500, Math.max(30, Number(q.count ?? 200) || 200)));
+    });
+    secured.get('/api/forex/calendar', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      const c = deps.fxCalendar?.get() ?? { at: 0, events: [] };
+      const now = Date.now();
+      return { at: c.at, clock: marketClock(now), events: c.events.filter((e) => e.t >= now - 12 * 3_600_000 && e.t <= now + 8 * 86_400_000 && e.impact !== 'Non-Economic') };
     });
     // OANDA demo token = a free DATA feed only (no trading through it); masked on read.
     secured.get('/api/forex/oanda', async () => {

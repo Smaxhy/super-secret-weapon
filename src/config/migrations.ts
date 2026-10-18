@@ -682,6 +682,17 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['explore', ['maxPerHour'], 40],
     ],
   },
+  {
+    version: 53,
+    note: 'v12.4 (owner: "I want my crypto usage a lot less now, it runs in the background while forex runs"): the paid parts off — AI coach + AI meme reader (Anthropic credits), the live-path dry run (RPC calls); Helius / FluxRPC daily budgets cut so optional lookups pause sooner. Crypto paper trading and the free learners keep running',
+    set: [
+      ['aiCoach', ['enabled'], false],
+      ['meme', ['enabled'], false],
+      ['live', ['dryRun', 'enabled'], false],
+      ['usage', ['helius', 'dailyBudget'], 5_000],
+      ['usage', ['flux', 'dailyBudget'], 50_000],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */
