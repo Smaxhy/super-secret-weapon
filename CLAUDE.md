@@ -349,6 +349,11 @@ December (small wallet in Nov only if paper edge is positive).
   `tests/deploy-split.test.ts` fails if the forex process imports an unlisted file. The generic GBDT core moved to
   `src/lib/gbdt.ts` (tree-model re-exports it) so forex doesn't load crypto learners. Forex logs:
   `docker compose logs -f forex`; health `/api/forex/health`.
+  **v15.4.1 fix (forex broke after the split)**: Caddy's config is a single-FILE bind mount; `git pull` writes a new
+  Caddyfile (new inode), so the running container kept the OLD file and `caddy reload` re-read it → `/api/forex*` still
+  went to the crypto bot (no forex routes any more) → forex dead. auto-update.sh `heal_caddy` (every 5-min run + after
+  each deploy): file inside the container ≠ repo's → `docker compose up -d --force-recreate --no-deps caddy`. Manual:
+  `cd /root/bot && docker compose up -d --force-recreate --no-deps caddy`. Never rely on `caddy reload` after a pull.
   Cron runs `scripts/auto-update.sh` every minute (GitHub checked every 5 min or on the dashboard's Update button).
   Log: `~/bot-update.log`. Bot logs: `docker compose logs -f bot`.
 - **API:** `https://209-250-254-34.sslip.io` (Caddy → bot:8080, Let's Encrypt).

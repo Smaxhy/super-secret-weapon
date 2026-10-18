@@ -28,6 +28,16 @@ status() { # status <state> <message>
   rcli SET update:status "$json" EX 86400 >/dev/null
 }
 
+# Caddy's config is a single-file bind mount: `git pull` writes a NEW Caddyfile (new inode), so the running
+# container keeps seeing the old one and `caddy reload` re-reads the old file. (v15.4: forex requests kept going to the
+# crypto bot → forex broke.) Fix: when the file inside the container differs from the repo's, recreate the container.
+heal_caddy() {
+  if ! docker compose exec -T caddy cat /etc/caddy/Caddyfile 2>/dev/null | cmp -s - Caddyfile; then
+    echo "$(date -u '+%F %T') Caddy runs an old config (or is down) — recreating it"
+    docker compose up -d --force-recreate --no-deps caddy >/dev/null 2>&1 || true
+  fi
+}
+
 REQ="$(rcli GETDEL update:request | tr -d '\r')"
 MIN="$(date -u '+%M')"
 # Nothing asked and not a 5-minute mark → done (no GitHub call).
@@ -43,6 +53,7 @@ if ! git fetch -q origin "$BRANCH"; then
 fi
 REMOTE="$(git rev-parse "origin/$BRANCH")"
 if [[ "$REMOTE" == "$DEPLOYED" && "$REQ" != "force" ]]; then
+  heal_caddy
   status up_to_date "already running the newest code"
   exit 0
 fi
@@ -89,10 +100,8 @@ if [[ $CRYPTO == 1 || $FOREX == 1 ]] && ! docker compose up "${FLAGS[@]}"; then
   status failed "build failed — retrying in 5 min (disk: $(df -h / | tail -1 | awk '{print $5}') used)"
   exit 1
 fi
-# Caddy only reads its config at start/reload.
-if [[ -z "$DEPLOYED" || -n "$(git diff --name-only "$PREV" HEAD -- Caddyfile)" ]]; then
-  docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
-fi
+# Caddy only reads its config at start: make sure it runs the repo's Caddyfile.
+heal_caddy
 echo "$REMOTE" > .deployed-sha
 DEPLOYED="$REMOTE"
 status done "updated to ${GIT_SHA}: ${WHAT}"
