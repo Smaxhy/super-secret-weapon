@@ -10,12 +10,12 @@ export function Card({ title, subtitle, action, children, className = '', accent
   return (
     <section id={id} className={`card min-w-0 ${accent ? 'card-accent' : ''} ${lift ? 'card-lift' : ''} ${padded ? 'p-4 sm:p-5' : ''} ${className}`}>
       {(title || action) && (
-        <div className={`flex items-start justify-between gap-3 ${padded ? 'mb-4' : 'px-4 pt-4 sm:px-5 sm:pt-5'}`}>
+        <div className={`flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between ${padded ? 'mb-4' : 'px-4 pt-4 sm:px-5 sm:pt-5'}`}>
           <div className="min-w-0">
             {title && <h2 className="break-words text-[15px] font-semibold leading-snug text-ink">{title}</h2>}
             {subtitle && <p className="mt-1 text-pretty text-[13px] leading-snug text-muted">{subtitle}</p>}
           </div>
-          {action && <div className="flex shrink-0 items-center gap-2 text-sm">{action}</div>}
+          {action && <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm sm:shrink-0">{action}</div>}
         </div>
       )}
       {children}
