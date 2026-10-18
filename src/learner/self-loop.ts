@@ -102,7 +102,7 @@ export const emptyState = (): LoopState => ({ current: null, history: [], lastRu
 
 /** Settings the replay really evaluates (owner filters, strategy minimums, gates, sniper, wallet/deployer entry, exits). */
 const REPLAYABLE = ['ownerFilters.', 'focus.migrated.', 'focus.soon.', 'focus.newPair.', 'momentumGate.', 'entryQuality.', 'entry.pressure.', 'entry.minCombinedScore', 'entry.minHolders', 'sniper.', 'exit.', 'wallets.entry.', 'deployers.', 'runner.scan.'];
-const EXCLUDED = [/^usage\./, /^obsidian\./, /^paper\./, /^trading\.enabledStrategies\./, /^sniper\.enabled$/, /^loop\./, /\.enabled$/];
+const EXCLUDED = [/^usage\./, /^obsidian\./, /^paper\./, /^live\./, /^trading\.enabledStrategies\./, /^sniper\.enabled$/, /^loop\./, /\.enabled$/];
 /** Trade sizes: the loop may only make them smaller. */
 const SIZE_KEY = /(sizeSol|PositionSol|sizeMultiplier|allocation)/;
 

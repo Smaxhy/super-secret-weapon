@@ -943,6 +943,29 @@ export const DEFAULT_CONFIG = {
    * UTC. Essential calls (the safety check of a coin about to be bought) always go. 0 = unlimited.
    */
   usage: { helius: { dailyBudget: 25_000 }, flux: { dailyBudget: 300_000 }, softPct: 80 },
+  /**
+   * v11.14 live execution (executor/live/, DORMANT): only runs when TRADING_MODE=LIVE + WALLET_SECRET are in the VPS .env
+   * AND the owner confirmed on Controls → Live trading AND the wallet holds ≥ minBalanceSol. These caps sit ON TOP of
+   * every normal one. dryRun: in PAPER, every paper fill also builds + simulates its real transaction (nothing sent).
+   */
+  live: {
+    dryRun: { enabled: true as boolean },
+    maxPositionSol: 0.1,
+    maxOpen: 2,
+    reserveSol: 0.05,
+    minBalanceSol: 0.5,
+    buySlippageBps: 1500,
+    sellSlippageBps: 2000,
+    priorityFeePercentile: 75,
+    minPriorityMicroLamports: 10_000,
+    maxPriorityMicroLamports: 1_000_000,
+    tipLamports: 1_000_000,
+    confirmTimeoutMs: 30_000,
+    /** SetLoadedAccountsDataSizeLimit (bytes); 0 = off — Chainstack disables it too (MaxLoadedAccountsDataSizeExceeded on Token-2022). */
+    loadedAccountsDataSizeLimit: 0,
+    reconcileSec: 60,
+    reconcileTolPct: 2,
+  },
 
   /**
    * Shadow trades (src/learner/shadow-trades.ts; owner: "speed up the learning"): coins the bot didn't buy

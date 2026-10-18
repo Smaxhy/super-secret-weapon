@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ResetPaperForm } from '../components/ResetPaper';
 import { groupRules, matchesRule, RuleGroup, useRuleSettings } from '../components/BuyRules';
 import { DataFeed } from '../components/DataFeed';
+import { LiveTrading } from '../components/LiveTrading';
 import { SniperMode } from '../components/SniperMode';
 import { Notifications } from '../components/Notifications';
 import { Icon } from '../components/Icon';
@@ -293,6 +294,7 @@ export function Controls() {
               )}
               {tab === 'system' && (
                 <div className="grid gap-6 xl:grid-cols-2">
+                  <LiveTrading />
                   <UpdateCard />
                   <Card title="Reset paper account" subtitle={`Current starting balance: ${form.paper.startingBalanceSol} SOL.`} className="border-critical/40">
                     <ResetPaperForm defaultBalance={10} />

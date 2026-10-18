@@ -26,6 +26,8 @@ import { logTrade } from '../learner/trade-logger';
 import { currentHourFactor, currentRegime } from '../learner/regime-detector';
 import { timingNow } from '../learner/timing';
 import type { MarketRaw } from '../evaluator/market-analyzer';
+import { liveEntryGuard } from './live/guards';
+import { liveConfig } from './live/tx-builder';
 import type { Executor } from './types';
 import { scaleInPlan } from './scale-in';
 import { sniperSize } from '../evaluator/sniper';
@@ -161,7 +163,7 @@ export class Trader {
     const capital = balance + openCost;
 
     // Paper ignores the loss limits (owner: as much data as possible); live always stops.
-    const lossLimits = mode === 'LIVE' || !(cfg.exit.paperIgnoresLossLimits ?? true);
+    const lossLimits = lossLimitsApply(mode, cfg.exit.paperIgnoresLossLimits);
     const dailyPnl = await realisedPnlToday(mode);
     if (dailyPnl <= -(cfg.exit.dailyLossCircuitBreakerPct / 100) * capital) {
       const day = new Date().toISOString().slice(0, 10);
@@ -178,7 +180,7 @@ export class Trader {
     // Strategy cool-off: its recent trades are clearly losing → no new entries for a while.
     const cool = await strategyCoolOff(req.strategy, mode, cfg.trading.strategyBreaker);
     // (learning trades still go through: minimum size, and the bot keeps learning while it cools off)
-    if (cool && !req.explore && lossLimits) return refuse(cool);
+    if (cool && (mode === 'LIVE' || !req.explore) && lossLimits) return refuse(cool);
     // Copy trades are heavily restricted.
     const copyMax = req.kolFollow ? (cfg.kol?.follow?.maxOpen ?? DEFAULT_CONFIG.kol.follow.maxOpen) : (cfg.copy.maxOpen ?? 1);
     if (req.strategy === 'SMART_MONEY_COPY' && open.filter((p) => p.strategy === 'SMART_MONEY_COPY').length >= copyMax) return refuse(req.kolFollow ? 'KOL-follow limit reached' : 'copy trade limit reached');
@@ -264,6 +266,12 @@ export class Trader {
     }
     if (size < cfg.trading.minPositionSol) {
       return refuse(`size ${size.toFixed(3)} SOL below minimum (balance ${balance.toFixed(3)}, ${req.strategy} budget ${budget.toFixed(3)})`);
+    }
+    // LIVE: its own caps on top of every one above (max open, max SOL per trade, fee reserve).
+    if (mode === 'LIVE') {
+      const lg = liveEntryGuard({ openLive: open.length, size, minPositionSol: cfg.trading.minPositionSol, balance }, liveConfig());
+      if ('refuse' in lg) return refuse(lg.refuse);
+      size = lg.size;
     }
 
     // Copycat ("vamp") of a coin we traded or of a bigger coin with the same ticker → never.
@@ -402,6 +410,11 @@ export function coolOffReason(
   const left = latest + b.pauseMinutes * 60_000 - now;
   if (avg >= b.maxAvgPnlPct || left <= 0) return null;
   return `cooling off: last ${last.length} trades average ${avg.toFixed(1)}% — paused ${Math.ceil(left / 60_000)} more min (the strategy lab keeps testing)`;
+}
+
+/** Daily loss breaker + strategy cool-off: always in LIVE; in PAPER only when the owner hasn't switched them off. */
+export function lossLimitsApply(mode: 'PAPER' | 'LIVE', paperIgnoresLossLimits: boolean | undefined): boolean {
+  return mode === 'LIVE' || !(paperIgnoresLossLimits ?? true);
 }
 
 async function strategyCoolOff(strategy: Strategy, mode: 'PAPER' | 'LIVE', b: { enabled: boolean; lastN: number; minTrades: number; maxAvgPnlPct: number; pauseMinutes: number } | undefined): Promise<string | null> {

@@ -44,7 +44,7 @@ import { priceShape } from './evaluator/price-shape';
 import { AiCoach } from './learner/ai-coach';
 import { Evaluator } from './evaluator/evaluator';
 import { WalletAnalyzer } from './evaluator/wallet-analyzer';
-import { PaperExecutor } from './executor/paper-trader';
+import { createExecutor } from './executor/executor';
 import { SellManager } from './executor/sell-manager';
 import { startPositionHistory, stopPositionHistory } from './executor/position-history';
 import { Trader } from './executor/trader';
@@ -154,9 +154,8 @@ async function main(): Promise<void> {
   observations?.start();
   const safety = env.ENABLE_SAFETY_CHECKS ? new SafetyChecker(liveState, redis) : null;
 
-  // Phase 2: scoring + execution. LIVE execution arrives in Phase 4.
-  if (env.TRADING_MODE === 'LIVE') log.warn('TRADING_MODE=LIVE but live execution is not built yet (Phase 4) — running PAPER');
-  const executor = new PaperExecutor(liveState);
+  // Execution: PAPER (with the live dry run) unless every live gate passes — see executor/executor.ts.
+  const { executor, reconciler: liveReconciler } = await createExecutor(liveState, redis);
   const trader = new Trader(executor);
   const sellManager = new SellManager(executor, liveState, redis);
   sellManager.start();
@@ -415,7 +414,7 @@ async function main(): Promise<void> {
     },
     load: () => redis.get(LOOP_STATE_KEY),
     save: async (raw) => void (await redis.set(LOOP_STATE_KEY, raw)),
-    liveMode: () => env.TRADING_MODE === 'LIVE',
+    liveMode: () => env.TRADING_MODE === 'LIVE' || executor.mode === 'LIVE',
     note: (atMs, title, lines) => obsidian.appendDiary(atMs, title, lines),
     remember: (bullet) => aiCoach.remember(bullet),
   });
@@ -825,6 +824,7 @@ async function main(): Promise<void> {
       brain.stop();
       stopPush();
       obsidian.stop();
+      liveReconciler?.stop();
       selfLoop.stop();
       await tapeRecorder.stop();
       usageBudget.stop();

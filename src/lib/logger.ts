@@ -10,7 +10,7 @@ export const logger = pino({
   level: env.LOG_LEVEL,
   // Never let a secret slip into the logs, even if someone logs a whole config object.
   redact: {
-    paths: ['*.privateKey', '*.BOT_WALLET_PRIVATE_KEY', '*.HELIUS_API_KEY', '*.apiKey', '*.password', '*.JWT_SECRET'],
+    paths: ['*.privateKey', '*.secretKey', '*.secret', '*.WALLET_SECRET', 'WALLET_SECRET', '*.BOT_WALLET_PRIVATE_KEY', '*.HELIUS_API_KEY', '*.apiKey', '*.password', '*.JWT_SECRET', '*.LIVE_SENDER_URL', '*.LIVE_SHIELD_URL'],
     censor: '***',
   },
   transport:

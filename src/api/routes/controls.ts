@@ -12,6 +12,8 @@
  *   POST /api/controls/add-funds     { sol: 0.01–1000 } add paper SOL without resetting anything
  *   GET  /api/controls/rules         buy rules per strategy (config/editable.ts) with current values
  *   PUT  /api/controls/rules         { key, value } change one of them (validated against its limits)
+ *   GET  /api/controls/live          live trading status: mode, wallet (first4…last4 only), balance, blockers, dry-run stats, caps
+ *   PUT  /api/controls/live          { action: 'live', confirm: first 4 chars of the wallet } | { action: 'paper' } → restart
  *   POST /api/positions/:id/sell     manual sell of one position
  */
 import type { FastifyInstance } from 'fastify';
@@ -24,6 +26,14 @@ import { applyEdit } from '../../config/apply-edit';
 import { EDITABLE, getPath } from '../../config/editable';
 import { DEFAULT_CONFIG } from '../../config/default';
 import type { ApiDeps } from '../deps';
+import { env } from '../../config/env';
+import { redis } from '../../lib/redis';
+import { getConnection } from '../../lib/solana';
+import { readSimStats } from '../../executor/live/dry-run';
+import { confirmMatches, liveBlockers } from '../../executor/live/guards';
+import { disableLive, enableLive, liveStatus } from '../../executor/live/live-mode';
+import { liveConfig } from '../../executor/live/tx-builder';
+import { loadWallet } from '../../executor/live/wallet';
 import { addPaperFunds, isResetting, MAX_ADD_SOL, MAX_START_SOL, MIN_START_SOL, parseStartingBalance, resetPaperAccount } from '../paper-reset';
 
 const num = (v: unknown, min: number, max: number): number | undefined => {
@@ -154,6 +164,43 @@ export async function controlsRoutes(app: FastifyInstance, deps: ApiDeps): Promi
     await saveFeedSettings(v.value);
     void recordEvent({ level: 'WARN', module: 'controls', type: 'feed_changed', message: `Data feed changed from the dashboard (trades: ${maskUrl(v.value.tradesWsUrl) ?? 'free default'}, gRPC: ${v.value.useGrpc ? maskUrl(v.value.grpcEndpoint) : 'off'}) — restarting to use it` });
     // Docker restarts the bot right away (restart: unless-stopped); the new feed is read at start.
+    setTimeout(() => process.kill(process.pid, 'SIGTERM'), 1_500).unref();
+    return { ok: true, restarting: true };
+  });
+
+  // Live trading (dormant until the owner sets it up on the VPS and confirms here). Never returns the key or full address.
+  const walletBalance = async (): Promise<number | null> => {
+    const w = loadWallet(env).wallet;
+    if (!w) return null;
+    try {
+      return (await getConnection().getBalance(w.publicKey, 'confirmed')) / 1e9;
+    } catch {
+      return null;
+    }
+  };
+  app.get('/api/controls/live', async () => {
+    const st = liveStatus();
+    const [sim, balanceSol, openLive] = await Promise.all([readSimStats(redis), walletBalance(), prisma.position.count({ where: { mode: 'LIVE', status: 'OPEN' } })]);
+    return { status: st, balanceSol, openLive, sim, caps: liveConfig(), activeMode: deps.executor.mode };
+  });
+  app.put<{ Body: { action?: unknown; confirm?: unknown } }>('/api/controls/live', async (req, reply) => {
+    const action = req.body?.action;
+    if (action === 'paper') {
+      const open = await prisma.position.count({ where: { mode: 'LIVE', status: 'OPEN' } });
+      if (open > 0) return reply.code(409).send({ error: `${open} live trade(s) still open — sell them first (Sell all & stop), then switch back to paper` });
+      await disableLive();
+      void recordEvent({ level: 'WARN', module: 'controls', type: 'live_off', message: 'Back to PAPER trading (live confirmation removed) — restarting' });
+      if (deps.executor.mode === 'LIVE') setTimeout(() => process.kill(process.pid, 'SIGTERM'), 1_500).unref();
+      return { ok: true, restarting: deps.executor.mode === 'LIVE' };
+    }
+    if (action !== 'live') return reply.code(400).send({ error: "action must be 'live' or 'paper'" });
+    const { wallet, error: walletError } = loadWallet(env);
+    if (!confirmMatches(req.body?.confirm, wallet?.address ?? null)) return reply.code(400).send({ error: 'Type the first 4 characters of the bot wallet address to confirm' });
+    const st = liveStatus();
+    const blockers = liveBlockers({ envMode: env.TRADING_MODE, hasWallet: !!wallet, walletError, enabledAt: 'now', balanceSol: await walletBalance(), senderReady: st?.senderReady ?? false, senderWhy: st?.senderReady ? null : 'no sender ready' }, liveConfig());
+    if (blockers.length) return reply.code(400).send({ error: `Can't go live yet: ${blockers.join('; ')}`, blockers });
+    await enableLive();
+    void recordEvent({ level: 'WARN', module: 'controls', type: 'live_on', message: `LIVE trading confirmed by the owner (wallet ${wallet!.short}) — restarting into live mode` });
     setTimeout(() => process.kill(process.pid, 'SIGTERM'), 1_500).unref();
     return { ok: true, restarting: true };
   });

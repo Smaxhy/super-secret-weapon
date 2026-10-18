@@ -24,7 +24,7 @@ strategy on Performance → Mistakes ("Does each strategy deserve to run?") and 
 Diagnosing (reading code, explaining Bot health, diagnose.sh output) is always fine — it changes nothing.
 
 ## Oct 17 build queue (owner: "even if the session runs out, continue when it's back"; owner approved all, no asking)
-Done: v11 … v11.10 (see Current state), dashboard colour pass (bb75986), 4 GB tuning. Running: dashboard LAYOUT rebuild
+Done: v11 … v11.14 (see Current state; live execution built DORMANT), dashboard colour pass (bb75986), 4 GB tuning. Running: dashboard LAYOUT rebuild
 (every page, multi-column; owner: "all you did is change the colour"). Next, in order, one worker at a time per tree:
 (1) research ports — Telegram + launch-size features, first-buyers-still-holding %, holder-rewards longer holds, early-leg
 lab variant; (2) self-improving loop: AI proposes ONE editable change → replay proves it on 2–3 days of tape vs current →
@@ -59,7 +59,7 @@ December (small wallet in Nov if paper edge is positive).
   outcome labels 1h after each stored evaluation, Bayesian pattern odds, nightly weight tuning 00:05 UTC,
   regime detector every 15 min), plus parts of 6 (PumpSwap/migration strategy, copy-trading tracked
   wallets) and 9 (free metadata socials/keywords). Positions stream live over WebSocket ('positions').
-- Mode: **PAPER only** (10 SOL fake balance). No wallet key on the server. Phase 4 (live) not built.
+- Mode: **PAPER** (10 SOL fake balance). No wallet key on the server. Phase 4 (live) built DORMANT in v11.14 — see the go-live checklist there.
 - **STRATEGY v5 (Oct 10, after the owner's CSV: 26 trades, −0.92 SOL, +3% wins vs −16% losses; based on
   3 research reports — see "v5 research" below).** Diagnosis: (1) USD rules bought late — with SOL ≈ $80,
   $12k MC = 75%+ curve, SOON $20k = ~90% (where holders dump into graduation); (2) entries ~27 s after launch
@@ -954,6 +954,42 @@ December (small wallet in Nov if paper edge is positive).
   skips the cooldown, never the one-at-a-time rule). LIVE mode: off unless `loop.allowLive`. Every step → Obsidian diary
   (`obsidian.appendDiary`); applied / kept / reverted → one AI memory bullet (`aiCoach.remember`). Editable group
   "Self-improving loop". tests/self-loop.test.ts.
+- **v11.14 (Oct 18): live execution (DORMANT)** (Phase 4; `src/executor/live/`, `live` config, migration v45). PAPER stays
+  the default: a real transaction can only be sent when ALL hold — `TRADING_MODE=LIVE` + `WALLET_SECRET` (base58 or a JSON
+  64-byte array; `BOT_WALLET_PRIVATE_KEY` also read) in the VPS .env, a ready sender, the wallet ≥ `live.minBalanceSol`, AND
+  the owner typed the wallet's first 4 characters on Controls → System → "Live trading" (PUT `/api/controls/live`, BotConfig
+  `_live` {enabledAt}; restarts the bot). `createExecutor` (`src/executor/executor.ts`) picks LIVE only when `liveBlockers`
+  is empty, else PAPER; trader + sell manager only see the `Executor` interface, so paper, dry run and live share one path.
+  - **Transactions** (`instructions.ts`, `tx-builder.ts`; layouts from Chainstack's pumpfun-bonkfun-bot Oct 2026 protocol
+    doc + IDLs): curve `buy_v2` [184,23,238,97,103,197,211,61] (27 accounts, `amount` + `max_sol_cost` = the size) /
+    `sell_v2` [93,246,130,60,231,233,64,178] (26, `min_sol_output`), quote_mint WSOL, fee recipient FEE / MAYHEM_FEE,
+    buyback recipient random of 8, sharing_config + fee_config under the fee program; PumpSwap `buy`
+    [102,6,61,18,1,218,235,234] (`base_amount_out`, `max_quote_amount_in` = size, track_volume) / `sell`
+    [51,230,133,164,1,127,131,173] (`min_quote_amount_out`): IDL accounts → cashback pair (cashback pools, sell) →
+    pool-v2 only on the canonical pool → buyback recipient + its WSOL ATA last; quote settles through a seed-derived WSOL
+    account opened + closed in the same tx. Idempotent ATA create; ATA closed on a full sell. Priority fee =
+    getRecentPrioritizationFees p75 clamped 10k–1M µlamports/CU (cached 10 s); CU limit per kind from the first
+    simulation ×1.2 (defaults curve 120k/90k, PumpSwap 220k/180k); `loadedAccountsDataSizeLimit` 0 = off (Token-2022 hits
+    MaxLoadedAccountsDataSizeExceeded — Chainstack disables it too). Non-SOL curves refused. UNVERIFIED: the PumpSwap BUY
+    account list (the doc only shows sell) — the dry run proves or disproves it.
+  - **Sending** (`sender.ts`): `LIVE_SENDER_URL` + `LIVE_TIP_ACCOUNTS` (comma list; Helius Sender, tip `live.tipLamports`
+    to a random tip account) → else `LIVE_SHIELD_URL` (FluxRPC shield) → else normal RPC. Every send counted in the usage
+    budget. Confirm by polling signature status until `live.confirmTimeoutMs` / blockhash expiry; fill from the confirmed
+    tx's pre/post balances (ATA rent excluded), else the plan.
+  - **Safety**: `live.maxPositionSol` 0.1 on top of every other cap, `maxOpen` 2, `reserveSol` 0.05 kept for fees,
+    `minBalanceSol` 0.5; daily loss limit + strategy cool-off ALWAYS apply in LIVE (`lossLimitsApply`; learning trades
+    don't skip the cool-off in live); kill switch (Sell all & stop) sells through the live executor; reconciler every 60 s
+    (chain token balances vs open LIVE positions; mismatch > 2% → `entryContext.review` + WARN, unknown tokens → WARN, never
+    buys / sells on its own); self-improving loop excludes `live.*` and never runs in LIVE. Secret never logged (logger
+    redaction + `redactSecret` on every error); only first4…last4 of the address leaves the process.
+  - **Dry run** (`dry-run.ts`, `live.dryRun.enabled`, on): in PAPER every successful paper fill also builds + SIMULATES the
+    real tx (bot wallet if set, else a throwaway key → "funds" = layout accepted), skipped past the RPC soft budget.
+    Redis `live:sim` (n / ok / funds / error) + `live:sim:last` (50). Bot health "Live path: N simulated, X% OK"; Controls
+    card shows the last 5. Editable group "Live trading" (caps only). Back to paper: 409 while live trades are open.
+  - **Owner's go-live checklist**: (1) a NEW dedicated wallet, funded with 2–5 SOL (never the main wallet); (2) VPS .env:
+    `WALLET_SECRET=…` + `LIVE_SENDER_URL` (+ `LIVE_TIP_ACCOUNTS`) or `LIVE_SHIELD_URL`, then `TRADING_MODE=LIVE`;
+    (3) dry-run stats ≥ 95% OK for a full day (Controls → System → Live trading); (4) Controls → Go live (type the first
+    4 characters). Go/no-go Nov 7 only if paper edge is positive. tests/live-executor.test.ts.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

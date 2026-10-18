@@ -615,6 +615,11 @@ export const MIGRATIONS: ConfigMigration[] = [
     note: 'v11.13: self-improving loop (one proven change a day, watched live, reverted when live disagrees)',
     set: [['loop', ['enabled'], true]],
   },
+  {
+    version: 45,
+    note: 'v11.14: live execution built but dormant (PAPER stays the default); the paper dry run simulates every paper fill\'s real transaction',
+    set: [['live', ['dryRun', 'enabled'], true]],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

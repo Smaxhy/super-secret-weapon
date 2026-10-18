@@ -33,8 +33,17 @@ const EnvSchema = z.object({
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   REDIS_URL: z.string().default('redis://localhost:6379'),
 
-  TRADING_MODE: z.enum(['PAPER', 'LIVE']).default('PAPER'),
+  TRADING_MODE: z.preprocess((v) => (typeof v === 'string' ? v.trim().toUpperCase() : v), z.enum(['PAPER', 'LIVE'])).default('PAPER'),
+  /** Live trading wallet secret (base58 or JSON byte array). Only in the VPS .env — never in git, logs or the API. */
+  WALLET_SECRET: optionalString,
+  /** Older name for the same secret. */
   BOT_WALLET_PRIVATE_KEY: optionalString,
+  /** Helius Sender URL (dual route validators + Jito); needs LIVE_TIP_ACCOUNTS. */
+  LIVE_SENDER_URL: optionalString,
+  /** Tip accounts for the Sender, comma-separated (from Helius docs). */
+  LIVE_TIP_ACCOUNTS: optionalString,
+  /** MEV-protected send endpoint (e.g. FluxRPC shield) — plain JSON-RPC sendTransaction. */
+  LIVE_SHIELD_URL: optionalString,
 
   API_PORT: z.coerce.number().int().default(8080),
   DASHBOARD_PASSWORD: optionalString,

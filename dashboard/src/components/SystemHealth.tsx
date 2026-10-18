@@ -25,6 +25,8 @@ export interface SystemData {
   walletBook?: { enabled: boolean; wallets: number; proven: number; dumpers: number; losers: number; bots: number } | null;
   /** v11.7: requests per provider today vs the owner's budgets. */
   usage?: { day: string; providers: Record<string, { used: number; budget: number; softLimitHit: boolean }> } | null;
+  /** v11.14: the live path (dry-run simulations of the real transactions). */
+  live?: { mode: 'PAPER' | 'LIVE'; wallet: string | null; simulated: number; okPct: number | null; errors: number; blockers: string[] } | null;
   trading?: {
     lastEntryAt: string | null;
     minutesSinceEntry: number;
@@ -193,6 +195,14 @@ export function SystemDetails({ data, upd }: { data: SystemData; upd: UpdateInfo
         <Row label="Event-loop lag" value={data.eventLoopLagMs !== null ? `${data.eventLoopLagMs} ms` : '—'} tone={(data.eventLoopLagMs ?? 0) > 1000 ? 'down' : undefined} />
         {data.usage && (
           <Row label="FluxRPC today" value={`${data.usage.providers.flux?.used.toLocaleString() ?? 0} / ${data.usage.providers.flux?.budget ? data.usage.providers.flux.budget.toLocaleString() : '∞'}`} />
+        )}
+        {data.live && (
+          <Row
+            label="Live path"
+            value={<span className={data.live.mode === 'LIVE' ? 'font-semibold text-down' : ''}>{data.live.mode === 'LIVE' ? 'LIVE' : `${data.live.simulated.toLocaleString()} simulated, ${data.live.okPct ?? '—'}% OK`}</span>}
+            sub={data.live.mode === 'LIVE' ? `wallet ${data.live.wallet ?? '—'}` : data.live.errors ? `${data.live.errors} would fail` : 'paper dry run of the real transactions'}
+            tone={data.live.mode === 'PAPER' && data.live.okPct !== null && data.live.okPct < 95 ? 'down' : undefined}
+          />
         )}
         {data.lastExit && <Row label="Last stop" value={<span className={crashed(data.lastExit.reason) ? 'text-down' : 'text-ink-2'}>{data.lastExit.reason}</span>} sub={new Date(data.lastExit.at).toLocaleString()} />}
       </Rows>

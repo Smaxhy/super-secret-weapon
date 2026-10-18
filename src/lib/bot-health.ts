@@ -15,6 +15,8 @@ import type { TapeStats } from '../learner/tape-recorder';
 import { usageSnapshot, type UsageSnapshot } from './usage-budget';
 import type { WalletBookStats } from '../learner/wallet-book';
 import type { DeployerStats } from '../learner/deployer-book';
+import { readSimStats } from '../executor/live/dry-run';
+import { liveStatus } from '../executor/live/live-mode';
 import type { Redis } from 'ioredis';
 import { eventLoopLagMs } from './process-guard';
 import { blockerSnapshot, type BlockerSnapshot } from './entry-blockers';
@@ -96,6 +98,8 @@ export interface HealthSnapshot {
   usage?: UsageSnapshot | null;
   /** v11.10: the deployer book (creators known, proven, serial, ruggers). */
   deployers?: DeployerStats | null;
+  /** v11.14: live path — mode, and how the paper dry run's simulations of the real transactions went. */
+  live?: { mode: 'PAPER' | 'LIVE'; wallet: string | null; simulated: number; okPct: number | null; errors: number; blockers: string[] } | null;
 }
 
 let tapeSource: (() => TapeStats) | null = null;
@@ -136,6 +140,11 @@ export async function healthSnapshot(now = Date.now()): Promise<HealthSnapshot> 
   };
   if (!redisRef) return base;
   try {
+    const st = liveStatus();
+    if (st) {
+      const sim = await readSimStats(redisRef);
+      base.live = { mode: st.activeMode, wallet: st.wallet, simulated: sim.n, okPct: sim.okPct, errors: sim.error, blockers: st.blockers };
+    }
     const [starts, last, errors, info, crashes] = await Promise.all([redisRef.lrange(K_STARTS, 0, 49), redisRef.get(K_LAST_EXIT), redisRef.lrange(K_ERRORS, 0, 4), redisRef.info('memory'), redisRef.lrange(K_CRASHES, 0, 49)]);
     // Starts in the last 24h, not counting the current run.
     base.restarts24h = Math.max(0, starts.filter((s) => now - Number(s) < 86_400_000).length - 1);
