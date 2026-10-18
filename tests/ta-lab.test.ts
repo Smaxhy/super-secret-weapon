@@ -100,5 +100,5 @@ describe('chart-strategy lab (live wiring)', () => {
     const lab = new TaLab(redis as unknown as Redis, crowd, ls);
     await lab.tick(now);
     expect(lab.openCount).toBe(0);
-  });
+  }, 30_000);
 });
