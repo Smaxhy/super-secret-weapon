@@ -81,6 +81,17 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       return deps.autopsy?.snapshot() ?? null;
     });
     secured.post('/api/autopsy/run', async () => (await deps.autopsy?.run()) ?? null);
+    // v11.13 self-improving loop: state + last experiments; Run = one experiment now (replays take minutes → answers early).
+    secured.get('/api/loop', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return deps.selfLoop ? { enabled: true, ...(await deps.selfLoop.state()) } : { enabled: false };
+    });
+    secured.post('/api/loop/run', async () => {
+      if (!deps.selfLoop) return { ran: false, why: 'the loop is not running' };
+      const run = deps.selfLoop.runOnce(true);
+      const quick = await Promise.race([run, new Promise<null>((r) => setTimeout(() => r(null), 1500))]);
+      return quick ?? { ran: true, why: 'started — proving the idea on the recorded market (a few minutes)' };
+    });
     // Best hours / days to trade (market motion + our results) and what that means right now.
     // What the bot changed about how it trades (learners' adjustments, newest first) + how each strategy enters now.
     secured.get('/api/changes', async () => ({ changes: await recentChanges(60), entryStyles: deps.autopsy?.snapshot()?.entryStyles ?? [], tuning: deps.autopsy?.snapshot()?.tuning ?? [] }));

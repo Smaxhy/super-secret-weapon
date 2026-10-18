@@ -31,6 +31,11 @@ import { Brain } from './learner/brain';
 import { startPushNotifier } from './lib/push';
 import { LossAutopsy } from './learner/loss-autopsy';
 import { ObsidianSync } from './integrations/obsidian-sync';
+import { SelfLoop, keyAllowed, LOOP_STATE_KEY, DEFAULT_LOOP, type LoopConfig } from './learner/self-loop';
+import { replayRunning, runReplayAndWait } from './learner/replay-runner';
+import { blockerSnapshot } from './lib/entry-blockers';
+import { applyEdit } from './config/apply-edit';
+import { EDITABLE, getPath } from './config/editable';
 import { sniperRuleLines } from './integrations/obsidian-notes';
 import { recentChanges } from './lib/change-log';
 import { MigratedScanner } from './scanner/migrated-scanner';
@@ -388,6 +393,33 @@ async function main(): Promise<void> {
   evaluator.obsidian = obsidian;
   aiCoach.ownerNotesSource = () => obsidian.ownerNotes();
   aiCoach.onReview = (e) => obsidian.onReview(e);
+  // v11.13 self-improving loop: one proven change a day (AI idea or Bot health), replay-tested, watched, reverted if live disagrees.
+  const loopCfg = (): LoopConfig => ({ ...DEFAULT_LOOP, ...((getConfig() as { loop?: Partial<LoopConfig> }).loop ?? {}) });
+  const selfLoop = new SelfLoop({
+    cfg: loopCfg,
+    current: (key) => getPath(getConfig(), key),
+    health: () => blockerSnapshot(Date.now(), { ...getConfig().trading.enabledStrategies }),
+    proposeAi: (ctx) => aiCoach.proposeOne({ ...ctx, keys: EDITABLE.filter((e) => keyAllowed(e.key, loopCfg()).ok).map((e) => ({ key: e.key, label: `${e.group}: ${e.label}`, min: e.min, max: e.max, now: getPath(getConfig(), e.key) })) }),
+    runReplay: (set, fromMs, toMs) => runReplayAndWait({ from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString(), policy: 'live', set }),
+    replayRunning,
+    tapeStartMs: async () => (await prisma.tradeTape.findFirst({ orderBy: { t: 'asc' }, select: { t: true } }))?.t.getTime() ?? null,
+    apply: (key, value, source, why) => applyEdit(key, typeof value === 'boolean' ? (value ? 1 : 0) : value, source, why),
+    liveTrades: async ({ sinceMs, untilMs, strategy, limit }) => {
+      const rows = await prisma.position.findMany({
+        where: { mode: 'PAPER', status: 'CLOSED', ...(strategy ? { strategy: strategy as never } : {}), closedAt: { ...(sinceMs ? { gte: new Date(sinceMs) } : {}), ...(untilMs ? { lt: new Date(untilMs) } : {}) } },
+        orderBy: { closedAt: 'desc' },
+        take: limit ?? 500,
+        select: { sizeSol: true, realizedPnlSol: true },
+      });
+      return rows.reverse().filter((p) => p.sizeSol > 0).map((p) => (p.realizedPnlSol / p.sizeSol) * 100);
+    },
+    load: () => redis.get(LOOP_STATE_KEY),
+    save: async (raw) => void (await redis.set(LOOP_STATE_KEY, raw)),
+    liveMode: () => env.TRADING_MODE === 'LIVE',
+    note: (atMs, title, lines) => obsidian.appendDiary(atMs, title, lines),
+    remember: (bullet) => aiCoach.remember(bullet),
+  });
+  selfLoop.start();
   const brain = new Brain(redis, (since) => shadow.results(since), aiCoach, (since) => coinOutcomes.results(since));
   brain.outcomeSource = () => coinOutcomes.snapshot();
   brain.exitSource = () => exitTuner.snapshot();
@@ -706,7 +738,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, moonshot, tape: tapeRecorder, walletBook, deployers: deployerBook }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, moonshot, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -793,6 +825,7 @@ async function main(): Promise<void> {
       brain.stop();
       stopPush();
       obsidian.stop();
+      selfLoop.stop();
       await tapeRecorder.stop();
       usageBudget.stop();
       taLab.stop();

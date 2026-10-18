@@ -6,6 +6,7 @@
  *    Budget (allocation as a stacked bar + the multiplier per strategy).
  */
 import { BrainTips } from '../components/BrainTips';
+import { LoopCard } from '../components/LoopCard';
 import { Card, Empty, ErrorBox, Loading, PageHeader, Row, Rows, SectionHeader, StackedBar, Stat, StatTile, Tabs, Timeline, useTab } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { ago, STRATEGY_LABEL } from '../lib/format';
@@ -98,6 +99,10 @@ export function Brain() {
             </div>
           )}
         </Card>
+      </div>
+
+      <div className="mb-8">
+        <LoopCard />
       </div>
 
       <Tabs tabs={[...TABS]} value={tab} onChange={setTab} sticky label="Brain sections" />

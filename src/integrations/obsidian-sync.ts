@@ -455,6 +455,25 @@ export class ObsidianSync {
     }
   }
 
+  /** A short diary entry outside an AI review (the self-improving loop's steps). */
+  async appendDiary(atMs: number, title: string, lines: readonly string[]): Promise<void> {
+    if (!this.enabled) return;
+    try {
+      const day = dayOf(atMs);
+      const fp = path.join(this.vault, DIRS.diary, `${day}.md`);
+      await ensureDir(path.dirname(fp));
+      try {
+        await fs.access(fp);
+      } catch {
+        await fs.writeFile(fp, diaryHeader(day));
+      }
+      const time = new Date(atMs).toISOString().slice(11, 16);
+      await fs.appendFile(fp, ['', `## ${time} — ${title}`, ...lines.map((l) => `- ${l}`), ''].join('\n'));
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'obsidian diary failed');
+    }
+  }
+
   snapshot(): { coins: number; wallets: number; trades: number; vault: string } {
     return { ...this.counts, vault: this.vault };
   }

@@ -968,6 +968,29 @@ export const DEFAULT_CONFIG = {
   /** v11: momentum gate — blocks buying at the peak (69% of losers never went above 1.05x). Uses priceShape data. */
   momentumGate: { enabled: true as boolean, maxRun1mPct: 18, maxRun3mPct: 30, minOffHighPct: 0, minBuyShare2m: 0.52, maxLastCandlePct: 15, skipForExplore: true as boolean, skipForDipEntry: true as boolean },
 
+  /**
+   * v11.13 self-improving loop (learner/self-loop.ts): once a day ONE setting change is proposed (AI coach, else a
+   * deterministic proposer from Bot health), proven on the recorded tape (replay baseline vs candidate), applied,
+   * watched on live trades and reverted when live disagrees. `allowedKeys` empty = every tape-replayable editable key.
+   */
+  loop: {
+    enabled: true as boolean,
+    hourUtc: 5,
+    tapeDays: 2,
+    minTapeHours: 24,
+    minTradesBoth: 8,
+    minEdgeSol: 0.1,
+    minEdgePctPts: 2,
+    maxPfDrop: 0.15,
+    watchTrades: 12,
+    watchHours: 48,
+    revertIfWorsePts: 3,
+    cooldownHours: 20,
+    allowedKeys: [] as string[],
+    maxStepPct: 30,
+    allowLive: false as boolean,
+  },
+
   /** v11: Obsidian vault sync — writes trades, strategies, performance as Markdown files (set OBSIDIAN_VAULT_PATH on the VPS). */
   obsidian: {
     enabled: false as boolean,

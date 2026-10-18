@@ -337,6 +337,17 @@ export const EDITABLE: EditableSetting[] = [
   S('Wallet engine', 'exit.holderClock.expiryShare', 'Sell once this share of the watched supply is past its usual hold', 0.3, 1, '0–1', 0.05),
   S('Wallet engine', 'exit.holderClock.sellPct', 'Sell this much of what\'s left', 10, 100, '%', 5),
   S('Wallet engine', 'exit.holderClock.minMultiple', 'Only at or above this multiple', 1, 3, 'x', 0.05),
+  S('Self-improving loop', 'loop.enabled', 'Once a day: try one change, prove it on the recorded market, keep it only if it wins: on (1) / off (0)', 0, 1, undefined, 1),
+  S('Self-improving loop', 'loop.hourUtc', 'Hour of the day it runs (UTC)', 0, 23, 'h', 1),
+  S('Self-improving loop', 'loop.tapeDays', 'Days of recorded market each test replays', 1, 5, 'days', 1),
+  S('Self-improving loop', 'loop.minTradesBoth', 'Replay trades the change needs before it can win', 3, 100, undefined, 1),
+  S('Self-improving loop', 'loop.minEdgeSol', 'It must make at least this much more on the replay', 0, 5, 'SOL', 0.05),
+  S('Self-improving loop', 'loop.minEdgePctPts', '…or at least this much more per trade', 0, 20, 'pts', 0.5),
+  S('Self-improving loop', 'loop.watchTrades', 'Live trades it watches before keeping a change', 3, 100, undefined, 1),
+  S('Self-improving loop', 'loop.watchHours', 'Or watch at most this long', 6, 168, 'h', 6),
+  S('Self-improving loop', 'loop.revertIfWorsePts', 'Undo when live is this much worse per trade than the replay', 0, 20, 'pts', 0.5),
+  S('Self-improving loop', 'loop.cooldownHours', 'Wait between experiments', 0, 168, 'h', 1),
+  S('Self-improving loop', 'loop.maxStepPct', 'Biggest move per change (share of a setting\'s range)', 5, 100, '%', 5),
 ];
 
 /** Pure: read a dotted path from an object. */

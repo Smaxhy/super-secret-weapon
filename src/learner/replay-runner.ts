@@ -75,6 +75,31 @@ export function startReplay(req: { from?: string; to?: string; policy?: string; 
   }
 }
 
+export function replayRunning(): boolean {
+  return running !== null;
+}
+
+/** Start a replay and wait for its report (the self-improving loop). null = busy, failed or timed out. */
+export async function runReplayAndWait(req: { from?: string; to?: string; policy?: string; set?: string[] }, timeoutMs = 45 * 60_000): Promise<ReplayReport | null> {
+  const r = startReplay(req);
+  if (!r.ok) return null;
+  const id = r.job.id;
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    await new Promise((res) => setTimeout(res, 2_000));
+    if (running?.id === id) continue;
+    if (r.job.exitCode !== 0) return null;
+    const raw = await redis.get(replayResKey(id)).catch(() => null);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as ReplayReport;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export interface ReplayStatus {
   running: ReplayJob | null;
   lastJob: ReplayJob | null;

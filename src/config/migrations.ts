@@ -610,6 +610,11 @@ export const MIGRATIONS: ConfigMigration[] = [
     note: 'v11.12: momentum gate no longer needs 6% under the 10-min high (owner: 11 h without a buy signal; it was the #1 migrated refusal ×128 and refused every coin making new highs — the run caps still stop chasing, dip-only still handles pullbacks)',
     set: [['momentumGate', ['minOffHighPct'], 0]],
   },
+  {
+    version: 44,
+    note: 'v11.13: self-improving loop (one proven change a day, watched live, reverted when live disagrees)',
+    set: [['loop', ['enabled'], true]],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

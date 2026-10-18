@@ -6,7 +6,7 @@ import { recordChange } from '../lib/change-log';
 import { checkEdit, getPath, setPath } from './editable';
 import { getConfig, updateConfigSection } from './runtime-config';
 
-export async function applyEdit(key: string, raw: unknown, source: 'owner' | 'owner-tip' | 'exit-tuner', why: string): Promise<{ ok: true; text: string; value: unknown } | { ok: false; error: string }> {
+export async function applyEdit(key: string, raw: unknown, source: 'owner' | 'owner-tip' | 'exit-tuner' | 'loop' | 'loop-revert', why: string): Promise<{ ok: true; text: string; value: unknown } | { ok: false; error: string }> {
   const r = checkEdit(key, raw);
   if (!r.ok) return r;
   const [section, ...rest] = key.split('.') as [keyof ReturnType<typeof getConfig>, ...string[]];

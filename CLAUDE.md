@@ -928,6 +928,32 @@ December (small wallet in Nov if paper edge is positive).
   sells 30% at 0.4 s then 20/20/15/15 at 2.4 / 3.6 / 5.2 / 7.2 s after the buy whatever the price (VirtualBook
   `slotLadderOf`; steps ≥200 ms apart so a leg can land up to ~1 s late); `noAutoApply` → `autoApplicable()` false — judged
   by the lab / backtester / replay only. Editable: Wallet engine, Exit timers — every strategy. tests/research-ports-2.test.ts.
+- **v11.12 (Oct 18): momentum gate fix** (owner: 11 h without a buy signal; "too close to the top" was the #1 migrated
+  refusal ×128/h): `momentumGate.minOffHighPct` 6 → 0 (default + migration v43). The +18%/1 min and +30%/3 min caps still
+  stop chasing; dip-only (≥$15k MC) still handles pullbacks.
+- **v11.13 (Oct 18): self-improving loop** (owner: "the bot improves itself with proof while I sleep";
+  `src/learner/self-loop.ts`, `loop` config, migration v44). Daily at `hourUtc` 5 (10-min tick) or Brain → "Self-improving
+  loop" → Run now (POST `/api/loop/run`; GET `/api/loop` = state + last 20 experiments; Redis `loop:state`). ONE change:
+  (1) **propose** — `aiCoach.proposeOne` (structured output, only keys `keyAllowed` offers, normal AI budget; over budget /
+  no key → none) else `proposeFromHealth` (pure, Bot health last hour: strategies with ≥20 rule-passes and 0 signals →
+  their top relaxable skip, else their score bar; after 6 h without a buy → the top relaxable skip of any switched-on
+  strategy; `settingForSkip` maps the normalised skip text to a key, `relaxStep` = 20% of the gap to the editable limit,
+  ≥1 step). `validateChange`: editable limits + step rounding, no-op refused, sizes (sizeSol / PositionSol /
+  sizeMultiplier / allocation) only DOWN, ≤ `maxStepPct` 30% of the range per change; `keyAllowed`: `allowedKeys` if set,
+  else only keys the replay evaluates (ownerFilters, focus.migrated/soon/newPair, momentumGate, entryQuality,
+  entry.pressure, entry.minCombinedScore / minHolders*, sniper.*, exit.*, wallets.entry, deployers, runner.scan) and never
+  usage / obsidian / paper / enabledStrategies / sniper.enabled / loop / any `.enabled` switch. (2) **prove** — needs ≥
+  `minTapeHours` 24 of TradeTape; two replays (`runReplayAndWait`, the child-process runner, policy `live` = saved config;
+  never while another replay runs) on the last `tapeDays` 2: baseline vs `--set key=value`; `acceptVerdict`: candidate ≥
+  `minTradesBoth` 8 trades, totalSol > 0, PF not lower than base − `maxPfDrop` 0.15, and +`minEdgeSol` 0.1 SOL or
+  +`minEdgePctPts` 2 pts/trade with ≥ the same SOL; baseline 0 trades → accept ≥8 profitable trades with PF ≥1. (3)
+  **apply** — `applyEdit(source 'loop')` → change log. (4) **watch** — real closed PAPER trades since the apply (the key's
+  own strategy via `strategyOfKey`, else all) until `watchTrades` 12 or `watchHours` 48; `watchVerdict` reverts (source
+  'loop-revert') only when live avg is > `revertIfWorsePts` 3 pts under the replay's avg AND under the 30 trades before
+  the change; 0 trades in 48 h → kept. One experiment at a time; `cooldownHours` 20 after a kept / reverted one (Run now
+  skips the cooldown, never the one-at-a-time rule). LIVE mode: off unless `loop.allowLive`. Every step → Obsidian diary
+  (`obsidian.appendDiary`); applied / kept / reverted → one AI memory bullet (`aiCoach.remember`). Editable group
+  "Self-improving loop". tests/self-loop.test.ts.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

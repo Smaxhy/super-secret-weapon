@@ -22,6 +22,7 @@ import type { AiCoach } from '../learner/ai-coach';
 import type { TapeRecorder } from '../learner/tape-recorder';
 import type { WalletBook } from '../learner/wallet-book';
 import type { DeployerBook } from '../learner/deployer-book';
+import type { SelfLoop } from '../learner/self-loop';
 
 export interface ApiDeps {
   liveState: LiveState;
@@ -50,6 +51,8 @@ export interface ApiDeps {
   walletBook?: WalletBook | null;
   /** v11.10: the deployer book (GET /api/deployers). */
   deployers?: DeployerBook | null;
+  /** v11.13: the self-improving loop (Brain page card). */
+  selfLoop?: SelfLoop | null;
 }
 
 /** Classify a token for the live feed colour code. */

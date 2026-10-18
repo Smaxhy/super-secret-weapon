@@ -332,6 +332,58 @@ export class AiCoach {
     }
   }
 
+  /** Add one dated bullet to the durable memory (the self-improving loop's kept / reverted results). */
+  async remember(bullet: string): Promise<void> {
+    const before = await this.memory();
+    const mem = mergeMemory(before, [bullet], false, new Date().toISOString().slice(0, 10));
+    await this.redis.set(K.memory, JSON.stringify(mem.bullets));
+  }
+
+  /**
+   * The self-improving loop asks for exactly ONE setting change worth testing on the recorded market (v11.13). Only
+   * keys the replay can evaluate are offered; the loop still validates and proves it. null = no key, over budget, no idea.
+   */
+  async proposeOne(ctx: { health: unknown; history: unknown[]; keys: Array<{ key: string; label: string; min: number; max: number; now: unknown }> }): Promise<{ key: string; value: number; why: string } | null> {
+    if (!this.client || !ctx.keys.length) return null;
+    try {
+      const spent = await this.spentToday();
+      if (spent >= this.budgetUsd) return null;
+      const model = this.model;
+      const schema = {
+        type: 'object',
+        additionalProperties: false,
+        required: ['found', 'key', 'value', 'why'],
+        properties: { found: { type: 'boolean' }, key: { type: 'string', enum: ctx.keys.map((k) => k.key) }, value: { type: 'number' }, why: { type: 'string' } },
+      };
+      const input = {
+        botHealthLastHour: ctx.health,
+        whatKeepsGoingWrong: this.autopsySource?.()?.findings?.slice(0, 12) ?? [],
+        memory: await this.memory(),
+        pastLoopExperiments: ctx.history,
+        settingsYouMayChange: ctx.keys,
+      };
+      const fallback = /haiku/.test(model) ? {} : { betas: ['server-side-fallback-2026-07-01'] as Anthropic.Beta.AnthropicBeta[], fallbacks: 'default' as const };
+      const res = await this.client.beta.messages.create({
+        model,
+        max_tokens: 2000,
+        ...fallback,
+        system: 'You tune a Solana pump.fun paper-trading bot. Propose exactly ONE change to one setting from "settingsYouMayChange" that is most likely to make the bot more profitable after costs — or set found=false. Your change will be tested on the last days of recorded market (replay: current settings vs your change, same costs) and applied only if it wins, then watched on live trades and reverted if live disagrees. Prefer the rule that blocks the most otherwise-good coins (Bot health) when the bot is not trading; when it trades but loses, prefer a stricter entry or a better exit. Small steps: stay within 30% of a setting\'s range from its current value ("now"). Never repeat a past experiment that was rejected or reverted. "why" = one plain sentence for the owner.',
+        output_config: { effort: 'medium', format: { type: 'json_schema', schema } },
+        messages: [{ role: 'user', content: JSON.stringify(input) }],
+      });
+      const price = priceFor(model, res.usage.input_tokens);
+      const cost = (res.usage.input_tokens * price.in + res.usage.output_tokens * price.out) / 1e6;
+      const day = new Date().toISOString().slice(0, 10);
+      await this.redis.multi().incrbyfloat(K.spend(day), cost).expire(K.spend(day), 3 * 86_400).exec();
+      if (res.stop_reason === 'refusal') return null;
+      const out = JSON.parse(res.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('')) as { found: boolean; key: string; value: number; why: string };
+      return out.found && Number.isFinite(out.value) ? { key: out.key, value: out.value, why: out.why.slice(0, 300) } : null;
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'loop proposal from the AI failed');
+      return null;
+    }
+  }
+
   constructor(
     private readonly redis: Redis,
     private readonly cfg: () => AiCoachConfig,
