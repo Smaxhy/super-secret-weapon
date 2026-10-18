@@ -19,11 +19,15 @@ export const ELITE_TEST_LAST = 'elite:test:last';
 
 export interface EliteTestConfig {
   sizeSol: number;
+  /** v2: entries — fixed delays after launch, and DIP entries (price ≥ dipPct under the first-minute high, within dipWindowMin) */
   entryDelaysSec: number[];
+  dipEntriesPct: number[];
+  dipWindowMin: number;
+  /** v2: hold horizons (minutes) — each entry × take-profit is tried with each */
+  maxHoldMins: number[];
   /** exit rules: graduation always sells; `tpX` sells earlier at this multiple (0 = graduation only) */
   takeProfitX: number[];
   stopPct: number;
-  maxHoldMin: number;
   feePct: number;
   slippagePct: number;
   buyTxSol: number;
@@ -33,10 +37,12 @@ export interface EliteTestConfig {
 
 export const DEFAULT_ELITE_TEST: EliteTestConfig = {
   sizeSol: 0.5,
-  entryDelaysSec: [15, 30, 60],
+  entryDelaysSec: [60],
+  dipEntriesPct: [30, 50],
+  dipWindowMin: 30,
+  maxHoldMins: [60, 360, 720],
   takeProfitX: [0, 3, 5],
-  stopPct: 50,
-  maxHoldMin: 60,
+  stopPct: 60,
   feePct: 1.25,
   slippagePct: 0.8,
   buyTxSol: 0.0011,
@@ -56,13 +62,16 @@ export interface EliteLaunch extends Launch {
 export interface SimResult {
   mint: string;
   symbol: string;
+  /** entry label: "60 s" or "dip 30%" */
+  entry: string;
   delaySec: number;
   tpX: number;
+  holdMin: number;
   pnlPct: number;
   pnlSol: number;
   peakX: number;
   holdSec: number;
-  reason: 'graduation' | 'take profit' | 'hard stop' | 'max hold' | 'dead' | 'no entry';
+  reason: 'graduation' | 'take profit' | 'hard stop' | 'max hold' | 'dead' | 'no entry' | 'no dip';
   graduated: boolean;
   repeat24h: boolean;
   priorGraduated: number;
@@ -78,9 +87,11 @@ export interface EliteTestReport {
   withTape: number;
   sizeSol: number;
   /** one row per delay × take-profit rule */
-  grid: Array<Agg & { delaySec: number; tpX: number; graduatedPct: number; byReason: Array<{ reason: string; n: number; avgPct: number }> }>;
+  grid: Array<Agg & { entry: string; holdMin: number; tpX: number; graduatedPct: number; byReason: Array<{ reason: string; n: number; avgPct: number }> }>;
   /** best rule, split by the no-repeat rule and by elite tier */
-  best: { delaySec: number; tpX: number } | null;
+  best: { entry: string; holdMin: number; tpX: number } | null;
+  /** when elite launches that graduated actually graduated (minutes after launch), from the Token table */
+  timeToGraduate: { n: number; medianMin: number; p25Min: number; p75Min: number; within1hPct: number; within6hPct: number } | null;
   splits: Array<Agg & { label: string }>;
   verdict: string;
   durationMs: number;
@@ -124,13 +135,25 @@ export function eliteLaunches(all: readonly (Launch & { mint: string; symbol: st
   return out;
 }
 
-/** Pure: one launch, one entry delay, one take-profit rule, on its tape. */
-export function simulate(l: EliteLaunch, tape: readonly TapeRow[], delaySec: number, tpX: number, c: EliteTestConfig): SimResult {
-  const base = { mint: l.mint, symbol: l.symbol, delaySec, tpX, graduated: l.graduated, repeat24h: l.repeat24h, priorGraduated: l.priorGraduated };
+export type Entry = { kind: 'delay'; delaySec: number } | { kind: 'dip'; dipPct: number };
+export const entryLabel = (e: Entry): string => (e.kind === 'delay' ? `${e.delaySec} s after launch` : `dip ${e.dipPct}% off the first-minute high`);
+
+/** Pure: one launch, one entry rule, one take-profit rule, one hold horizon, on its tape. */
+export function simulate(l: EliteLaunch, tape: readonly TapeRow[], entry: Entry, tpX: number, holdMin: number, c: EliteTestConfig): SimResult {
+  const base = { mint: l.mint, symbol: l.symbol, entry: entryLabel(entry), delaySec: entry.kind === 'delay' ? entry.delaySec : 0, tpX, holdMin, graduated: l.graduated, repeat24h: l.repeat24h, priorGraduated: l.priorGraduated };
   const costPct = 2 * c.feePct + 2 * c.slippagePct + ((c.buyTxSol + c.sellTxSol) / c.sizeSol) * 100;
-  const tEntry = l.createdAtMs + delaySec * 1000;
   const px = (r: TapeRow) => (r.pp && r.pp > 0 ? r.pp : r.px);
-  const first = tape.find((r) => r.t >= tEntry && px(r) > 0 && !r.amm);
+  let first: TapeRow | undefined;
+  if (entry.kind === 'delay') {
+    const tEntry = l.createdAtMs + entry.delaySec * 1000;
+    first = tape.find((r) => r.t >= tEntry && px(r) > 0 && !r.amm);
+  } else {
+    // the first-minute high, then the first trade ≥ dipPct under it within the dip window (curve only)
+    let high = 0;
+    for (const r of tape) if (r.t - l.createdAtMs <= 60_000 && px(r) > high) high = px(r);
+    if (high > 0) first = tape.find((r) => r.t - l.createdAtMs > 60_000 && r.t - l.createdAtMs <= c.dipWindowMin * 60_000 && !r.amm && px(r) > 0 && px(r) <= high * (1 - entry.dipPct / 100));
+    if (!first) return { ...base, pnlPct: 0, pnlSol: 0, peakX: 1, holdSec: 0, reason: 'no dip' };
+  }
   if (!first) return { ...base, pnlPct: r1(-costPct), pnlSol: r3((-costPct / 100) * c.sizeSol), peakX: 1, holdSec: 0, reason: tape.length ? 'dead' : 'no entry' };
   const entryPx = px(first) * (1 + c.slippagePct / 100);
   const tok = (c.sizeSol * (1 - c.feePct / 100) - c.buyTxSol) / entryPx;
@@ -138,7 +161,7 @@ export function simulate(l: EliteLaunch, tape: readonly TapeRow[], delaySec: num
   let peak = px(first);
   let lastPx = px(first);
   let lastT = first.t;
-  const deadline = first.t + c.maxHoldMin * 60_000;
+  const deadline = first.t + holdMin * 60_000;
   for (const r of tape) {
     if (r.t <= first.t) continue;
     const p = px(r);
@@ -156,28 +179,37 @@ export function simulate(l: EliteLaunch, tape: readonly TapeRow[], delaySec: num
     lastT = r.t;
   }
   const out = sellAt(lastPx);
-  return { ...base, pnlPct: r1(((out - c.sizeSol) / c.sizeSol) * 100), pnlSol: r3(out - c.sizeSol), peakX: r2(peak / entryPx), holdSec: Math.round((lastT - first.t) / 1000), reason: lastT - first.t >= c.maxHoldMin * 60_000 - 1 ? 'max hold' : 'max hold' };
+  return { ...base, pnlPct: r1(((out - c.sizeSol) / c.sizeSol) * 100), pnlSol: r3(out - c.sizeSol), peakX: r2(peak / entryPx), holdSec: Math.round((lastT - first.t) / 1000), reason: 'max hold' };
 }
 
 /** Pure: the report from all sim results. */
-export function buildReport(launches: readonly EliteLaunch[], results: readonly SimResult[], c: EliteTestConfig, meta: { from: number; to: number; withTape: number; now?: number; startedAt?: number }): EliteTestReport {
-  const grid = c.entryDelaysSec.flatMap((d) =>
-    c.takeProfitX.map((tp) => {
-      const xs = results.filter((r) => r.delaySec === d && r.tpX === tp);
-      const reasons = new Map<string, SimResult[]>();
-      for (const x of xs) reasons.set(x.reason, [...(reasons.get(x.reason) ?? []), x]);
-      return {
-        delaySec: d,
-        tpX: tp,
-        ...agg(xs),
-        graduatedPct: xs.length ? Math.round((xs.filter((x) => x.graduated).length / xs.length) * 100) : 0,
-        byReason: [...reasons].map(([reason, rs]) => ({ reason, n: rs.length, avgPct: r1(rs.reduce((a, r) => a + r.pnlPct, 0) / rs.length) })).sort((a, b) => b.n - a.n),
-      };
-    }),
+export function entriesOf(c: EliteTestConfig): Entry[] {
+  return [...c.entryDelaysSec.map((d): Entry => ({ kind: 'delay', delaySec: d })), ...c.dipEntriesPct.map((p): Entry => ({ kind: 'dip', dipPct: p }))];
+}
+
+export function buildReport(launches: readonly EliteLaunch[], results: readonly SimResult[], c: EliteTestConfig, meta: { from: number; to: number; withTape: number; now?: number; startedAt?: number; timeToGraduate?: EliteTestReport['timeToGraduate'] }): EliteTestReport {
+  const taken = results.filter((r) => r.reason !== 'no dip');
+  const grid = entriesOf(c).flatMap((e) =>
+    c.maxHoldMins.flatMap((h) =>
+      c.takeProfitX.map((tp) => {
+        const label = entryLabel(e);
+        const xs = taken.filter((r) => r.entry === label && r.holdMin === h && r.tpX === tp);
+        const reasons = new Map<string, SimResult[]>();
+        for (const x of xs) reasons.set(x.reason, [...(reasons.get(x.reason) ?? []), x]);
+        return {
+          entry: label,
+          holdMin: h,
+          tpX: tp,
+          ...agg(xs),
+          graduatedPct: xs.length ? Math.round((xs.filter((x) => x.graduated).length / xs.length) * 100) : 0,
+          byReason: [...reasons].map(([reason, rs]) => ({ reason, n: rs.length, avgPct: r1(rs.reduce((a, r) => a + r.pnlPct, 0) / rs.length) })).sort((a, b) => b.n - a.n),
+        };
+      }),
+    ),
   );
   const ranked = [...grid].filter((g) => g.n >= 10).sort((a, b) => b.totalSol - a.totalSol);
-  const best = ranked[0] ? { delaySec: ranked[0].delaySec, tpX: ranked[0].tpX } : null;
-  const bestRs = best ? results.filter((r) => r.delaySec === best.delaySec && r.tpX === best.tpX) : [];
+  const best = ranked[0] ? { entry: ranked[0].entry, holdMin: ranked[0].holdMin, tpX: ranked[0].tpX } : null;
+  const bestRs = best ? taken.filter((r) => r.entry === best.entry && r.holdMin === best.holdMin && r.tpX === best.tpX) : [];
   const splits = best
     ? [
         { label: 'creator launched again within 24 h', ...agg(bestRs.filter((r) => r.repeat24h)) },
@@ -192,10 +224,10 @@ export function buildReport(launches: readonly EliteLaunch[], results: readonly 
     ? 'No elite-creator launches in this window.'
     : !b
       ? `Only ${launches.length} elite launches with tape — too few to judge.`
-      : b.totalSol > 0 && b.profitFactor !== null && (b.profitFactor >= 1.3 || b.profitFactor === null)
-        ? `It pays on our tape: buy ${b.delaySec} s after an elite launch, ${b.tpX ? `sell at ${b.tpX}× or graduation` : 'sell into graduation'} → ${b.n} trades, ${b.winPct}% won, ${b.totalSol >= 0 ? '+' : ''}${b.totalSol} SOL at ${c.sizeSol} SOL each (avg ${b.avgPct >= 0 ? '+' : ''}${b.avgPct}%, PF ${b.profitFactor ?? '∞'}).`
-        : `Elite launches graduate often but the trade did NOT pay on our tape: best rule ${b.delaySec} s / ${b.tpX ? `${b.tpX}×` : 'graduation'} made ${b.totalSol >= 0 ? '+' : ''}${b.totalSol} SOL over ${b.n} trades (${b.winPct}% won). The move happens before a 15 s-late buyer gets in, or the losers cost more than the graduates pay.`;
-  return { at: meta.now ?? Date.now(), from: new Date(meta.from).toISOString(), to: new Date(meta.to).toISOString(), launches: launches.length, withTape: meta.withTape, sizeSol: c.sizeSol, grid, best, splits, verdict, durationMs: Date.now() - (meta.startedAt ?? Date.now()) };
+      : b.totalSol > 0 && (b.profitFactor === null || b.profitFactor >= 1.5) && b.n >= 30
+        ? `It pays on our tape: ${b.entry}, hold up to ${b.holdMin >= 60 ? `${b.holdMin / 60} h` : `${b.holdMin} min`}, ${b.tpX ? `sell at ${b.tpX}× or graduation` : 'sell into graduation'} → ${b.n} trades, ${b.winPct}% won, ${b.totalSol >= 0 ? '+' : ''}${b.totalSol} SOL at ${c.sizeSol} SOL each (avg ${b.avgPct >= 0 ? '+' : ''}${b.avgPct}%, PF ${b.profitFactor ?? '∞'}).`
+        : `Not an edge on our tape: the best rule (${b.entry}, hold ${b.holdMin >= 60 ? `${b.holdMin / 60} h` : `${b.holdMin} min`}, ${b.tpX ? `${b.tpX}×` : 'graduation'}) made ${b.totalSol >= 0 ? '+' : ''}${b.totalSol} SOL over ${b.n} trades (${b.winPct}% won, PF ${b.profitFactor ?? '∞'}). Needs PF ≥ 1.5 on 30+ trades to count.`;
+  return { at: meta.now ?? Date.now(), from: new Date(meta.from).toISOString(), to: new Date(meta.to).toISOString(), launches: launches.length, withTape: meta.withTape, sizeSol: c.sizeSol, grid, best, timeToGraduate: meta.timeToGraduate ?? null, splits, verdict, durationMs: Date.now() - (meta.startedAt ?? Date.now()) };
 }
 
 let running: Promise<EliteTestReport> | null = null;
@@ -206,29 +238,36 @@ export function runEliteTest(from: number, to: number, cfg: EliteTestConfig = DE
   if (running) return running;
   running = (async () => {
     const startedAt = Date.now();
-    const all: Array<Launch & { mint: string; symbol: string }> = [];
+    const all: Array<Launch & { mint: string; symbol: string; completedAtMs: number | null }> = [];
     let cursor = new Date(from - 30 * 86_400_000);
     const until = new Date(Math.min(to, Date.now() - 2 * 3_600_000));
     for (let page = 0; page < 3_000; page++) {
       const rows = await prisma.token.findMany({ where: { createdAt: { gt: cursor, lte: until } }, select: { mint: true, symbol: true, creator: true, createdAt: true, completedAt: true }, orderBy: { createdAt: 'asc' }, take: 5_000 });
       if (!rows.length) break;
-      for (const r of rows) all.push({ mint: r.mint, symbol: r.symbol, creator: r.creator, createdAtMs: r.createdAt.getTime(), graduated: r.completedAt !== null });
+      for (const r of rows) all.push({ mint: r.mint, symbol: r.symbol, creator: r.creator, createdAtMs: r.createdAt.getTime(), graduated: r.completedAt !== null, completedAtMs: r.completedAt?.getTime() ?? null });
       cursor = rows[rows.length - 1]!.createdAt;
       await new Promise((r) => setImmediate(r));
       if (rows.length < 5_000) break;
     }
     const launches = eliteLaunches(all, from, to, cfg.elite);
+    // When do elite launches that graduate actually graduate?
+    const byMint = new Map(all.map((a) => [a.mint, a]));
+    const ttg = launches.map((l) => byMint.get(l.mint)?.completedAtMs).filter((t): t is number => typeof t === 'number').map((t, i) => (t - launches.filter((l) => byMint.get(l.mint)?.completedAtMs !== null)[i]!.createdAtMs) / 60_000).filter((m) => m >= 0).sort((a, b) => a - b);
+    const q = (p: number) => (ttg.length ? Math.round(ttg[Math.min(ttg.length - 1, Math.floor(ttg.length * p))]!) : 0);
+    const timeToGraduate = ttg.length ? { n: ttg.length, medianMin: q(0.5), p25Min: q(0.25), p75Min: q(0.75), within1hPct: Math.round((ttg.filter((m) => m <= 60).length / ttg.length) * 100), within6hPct: Math.round((ttg.filter((m) => m <= 360).length / ttg.length) * 100) } : null;
     const results: SimResult[] = [];
     let withTape = 0;
+    const longest = Math.max(...cfg.maxHoldMins) + cfg.dipWindowMin + 2;
+    const entries = entriesOf(cfg);
     for (const l of launches) {
-      const rows = await prisma.tradeTape.findMany({ where: { mint: l.mint, t: { gte: new Date(l.createdAtMs), lte: new Date(l.createdAtMs + (cfg.maxHoldMin + 2) * 60_000) } }, orderBy: [{ t: 'asc' }, { id: 'asc' }], select: { mint: true, t: true, wallet: true, buy: true, sol: true, tokens: true, px: true, pp: true, amm: true, curvePct: true } });
+      const rows = await prisma.tradeTape.findMany({ where: { mint: l.mint, t: { gte: new Date(l.createdAtMs), lte: new Date(l.createdAtMs + longest * 60_000) } }, orderBy: [{ t: 'asc' }, { id: 'asc' }], select: { mint: true, t: true, wallet: true, buy: true, sol: true, tokens: true, px: true, pp: true, amm: true, curvePct: true } });
       const tape: TapeRow[] = rows.map((r) => ({ mint: r.mint, t: r.t.getTime(), w: r.wallet, buy: r.buy, sol: r.sol, tok: r.tokens ?? 0, px: r.px, ...(r.pp ? { pp: r.pp } : {}), amm: r.amm, curvePct: r.curvePct }));
       if (tape.length) withTape++;
       else continue; // launched before the tape started recording it: no price path, not counted
-      for (const d of cfg.entryDelaysSec) for (const tp of cfg.takeProfitX) results.push(simulate(l, tape, d, tp, cfg));
+      for (const e of entries) for (const h of cfg.maxHoldMins) for (const tp of cfg.takeProfitX) results.push(simulate(l, tape, e, tp, h, cfg));
       await new Promise((r) => setImmediate(r));
     }
-    const report = buildReport(launches.filter((l) => results.some((r) => r.mint === l.mint)), results, cfg, { from, to, withTape, startedAt });
+    const report = buildReport(launches.filter((l) => results.some((r) => r.mint === l.mint)), results, cfg, { from, to, withTape, startedAt, timeToGraduate });
     await redis.set(ELITE_TEST_LAST, JSON.stringify(report)).catch(() => undefined);
     return report;
   })().finally(() => (running = null));

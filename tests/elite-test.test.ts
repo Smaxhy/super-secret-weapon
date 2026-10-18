@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildReport, DEFAULT_ELITE_TEST, eliteLaunches, simulate, type EliteLaunch } from '../src/learner/elite-test';
+import { buildReport, DEFAULT_ELITE_TEST, eliteLaunches, entriesOf, simulate, type EliteLaunch } from '../src/learner/elite-test';
 import type { TapeRow } from '../src/learner/replay';
 
 const T0 = 1_700_000_000_000;
@@ -28,7 +28,7 @@ describe('elite launch test', () => {
     const tape: TapeRow[] = [];
     for (let s = 0; s < 600; s += 5) tape.push(row(s, 1e-6 * (1 + s / 100), { curvePct: Math.min(100, 20 + s / 7) }));
     tape.push(row(600, 7e-6, { amm: true, curvePct: null }));
-    const r = simulate(launch, tape, 15, 0, DEFAULT_ELITE_TEST);
+    const r = simulate(launch, tape, { kind: 'delay', delaySec: 15 }, 0, 60, DEFAULT_ELITE_TEST);
     expect(r.reason).toBe('graduation');
     expect(r.pnlPct).toBeGreaterThan(300); // ~1.15e-6 → ~6.9e-6 minus costs
     expect(r.holdSec).toBeGreaterThan(500);
@@ -36,13 +36,20 @@ describe('elite launch test', () => {
   it('take-profit sells earlier; the stop catches a dump; a dead coin costs the round trip', () => {
     const tape: TapeRow[] = [];
     for (let s = 0; s < 600; s += 5) tape.push(row(s, 1e-6 * (1 + s / 100)));
-    expect(simulate(launch, tape, 15, 3, DEFAULT_ELITE_TEST).reason).toBe('take profit');
-    const dump: TapeRow[] = [row(10, 1e-6), row(20, 1e-6), row(40, 0.4e-6)];
-    const d = simulate(launch, dump, 15, 0, DEFAULT_ELITE_TEST);
+    expect(simulate(launch, tape, { kind: 'delay', delaySec: 15 }, 3, 60, DEFAULT_ELITE_TEST).reason).toBe('take profit');
+    const dump: TapeRow[] = [row(10, 1e-6), row(20, 1e-6), row(40, 0.3e-6)];
+    const d = simulate(launch, dump, { kind: 'delay', delaySec: 15 }, 0, 60, DEFAULT_ELITE_TEST);
     expect(d.reason).toBe('hard stop');
-    expect(d.pnlPct).toBeLessThan(-50);
-    expect(simulate(launch, [row(1, 1e-6)], 15, 0, DEFAULT_ELITE_TEST).reason).toBe('dead');
-    expect(simulate(launch, [], 15, 0, DEFAULT_ELITE_TEST).pnlPct).toBeCloseTo(-5.5, 0);
+    expect(d.pnlPct).toBeLessThan(-60);
+    expect(simulate(launch, [row(1, 1e-6)], { kind: 'delay', delaySec: 15 }, 0, 60, DEFAULT_ELITE_TEST).reason).toBe('dead');
+    expect(simulate(launch, [], { kind: 'delay', delaySec: 15 }, 0, 60, DEFAULT_ELITE_TEST).pnlPct).toBeCloseTo(-5.5, 0);
+    // dip entry: spike to 2e-6 in the first minute, 50% dip at 5 min, then a run to graduation at 2 h
+    const dipTape: TapeRow[] = [row(5, 1e-6), row(30, 2e-6), row(300, 0.9e-6), ...Array.from({ length: 20 }, (_, i) => row(600 + i * 300, 0.9e-6 * (1 + i / 4), { curvePct: Math.min(100, 30 + i * 4) })), row(7200, 6e-6, { amm: true, curvePct: null })];
+    const dip = simulate(launch, dipTape, { kind: 'dip', dipPct: 50 }, 0, 360, DEFAULT_ELITE_TEST);
+    expect(dip.reason).toBe('graduation');
+    expect(dip.pnlPct).toBeGreaterThan(400);
+    expect(simulate(launch, dipTape, { kind: 'dip', dipPct: 50 }, 0, 60, DEFAULT_ELITE_TEST).reason).toBe('max hold');
+    expect(simulate(launch, [row(5, 1e-6), row(30, 1.1e-6), row(300, 1.0e-6)], { kind: 'dip', dipPct: 30 }, 0, 60, DEFAULT_ELITE_TEST).reason).toBe('no dip');
   });
   it('report: a grid per delay × rule, best rule, splits and a verdict', () => {
     const res = [];
@@ -52,13 +59,13 @@ describe('elite launch test', () => {
       for (let s = 0; s < 300; s += 5) tape.push(row(s, win ? 1e-6 * (1 + s / 60) : 1e-6 * Math.max(0.3, 1 - s / 100)));
       if (win) tape.push(row(300, 6e-6, { amm: true, curvePct: null }));
       const l = { ...launch, mint: `m${i}`, repeat24h: i % 2 === 0, graduated: win };
-      for (const d of DEFAULT_ELITE_TEST.entryDelaysSec) for (const tp of DEFAULT_ELITE_TEST.takeProfitX) res.push(simulate(l, tape.map((t) => ({ ...t, mint: l.mint })), d, tp, DEFAULT_ELITE_TEST));
+      for (const e of entriesOf(DEFAULT_ELITE_TEST)) for (const h of DEFAULT_ELITE_TEST.maxHoldMins) for (const tp of DEFAULT_ELITE_TEST.takeProfitX) res.push(simulate(l, tape.map((t) => ({ ...t, mint: l.mint })), e, tp, h, DEFAULT_ELITE_TEST));
     }
     const rep = buildReport(Array.from({ length: 12 }, (_, i) => ({ ...launch, mint: `m${i}` })), res, DEFAULT_ELITE_TEST, { from: T0, to: T0 + D, withTape: 12 });
-    expect(rep.grid.length).toBe(9);
+    expect(rep.grid.length).toBe(27); // 3 entries × 3 holds × 3 sell rules
     expect(rep.best).not.toBeNull();
-    expect(rep.grid.find((g) => g.delaySec === rep.best!.delaySec && g.tpX === rep.best!.tpX)!.totalSol).toBeGreaterThan(0);
+    expect(rep.grid.find((g) => g.entry === rep.best!.entry && g.holdMin === rep.best!.holdMin && g.tpX === rep.best!.tpX)!.totalSol).toBeGreaterThan(0);
     expect(rep.splits.length).toBe(5);
-    expect(rep.verdict).toMatch(/It pays on our tape/);
+    expect(rep.verdict).toMatch(/It pays on our tape|Not an edge/); // 12 launches < the 30 the verdict wants
   });
 });

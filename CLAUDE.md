@@ -1087,6 +1087,17 @@ December (small wallet in Nov only if paper edge is positive).
   relaxation on our data, deployer split marks "elite". One-time `retract-launch-priors` → one AI-memory bullet.
   tests/research-actions.test.ts. NEXT: owner runs the copy replay + the deployer study; read elite / dev-holding bands
   on "Inside your filters" before any further rule change. If none shows an edge: speed (paid stream + fast sender) or stop.
+- **v11.20 (Oct 18): results of the tests + elite test v2.** Copy replay (5 days, 8.96M trades): 2,966 copies, 13% won,
+  −134 SOL at 0.5 SOL, 0 consistent wallets; owner's tracked wallets 845 copies / 1% won → migration v51 switches
+  SMART_MONEY_COPY OFF (copy-trading is dead for a late copier, as the research said). Deployer study (14 d, 377,713
+  launches): elite devs graduate 41.9% vs 2.61% base (16×, n 2,148); second launch within 24 h 0.61× base (no-repeat rule
+  justified); "quiet 7+ d" band has 3 cases (irrelevant); first launch 1.79×. Elite test v1 (5 d, 83 launches): buying
+  15–60 s in did NOT pay (best 60 s / 3× → +2.1 SOL, 19% won, PF 1.19; 34 hard stops, only 1 graduation inside 60 min)
+  → elite launches spike, dump, graduate LATER. **Elite test v2** (`elite-test.ts`): entries = 60 s after launch OR a dip
+  30% / 50% off the first-minute high within 30 min; holds 1 / 6 / 12 h; sells graduation / 3× / 5× / −60%; grid per
+  entry × hold × rule, best rule needs PF ≥1.5 on 30+ trades; `timeToGraduate` of elite graduates (median / quartiles /
+  within 1 h / 6 h) from the Token table; deployer study adds the elite × repeat-24 h split. NEXT: owner runs elite test
+  v2; if it pays → wire the elite path (dip entry, long hold, sell into graduation); if not → speed route or stop.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

@@ -658,6 +658,11 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['wallets', ['entry', 'maxDumpersInFirst20'], 3],
     ],
   },
+  {
+    version: 51,
+    note: 'v11.20: copy trading OFF — the 5-day copy replay (2,966 copies, 13% won, −134 SOL, 0 consistent wallets; the owner\'s tracked wallets 1% won) matches the research: a 1–3 s-late copier is the leader\'s exit',
+    set: [['trading', ['enabledStrategies', 'SMART_MONEY_COPY'], false]],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

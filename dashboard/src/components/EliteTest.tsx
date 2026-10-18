@@ -10,8 +10,8 @@ import { Icon } from './Icon';
 import { Button, Card, Loading, NumberInput, Row, Rows } from './ui';
 
 interface Agg { n: number; winPct: number; avgPct: number; medianPct: number; totalSol: number; profitFactor: number | null }
-interface GridRow extends Agg { delaySec: number; tpX: number; graduatedPct: number; byReason: Array<{ reason: string; n: number; avgPct: number }> }
-interface Report { at: number; from: string; to: string; launches: number; withTape: number; sizeSol: number; grid: GridRow[]; best: { delaySec: number; tpX: number } | null; splits: Array<Agg & { label: string }>; verdict: string; durationMs: number }
+interface GridRow extends Agg { entry: string; holdMin: number; tpX: number; graduatedPct: number; byReason: Array<{ reason: string; n: number; avgPct: number }> }
+interface Report { at: number; from: string; to: string; launches: number; withTape: number; sizeSol: number; grid: GridRow[]; best: { entry: string; holdMin: number; tpX: number } | null; timeToGraduate: { n: number; medianMin: number; p25Min: number; p75Min: number; within1hPct: number; within6hPct: number } | null; splits: Array<Agg & { label: string }>; verdict: string; durationMs: number }
 interface Data { running: boolean; last: Report | null }
 
 const signed = (x: number, dp = 1) => `${x >= 0 ? '+' : ''}${x.toFixed(dp)}`;
@@ -37,11 +37,12 @@ export function EliteTest() {
     }
   };
   const r = data?.last ?? null;
-  const isBest = (g: GridRow) => !!r?.best && g.delaySec === r.best.delaySec && g.tpX === r.best.tpX;
+  const isBest = (g: GridRow) => !!r?.best && g.entry === r.best.entry && g.holdMin === r.best.holdMin && g.tpX === r.best.tpX;
+  const hold = (m: number) => (m >= 60 ? `${m / 60} h` : `${m} min`);
   return (
     <Card
       title="Elite launch test"
-      subtitle="Every launch by a creator who was a repeat graduator at that moment: buy 15 / 30 / 60 s after launch, sell into graduation, at a multiple, at −50% or after 60 min — on the recorded tape, all costs in."
+      subtitle="Every launch by a creator who was a repeat graduator at that moment: buy 60 s in, or on a 30% / 50% dip off the first-minute high; hold up to 1 / 6 / 12 h; sell into graduation, at 3× / 5×, or at −60% — on the recorded tape, all costs in."
       action={
         <div className="flex items-center gap-2">
           <NumberInput size="sm" label="Days" value={days} onChange={setDays} min={1} max={7} step={1} unit="d" className="w-24" />
@@ -62,11 +63,17 @@ export function EliteTest() {
           <p className="text-xs text-muted">
             {r.launches} elite launches with tape ({r.withTape} had a price path) · {r.from.slice(0, 10)} → {r.to.slice(0, 10)} · {r.sizeSol} SOL each · {ago(new Date(r.at).toISOString())}
           </p>
+          {r.timeToGraduate && (
+            <p className="text-sm text-ink-2">
+              Of the elite launches that graduated ({r.timeToGraduate.n}), half did so within <span className="font-medium text-ink">{hold(r.timeToGraduate.medianMin)}</span> (quarter {hold(r.timeToGraduate.p25Min)}, three quarters {hold(r.timeToGraduate.p75Min)}); {r.timeToGraduate.within1hPct}% within an hour, {r.timeToGraduate.within6hPct}% within 6 hours.
+            </p>
+          )}
           <div className="overflow-x-auto">
             <table className="tabular w-full min-w-[36rem] text-sm">
               <thead>
                 <tr className="text-left text-xs text-muted">
-                  <th className="py-1 font-medium">Buy after</th>
+                  <th className="py-1 font-medium">Entry</th>
+                  <th className="py-1 font-medium">Hold</th>
                   <th className="py-1 font-medium">Sell rule</th>
                   <th className="py-1 text-right font-medium">Trades</th>
                   <th className="py-1 text-right font-medium">Won</th>
@@ -78,8 +85,9 @@ export function EliteTest() {
               </thead>
               <tbody>
                 {r.grid.map((g) => (
-                  <tr key={`${g.delaySec}:${g.tpX}`} className={`border-t border-line ${isBest(g) ? 'bg-good/5' : ''}`}>
-                    <td className="py-1.5 text-ink">{g.delaySec} s</td>
+                  <tr key={`${g.entry}:${g.holdMin}:${g.tpX}`} className={`border-t border-line ${isBest(g) ? 'bg-good/5' : ''}`}>
+                    <td className="py-1.5 text-ink">{g.entry}</td>
+                    <td className="py-1.5 text-ink-2">{hold(g.holdMin)}</td>
                     <td className="py-1.5 text-ink">{g.tpX ? `${g.tpX}× or graduation` : 'into graduation'}</td>
                     <td className="py-1.5 text-right text-ink-2">{g.n}</td>
                     <td className="py-1.5 text-right text-ink-2">{g.winPct}%</td>
