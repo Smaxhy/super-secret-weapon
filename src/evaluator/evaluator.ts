@@ -85,6 +85,7 @@ import type { DeployerBook, DeployerView } from '../learner/deployer-book';
 import type { WalletBook } from '../learner/wallet-book';
 import type { RuggerMemory } from '../executor/rug-watch';
 import type { ObsidianSync } from '../integrations/obsidian-sync';
+import { memeFeatures, memePoints, memeRuleFails, shouldRead, type MemeReader, type MemeVerdict } from './meme-reader';
 import { confirmHoldSec, confirmStep } from './confirm';
 import type { CrowdTrade } from '../scanner/crowd-tracker';
 
@@ -133,6 +134,8 @@ export class Evaluator {
   deployers: DeployerBook | null = null;
   /** v11.9 Obsidian shared brain (set in index.ts): coins it wanted / nearly wanted get a linked note. */
   obsidian: ObsidianSync | null = null;
+  /** v11.16 AI meme-reading for serious candidates (set in index.ts). */
+  meme: MemeReader | null = null;
 
   /** Funders of the biggest recent buyers, from the funding-graph cache only (`wfund:<wallet>`, no RPC). */
   private async cachedFunders(trades: readonly CrowdTrade[], now: number, launchMs: number | null = null): Promise<Map<string, string | null>> {
@@ -626,6 +629,25 @@ export class Evaluator {
       threshold -= xv.points;
     }
 
+    // v11.16 AI meme-reading: one cheap Claude read of name / ticker / description / socials, only for serious candidates
+    // (every rule passes, within reach of the bar), cached per coin, never blocks a buy (4 s timeout, answer kept for the
+    // next checkpoint). Drainer / impersonation "avoid" → rule fail; ±points (watch-only in Sniper mode).
+    const memeCfg = this.meme?.cfg();
+    let memeV: MemeVerdict | null = null;
+    if (this.meme && memeCfg?.enabled) {
+      const readNow = shouldRead({ ruleFailsAllSoft: ruleFails.every(isSoft), hardFail: !!token.safetyHardFail, score: result.score, threshold }, memeCfg);
+      memeV = readNow
+        ? await this.meme.read({
+            mint, name: token.name, symbol: token.symbol, description: token.description ?? null, twitter: token.twitter ?? null, telegram: token.telegram ?? null, website: token.website ?? null,
+            createdAt: view.createdAtMs > 0 ? new Date(view.createdAtMs).toISOString() : null, narratives: hot,
+            similar: this.vamp ? await this.vamp.similar(mint, token.symbol, token.name) : [],
+          }).catch(() => null)
+        : await this.meme.cached(mint);
+      ruleFails = [...ruleFails, ...memeRuleFails(memeV, memeCfg)];
+      threshold -= memePoints(memeV, memeCfg, sniperOn());
+    }
+    const memeF = memeFeatures(memeV);
+
     // AI coach rules (tested on new trades before they go live): avoid → no buy, prefer → easier bar.
     // Same feature shape as the stored evaluation, so live and backtest read identical numbers.
     const aiFlat = flattenFeatures(
@@ -644,6 +666,7 @@ export class Evaluator {
         x: xv?.features ?? null,
         pressure: pressure ? { buySharePct: pressure.buySharePct, prevBuySharePct: pressure.prevBuySharePct, buySol: pressure.buySol, sellSol: pressure.sellSol } : null,
         mood: moodNow(),
+        meme: memeF,
       },
       { score: result.score, kols: kolsIn, mcUsd: market.raw.marketCapUsd ?? null, ageMin: market.raw.ageSec / 60, hourUtc: new Date().getUTCHours(), dowUtc: new Date().getUTCDay() },
     );
@@ -724,6 +747,7 @@ export class Evaluator {
           mint, symbol: token.symbol, strategy: STRATEGY.name, strategyEnabled: cfg.trading.enabledStrategies[STRATEGY.name] === true,
           priceSol: market.raw.priceSol, onAmm: market.raw.onAmm, hardFail: token.safetyHardFail, ruleFails, shape,
           sniper: { flow: this.crowd ? organicFlow(this.crowd.trades(mint), Date.now()) : null, score: result.score, threshold, momentumGateWhy: mgWhy, entryQualityVerdict: eq.verdict, edgeGatePass: egT, pressureSellersInControl: prWhy !== null, crowd: cq, risky: risky !== null, deployerClass: deployer?.class ?? null },
+          memeScore: memeV?.score ?? null,
         });
       } catch (err) {
         log.warn({ mint, err: (err as Error).message }, 'tournament candidate failed');
@@ -765,7 +789,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, trusted: kolAct.buyers.filter((b) => b.weight >= (kolCfg.trustedMinWeight ?? Infinity)).length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, copied: job.data.wallet ? 1 : 0, owner: { profile: owner.profile, fails: owner.fails }, pressure, launch, wallets: cq, deployer: deployer ? { class: deployer.class, launches: deployer.launches, graduated: deployer.graduated, diedFastPct: deployer.diedFastPct, rugs: deployer.rugs, linked: deployer.linked, launchesToday: deployer.launchesToday, daysSinceLastLaunch: deployer.daysSinceLastLaunch, points: deployer.points } : null, mood: moodNow(), market: market.raw, shape, tf, pa, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, momentumGate: mgWhy ? { blocked: true, reason: mgWhy } : null, edgeGate: egInfo, sniper: sniperInfo, entryQuality: eq.verdict !== 'ok' ? { verdict: eq.verdict, reason: eq.reason, points: eq.points } : null, rugCheck: rc.result ? { score: rc.score, riskLevel: rc.riskLevel, pass: rc.pass, reasons: rc.reasons } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, trusted: kolAct.buyers.filter((b) => b.weight >= (kolCfg.trustedMinWeight ?? Infinity)).length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, copied: job.data.wallet ? 1 : 0, owner: { profile: owner.profile, fails: owner.fails }, pressure, launch, meme: memeF, wallets: cq, deployer: deployer ? { class: deployer.class, launches: deployer.launches, graduated: deployer.graduated, diedFastPct: deployer.diedFastPct, rugs: deployer.rugs, linked: deployer.linked, launchesToday: deployer.launchesToday, daysSinceLastLaunch: deployer.daysSinceLastLaunch, points: deployer.points } : null, mood: moodNow(), market: market.raw, shape, tf, pa, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, momentumGate: mgWhy ? { blocked: true, reason: mgWhy } : null, edgeGate: egInfo, sniper: sniperInfo, entryQuality: eq.verdict !== 'ok' ? { verdict: eq.verdict, reason: eq.reason, points: eq.points } : null, rugCheck: rc.result ? { score: rc.score, riskLevel: rc.riskLevel, pass: rc.pass, reasons: rc.reasons } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },
@@ -786,6 +810,7 @@ export class Evaluator {
       dumpCrew: (cq?.dumpersInside ?? 0) > 0 || (cq?.deployerSnipers ?? 0) > 0, provenCrowd: (cq?.provenSolPct ?? 0) >= 20,
       creator: token.creator ?? null, deployerClass: deployer?.class ?? null, deployerNote: deployer?.note ?? null,
       telegram: launch.telegram === 1,
+      memeScore: memeV?.score ?? null, memeLine: memeV?.oneLine ?? null,
     });
     if (decision === 'REJECT') noteSkip(STRATEGY.name, ruleFails[0] ?? reasons[0] ?? 'rejected');
     if (decision === 'REJECT') {
@@ -984,7 +1009,7 @@ export class Evaluator {
         explore,
         adaptiveStopFactor: asf,
         explain: (sizeSol) =>
-          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, chartNote: chart ? `${chart.summary}${dipEntry ? ` — bought the dip: ${job.data.dipWhy ?? ''}` : ''}` : null, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: explore ? `learning trade ×${ex.sizeMultiplier} (score just under the bar)` : conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...(explore ? [`LEARNING TRADE: score ${result.score.toFixed(1)} is just under the bar ${threshold.toFixed(0)} — bought small so the bot learns whether these near-misses pay`] : []), ...(newPair?.notes ?? []), ...taBonus.notes.map((n) => `chart setup: ${n}`), ...(trend?.notes ?? []), ...aiVerdict.notes, ...(modelNote ? [modelNote] : []), ...(xv?.notes ?? []).map((n) => `X: ${n}`), ...kolBonus.notes, ...(kolRelaxNote ? [`top holders high but KOLs in: ${kolRelaxNote}`] : []), ...(pressure ? [`buyers ${pressure.buySharePct}% of the last ${prCfg.windowSec}s${pressure.prevBuySharePct !== null ? ` (was ${pressure.prevBuySharePct}%)` : ''}`] : []), ...(cq ? [cq.note] : []), ...(deployer ? [deployer.note] : []), ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : []), ...(rc.result && rc.pass ? [`RugCheck: score ${rc.score}, ${rc.riskLevel}`] : []), ...(eq.verdict === 'boost' ? [`entry quality: ${eq.reason}`] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
+          explainBuy({ symbol: token.symbol, strategy: STRATEGY.name, score: result.score, threshold, contributions: result.contributions, features, market: market.raw, sizeSol, regime, risky, copiedWallet: job.data.wallet, odds, narrativeReason, chartNote: chart ? `${chart.summary}${dipEntry ? ` — bought the dip: ${job.data.dipWhy ?? ''}` : ''}` : null, crowdSummary: crowd?.summary ?? null, swingNote: swing ? job.data.swingWhy ?? 'swing re-entry' : null, coachNote: coach.note, sizeNote: explore ? `learning trade ×${ex.sizeMultiplier} (score just under the bar)` : conv.note + (copyMult !== 1 ? `, copy ×${copyMult}` : ''), scoreNotes: [...(explore ? [`LEARNING TRADE: score ${result.score.toFixed(1)} is just under the bar ${threshold.toFixed(0)} — bought small so the bot learns whether these near-misses pay`] : []), ...(newPair?.notes ?? []), ...taBonus.notes.map((n) => `chart setup: ${n}`), ...(trend?.notes ?? []), ...aiVerdict.notes, ...(modelNote ? [modelNote] : []), ...(xv?.notes ?? []).map((n) => `X: ${n}`), ...kolBonus.notes, ...(kolRelaxNote ? [`top holders high but KOLs in: ${kolRelaxNote}`] : []), ...(pressure ? [`buyers ${pressure.buySharePct}% of the last ${prCfg.windowSec}s${pressure.prevBuySharePct !== null ? ` (was ${pressure.prevBuySharePct}%)` : ''}`] : []), ...(cq ? [cq.note] : []), ...(deployer ? [deployer.note] : []), ...(memeV ? [`meme: ${memeV.score} — ${memeV.oneLine}`] : []), ...dexBonus.notes.map((n) => `${n} (+)`), ...manip.notes, ...(result.cal.note ? [result.cal.note] : []), ...(rc.result && rc.pass ? [`RugCheck: score ${rc.score}, ${rc.riskLevel}`] : []), ...(eq.verdict === 'boost' ? [`entry quality: ${eq.reason}`] : [])], insiderNote: profile?.insider?.reasons?.length ? profile.insider.reasons.slice(0, 2).join('; ') : null }),
       });
       if (!res.entered && !/^(already traded|still holding)/.test(res.reason)) shadowOf('refused', res.reason);
       // Entered, or permanently impossible → stop evaluating. Capacity issues → retry next checkpoint.

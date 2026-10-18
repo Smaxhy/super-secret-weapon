@@ -61,6 +61,7 @@ import { getSolUsd } from './lib/sol-price';
 import { DipWatcher } from './executor/dip-watcher';
 import { StrategyLab } from './learner/strategy-lab';
 import { Tournament } from './learner/tournament';
+import { MemeReader } from './evaluator/meme-reader';
 import { NewPairWatcher } from './scanner/new-pair-watcher';
 import { TaLab } from './learner/ta-lab';
 import { TrendingFeeds } from './scanner/trending-feeds';
@@ -78,7 +79,7 @@ import { OutcomeLabeler } from './learner/outcome-labeler';
 import { startRegimeDetector } from './learner/regime-detector';
 import { logger } from './lib/logger';
 import { installProcessGuards } from './lib/process-guard';
-import { recordError, recordExit, recordStart, setDeployerStatsSource, setTapeStatsSource, setWalletBookStatsSource } from './lib/bot-health';
+import { recordError, recordExit, recordStart, setDeployerStatsSource, setMemeStatsSource, setTapeStatsSource, setWalletBookStatsSource } from './lib/bot-health';
 import { prisma } from './lib/prisma';
 import { setLastEntryAt } from './lib/entry-blockers';
 import { closeQueues } from './lib/queues';
@@ -344,6 +345,13 @@ async function main(): Promise<void> {
   // v11.15 policy tournament: Sniper entry + exit variants trade virtually on the same live candidates.
   const tournament = new Tournament(redis, crowd);
   evaluator.tournament = tournament;
+  // v11.16 AI meme-reading for serious candidates (cached, capped, never blocks a buy).
+  const memeReader = new MemeReader(redis);
+  evaluator.meme = memeReader;
+  setMemeStatsSource(async () => {
+    const m = await memeReader.snapshot();
+    return { enabled: m.enabled, hasKey: m.hasKey, today: m.today, spentTodayUsd: m.spentTodayUsd, budgetUsd: m.budgetUsd };
+  });
   registry.onTradeApplied.push((mint) => tournament.onTrade(mint));
   tournament.start();
   // Shadow trades: pretend trades on coins it didn't buy (refused / just under the bar / skipped by a rule).
@@ -745,7 +753,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, moonshot, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, moonshot, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament, meme: memeReader }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });

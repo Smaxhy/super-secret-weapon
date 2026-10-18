@@ -625,6 +625,11 @@ export const MIGRATIONS: ConfigMigration[] = [
     note: 'v11.15: policy tournament — ~20 Sniper variants trade virtually on the same live candidates; winners are offered to the self-improving loop (which still proves them on the tape)',
     set: [['tournament', ['enabled'], true]],
   },
+  {
+    version: 47,
+    note: 'v11.16: AI meme-reading for serious candidates (Sonnet, cached, capped, never blocks); the tournament tests meme score 6 / 7.5 gates',
+    set: [['tournament', ['variants'], structuredClone(DEFAULT_CONFIG.tournament.variants) as unknown]],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

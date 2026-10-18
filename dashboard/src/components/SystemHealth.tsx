@@ -23,6 +23,7 @@ export interface SystemData {
   tape?: { enabled: boolean; perMin: number; buffered: number; written: number; dropped: number; failed: number; daysOnDisk: number | null; rowsOnDisk: number | null } | null;
   /** v11.6: the wallet book. */
   walletBook?: { enabled: boolean; wallets: number; proven: number; dumpers: number; losers: number; bots: number } | null;
+  meme?: { enabled: boolean; hasKey: boolean; today: number; spentTodayUsd: number; budgetUsd: number } | null;
   /** v11.7: requests per provider today vs the owner's budgets. */
   usage?: { day: string; providers: Record<string, { used: number; budget: number; softLimitHit: boolean }> } | null;
   /** v11.14: the live path (dry-run simulations of the real transactions). */
@@ -119,6 +120,7 @@ export function StatusStrip({ data, tradesPerMin, launchesPerMin }: { data: Syst
       <StatTile compact label="Last buy" value={t?.lastEntryAt ? duration(t.minutesSinceEntry * 60) : '—'} sub={t?.lastEntryAt ? 'ago' : 'none yet'} tone={t && t.minutesSinceEntry >= 60 ? 'warn' : undefined} />
       <StatTile compact label="Tape" value={data?.tape ? (data.tape.enabled ? `${k(data.tape.perMin)}/min` : 'off') : '—'} sub={data?.tape?.enabled ? `${data.tape.daysOnDisk ?? 0} days on disk` : 'replay recording'} tone={data?.tape?.enabled && data.tape.failed > 0 && data.tape.written === 0 ? 'down' : undefined} />
       <StatTile compact label="Wallet book" value={data?.walletBook ? (data.walletBook.enabled ? k(data.walletBook.wallets) : 'off') : '—'} sub={data?.walletBook?.enabled ? `${data.walletBook.proven} proven · ${data.walletBook.dumpers} dumpers` : 'wallets known'} />
+      <StatTile compact label="Meme reader" value={data?.meme ? (data.meme.enabled && data.meme.hasKey ? String(data.meme.today) : data.meme.enabled ? 'no key' : 'off') : '—'} sub={data?.meme?.enabled ? `$${data.meme.spentTodayUsd.toFixed(3)} of $${data.meme.budgetUsd} today` : 'AI reads today'} />
       <StatTile compact label="Helius today" value={helius ? k(helius.used) : '—'} sub={helius ? (helius.budget ? `of ${k(helius.budget)}${usageWarn ? ' · lookups paused' : ''}` : 'no budget set') : 'requests'} tone={usageWarn ? 'warn' : undefined} />
     </section>
   );

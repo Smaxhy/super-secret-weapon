@@ -100,6 +100,8 @@ export interface HealthSnapshot {
   deployers?: DeployerStats | null;
   /** v11.14: live path — mode, and how the paper dry run's simulations of the real transactions went. */
   live?: { mode: 'PAPER' | 'LIVE'; wallet: string | null; simulated: number; okPct: number | null; errors: number; blockers: string[] } | null;
+  /** v11.16: AI meme reader — reads today and their cost. */
+  meme?: { enabled: boolean; hasKey: boolean; today: number; spentTodayUsd: number; budgetUsd: number } | null;
 }
 
 let tapeSource: (() => TapeStats) | null = null;
@@ -111,6 +113,11 @@ let walletBookSource: (() => WalletBookStats) | null = null;
 /** index.ts: where the Bot health panel reads the wallet book's counts from. */
 export function setWalletBookStatsSource(fn: (() => WalletBookStats) | null): void {
   walletBookSource = fn;
+}
+let memeSource: (() => Promise<NonNullable<HealthSnapshot['meme']>>) | null = null;
+/** index.ts: where the Bot health panel reads the meme reader's counts from. */
+export function setMemeStatsSource(fn: (() => Promise<NonNullable<HealthSnapshot['meme']>>) | null): void {
+  memeSource = fn;
 }
 let deployerSource: (() => DeployerStats) | null = null;
 /** index.ts: where the Bot health panel reads the deployer book's counts from. */
@@ -138,6 +145,7 @@ export async function healthSnapshot(now = Date.now()): Promise<HealthSnapshot> 
     usage: usageSnapshot(),
     deployers: deployerSource?.() ?? null,
   };
+  if (memeSource) base.meme = await memeSource().catch(() => null);
   if (!redisRef) return base;
   try {
     const st = liveStatus();

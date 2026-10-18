@@ -91,6 +91,9 @@ export interface CoinState {
   deployerNote?: string | null;
   /** v11.11 */
   telegram?: boolean;
+  /** v11.16 AI meme read */
+  memeScore?: number | null;
+  memeLine?: string | null;
 }
 
 export function coinNote(c: CoinState): Note {
@@ -105,6 +108,7 @@ export function coinNote(c: CoinState): Note {
     `## What the bot decided`,
     c.why || '—',
     ...(c.crowdNote ? ['', `## Who was buying`, c.crowdNote] : []),
+    ...(c.memeScore !== undefined && c.memeScore !== null ? ['', `## Meme read`, `${c.memeScore}/10${c.memeLine ? ` — ${c.memeLine}` : ''}`] : []),
     '',
     `## Links`,
     `- Strategy: ${c.strategies.map(strategyLink).join(', ') || '—'}`,
@@ -120,7 +124,7 @@ export function coinNote(c: CoinState): Note {
     path: `${DIRS.coins}/${coinFile(c.symbol, c.mint)}.md`,
     content: fm({
       type: 'coin', mint: c.mint, symbol: sym, name: c.name, strategy_seen: c.strategies, first_seen: new Date(c.firstSeenMs).toISOString(),
-      mc_usd: c.mcUsd, migrated: c.migrated, verdict: c.verdict, score: c.score, dump_crew: c.dumpCrew, proven_crowd: c.provenCrowd, deployer_class: c.deployerClass ?? null, telegram: c.telegram ?? null,
+      mc_usd: c.mcUsd, migrated: c.migrated, verdict: c.verdict, score: c.score, dump_crew: c.dumpCrew, proven_crowd: c.provenCrowd, deployer_class: c.deployerClass ?? null, telegram: c.telegram ?? null, meme_score: c.memeScore ?? null,
       wallets: wallets.length, trades: c.trades.length, updated: new Date(c.updatedMs).toISOString(), tags,
     }) + body,
   };

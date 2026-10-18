@@ -1008,6 +1008,23 @@ December (small wallet in Nov if paper edge is positive).
   the AI), still replay-proven + watched + revertible; an offer equal to a change rejected / reverted in the last 7 days
   is refused. GET `/api/tournament`; Performance → Tests card "Tournament" (sortable, status chips). Editable group
   "Tournament". tests/tournament.test.ts.
+- **v11.16 (Oct 18): AI meme-reading** (`src/evaluator/meme-reader.ts`, `meme` config, migration v47). One Claude read
+  of a coin's name / ticker / description (≤600 chars) / socials / launch time + the current hot narratives + ≤5 known
+  coins with a similar ticker (`VampGuard.similar`) → strict JSON {originality, narrativeFit, effortSignals 0–10,
+  redFlags ≤4, verdict strong/ok/weak/avoid, oneLine}; memeScore = mean of the three. Model `AI_MEME_MODEL` → `AI_MODEL`
+  → `claude-sonnet-5-5` (owner chose Sonnet), same request shape as the AI coach: `client.beta.messages.create` with
+  betas `server-side-fallback-2026-07-01` + `fallbacks: "default"` (not for Haiku), `output_config: {effort: 'low',
+  format: json_schema}`, no thinking param, no tools; `stop_reason === 'refusal'` → no verdict. Runs ONLY for coins
+  whose rule fails are all soft and that score within `withinBar` 10 of the bar; once per mint (Redis `meme:<mint>`,
+  `cacheHours` 24); `maxPerHour` 30 (`meme:calls:<hour>`); `dailyBudgetUsd` 0.25 (`meme:spend:<day>`, also added to
+  the coach's `ai:spend:<day>`); raced against `timeoutMs` 4 s — late answers are cached for the next checkpoint, a buy
+  never waits on it. Effect (evaluator, before the AI-rule flatten): `features.meme` {score, originality, narrativeFit,
+  effortSignals, verdict, verdictRank, redFlagsCount} (flatten section `meme`); verdict avoid + a drainer / phishing /
+  impersonation / fake-team flag → rule fail "meme: <flag>" (Sniper too); ±`points` 6 around 5/10 (watch-only in Sniper
+  mode unless `applyPointsInSniper`); `minScore` > 0 → "meme score X < Y" (default 0 = off; the tournament tests 6 and
+  7.5 as variants `meme6` / `meme75`, and a winner goes to the self-loop like any other). Buy note "meme: 7.2 — …";
+  Obsidian coin notes `meme_score` + a "Meme read" section. GET `/api/meme`; Bot health tile "Meme reader". Text only
+  — reading the coin image is a possible later add (costs more). tests/meme-reader.test.ts (Anthropic call mocked).
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

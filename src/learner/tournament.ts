@@ -75,6 +75,8 @@ export interface TournamentCandidate {
   shape: ShapeInput | null;
   /** Sniper entry inputs as the live evaluator saw them (score, threshold, flow, gates, crowd …). */
   sniper: Omit<SniperEntryInput, 'explore' | 'probe' | 'dipEntry'>;
+  /** v11.16 AI meme score (0–10) when the meme reader has one for this coin. */
+  memeScore?: number | null;
 }
 
 export interface TournamentResult {
@@ -146,14 +148,20 @@ export function variantMomentum(base: MomentumGateConfig, v: Pick<TournamentVari
 
 /** Pure: is this scored coin a candidate (no hard fail; only momentum-gate rule fails at most)? */
 export function isCandidate(c: Pick<TournamentCandidate, 'hardFail' | 'ruleFails'>): boolean {
-  return !c.hardFail && c.ruleFails.every((f) => f.startsWith('momentum gate: '));
+  return !c.hardFail && c.ruleFails.every((f) => f.startsWith('momentum gate: ') || f.startsWith('meme score '));
 }
 
 /** Pure: would this variant buy the candidate? (empty fails = buy) */
 export function variantEntryFails(c: TournamentCandidate, v: TournamentVariant, liveSniper: SniperConfig, liveMg: MomentumGateConfig): string[] {
   const mgKeys = Object.keys(v.entryOverrides).some((k) => k.startsWith('momentumGate.'));
   const mgWhy = mgKeys ? momentumGateFails(c.shape, variantMomentum(liveMg, v)) : c.sniper.momentumGateWhy;
-  return sniperEntryFails({ ...c.sniper, momentumGateWhy: mgWhy, explore: false, probe: false, dipEntry: false }, variantSniper(liveSniper, v));
+  // Meme score gate (v11.16): a variant with its own `meme.minScore` judges the coin's meme score itself (no read = no
+  // verdict, like live); otherwise the live gate's verdict stands.
+  const memeMin = v.entryOverrides['meme.minScore'];
+  const memeFails = typeof memeMin === 'number'
+    ? (memeMin > 0 && typeof c.memeScore === 'number' && c.memeScore < memeMin ? [`meme score ${c.memeScore} < ${memeMin}`] : [])
+    : c.ruleFails.filter((f) => f.startsWith('meme score '));
+  return [...memeFails, ...sniperEntryFails({ ...c.sniper, momentumGateWhy: mgWhy, explore: false, probe: false, dipEntry: false }, variantSniper(liveSniper, v))];
 }
 
 /** Pure: the variant's exit rules — live rules, the Sniper overlay rebuilt with the variant's exits, then `exit.*` keys. */

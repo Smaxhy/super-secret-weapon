@@ -81,6 +81,11 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       return deps.autopsy?.snapshot() ?? null;
     });
     secured.post('/api/autopsy/run', async () => (await deps.autopsy?.run()) ?? null);
+    // v11.16 AI meme reader: today's reads, spend, cache hits, last 20 verdicts.
+    secured.get('/api/meme', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return deps.meme ? await deps.meme.snapshot() : { enabled: false, hasKey: false, model: null, today: 0, spentTodayUsd: 0, budgetUsd: 0, cacheHits: 0, recent: [] };
+    });
     // v11.15 policy tournament: Sniper variants vs the current settings on the same live candidates.
     secured.get('/api/tournament', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');

@@ -124,6 +124,27 @@ export class VampGuard {
     }
   }
 
+  /** Known coins under the same / similar ticker (other mints only), newest first — context for the meme reader. */
+  async similar(mint: string, symbol: string, name: string, limit = 5): Promise<Array<{ symbol: string; mint: string; mcUsd: number | null }>> {
+    try {
+      const keys = candidateKeys(symbol, name, this.cfg().minKeyLength);
+      if (!keys.length) return [];
+      const raw = await this.redis.hmget(K_ORIG, ...keys);
+      const seen = new Set<string>();
+      const out: VampOriginal[] = [];
+      for (const r of raw) {
+        if (!r) continue;
+        const o = JSON.parse(r) as VampOriginal;
+        if (o.mint === mint || seen.has(o.mint)) continue;
+        seen.add(o.mint);
+        out.push(o);
+      }
+      return out.sort((a, b) => b.at - a.at).slice(0, limit).map((o) => ({ symbol: o.symbol, mint: o.mint, mcUsd: o.mcUsd }));
+    } catch {
+      return [];
+    }
+  }
+
   /** Drop expired originals (call now and then). */
   async prune(now = Date.now()): Promise<number> {
     const c = this.cfg();

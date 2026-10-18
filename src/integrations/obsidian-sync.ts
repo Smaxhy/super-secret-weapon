@@ -101,6 +101,9 @@ export interface EvaluationEvent {
   deployerNote?: string | null;
   /** v11.11: a Telegram link anywhere in the socials / description */
   telegram?: boolean;
+  /** v11.16 AI meme read */
+  memeScore?: number | null;
+  memeLine?: string | null;
 }
 
 /** Pure: the bus's trade event (one 'event' with type 'trade') → a journal line. */
@@ -231,6 +234,10 @@ export class ObsidianSync {
     c.provenCrowd = c.provenCrowd || ev.provenCrowd;
     if (ev.creator) c.creator = ev.creator;
     if (ev.telegram !== undefined) c.telegram = ev.telegram;
+    if (ev.memeScore !== undefined && ev.memeScore !== null) {
+      c.memeScore = ev.memeScore;
+      c.memeLine = ev.memeLine ?? c.memeLine ?? null;
+    }
     if (ev.deployerClass) {
       c.deployerClass = ev.deployerClass;
       c.deployerNote = ev.deployerNote ?? c.deployerNote ?? null;

@@ -996,6 +996,12 @@ export const DEFAULT_CONFIG = {
    * candidates; winners (BH q, ≥ baseline + beatLiveByPts, positive without their 3 best) are OFFERED to the
    * self-improving loop, which still has to prove them on the tape. Overrides are dotted config paths.
    */
+  /**
+   * v11.16 AI meme-reading (src/evaluator/meme-reader.ts): one Claude read (AI_MEME_MODEL / AI_MODEL, default Sonnet 5.5)
+   * of name / ticker / description / socials for serious candidates only, cached per coin, its own hourly cap + daily
+   * budget, never blocks a buy. minScore 0 = gate off (the tournament tests 6 and 7.5); points are watch-only in Sniper mode.
+   */
+  meme: { enabled: true as boolean, maxPerHour: 30, dailyBudgetUsd: 0.25, cacheHours: 24, minScore: 0, points: 6, applyPointsInSniper: false as boolean, withinBar: 10, timeoutMs: 4000 },
   tournament: {
     enabled: true as boolean,
     maxOpen: 400,
@@ -1027,6 +1033,8 @@ export const DEFAULT_CONFIG = {
       { id: 'stop16', name: 'Stop 16%', entryOverrides: {}, exitOverrides: { 'sniper.exits.stopMaxPct': 16 } },
       { id: 'noGrowth', name: 'No holder-growth exit', entryOverrides: {}, exitOverrides: { 'exit.holderGrowth.enabled': false } },
       { id: 'noClock', name: 'No holder-clock exit', entryOverrides: {}, exitOverrides: { 'exit.holderClock.enabled': false } },
+      { id: 'meme6', name: 'AI meme score 6+', entryOverrides: { 'meme.minScore': 6 }, exitOverrides: {} },
+      { id: 'meme75', name: 'AI meme score 7.5+', entryOverrides: { 'meme.minScore': 7.5 }, exitOverrides: {} },
     ] as Array<{ id: string; name: string; entryOverrides: Record<string, unknown>; exitOverrides: Record<string, unknown>; random?: boolean }>,
   },
 

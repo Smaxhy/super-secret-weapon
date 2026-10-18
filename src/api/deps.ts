@@ -10,6 +10,7 @@ import type { DipWatcher } from '../executor/dip-watcher';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
 import type { StrategyLab } from '../learner/strategy-lab';
 import type { Tournament } from '../learner/tournament';
+import type { MemeReader } from '../evaluator/meme-reader';
 import type { TaLab } from '../learner/ta-lab';
 import type { TrendingHub } from '../scanner/trending-hub';
 import type { SwingUniverse } from '../scanner/swing-universe';
@@ -56,6 +57,8 @@ export interface ApiDeps {
   selfLoop?: SelfLoop | null;
   /** v11.15: the policy tournament (Performance → Tests card). */
   tournament?: Tournament | null;
+  /** v11.16: AI meme reader (today's reads, spend, recent verdicts). */
+  meme?: MemeReader | null;
 }
 
 /** Classify a token for the live feed colour code. */
