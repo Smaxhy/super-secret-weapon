@@ -52,9 +52,16 @@ export interface Sim {
 }
 
 export interface Agg { n: number; winPct: number; avgPct: number; medianPct: number; totalSol: number; profitFactor: number | null }
+
+/** A single pretend trade can't be trusted past 10× (bad pool prints). Averages are capped at +300% per trade. */
+export const SANE_MAX_X = 10;
+export const CAP_PCT = 300;
+export const saneSim = (s: Sim) => s.peakX <= SANE_MAX_X && s.pnlPct <= (SANE_MAX_X - 1) * 100;
 export interface RuleRow extends Agg { cohort: 'boost' | 'survivor'; rule: string; byReason: Array<{ reason: string; n: number; avgPct: number }> }
 export interface CohortReport {
   at: number;
+  /** sims dropped as broken price prints (gain > 10× or peak > 10×, like the Money tab's saneRow) */
+  dropped: number;
   from: string;
   to: string;
   graduates: number;
@@ -75,16 +82,17 @@ const priceOf = (r: TapeRow) => (r.pp && r.pp > 0 ? r.pp : r.px);
 export function agg(xs: readonly Sim[]): Agg {
   const n = xs.length;
   if (!n) return { n: 0, winPct: 0, avgPct: 0, medianPct: 0, totalSol: 0, profitFactor: null };
-  const ps = xs.map((x) => x.pnlPct).sort((a, b) => a - b);
+  const ps = xs.map((x) => Math.min(CAP_PCT, x.pnlPct)).sort((a, b) => a - b);
+  const sols = xs.map((x) => (x.pnlPct > CAP_PCT ? (x.pnlSol * CAP_PCT) / x.pnlPct : x.pnlSol));
   let gw = 0;
   let gl = 0;
-  for (const x of xs) if (x.pnlSol > 0) gw += x.pnlSol; else gl += -x.pnlSol;
+  for (const v of sols) if (v > 0) gw += v; else gl += -v;
   return {
     n,
     winPct: Math.round((xs.filter((x) => x.pnlPct > 0).length / n) * 100),
     avgPct: r1(ps.reduce((a, b) => a + b, 0) / n),
     medianPct: r1(ps[Math.floor(n / 2)]!),
-    totalSol: r2(xs.reduce((a, x) => a + x.pnlSol, 0)),
+    totalSol: r2(sols.reduce((a, v) => a + v, 0)),
     profitFactor: gl > 0 ? r2(gw / gl) : gw > 0 ? null : 0,
   };
 }
@@ -166,8 +174,13 @@ export function simulateSurvivor(meta: { mint: string; symbol: string }, amm: re
 
 export function buildReport(sims: readonly Sim[], c: CohortConfig, meta: { from: number; to: number; graduates: number; withTape: number; survivors: number; startedAt: number }): CohortReport {
   const groups = new Map<string, Sim[]>();
+  let dropped = 0;
   for (const s of sims) {
     if (s.reason === 'no entry') continue;
+    if (!saneSim(s)) {
+      dropped++;
+      continue;
+    }
     const k = `${s.cohort}:${s.rule}`;
     (groups.get(k) ?? groups.set(k, []).get(k)!).push(s);
   }
@@ -179,13 +192,14 @@ export function buildReport(sims: readonly Sim[], c: CohortConfig, meta: { from:
   rows.sort((a, b) => b.totalSol - a.totalSol);
   const bestRow = rows.find((r) => r.n >= 30) ?? null;
   const best = bestRow ? { cohort: bestRow.cohort, rule: bestRow.rule } : null;
-  const pays = !!bestRow && bestRow.totalSol > 0 && (bestRow.profitFactor === null || bestRow.profitFactor >= 1.5);
+  // pays = positive after costs for the TYPICAL trade too (median), not one lucky print carrying the total
+  const pays = !!bestRow && bestRow.totalSol > 0 && bestRow.medianPct > 0 && (bestRow.profitFactor === null || bestRow.profitFactor >= 1.5);
   const verdict = !bestRow
     ? 'Too few trades to judge (a rule needs 30+). Record more tape and run again.'
     : pays
       ? `It pays: ${bestRow.cohort === 'boost' ? 'BOOST' : 'Survivor'} "${bestRow.rule}" made ${bestRow.totalSol >= 0 ? '+' : ''}${bestRow.totalSol} SOL over ${bestRow.n} trades (${bestRow.winPct}% won, PF ${bestRow.profitFactor ?? '∞'}). Worth wiring as a real strategy.`
-      : `Not an edge: the best rule (${bestRow.cohort === 'boost' ? 'BOOST' : 'Survivor'} "${bestRow.rule}") made ${bestRow.totalSol >= 0 ? '+' : ''}${bestRow.totalSol} SOL over ${bestRow.n} trades, ${bestRow.winPct}% won, PF ${bestRow.profitFactor ?? '∞'} — under the 1.5 bar.`;
-  return { at: Date.now(), from: new Date(meta.from).toISOString(), to: new Date(meta.to).toISOString(), graduates: meta.graduates, withTape: meta.withTape, survivors: meta.survivors, sizeSol: c.sizeSol, rows, best, verdict, durationMs: Date.now() - meta.startedAt };
+      : `Not an edge: the best rule (${bestRow.cohort === 'boost' ? 'BOOST' : 'Survivor'} "${bestRow.rule}") made ${bestRow.totalSol >= 0 ? '+' : ''}${bestRow.totalSol} SOL over ${bestRow.n} trades, ${bestRow.winPct}% won, PF ${bestRow.profitFactor ?? '∞'} — needs PF ≥ 1.5 AND a positive median (the typical trade must pay, not one lucky print).`;
+  return { at: Date.now(), dropped, from: new Date(meta.from).toISOString(), to: new Date(meta.to).toISOString(), graduates: meta.graduates, withTape: meta.withTape, survivors: meta.survivors, sizeSol: c.sizeSol, rows, best, verdict, durationMs: Date.now() - meta.startedAt };
 }
 
 let running: Promise<CohortReport> | null = null;

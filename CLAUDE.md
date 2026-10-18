@@ -1140,6 +1140,11 @@ December (small wallet in Nov only if paper edge is positive).
   ZERO delay and lost, so faster plumbing (gRPC, processed commitment, Sender tips, pre-built txs, co-location,
   ShredStream) cannot rescue copy trading unless the method-only replay finds a consistent wallet first.
   tests/cohort-test.test.ts, copy-replay.test.ts (method mode). 888 tests.
+  **First run (5 d, 600 graduates, 491 with tape) was a PRICE ARTEFACT**: "60 s in / 2×" showed +7,487 SOL, PF 152 —
+  avg +3,049% with a MEDIAN of −4.9% = one fake ~10,000× print; the "10 s in" rows (same coins, no broken print) were the
+  truth: avg +0.6…+4%, median −5%, PF 1.03–1.18 → no edge; survivors 13% won, median −6%. Fix: `saneSim` drops sims past
+  10× (peak or gain), averages / totals cap each trade at +300% (`CAP_PCT`), report `dropped`, and "It pays" now also
+  needs a POSITIVE MEDIAN. Owner re-runs; expect "Not an edge".
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

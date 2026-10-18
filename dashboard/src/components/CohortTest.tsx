@@ -8,7 +8,7 @@ import { Button, Card, Loading, NumberInput } from './ui';
 
 interface Agg { n: number; winPct: number; avgPct: number; medianPct: number; totalSol: number; profitFactor: number | null }
 interface RuleRow extends Agg { cohort: 'boost' | 'survivor'; rule: string; byReason: Array<{ reason: string; n: number; avgPct: number }> }
-interface Report { at: number; from: string; to: string; graduates: number; withTape: number; survivors: number; sizeSol: number; rows: RuleRow[]; best: { cohort: string; rule: string } | null; verdict: string; durationMs: number }
+interface Report { at: number; dropped?: number; from: string; to: string; graduates: number; withTape: number; survivors: number; sizeSol: number; rows: RuleRow[]; best: { cohort: string; rule: string } | null; verdict: string; durationMs: number }
 interface Data { running: boolean; last: Report | null }
 
 const signed = (x: number, dp = 1) => `${x >= 0 ? '+' : ''}${x.toFixed(dp)}`;
@@ -39,7 +39,7 @@ export function CohortTest() {
   return (
     <Card
       title="BOOST trade & survivor trade"
-      subtitle="Every graduate: buy 10 / 30 / 60 s after migration and sell at 1.3× / 1.5× / 2× or when pump.fun's 5-minute buy-and-burn ends (stop −30%). Survivors still trading 1–2 h after graduation: buy and hold up to 6 / 12 / 24 h with a 25% trail. All costs in."
+      subtitle="Averages cap each trade at +300% and drop prints past 10× (fake pool prices); read the median first. Every graduate: buy 10 / 30 / 60 s after migration and sell at 1.3× / 1.5× / 2× or when pump.fun's 5-minute buy-and-burn ends (stop −30%). Survivors still trading 1–2 h after graduation: buy and hold up to 6 / 12 / 24 h with a 25% trail. All costs in."
       action={
         <div className="flex items-center gap-2">
           <NumberInput size="sm" label="Days" value={days} onChange={setDays} min={1} max={14} step={1} unit="d" className="w-24" />
@@ -58,7 +58,7 @@ export function CohortTest() {
         <div className="flex flex-col gap-4">
           <p className={`rounded-xl border p-3 text-sm ${r.verdict.startsWith('It pays') ? 'border-good/40 bg-good/5 text-ink' : 'border-line bg-surface-2/40 text-ink-2'}`}>{r.verdict}</p>
           <p className="text-xs text-muted">
-            {r.graduates} graduates, {r.withTape} with a PumpSwap tape, {r.survivors} still alive at 1 h · {r.from.slice(0, 10)} → {r.to.slice(0, 10)} · {r.sizeSol} SOL each · {ago(new Date(r.at).toISOString())}
+            {r.graduates} graduates, {r.withTape} with a PumpSwap tape, {r.survivors} still alive at 1 h{r.dropped ? ` · ${r.dropped} broken price prints left out` : ''} · {r.from.slice(0, 10)} → {r.to.slice(0, 10)} · {r.sizeSol} SOL each · {ago(new Date(r.at).toISOString())}
           </p>
           <div className="overflow-x-auto">
             <table className="tabular w-full min-w-[36rem] text-sm">
