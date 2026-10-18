@@ -100,6 +100,8 @@ export interface Trade {
   pair: string;
   side: 1 | -1;
   entryT: number;
+  /** v15.3: identity time = the signal bar's close (= entryT unless the bar after the signal is missing) */
+  keyT?: number;
   exitT: number;
   entry: number;
   exit: number;

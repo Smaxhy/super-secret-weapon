@@ -42,8 +42,9 @@ export const FX_FAST = {
   keepDays: { '15m': 210, '1m': 21 } as Record<FastTf, number>,
   /** most bars stored per market */
   maxStore: { '15m': 21_000, '1m': 24_000 } as Record<FastTf, number>,
-  /** most bars tested per market (memory / CPU bound) */
-  maxEvalBars: 20_000,
+  /** most bars tested per market (memory / CPU bound: the test shares the bot's process; ≈ 10 trading days of 1m,
+   * ≈ 145 of 15m) */
+  maxEvalBars: 14_000,
   /** fewest bars a market needs before it is tested */
   minEvalBars: 1_500,
   /** bars of recent history for the live pass */
@@ -408,6 +409,11 @@ export class FastLab {
       const keep = new Set(chosenOf(rowsTf, rec.dropped));
       const chosenRows = rowsTf.filter((r) => keep.has(`${r.id}:${r.tf}`));
       this.chosen = [...this.chosen.filter((k) => !k.endsWith(`:${tf}`)), ...keep];
+      // strategies the bot still holds a trade from on this chart keep being followed (their stop, their exit) even
+      // when they are no longer chosen: a verdict flip stops new entries, it never closes a running trade early
+      const practice = this.lab.practice;
+      const heldIds = new Set(((await practice?.heldRefs().catch(() => [] as string[])) ?? []).filter((r) => r.split(':')[1] === tf).map((r) => r.split(':')[0]!));
+      const followRows = rowsTf.filter((r) => keep.has(`${r.id}:${r.tf}`) || heldIds.has(r.id));
       const labOpen: LabOpenTrade[] = [];
       const openKeys: Record<string, number> = {};
       const byPair: FastFiring['byPair'] = {};
@@ -430,9 +436,10 @@ export class FastLab {
           fired.push({ id: s.id, name: s.name, side: sig.side, allowed: why === null, why, chosen: chosenRows.some((r) => r.id === s.id) });
         }
         if (fired.length) byPair[inst.id] = fired;
-        for (const row of chosenRows) {
+        for (const row of followRows) {
           const s = strategyById(row.id);
           if (!s) continue;
+          const isChosen = keep.has(`${row.id}:${tf}`);
           const sigs = signalsFor(se.ctx, s).map((sg, i) => applyExit(sg, row.exit ?? 'designed', se.ctx, i));
           for (const t of simulate(inst, tf, se.ctx, s.id, sigs, allowFor(row.filter ?? 'none', se.env, styleOf(s)))) {
             if (t.reason !== 'open') continue;
@@ -442,15 +449,15 @@ export class FastLab {
             const si = signalIndex(se.ctx.bars, t.entryT, se.ctx.barMin);
             const conf = si >= 0 ? agreeCount(se.env, si, t.side) : 0;
             const b = boostFor(tierOf(conf, false), this.report?.conviction?.[tf]);
-            labOpen.push(toLabTrade(t, { chosen: true, sizeF, prio: row.all.avgR, judge: null, conviction: { tier: b.tier, conf, of: maxConfirmations(tf, false), mult: b.mult, lev: b.lev } }));
+            labOpen.push(toLabTrade(t, { chosen: isChosen, sizeF, prio: row.all.avgR, judge: null, conviction: { tier: b.tier, conf, of: maxConfirmations(tf, false), mult: b.mult, lev: b.lev } }));
           }
         }
         await yieldNow();
       }
       this.firing[tf] = { tf, t: newest, at: Date.now(), byPair };
       this.labOpen[tf] = openKeys;
-      const practice = this.lab.practice;
-      if (!practice) return;
+      // no test report yet (or it has no rows for this chart): never manage trades without the lab's view of them
+      if (!practice || !rowsTf.length) return;
       const sync = newSyncReport();
       const ev = await practice
         .syncBot(labOpen, (pair) => this.lab.calendar?.blockFor(pair) ?? this.lab.headlines?.blockFor(pair) ?? null, this.lab.atr1h, { scope: [tf], report: sync })

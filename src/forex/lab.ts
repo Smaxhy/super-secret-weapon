@@ -335,10 +335,11 @@ export function signalIndex(bars: readonly Bar[], entryT: number, barMin: number
 const px7 = (x: number) => (Number.isFinite(x) ? Number(x.toPrecision(7)) : x);
 /** A trade as the dashboard needs it. */
 export function slimTrade(t: Trade): Trade {
-  return { strategy: t.strategy, tf: t.tf, pair: t.pair, side: t.side, entryT: t.entryT, exitT: t.exitT, entry: px7(t.entry), exit: px7(t.exit), r: Math.round(t.r * 100) / 100, stopPct: Math.round(t.stopPct * 1000) / 1000, reason: t.reason, bars: t.bars, stop: px7(t.stop), stop0: px7(t.stop0), target: t.target === null ? null : px7(t.target), ...(t.scaled ? { scaled: true } : {}), ...(t.tpHit ? { tpHit: true } : {}) };
+  return { strategy: t.strategy, tf: t.tf, pair: t.pair, side: t.side, entryT: t.entryT, ...(t.keyT !== undefined && t.keyT !== t.entryT ? { keyT: t.keyT } : {}), exitT: t.exitT, entry: px7(t.entry), exit: px7(t.exit), r: Math.round(t.r * 100) / 100, stopPct: Math.round(t.stopPct * 1000) / 1000, reason: t.reason, bars: t.bars, stop: px7(t.stop), stop0: px7(t.stop0), target: t.target === null ? null : px7(t.target), ...(t.scaled ? { scaled: true } : {}), ...(t.tpHit ? { tpHit: true } : {}) };
 }
 
-export const tradeKey = (t: { strategy: string; tf: string; pair: string; entryT: number }) => `${t.strategy}:${t.tf}:${t.pair}:${t.entryT}`;
+/** A trade's identity (the bot's position ref): the signal bar's close, so a missing bar after it can't rename it. */
+export const tradeKey = (t: { strategy: string; tf: string; pair: string; entryT: number; keyT?: number }) => `${t.strategy}:${t.tf}:${t.pair}:${t.keyT ?? t.entryT}`;
 
 /** A lab trade as the bot account takes it (v15: with its trailing take-profit and the exit rules still in force). */
 export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction'] }): LabOpenTrade {
@@ -476,6 +477,8 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
         const b = byFilter.get(f)!;
         b.trades.push(...ts);
         b.perPair.push({ pair: se.inst.id, ...rStats(ts) });
+        // the lab shares the bot's process: give the event loop a turn after every long simulation
+        if (se.ctx.bars.length > 8_000) await yieldNow();
       }
       await yieldNow();
     }
@@ -502,6 +505,7 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
           const b = byExit.get(k)!;
           b.trades.push(...ts);
           b.perPair.push({ pair: se.inst.id, ...rStats(ts) });
+          if (!same && se.ctx.bars.length > 8_000) await yieldNow();
         }
         await yieldNow();
       }
@@ -518,6 +522,8 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
         exit,
         OWNER_EXITS,
         'designed' as ExitKind,
+        40,
+        prev?.e,
       );
     }
     const ch = eStats.find((x) => x.exit === exit)!;
@@ -862,7 +868,7 @@ export class ForexLab {
         if (picked) {
           const sf = stratFactorFromStats(x.ch.inSample.avgR, x.ch.inSample.pf);
           const unseen = x.done.filter((t) => t.entryT >= oosFrom);
-          for (const t of unseen) poolNew.push({ pair: t.pair, side: t.side, entryT: t.entryT, exitT: t.exitT, r: t.r, stopPct: t.stopPct, strategy: t.strategy, tf: t.tf, sizeF: sf * volFactor(t.volRatio), prio: x.ch.inSample.avgR });
+          for (const t of unseen) poolNew.push({ pair: t.pair, side: t.side, entryT: t.entryT, ...(t.keyT !== undefined ? { keyT: t.keyT } : {}), exitT: t.exitT, r: t.r, stopPct: t.stopPct, strategy: t.strategy, tf: t.tf, sizeF: sf * volFactor(t.volRatio), prio: x.ch.inSample.avgR });
           pickedNew.push({ id: x.s.id, name: x.s.name, tf, filter: x.filter, exit: x.exit, inAvgR: x.ch.inSample.avgR, inN: x.ch.inSample.n, unseenN: unseen.length });
         }
         const raw = x.fStats.find((y) => y.filter === 'none')!;

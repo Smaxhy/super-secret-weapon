@@ -7,7 +7,7 @@ import { runsOn, strategyById, type Strategy } from '../src/forex/strategies';
 import { buildCtx } from '../src/forex/ta';
 import { trimBars } from '../src/forex/data';
 import { upcomingFor, type CalEvent } from '../src/forex/calendar';
-import { ForexLab, signalIndex, type MarketBook, type MarketNow, type RunNote } from '../src/forex/lab';
+import { ForexLab, signalIndex, tradeKey, type MarketBook, type MarketNow, type RunNote } from '../src/forex/lab';
 import { chosenOf, FastLab, nextOnGrid, type FastSource } from '../src/forex/fast';
 import { newAccount, newSyncReport, Practice, tfOfRef, tick, type LabOpenTrade, type PracticeAccount, type PracticePosition, type Quote } from '../src/forex/practice';
 import { buildPlan, leanOf, nextChecks, tradeLines, type PlanInputs } from '../src/forex/plan';
@@ -127,6 +127,41 @@ describe('trailing take-profit in the engine (v15)', () => {
     expect(simulate(EUR, '1h', c, 'x', sigs, undefined, { weekendPause: true, sessionSpreads: true, liveEdge: false })).toHaveLength(0);
   });
 
+  it('a trade keeps its identity when the bar after its signal is missing (no close-and-reopen in the bot)', () => {
+    const t0 = Date.UTC(2025, 0, 6);
+    const bars = Array.from({ length: 300 }, (_, i) => flat(t0 + i * H, 1.1));
+    const s = once(299, { side: 1, stop: 1.099, target: 1.102 });
+    const c1 = buildCtx(bars, 60, 'EURUSD');
+    const live = simulate(EUR, '1h', c1, 'x', bars.map((_, i) => s.signal(c1, i)))[0]!;
+    // next run: the bar after the signal never arrived, the one after it did
+    const later = [...bars, flat(t0 + 301 * H, 1.1)];
+    const c2 = buildCtx(later, 60, 'EURUSD');
+    const real = simulate(EUR, '1h', c2, 'x', later.map((_, i) => s.signal(c2, i)))[0]!;
+    expect(real.entryT).toBe(t0 + 301 * H);
+    expect(real.entryT).not.toBe(live.entryT);
+    expect(tradeKey(real)).toBe(tradeKey(live));
+  });
+
+  it('a gap through the target at the open: the whole candle can still come back to the locked stop', () => {
+    // green candle that opens above the target, dips under the lock, closes high
+    const bars = market([{ o: 1.1013, h: 1.1016, l: 1.1004, c: 1.1015 }, { c: 1.1015 }]);
+    const tr = run(bars, sig({ tpTrail: 2, tpFrac: 0 }))[0]!;
+    expect(tr.reason).toBe('trail');
+    expect(tr.exitT).toBe(bars[260]!.t);
+    // the same green candle opening UNDER the target touches it at its high: only its close is left → still open
+    const calm = market([{ o: 1.1005, h: 1.1016, l: 1.1004, c: 1.1015 }, { c: 1.1015 }]);
+    expect(run(calm, sig({ tpTrail: 2, tpFrac: 0 }))[0]!.exitT).not.toBe(calm[260]!.t);
+  });
+
+  it('part taken at the target, then a scale-out: shares stay shares of what is left', () => {
+    const bars = market([{ o: 1.1, h: 1.1011, l: 1.0999, c: 1.101 }, { o: 1.101, h: 1.1022, l: 1.1009, c: 1.102 }, { c: 1.1021 }, { o: 1.1021, h: 1.1021, l: 1.099, c: 1.099 }]);
+    const tr = run(bars, sig({ target: 1.101, tpTrail: 3, tpFrac: 0.5, scaleAtR: 2, scaleFrac: 0.5 }))[0]!;
+    expect(Number.isFinite(tr.r)).toBe(true);
+    // half at ~+1R, a quarter at ~+2R, the last quarter at the locked stop (≥ break-even): clearly positive, under 2R
+    expect(tr.r).toBeGreaterThan(0.5);
+    expect(tr.r).toBeLessThan(2);
+  });
+
   it('signalIndex: the bar before the entry, or the last bar for a trade filled at the last close', () => {
     const bars = [flat(0, 1), flat(H, 1), flat(2 * H, 1)];
     expect(signalIndex(bars, H, 60)).toBe(0);
@@ -173,6 +208,11 @@ describe('exit variants and the owner preference (v15)', () => {
     expect(preferVariant([...v(0.2), { key: 'trail_sl', inSample: st(400, 0.15) }], 'wide', ['trail_sl', 'trail_tp'], 'designed')).toBe('trail_tp');
     // the yardstick is the best variant, not a weaker pick
     expect(preferVariant([...v(0.1), { key: 'runner', inSample: st(400, 0.3) }], 'wide', ['trail_tp'], 'designed')).toBe('wide');
+    // last hour's owner pick stays through a near-tie (within 10%), so the bot's trades don't flip back and forth
+    const near = [...v(0.2), { key: 'trail_sl', inSample: st(400, 0.185) }];
+    expect(preferVariant(near, 'wide', ['trail_sl'], 'designed')).toBe('wide');
+    expect(preferVariant(near, 'wide', ['trail_sl'], 'designed', 40, 'trail_sl')).toBe('trail_sl');
+    expect(preferVariant([...v(0.2), { key: 'trail_sl', inSample: st(400, 0.15) }], 'wide', ['trail_sl'], 'designed', 40, 'trail_sl')).toBe('wide');
   });
 
   it('which strategies run on which chart', () => {
@@ -205,11 +245,11 @@ describe('bot account (v15)', () => {
     expect(a.closed[0]!.pnlUsd).toBeGreaterThan(0);
   });
 
-  function botWith(open: PracticePosition[]): { practice: Practice; redis: MiniRedis } {
+  function botWith(open: PracticePosition[], eurusd = 1.1): { practice: Practice; redis: MiniRedis } {
     const redis = new MiniRedis();
     redis.m.set('fx:practice:bot', JSON.stringify({ ...newAccount(1000), open }));
     const practice = new Practice(asRedis(redis));
-    const mids: Record<string, number> = { EURUSD: 1.1, GBPUSD: 1.27, USDJPY: 150, AUDUSD: 0.66, USDCAD: 1.37, USDCHF: 0.8, NZDUSD: 0.6, EURJPY: 165, GBPJPY: 190, EURGBP: 0.866, XAUUSD: 2500, XAGUSD: 30 };
+    const mids: Record<string, number> = { EURUSD: eurusd, GBPUSD: 1.27, USDJPY: 150, AUDUSD: 0.66, USDCAD: 1.37, USDCHF: 0.8, NZDUSD: 0.6, EURJPY: 165, GBPJPY: 190, EURGBP: 0.866, XAUUSD: 2500, XAGUSD: 30 };
     (practice as unknown as { quotes: () => Promise<Record<string, Quote>> }).quotes = async () =>
       Object.fromEntries(
         INSTRUMENTS.map((i) => {
@@ -257,32 +297,52 @@ describe('bot account (v15)', () => {
     expect(rep.skipped.map((s) => s.why).join(' ')).toMatch(/already 2 1m trades open/);
   });
 
-  it('the lab reached the target on its chart → the bot position switches to trailing too', async () => {
+  it('the lab reached the target on its chart → the bot position switches to trailing too and locks the stop', async () => {
     vi.useFakeTimers({ now: WED });
     const ref = `x:15m:EURUSD:${WED - 30 * M}`;
-    const { practice, redis } = botWith([pos({ ref, strategy: 'x', tf: '15m', tpTrailPx: 0.0004, tpFrac: 0.5, tpHit: false })]);
-    await practice.syncBot([lab({ ref, tf: '15m', stop: 1.1006, target: null, tpHit: true, tpTrailPx: 0.0004, tpFrac: 0.5, trailAtr: 2 })], () => null, {}, { scope: ['15m'] });
-    const a = await load(redis);
+    const labTrade = lab({ ref, tf: '15m', stop: 1.1006, target: null, tpHit: true, tpTrailPx: 0.0004, tpFrac: 0.5, trailAtr: 2 });
+    // price still above the lab's locked stop: half banked, target gone, stop locked at the lab's level
+    const up = botWith([pos({ ref, strategy: 'x', tf: '15m', tpTrailPx: 0.0004, tpFrac: 0.5, tpHit: false })], 1.1012);
+    await up.practice.syncBot([labTrade], () => null, {}, { scope: ['15m'] });
+    const a = await load(up.redis);
     const p = a.open[0]!;
     expect(p.tpHit).toBe(true);
     expect(p.target).toBeNull();
     expect(p.trailAtr).toBe(2);
+    expect(p.stop).toBe(1.1006);
+    expect(p.bankedUsd).toBeGreaterThan(0);
     expect(a.closed[0]!.reason).toBe('partial');
-    // the lab's locked stop sits above the price (1.1000): it is not followed until price is past it
-    expect(p.stop).toBe(1.099);
+    // price already back under the lab's locked stop: the bot closes now instead of keeping its old −1R stop
+    const down = botWith([pos({ ref, strategy: 'x', tf: '15m', tpTrailPx: 0.0004, tpFrac: 0.5, tpHit: false })], 1.1);
+    const ev = await down.practice.syncBot([labTrade], () => null, {}, { scope: ['15m'] });
+    const b = await load(down.redis);
+    expect(b.open).toHaveLength(0);
+    expect(b.closed[0]!.reason).toBe('stop');
+    expect(ev.join(' ')).toMatch(/already past its trailing stop/);
+    // one finished trade in its record: the part taken plus the rest
+    expect(b.stats!['x:15m']).toHaveLength(1);
+    expect(b.stats!['x:15m']![0]![1]).toBeCloseTo(b.closed[0]!.pnlUsd + b.closed[1]!.pnlUsd, 2);
   });
 
-  it('results per strategy and chart', async () => {
-    const redis = new MiniRedis();
+  it('results per strategy and chart: a record of finished trades that no other chart can scroll away', async () => {
+    const { botRecordOf, recordTrade } = await import('../src/forex/practice');
+    // an older account without a record: rebuilt once from its closed list (parts and weekend legs are not trades)
     const closed = [
-      { ...pos({ ref: 'a:1h:EURUSD:1', strategy: 'a' }), exit: 1, closedAt: 1, pnlUsd: -5, reason: 'stop' },
-      { ...pos({ ref: 'a:1m:EURUSD:2', strategy: 'a', tf: '1m' }), exit: 1, closedAt: 2, pnlUsd: 3, reason: 'target' },
-      { ...pos({ ref: 'a:1m:EURUSD:2', strategy: 'a', tf: '1m' }), exit: 1, closedAt: 2, pnlUsd: 1, reason: 'partial' },
-    ];
-    redis.m.set('fx:practice:bot', JSON.stringify({ ...newAccount(1000), closed }));
-    const res = await new Practice(asRedis(redis)).botResults();
-    expect(res['a:1h']).toEqual({ n: 1, pnlUsd: -5 });
-    expect(res['a:1m']).toEqual({ n: 1, pnlUsd: 4 });
+      { ...pos({ ref: 'a:1h:EURUSD:1', strategy: 'a' }), exit: 1, closedAt: WED - 2 * H, pnlUsd: -5, reason: 'stop' },
+      { ...pos({ ref: 'a:1m:EURUSD:2', strategy: 'a', tf: '1m' }), exit: 1, closedAt: WED - H, pnlUsd: 3, reason: 'target' },
+      { ...pos({ ref: 'a:1m:EURUSD:2', strategy: 'a', tf: '1m' }), exit: 1, closedAt: WED - H, pnlUsd: 1, reason: 'partial' },
+    ] as PracticeAccount['closed'];
+    const old: PracticeAccount = { ...newAccount(1000), closed, stats: undefined };
+    expect(botRecordOf(old, WED)).toEqual({ 'a:1h': { n: 1, pnlUsd: -5 }, 'a:1m': { n: 1, pnlUsd: 3 } });
+    // 300 one-minute trades don't push the hourly record out
+    const a: PracticeAccount = { ...newAccount(1000), stats: {} };
+    recordTrade(a, 'h:1h', WED - 5 * H, -2);
+    for (let k = 0; k < 300; k++) recordTrade(a, 'f:1m', WED - k * M, 1);
+    const rec = botRecordOf(a, WED);
+    expect(rec['h:1h']).toEqual({ n: 1, pnlUsd: -2 });
+    expect(rec['f:1m']!.n).toBe(40);
+    // a month later the old trades no longer count (a dropped strategy gets another chance)
+    expect(botRecordOf(a, WED + 31 * 86_400_000)).toEqual({});
     expect(tfOfRef('a:15m:EURUSD:1')).toBe('15m');
   });
 });
@@ -325,7 +385,7 @@ describe('15-minute and 1-minute lab (v15)', () => {
     const redis = new MiniRedis();
     const lab = labWithBook(redis);
     const sync = vi.fn(async () => [] as string[]);
-    lab.practice = { syncBot: sync, botResults: async () => ({}) } as unknown as Practice;
+    lab.practice = { syncBot: sync, botResults: async () => ({}), heldRefs: async () => [] } as unknown as Practice;
     const data: Record<string, Bar[]> = {};
     for (const [k, inst] of INSTRUMENTS.slice(0, 2).entries()) {
       data[`15m:${inst.id}`] = walk(1_700, WED - 30_000, 15 * M, inst.id === 'EURUSD' ? 1.1 : 1.27, 11 + k);

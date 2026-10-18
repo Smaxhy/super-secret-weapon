@@ -59,6 +59,8 @@ export interface PTrade {
   pair: string;
   side: 1 | -1;
   entryT: number;
+  /** v15.3: identity time (see Trade.keyT) */
+  keyT?: number;
   exitT: number;
   r: number;
   stopPct: number;

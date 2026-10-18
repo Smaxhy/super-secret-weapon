@@ -110,6 +110,8 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
     target0: number | null;
     /** v15.1 trailing stop-loss: the stop follows the best close this far behind (price; null = off) */
     trailPx: number | null;
+    /** v15.3: the trade's identity time = its signal bar's close (stays the same when the next bar is missing) */
+    keyT: number;
   };
   let pos: Pos | null = null;
   const finish = (i: number, fill: number, reason: Trade['reason']) => {
@@ -121,6 +123,7 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
       pair: inst.id,
       side: p.side,
       entryT: bars[p.entryIdx]!.t,
+      keyT: p.keyT,
       exitT: bars[i]!.t,
       entry: p.entry,
       exit: fill,
@@ -185,8 +188,10 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
         p.trailed = true;
         p.be = true;
         // rest of the candle: open → low → high → close on a green candle, open → high → low → close on a red one
-        // (a long's target is touched at the high: a red candle still has its low to come, a green one only its close)
-        const back = p.side === 1 ? (b.c < b.o ? b.l : b.c) <= p.stop : (b.c > b.o ? b.h : b.c) >= p.stop;
+        // (a long's target is touched at the high: a red candle still has its low to come, a green one only its close).
+        // A gap through the target at the open: the whole candle is still to come.
+        const gap = at === b.o;
+        const back = p.side === 1 ? (gap || b.c < b.o ? b.l : b.c) <= p.stop : (gap || b.c > b.o ? b.h : b.c) >= p.stop;
         if (back) finish(i, exitFill(i, p.side, p.stop, true), 'trail');
       } else if (hitTgt) finish(i, exitFill(i, p.side, p.side === 1 ? Math.max(b.o, p.target!) : Math.min(b.o, p.target!), false), 'target');
       else {
@@ -194,8 +199,10 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
         let toBe = false;
         if (!p.scaled && p.scaleAt !== null && (p.side === 1 ? b.h >= p.scaleAt : b.l <= p.scaleAt)) {
           const fill = exitFill(i, p.side, p.side === 1 ? Math.max(b.o, p.scaleAt) : Math.min(b.o, p.scaleAt), false);
-          p.realized += (p.scaleFrac * p.side * (fill - p.legEntry)) / p.risk;
-          p.frac -= p.scaleFrac;
+          // a share of what is still open (a trailing take-profit may already have taken part off)
+          const part = p.frac * p.scaleFrac;
+          p.realized += (part * p.side * (fill - p.legEntry)) / p.risk;
+          p.frac -= part;
           p.scaled = true;
           toBe = true;
         }
@@ -244,6 +251,7 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
           pos = {
             side: sig.side,
             entryIdx: i + 1,
+            keyT: bars[i]!.t + c.barMin * 60_000,
             entry,
             stop: sig.stop,
             stop0: sig.stop,
@@ -293,6 +301,7 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
           pair: inst.id,
           side: sig.side,
           entryT: t,
+          keyT: t,
           exitT: t,
           entry,
           exit: entry,

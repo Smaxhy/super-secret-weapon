@@ -271,6 +271,23 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   the size decision. The currency cap (2.2%) still applies, so a 2% trade blocks a second bet on the same currency.
   Dashboard Auto-bot: "Bigger size when it's more sure" card (per chart group: on / off + why, unseen R per tier).
   Synthetic candles: not proven on any chart (sure trades not clearly better) → normal size; real data decides.
+- **v15.3 (Oct 18): fixes from an independent review of v15–v15.2.** (1) Fast lab: a 15m / 1m strategy that stops being
+  chosen (verdict flip, dropped) no longer gets its running bot trades closed as "strategy exit": `decide` also
+  simulates strategies the bot still holds (`Practice.heldRefs`) and passes them with `chosen: false` (manage, never
+  open); no fast report → no sync at all. (2) Trade identity = `Trade.keyT` (signal bar's close; `tradeKey` uses it,
+  `PTrade.keyT`): a missing bar after a signal no longer renames the trade (= close + re-open, two spreads). (3) Bot
+  self-pruning: `PracticeAccount.stats` per `strategy:tf` = newest 40 finished trades [closedAt, USD incl. parts taken
+  (`bankedUsd`) and weekend legs (`ResumeItem.bankedUsd`)], `botRecordOf` counts the last 30 days (a dropped combo
+  gets another chance after a month); older accounts rebuild it once from the closed list (`ensureStats`). Before,
+  fast trades scrolled the 200-row closed list and 1h / 4h combos never reached 12 trades. (4) `preferVariant(…, prev)`:
+  last hour's owner exit stays while within 10% / 0.2 (no hourly flips). (5) `syncBot`: when the lab's (tighter) stop
+  is already crossed by the price, close at market instead of keeping the looser stop (covers a lab target hit the
+  bot's feed missed). (6) Engine: a gap through the target at the open checks the whole candle against the locked
+  stop. (7) Engine: scale-out takes a share of what is left (`frac × scaleFrac`). (8) Load: fast test ≤ 14k bars a
+  market (was 20k; reviewer measured 23 s / +400 MB heap at 20k), yields after every long simulation. Behaviour notes:
+  with the live edge, 4h trades now open for real (before they were always older than the 2 h freshness); the first
+  v15 run could switch exits and close some bot trades as "signal" once. If memory stays tight, move the fast test to
+  a child process like the replay runner.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

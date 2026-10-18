@@ -113,10 +113,11 @@ export function chooseVariant<K extends string>(v: ReadonlyArray<{ key: K; inSam
 
 /**
  * Owner preference (v15, v15.1): `preferred` in the owner's order. The first one that scores at least as well as the
- * best variant on the FIRST 70% (within 5% of its score, or 0.1) and keeps enough trades is used instead. Selection
- * still sees the first 70% only, so the unseen 30% stays a fair test. Pure.
+ * best variant on the FIRST 70% (within 5% of its score, or 0.1) and keeps enough trades is used instead. Last hour's
+ * owner pick (`prev`) stays while it is within a wider band (10%, or 0.2), so a near-tie can't flip the bot's trades
+ * back and forth. Selection still sees the first 70% only, so the unseen 30% stays a fair test. Pure.
  */
-export function preferVariant<K extends string>(v: ReadonlyArray<{ key: K; inSample: RStats }>, chosen: K, preferred: readonly K[], baseKey: K, minN = 40): K {
+export function preferVariant<K extends string>(v: ReadonlyArray<{ key: K; inSample: RStats }>, chosen: K, preferred: readonly K[], baseKey: K, minN = 40, prev?: K): K {
   const raw = v.find((x) => x.key === baseKey);
   if (!raw) return chosen;
   const enough = (x: { inSample: RStats }) => x.inSample.n >= Math.max(minN, raw.inSample.n * 0.25);
@@ -125,6 +126,8 @@ export function preferVariant<K extends string>(v: ReadonlyArray<{ key: K; inSam
   for (const x of v) if (enough(x) && (!best || score(x.inSample) > score(best.inSample))) best = x;
   if (!best) return chosen;
   const sc = score(best.inSample);
+  const kept = prev && preferred.includes(prev) ? v.find((y) => y.key === prev) : undefined;
+  if (kept && enough(kept) && score(kept.inSample) >= sc - Math.max(0.2, Math.abs(sc) * 0.1)) return kept.key;
   for (const k of preferred) {
     const x = v.find((y) => y.key === k);
     if (x && enough(x) && score(x.inSample) >= sc - Math.max(0.1, Math.abs(sc) * 0.05)) return k;

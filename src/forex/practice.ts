@@ -84,6 +84,8 @@ export interface PracticePosition {
   tpHit?: boolean;
   /** bot trades (v15.2): how sure it was of the entry and what size that earned */
   conviction?: Conviction | null;
+  /** bot trades (v15.3): USD already banked by parts taken off (and legs before a weekend pause) */
+  bankedUsd?: number;
   /** bot trades (v15): the strategy's chart and the exit rules still in force (shown as the trade's plan); v15.1:
    * `trailPx` = the trailing stop-loss distance (price) */
   tf?: string;
@@ -112,6 +114,8 @@ export interface ResumeItem {
   tpHit?: boolean;
   /** v15.2: its leverage (a 'sure' trade re-opens at the same size) */
   lev?: number;
+  /** v15.3: USD the trade had banked before the pause (it is one trade with the re-opened leg) */
+  bankedUsd?: number;
   at: number;
 }
 
@@ -122,12 +126,15 @@ export interface PracticeAccount {
   peakUsd?: number;
   /** v14: trades closed for the weekend, waiting to be re-opened */
   resume?: ResumeItem[];
+  /** v15.3: finished bot trades per strategy and chart (`ema_cross:1h`): [closed at, total USD incl. parts taken] — the
+   * newest 40 each, so the bot's own record never depends on how many other trades scrolled the history */
+  stats?: Record<string, Array<[number, number]>>;
   open: PracticePosition[];
   closed: ClosedPractice[];
   createdAt: number;
 }
 
-export const newAccount = (startUsd = 1000): PracticeAccount => ({ startUsd, balanceUsd: startUsd, open: [], closed: [], createdAt: Date.now() });
+export const newAccount = (startUsd = 1000): PracticeAccount => ({ startUsd, balanceUsd: startUsd, open: [], closed: [], stats: {}, createdAt: Date.now() });
 
 /** Value of 1 unit of `ccy` in USD from the latest mids. Pure. */
 export function usdPer(ccy: string, mids: Record<string, number>): number | null {
@@ -231,12 +238,42 @@ export function view(a: PracticeAccount, mids: Record<string, number>, halves: R
   return { ...a, equityUsd: Math.round(equity * 100) / 100, marginUsedUsd: Math.round(used * 100) / 100, freeMarginUsd: Math.round((equity - used) * 100) / 100, marginLevelPct: used > 0 ? Math.round((equity / used) * 1000) / 10 : null, positions };
 }
 
-function closePos(a: PracticeAccount, p: PracticePosition, px: number, mids: Record<string, number>, reason: ClosedPractice['reason'], at: number): void {
+/** `strategy:chart` of a bot trade (null for manual ones). */
+export const statKey = (p: Pick<PracticePosition, 'strategy' | 'tf' | 'ref'>) => (p.strategy ? `${p.strategy}:${p.tf ?? (tfOfRef(p.ref) || '1h')}` : null);
+const STATS_KEEP = 40;
+
+/** Older accounts: rebuild the per strategy:chart record from the closed list once. Mutates `a`. */
+function ensureStats(a: PracticeAccount): Record<string, Array<[number, number]>> {
+  if (a.stats) return a.stats;
+  const st: Record<string, Array<[number, number]>> = {};
+  for (const c of [...a.closed].reverse()) {
+    const k = statKey(c);
+    if (!k || c.reason === 'partial' || c.reason === 'weekend') continue;
+    (st[k] = st[k] ?? []).push([c.closedAt, c.pnlUsd]);
+  }
+  for (const k of Object.keys(st)) st[k] = st[k]!.slice(-STATS_KEEP);
+  a.stats = st;
+  return st;
+}
+
+/** Record one finished bot trade (its total, parts included). Mutates `a`. */
+export function recordTrade(a: PracticeAccount, key: string | null, at: number, usd: number): void {
+  if (!key) return;
+  const st = ensureStats(a);
+  st[key] = [...(st[key] ?? []), [at, Math.round(usd * 100) / 100] as [number, number]].slice(-STATS_KEEP);
+}
+
+/** Close a position; a bot trade's total (parts + this close) goes into its record unless it only paused for the
+ * weekend. Returns this close's P&L. Mutates `a`. */
+function closePos(a: PracticeAccount, p: PracticePosition, px: number, mids: Record<string, number>, reason: ClosedPractice['reason'], at: number): number {
+  ensureStats(a); // an older account's record is rebuilt from the closed list BEFORE this close joins it
   const pl = Math.round(pnlUsd(p, px, mids) * 100) / 100;
   a.balanceUsd = Math.round((a.balanceUsd + pl) * 100) / 100;
   a.open = a.open.filter((x) => x.id !== p.id);
   a.closed.unshift({ ...p, exit: px, closedAt: at, pnlUsd: pl, reason });
   a.closed = a.closed.slice(0, 200);
+  if (reason !== 'weekend') recordTrade(a, statKey(p), at, pl + (p.bankedUsd ?? 0));
+  return pl;
 }
 
 /** Close part of a position (a scale-out): realise its P&L, keep the rest open. Mutates `a`. */
@@ -245,6 +282,7 @@ function closePart(a: PracticeAccount, p: PracticePosition, frac: number, px: nu
   const part = { ...p, units, marginUsd: Math.round(p.marginUsd * frac * 100) / 100 };
   const pl = Math.round(pnlUsd(part, px, mids) * 100) / 100;
   a.balanceUsd = Math.round((a.balanceUsd + pl) * 100) / 100;
+  p.bankedUsd = Math.round(((p.bankedUsd ?? 0) + pl) * 100) / 100;
   p.units -= units;
   p.marginUsd = Math.round(p.marginUsd * (1 - frac) * 100) / 100;
   // one id per part (a trade can take part off at +1R and again at its target)
@@ -420,7 +458,7 @@ export interface ExitPlan {
   exitWhen?: string | null;
 }
 
-export interface OpenReq extends ExitPlan { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null }
+export interface OpenReq extends ExitPlan { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null; bankedUsd?: number }
 
 /** The exit-plan fields of a lab trade, ready for `openIn`. Pure. */
 export function planOf(t: LabOpenTrade): ExitPlan {
@@ -438,6 +476,20 @@ export function planOf(t: LabOpenTrade): ExitPlan {
     maxBars: t.maxBars ?? null,
     exitWhen: t.exitWhen ?? null,
   };
+}
+
+/**
+ * The bot's own record per strategy and chart: its newest 40 finished trades of the last 30 days (a dropped strategy
+ * gets another chance once its losing trades are a month old). Pure.
+ */
+export function botRecordOf(a: PracticeAccount, now: number): Record<string, { n: number; pnlUsd: number }> {
+  const out: Record<string, { n: number; pnlUsd: number }> = {};
+  const st = a.stats ?? ensureStats({ ...a, stats: undefined });
+  for (const [k, xs] of Object.entries(st)) {
+    const recent = xs.filter(([t]) => now - t <= 30 * 86_400_000);
+    if (recent.length) out[k] = { n: recent.length, pnlUsd: Math.round(recent.reduce((s, [, v]) => s + v, 0) * 100) / 100 };
+  }
+  return out;
 }
 
 /** v15: what one bot sync saw (for the plan's timeline and "held back" lists). */
@@ -567,8 +619,9 @@ export class Practice {
         for (const x of Object.values(q)) mids[x.id] = x.mid;
         for (const p of [...a.open]) {
           const qq = q[p.pair];
-          closePos(a, p, qq ? (p.side === 1 ? qq.bid : qq.ask) : exitPx(p, mids[p.pair] ?? p.entry), mids, 'weekend', Date.now());
-          if (p.ref) a.resume = [...(a.resume ?? []), { ref: p.ref, ...(p.strategy ? { strategy: p.strategy } : {}), pair: p.pair, side: p.side, ...(p.riskPct !== undefined ? { riskPct: p.riskPct } : {}), scaled: !!p.scaled, tpHit: !!p.tpHit, lev: p.leverage, at: Date.now() }];
+          const leg = closePos(a, p, qq ? (p.side === 1 ? qq.bid : qq.ask) : exitPx(p, mids[p.pair] ?? p.entry), mids, 'weekend', Date.now());
+          if (p.ref) a.resume = [...(a.resume ?? []), { ref: p.ref, ...(p.strategy ? { strategy: p.strategy } : {}), pair: p.pair, side: p.side, ...(p.riskPct !== undefined ? { riskPct: p.riskPct } : {}), scaled: !!p.scaled, tpHit: !!p.tpHit, lev: p.leverage, bankedUsd: Math.round(((p.bankedUsd ?? 0) + leg) * 100) / 100, at: Date.now() }];
+          else recordTrade(a, statKey(p), Date.now(), leg + (p.bankedUsd ?? 0));
         }
         ev.push('weekend: every bot trade closed before the Friday close (re-opened after Monday\'s open if still running)');
       }
@@ -641,6 +694,7 @@ export class Practice {
         ...(req.ref ? { ref: req.ref } : {}),
         ...(req.riskPct !== undefined ? { riskPct: req.riskPct } : {}),
         ...(req.conviction ? { conviction: req.conviction } : {}),
+        ...(req.bankedUsd ? { bankedUsd: req.bankedUsd } : {}),
         ...(req.beAt != null ? { beAt: req.beAt } : {}),
         ...(req.scaleAt != null ? { scaleAt: req.scaleAt, scaleFrac: req.scaleFrac ?? 0.5, scaled: !!req.scaled } : {}),
         ...(req.tpTrailPx != null ? { tpTrailPx: req.tpTrailPx, tpFrac: req.tpFrac ?? 0, tpHit: !!req.tpHit } : {}),
@@ -701,12 +755,16 @@ export class Practice {
         p.trailAtr = lab.trailAtr ?? null;
         p.maxBars = lab.maxBars ?? null;
         p.exitWhen = lab.exitWhen ?? null;
-        // follow the lab's trailing stop: only ever tighter, and only while it is still on the losing side of the price
+        // follow the lab's trailing stop: only ever tighter; when the price is already past it (the lab's own check will
+        // close the trade at its next candle) close now instead of keeping the looser stop
         if (p.stop !== null && (p.side === 1 ? lab.stop > p.stop : lab.stop < p.stop)) {
           const px = pxNow(p.pair, p.side);
           if (px === null || (p.side === 1 ? lab.stop < px : lab.stop > px)) {
             p.stop = lab.stop;
             moved++;
+          } else {
+            closePos(a, p, px, mids, 'stop', Date.now());
+            events.push(`closed ${p.pair} (${p.strategy}): the price is already past its trailing stop`);
           }
         }
       }
@@ -731,10 +789,15 @@ export class Practice {
             keep.push(r);
             continue;
           }
-          if (Date.now() - r.at > 4 * 86_400_000) continue;
+          const done = () => recordTrade(a, r.strategy ? `${r.strategy}:${tfOfRef(r.ref) || '1h'}` : null, Date.now(), r.bankedUsd ?? 0);
+          if (Date.now() - r.at > 4 * 86_400_000) {
+            done();
+            continue;
+          }
           const lab = byRef.get(r.ref);
           if (!lab) {
             events.push(`${r.pair} (${r.strategy ?? 'bot'}) ended over the weekend, not re-opened`);
+            done();
             continue;
           }
           if (!canOpen) {
@@ -750,6 +813,7 @@ export class Practice {
           const dist = (entry - lab.stop) * r.side;
           if (!(dist > 0) || (lab.target !== null && (r.side === 1 ? entry >= lab.target : entry <= lab.target))) {
             events.push(`${r.pair} (${r.strategy ?? 'bot'}) moved past its stop / target over the weekend, not re-opened`);
+            done();
             continue;
           }
           const v = view(a, mids);
@@ -758,7 +822,7 @@ export class Practice {
           const rlev = r.lev ?? BOT.leverage;
           const margin = Math.min((v.equityUsd * risk) / 100 / (dist / entry) / rlev, v.freeMarginUsd * SIZING.marginShare);
           if (margin < 1) continue;
-          const res = await this.openIn(a, { pair: r.pair, side: r.side, marginUsd: margin, leverage: rlev, stop: lab.stop, target: lab.target, ...(r.strategy ? { strategy: r.strategy } : {}), ref: r.ref, riskPct: Math.round(risk * 100) / 100, ...planOf(lab), scaled: !!r.scaled || !!lab.scaled, tpHit: !!r.tpHit || !!lab.tpHit });
+          const res = await this.openIn(a, { pair: r.pair, side: r.side, marginUsd: margin, leverage: rlev, stop: lab.stop, target: lab.target, ...(r.strategy ? { strategy: r.strategy } : {}), ref: r.ref, riskPct: Math.round(risk * 100) / 100, ...planOf(lab), scaled: !!r.scaled || !!lab.scaled, tpHit: !!r.tpHit || !!lab.tpHit, bankedUsd: r.bankedUsd ?? 0 });
           events.push(res.ok ? `re-opened ${r.side === 1 ? 'long' : 'short'} ${r.pair} (${r.strategy ?? 'bot'}) after the weekend` : `could not re-open ${r.pair}: ${res.error}`);
         }
         a.resume = keep;
@@ -866,19 +930,15 @@ export class Practice {
     });
   }
 
-  /** Results of the bot account per strategy and chart (`ema_cross:1h`), to drop what loses in real time. */
-  async botResults(): Promise<Record<string, { n: number; pnlUsd: number }>> {
+  /** v15.3: refs of the bot's open trades (no prices needed). */
+  async heldRefs(): Promise<string[]> {
     const a = await this.load('bot');
-    const out: Record<string, { n: number; pnlUsd: number }> = {};
-    for (const c of a.closed) {
-      if (!c.strategy) continue;
-      const k = `${c.strategy}:${c.tf ?? (tfOfRef(c.ref) || '1h')}`;
-      out[k] = out[k] ?? { n: 0, pnlUsd: 0 };
-      // a scale-out or a weekend pause is part of one trade: its money counts, not as an extra trade
-      if (c.reason !== 'partial' && c.reason !== 'weekend') out[k].n++;
-      out[k].pnlUsd += c.pnlUsd;
-    }
-    return out;
+    return a.open.map((p) => p.ref).filter((r): r is string => !!r);
+  }
+
+  /** Results of the bot account per strategy and chart (`ema_cross:1h`), to drop what loses in real time. */
+  async botResults(now = Date.now()): Promise<Record<string, { n: number; pnlUsd: number }>> {
+    return botRecordOf(await this.load('bot'), now);
   }
 
   async close(id: string | 'all', acct: AcctId = 'me'): Promise<{ ok: boolean; error?: string }> {
