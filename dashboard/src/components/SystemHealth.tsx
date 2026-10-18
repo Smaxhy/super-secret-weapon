@@ -5,9 +5,9 @@
 import { useApi } from '../hooks/useApi';
 import { duration, STRATEGY_LABEL } from '../lib/format';
 import { Icon } from './Icon';
-import { Badge, Card, Funnel, RankedBars, Rows, Row, SectionLabel } from './ui';
+import { Badge, Card, Funnel, Rows, Row, SectionLabel, StatTile } from './ui';
 
-interface SystemData {
+export interface SystemData {
   version: string;
   startedAt: string;
   uptimeSec: number;
@@ -37,7 +37,7 @@ interface SystemData {
   };
 }
 
-interface StrategyFunnel {
+export interface StrategyFunnel {
   strategy: string;
   on: boolean | null;
   checked: number;
@@ -98,96 +98,32 @@ export function HealthBanner() {
   );
 }
 
-export function SystemPanel() {
-  const { data, error } = useApi<SystemData>('/api/system', 30_000);
-  const { data: upd } = useApi<UpdateInfo>('/api/update', 120_000);
+export const isBotBehind = botBehind;
+export type { UpdateInfo };
+
+/** Scanner board, top: nine live tiles (stream speed, last hour of buying, tape, wallet book, usage). */
+export function StatusStrip({ data, tradesPerMin, launchesPerMin }: { data: SystemData | null; tradesPerMin: number | null; launchesPerMin: number | null }) {
+  const t = data?.trading;
+  const helius = data?.usage?.providers.helius;
   const usageWarn = !!data?.usage && Object.values(data.usage.providers).some((p) => p.softLimitHit);
+  const k = (n: number | null | undefined) => (n === null || n === undefined ? '—' : n >= 10_000 ? `${(n / 1000).toFixed(1)}k` : n.toLocaleString());
   return (
-    <div className="flex min-w-0 flex-col gap-4">
-      <Card title="Bot health" subtitle="Is it running, up to date and not overloaded.">
-        {error && <p className="text-sm text-down">{error}</p>}
-        {data && (
-          <>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Tile label="Running for" value={duration(data.uptimeSec)} />
-              <Tile label="Restarts (24h)" value={data.restarts24h ?? '—'} warn={data.crashes24h != null ? data.crashes24h >= 3 : (data.restarts24h ?? 0) >= 3} sub={data.crashes24h != null ? `${data.crashes24h} crash${data.crashes24h === 1 ? '' : 'es'}, rest = updates` : undefined} />
-              <Tile label="Memory" value={`${data.memory.rssMb} MB`} sub={data.redisMemoryMb !== null ? `Redis ${data.redisMemoryMb} MB` : undefined} />
-              <Tile label="Lag" value={data.eventLoopLagMs !== null ? `${data.eventLoopLagMs} ms` : '—'} warn={(data.eventLoopLagMs ?? 0) > 1000} />
-            </div>
-            <Rows className="mt-4">
-              <Row label="Bot version" value={<span className={botBehind(upd) ? 'text-down' : ''}>{data.version}</span>} sub={botBehind(upd) ? `newest ${upd!.last!.remote}` : versionMismatch(data.version) ? `up to date (site ${SITE_VERSION})` : 'up to date'} />
-              {data.tape && (
-                <Row
-                  label="Tape (replay recording)"
-                  value={data.tape.enabled ? `${data.tape.perMin.toLocaleString()} / min` : 'off'}
-                  tone={data.tape.enabled && data.tape.failed > 0 && data.tape.written === 0 ? 'down' : undefined}
-                  sub={data.tape.enabled ? `${data.tape.daysOnDisk ?? 0} days on disk${data.tape.rowsOnDisk ? ` · ~${(data.tape.rowsOnDisk / 1e6).toFixed(1)}M rows` : ''}${data.tape.dropped ? ` · ${data.tape.dropped.toLocaleString()} dropped` : ''}${data.tape.failed ? ` · ${data.tape.failed.toLocaleString()} failed writes` : ''}` : undefined}
-                />
-              )}
-              {data.walletBook && <Row label="Wallet book" value={data.walletBook.enabled ? `${data.walletBook.wallets.toLocaleString()} wallets` : 'off'} sub={data.walletBook.enabled ? `${data.walletBook.proven} proven · ${data.walletBook.dumpers} known dumpers` : undefined} />}
-              {data.usage && (
-                <Row
-                  label="Usage today"
-                  tone={usageWarn ? 'down' : undefined}
-                  value={`Helius ${data.usage.providers.helius?.used.toLocaleString() ?? 0} / ${data.usage.providers.helius?.budget ? data.usage.providers.helius.budget.toLocaleString() : '∞'}`}
-                  sub={`FluxRPC ${data.usage.providers.flux?.used.toLocaleString() ?? 0} / ${data.usage.providers.flux?.budget ? data.usage.providers.flux.budget.toLocaleString() : '∞'}${usageWarn ? ' — optional lookups paused until midnight UTC' : ''}`}
-                />
-              )}
-              {data.lastExit && <Row label="Last stop" value={<span className={crashed(data.lastExit.reason) ? 'text-down' : 'text-ink-2'}>{data.lastExit.reason}</span>} sub={new Date(data.lastExit.at).toLocaleString()} />}
-            </Rows>
-            {data.recentErrors.length > 0 && (
-              <div className="mt-4">
-                <SectionLabel>Recent errors</SectionLabel>
-                <ul className="space-y-1 text-xs text-muted">
-                  {data.recentErrors.map((e) => (
-                    <li key={e.at + e.message} className="break-words">
-                      <span className="tabular text-ink-2">{new Date(e.at).toLocaleTimeString()}</span> — {e.message}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </>
-        )}
-      </Card>
-      {data?.trading && <WhyNoTrades t={data.trading} />}
-    </div>
+    <section aria-label="Live status" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-9">
+      <StatTile compact label="Trades / min" value={k(tradesPerMin)} sub="on the live stream" tone={tradesPerMin === 0 ? 'down' : undefined} />
+      <StatTile compact label="Launches / min" value={launchesPerMin === null ? '—' : launchesPerMin.toFixed(1)} sub="new coins" />
+      <StatTile compact label="Checked (1 h)" value={k(t?.lastHour.evaluated)} sub="coins scored" />
+      <StatTile compact label="Signals (1 h)" value={k(t?.lastHour.buySignals)} sub="passed every rule" />
+      <StatTile compact label="Bought (1 h)" value={k(t?.lastHour.entries)} sub={t && t.lastHour.entries === 0 ? 'no buys' : 'entries'} tone={t && t.lastHour.entries > 0 ? 'up' : undefined} />
+      <StatTile compact label="Last buy" value={t?.lastEntryAt ? duration(t.minutesSinceEntry * 60) : '—'} sub={t?.lastEntryAt ? 'ago' : 'none yet'} tone={t && t.minutesSinceEntry >= 60 ? 'warn' : undefined} />
+      <StatTile compact label="Tape" value={data?.tape ? (data.tape.enabled ? `${k(data.tape.perMin)}/min` : 'off') : '—'} sub={data?.tape?.enabled ? `${data.tape.daysOnDisk ?? 0} days on disk` : 'replay recording'} tone={data?.tape?.enabled && data.tape.failed > 0 && data.tape.written === 0 ? 'down' : undefined} />
+      <StatTile compact label="Wallet book" value={data?.walletBook ? (data.walletBook.enabled ? k(data.walletBook.wallets) : 'off') : '—'} sub={data?.walletBook?.enabled ? `${data.walletBook.proven} proven · ${data.walletBook.dumpers} dumpers` : 'wallets known'} />
+      <StatTile compact label="Helius today" value={helius ? k(helius.used) : '—'} sub={helius ? (helius.budget ? `of ${k(helius.budget)}${usageWarn ? ' · lookups paused' : ''}` : 'no budget set') : 'requests'} tone={usageWarn ? 'warn' : undefined} />
+    </section>
   );
 }
 
-function WhyNoTrades({ t }: { t: NonNullable<SystemData['trading']> }) {
-  const quiet = t.lastHour.entries === 0;
-  return (
-    <>
-      <Card title="Buying (last hour)" subtitle={t.summary} action={quiet ? <Badge tone="warn">no buys</Badge> : <Badge tone="up">{t.lastHour.entries} bought</Badge>}>
-        <Funnel
-          steps={[
-            { label: 'checked', n: t.lastHour.evaluated },
-            { label: 'buy signals', n: t.lastHour.buySignals },
-            { label: 'bought', n: t.lastHour.entries, tone: t.lastHour.entries > 0 ? 'up' : 'warn' },
-          ]}
-        />
-        {t.lastEntryAt && <p className="mt-3 text-xs text-muted">Last buy {duration(t.minutesSinceEntry * 60)} ago.</p>}
-        {t.strategies && t.strategies.length > 0 && <StrategyFunnels rows={t.strategies} />}
-      </Card>
-      <div className="grid gap-4 lg:grid-cols-2">
-        {t.topSkips.length > 0 && (
-          <Card title="Why coins were skipped" subtitle="The rule each coin failed first, most common on top.">
-            <RankedBars rows={t.topSkips.map((r) => ({ label: r.reason, count: r.count }))} />
-          </Card>
-        )}
-        {t.topRefusals.length > 0 && (
-          <Card title="Why buy signals were refused" subtitle="Coins that passed every rule but the trader said no.">
-            <RankedBars rows={t.topRefusals.map((r) => ({ label: r.reason, count: r.count }))} tone="muted" />
-          </Card>
-        )}
-      </div>
-    </>
-  );
-}
-
-/** One block per strategy: is it running and how far its coins got (checked → passed rules → buy signal → bought). */
-function StrategyFunnels({ rows }: { rows: StrategyFunnel[] }) {
+/** One horizontal stepper per strategy, in a grid: is it on, and how far its coins got. */
+export function StrategyFunnelGrid({ rows }: { rows: StrategyFunnel[] }) {
   const verdict = (r: StrategyFunnel): { text: string; tone: 'neutral' | 'up' | 'warn' } => {
     if (r.on === false) return { text: 'switched off', tone: 'neutral' };
     if (r.bought > 0) return { text: 'buying', tone: 'up' };
@@ -207,47 +143,71 @@ function StrategyFunnels({ rows }: { rows: StrategyFunnel[] }) {
     if (r.refused) parts.push(`${r.refused} refused`);
     return parts.join(' · ');
   };
+  const sorted = [...rows].sort((a, b) => Number(b.on !== false) - Number(a.on !== false) || b.checked - a.checked);
   return (
-    <div className="mt-5">
-      <SectionLabel>Per strategy</SectionLabel>
-      <ul className="divide-y divide-line">
-        {rows.map((r) => {
-          const v = verdict(r);
-          const h = held(r);
-          return (
-            <li key={r.strategy} className={`py-3 first:pt-0 last:pb-0 ${r.on === false ? 'opacity-60' : ''}`}>
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="font-medium text-ink">{STRATEGY_LABEL[r.strategy] ?? r.strategy}</span>
-                <Badge tone={v.tone}>{v.text}</Badge>
-              </div>
-              <Funnel
-                steps={[
-                  { label: 'checked', n: r.checked },
-                  { label: 'rules ok', n: r.rulesOk },
-                  { label: 'signal', n: r.signal },
-                  { label: 'bought', n: r.bought, tone: r.bought ? 'up' : undefined },
-                ]}
-              />
-              {h && <div className="mt-2 text-xs text-muted">{h}</div>}
-              {r.topSkips && r.topSkips.length > 0 && r.rulesOk < r.checked && (
-                <div className="mt-2 text-xs text-muted">
-                  <span className="text-ink-2">Skipped for:</span> {r.topSkips.map((x) => `${x.reason} ×${x.count}`).join(' · ')}
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </div>
+    <ul className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+      {sorted.map((r) => {
+        const v = verdict(r);
+        const h = held(r);
+        return (
+          <li key={r.strategy} className={`card min-w-0 p-4 ${r.on === false ? 'opacity-60' : ''}`}>
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <span className="font-semibold text-ink">{STRATEGY_LABEL[r.strategy] ?? r.strategy}</span>
+              <Badge tone={v.tone}>{v.text}</Badge>
+            </div>
+            <Funnel
+              steps={[
+                { label: 'checked', n: r.checked },
+                { label: 'rules ok', n: r.rulesOk },
+                { label: 'signal', n: r.signal },
+                { label: 'bought', n: r.bought, tone: r.bought ? 'up' : undefined },
+              ]}
+            />
+            {h && <div className="mt-2 text-xs text-muted">{h}</div>}
+            {r.topSkips && r.topSkips.length > 0 && r.rulesOk < r.checked && (
+              <ul className="mt-2 space-y-0.5 text-xs text-muted">
+                {r.topSkips.slice(0, 3).map((x) => (
+                  <li key={x.reason} className="flex justify-between gap-2">
+                    <span className="min-w-0 truncate" title={x.reason}>{x.reason}</span>
+                    <span className="tabular shrink-0">×{x.count}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
-function Tile({ label, value, sub, warn }: { label: string; value: React.ReactNode; sub?: string; warn?: boolean }) {
+/** Bot process details: version, restarts, memory, lag, last stop, recent errors. */
+export function SystemDetails({ data, upd }: { data: SystemData; upd: UpdateInfo | null | undefined }) {
   return (
-    <div className="min-w-0 rounded-xl border border-line bg-surface-2/50 px-3 py-2.5">
-      <div className="truncate text-xs font-medium text-muted">{label}</div>
-      <div className={`tabular mt-1 truncate text-lg font-semibold leading-tight ${warn ? 'text-down' : 'text-ink'}`}>{value}</div>
-      {sub && <div className="mt-0.5 truncate text-xs text-muted">{sub}</div>}
-    </div>
+    <Card title="Bot process" subtitle="Is it running, up to date and not overloaded.">
+      <Rows>
+        <Row label="Running for" value={duration(data.uptimeSec)} />
+        <Row label="Bot version" value={<span className={botBehind(upd) ? 'text-down' : ''}>{data.version}</span>} sub={botBehind(upd) ? `newest ${upd!.last!.remote}` : versionMismatch(data.version) ? `up to date (site ${SITE_VERSION})` : 'up to date'} />
+        <Row label="Restarts (24 h)" value={data.restarts24h ?? '—'} tone={(data.crashes24h ?? 0) >= 3 ? 'down' : undefined} sub={data.crashes24h != null ? `${data.crashes24h} crash${data.crashes24h === 1 ? '' : 'es'}, rest = updates` : undefined} />
+        <Row label="Memory" value={`${data.memory.rssMb} MB`} sub={data.redisMemoryMb !== null ? `Redis ${data.redisMemoryMb} MB` : undefined} />
+        <Row label="Event-loop lag" value={data.eventLoopLagMs !== null ? `${data.eventLoopLagMs} ms` : '—'} tone={(data.eventLoopLagMs ?? 0) > 1000 ? 'down' : undefined} />
+        {data.usage && (
+          <Row label="FluxRPC today" value={`${data.usage.providers.flux?.used.toLocaleString() ?? 0} / ${data.usage.providers.flux?.budget ? data.usage.providers.flux.budget.toLocaleString() : '∞'}`} />
+        )}
+        {data.lastExit && <Row label="Last stop" value={<span className={crashed(data.lastExit.reason) ? 'text-down' : 'text-ink-2'}>{data.lastExit.reason}</span>} sub={new Date(data.lastExit.at).toLocaleString()} />}
+      </Rows>
+      {data.recentErrors.length > 0 && (
+        <div className="mt-4">
+          <SectionLabel>Recent errors</SectionLabel>
+          <ul className="space-y-1 text-xs text-muted">
+            {data.recentErrors.map((e) => (
+              <li key={e.at + e.message} className="break-words">
+                <span className="tabular text-ink-2">{new Date(e.at).toLocaleTimeString()}</span> {e.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Card>
   );
 }

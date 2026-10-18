@@ -48,6 +48,7 @@ export function TokenDetail() {
         ← Live feed
       </Link>
       <PageHeader
+        keepTitle
         title={`${d.symbol} · ${d.name}`}
         subtitle={`Launched ${ago(d.createdAt)} · status ${d.status.toLowerCase()}`}
         action={

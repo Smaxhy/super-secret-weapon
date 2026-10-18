@@ -99,6 +99,8 @@ export interface EvaluationEvent {
   creator?: string | null;
   deployerClass?: string | null;
   deployerNote?: string | null;
+  /** v11.11: a Telegram link anywhere in the socials / description */
+  telegram?: boolean;
 }
 
 /** Pure: the bus's trade event (one 'event' with type 'trade') → a journal line. */
@@ -228,6 +230,7 @@ export class ObsidianSync {
     c.dumpCrew = c.dumpCrew || ev.dumpCrew;
     c.provenCrowd = c.provenCrowd || ev.provenCrowd;
     if (ev.creator) c.creator = ev.creator;
+    if (ev.telegram !== undefined) c.telegram = ev.telegram;
     if (ev.deployerClass) {
       c.deployerClass = ev.deployerClass;
       c.deployerNote = ev.deployerNote ?? c.deployerNote ?? null;

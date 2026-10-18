@@ -35,6 +35,10 @@ export interface LabVariant {
   name: string;
   /** Tests something only the owner may switch on (e.g. a stop outside the 10–20% band): reported, never auto-applied. */
   ownerOnly?: boolean;
+  /** Tested and reported, never switched on automatically (e.g. the v11.11 early ladder). */
+  noAutoApply?: boolean;
+  /** Only these strategies' signals open a trade for this variant (absent = every strategy). */
+  strategies?: readonly string[];
   /** Partial exit settings layered over the live exit config (deep-merged; arrays replace). */
   exit: Record<string, unknown>;
 }
@@ -122,6 +126,11 @@ export function pickBest(stats: readonly LabStats[], current: string, c: { minTr
   return best;
 }
 
+/** Pure: may the lab switch the live exits to this variant on its own? (owner-only / no-auto-apply variants: never) */
+export function autoApplicable(v: Pick<LabVariant, 'ownerOnly' | 'noAutoApply'>): boolean {
+  return !v.ownerOnly && !v.noAutoApply;
+}
+
 /** The variant's exit rules: the live rules with the variant's settings layered on top. */
 export function variantRules(live: ExitRules, v: Pick<LabVariant, 'exit' | 'ownerOnly'>): ExitRules {
   const merged = deepMerge(live, v.exit) as ExitRules;
@@ -185,7 +194,8 @@ export class StrategyLab {
     if (now - (this.lastSignal.get(sk) ?? 0) < SIGNAL_COOLDOWN_MS) return;
     this.lastSignal.set(sk, now);
     if (this.lastSignal.size > 20_000) for (const [k, t] of this.lastSignal) if (now - t > SIGNAL_COOLDOWN_MS) this.lastSignal.delete(k);
-    for (const v of c.variants) {
+    for (const v of c.variants as LabVariant[]) {
+      if (v.strategies && !v.strategies.includes(s.strategy)) continue;
       this.book.add({ key: `${v.id}:${s.mint}:${s.strategy}`, mint: s.mint, symbol: s.symbol, strategy: s.strategy, onAmm: s.onAmm, priceSol: s.priceSol, tag: { variant: v.id, kind: s.kind } }, now);
     }
   }
@@ -250,7 +260,7 @@ export class StrategyLab {
       const current = applied?.id ?? c.liveVariant;
       const stats: LabStats[] = [];
       // Owner-only variants (e.g. a stop outside the owner's band) are reported, never applied.
-      for (const v of c.variants as LabVariant[]) if (!v.ownerOnly) stats.push(labStats(v.id, v.name, (await this.results(v.id)).filter((r) => r.kind === 'buy')));
+      for (const v of c.variants as LabVariant[]) if (autoApplicable(v)) stats.push(labStats(v.id, v.name, (await this.results(v.id)).filter((r) => r.kind === 'buy')));
       const best = pickBest(stats, current, c);
       if (!best) return null;
       const v = (c.variants as LabVariant[]).find((x) => x.id === best.id)!;

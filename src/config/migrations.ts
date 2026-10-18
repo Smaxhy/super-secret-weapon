@@ -11,6 +11,7 @@
 import type { Prisma } from '@prisma/client';
 import { moduleLogger } from '../lib/logger';
 import { prisma } from '../lib/prisma';
+import { DEFAULT_CONFIG } from './default';
 
 const log = moduleLogger('config-migrations');
 export const VERSION_KEY = '_version';
@@ -593,6 +594,21 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['exit', ['holderGrowth'], { enabled: true, minMultiple: 1.15, collapsePct: 35, holdSec: 45, minSellerSharePct: 45, sellPct: 50, tightenTrailFactor: 0.7, fullTrailFromMultiple: 1.5 }],
       ['sniper', ['requireDeployerNotSerial'], true],
     ],
+  },
+  {
+    version: 42,
+    note: 'v11.11 research ports: first-buyers-still-holding rule (off), Holder Rewards time factor 1.5, lab variant E (early ladder) into a saved lab row',
+    set: [
+      ['wallets', ['entry', 'maxFirstBuyersHoldingPct'], 0],
+      ['wallets', ['entry', 'firstBuyersMinBagPct'], 5],
+      ['exit', ['holderRewardsHoldFactor'], 1.5],
+      ['lab', ['variants'], structuredClone(DEFAULT_CONFIG.lab.variants) as unknown],
+    ],
+  },
+  {
+    version: 43,
+    note: 'v11.12: momentum gate no longer needs 6% under the 10-min high (owner: 11 h without a buy signal; it was the #1 migrated refusal ×128 and refused every coin making new highs — the run caps still stop chasing, dip-only still handles pullbacks)',
+    set: [['momentumGate', ['minOffHighPct'], 0]],
   },
 ];
 

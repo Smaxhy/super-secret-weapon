@@ -1,7 +1,7 @@
 /** DexScreener trending coins (Scanner page): last hour or last 5 minutes, MC, volume / change, DEX paid, tracked by the bot. */
 import { useState } from 'react';
 import { useApi } from '../hooks/useApi';
-import { Card, Empty } from './ui';
+import { Card, Empty, Tabs } from './ui';
 
 interface Row {
   mint: string;
@@ -29,27 +29,13 @@ export function DexTrending() {
     win === 'm5'
       ? (data?.trending ?? []).filter((c) => c.hot5mRank != null).sort((a, b) => (a.hot5mRank ?? 0) - (b.hot5mRank ?? 0))
       : (data?.trending ?? []).filter((c) => c.rank <= 30);
-  const tab = (w: 'm5' | 'h1', label: string) => (
-    <button type="button" onClick={() => setWin(w)} className={`rounded-lg px-2.5 py-1 text-xs ${win === w ? 'bg-accent/15 font-semibold text-accent' : 'text-ink-2'}`}>
-      {label}
-    </button>
-  );
   return (
-    <Card title="DexScreener trending">
-      <p className="mb-2 text-sm text-ink-2">
-        Checked every 30 s. "Last 5 min" = coins popping up right now (5-min volume, trades, rising price, mostly buys). Tracked coins that show up get checked right
-        away; DEX paid and trending add points to the score.
-      </p>
-      <div className="mb-2 flex gap-1">
-        {tab('m5', 'Last 5 min')}
-        {tab('h1', 'Last hour')}
-        {data?.updatedAt && <span className="ml-auto self-center text-xs text-muted">updated {new Date(data.updatedAt).toLocaleTimeString()}</span>}
-      </div>
+    <Card title="DexScreener" subtitle={data?.updatedAt ? `Checked every 30 s · updated ${new Date(data.updatedAt).toLocaleTimeString()}` : 'Checked every 30 s'} action={<Tabs label="DexScreener window" className="w-[11rem]" tabs={[{ key: 'm5', label: '5 min' }, { key: 'h1', label: '1 hour' }]} value={win} onChange={setWin} />}>
       {(error || data?.error) && <p className="text-sm text-down">{error ?? data?.error}</p>}
       {data && rows.length > 0 ? (
         <ul className="divide-y divide-line text-sm">
-          {rows.slice(0, 20).map((c) => (
-            <li key={c.mint} className="flex min-w-0 items-center justify-between gap-2 py-1.5">
+          {rows.slice(0, 15).map((c) => (
+            <li key={c.mint} className="flex min-h-11 min-w-0 items-center justify-between gap-2 py-1.5">
               <span className="flex min-w-0 items-center gap-2">
                 <span className="w-6 shrink-0 tabular-nums text-muted">#{win === 'm5' ? c.hot5mRank : c.rank}</span>
                 {c.url ? (
@@ -63,9 +49,9 @@ export function DexTrending() {
                 {!c.dexPaid?.paid && c.dexPaid?.cto && <span className="shrink-0 rounded border border-line px-1 text-xs text-ink-2">CTO</span>}
                 {c.tracked && <span className="shrink-0 text-xs text-accent" title="the bot is watching this coin">● tracked</span>}
               </span>
-              <span className="shrink-0 text-right tabular-nums text-ink-2">
-                {k(c.marketCapUsd)} · vol {k(win === 'm5' ? (c.volumeM5Usd ?? 0) : c.volumeH1Usd)} ·{' '}
+              <span className="shrink-0 text-right text-xs tabular-nums text-ink-2">
                 <Change pct={win === 'm5' ? (c.priceChangeM5Pct ?? 0) : c.priceChangeH1Pct} />
+                <span className="block text-[11px] text-muted">{k(c.marketCapUsd)} · vol {k(win === 'm5' ? (c.volumeM5Usd ?? 0) : c.volumeH1Usd)}</span>
               </span>
             </li>
           ))}

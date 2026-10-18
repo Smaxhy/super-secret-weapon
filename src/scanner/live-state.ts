@@ -163,6 +163,11 @@ export interface LiveTokenView {
   /** Raw tokens the dev bought / sold in total. */
   devBought: bigint;
   devSold: bigint;
+  /** v11.11: the creator's launch buy (lamports / raw tokens); null = not seen (older coin or adopted). */
+  devFirstBuyLamports?: bigint | null;
+  devFirstBuyTokens?: bigint | null;
+  /** v11.11: Holder Rewards coin (creator fees paid to holders) from the last curve-account read. */
+  isHolderReward?: boolean;
   /**
    * Adopted after it migrated (swing trading bigger coins): we never saw its launch, so the trade
    * counters and the holder ledger only cover trades since `adoptedAtMs` — holder %, dev and bundle
@@ -662,6 +667,11 @@ export class LiveState {
     p.pfadd(hll, t.user);
     if (info.creator && t.user === info.creator) {
       p.hincrby(live, t.isBuy ? 'devBought' : 'devSold', t.tokens.toString());
+      // v11.11: the creator's launch buy (same tx / first 2 s) — a launch-size feature for the learners.
+      if (t.isBuy && t.timestamp - info.createdSec <= 2) {
+        p.hsetnx(live, 'devFirstBuyLam', t.lamports.toString());
+        p.hsetnx(live, 'devFirstBuyTok', t.tokens.toString());
+      }
     } else if (t.isBuy && t.timestamp - info.createdSec <= EARLY_WINDOW_SECONDS) {
       p.sadd(key.early(mint), t.user);
       p.expire(key.early(mint), LIVE_STATE_TTL_SECONDS);
@@ -796,6 +806,9 @@ export class LiveState {
       earlyBuyers: earlyRes[1] ?? [],
       devBought: big(h.devBought),
       devSold: big(h.devSold),
+      devFirstBuyLamports: h.devFirstBuyLam ? BigInt(h.devFirstBuyLam) : null,
+      devFirstBuyTokens: h.devFirstBuyTok ? BigInt(h.devFirstBuyTok) : null,
+      isHolderReward: h.holderReward === '1',
       adopted: h.adopted === '1',
       adoptedAtMs: h.adoptedAt ? Number(h.adoptedAt) : null,
     };

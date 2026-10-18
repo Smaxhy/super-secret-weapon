@@ -79,13 +79,13 @@ export function LiveFeed() {
       />
       <div className="no-scrollbar -mx-4 mb-4 flex gap-2 overflow-x-auto px-4 sm:mx-0 sm:flex-wrap sm:px-0" role="group" aria-label="Filter">
         {FILTERS.map(([k, l]) => (
-          <Chip key={k} active={filter === k} onClick={() => setFilter(k)}>
+          <Chip key={k} active={filter === k} onClick={() => setFilter(k)} count={k === 'all' ? items.length : items.filter((i) => i.feedStatus === k).length}>
             {l}
           </Chip>
         ))}
       </div>
       {error && <ErrorBox message={error} />}
-      {loading ? <Loading /> : shown.length ? <div className="flex flex-col gap-2">{shown.map((d) => <TokenCard key={d.mint} d={d} />)}</div> : <Empty>Nothing here yet.</Empty>}
+      {loading ? <Loading kind="rows" /> : shown.length ? <div className="grid grid-cols-[minmax(0,1fr)] gap-2 lg:grid-cols-2 2xl:grid-cols-3">{shown.map((d) => <TokenCard key={d.mint} d={d} />)}</div> : <Empty>Nothing here yet.</Empty>}
     </>
   );
 }

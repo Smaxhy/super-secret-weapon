@@ -19,7 +19,7 @@ import { organicFlow, scanVerdict } from '../scanner/migrated-scanner';
 import { priceShape, staircase } from './price-shape';
 import { timeframeFail, timeframes } from './timeframes';
 import { paFeatures, priceActionFor } from './price-action';
-import { poolFeeBps } from '../lib/pumpfun';
+import { poolFeeBps, PUMP_TOKEN_DECIMALS } from '../lib/pumpfun';
 import { aiRuleVerdict, flattenFeatures } from '../learner/ai-coach';
 import { autopsyTuneFor, strategyEdgeStatsFor } from '../learner/loss-autopsy';
 import { timingNow } from '../learner/timing';
@@ -77,6 +77,7 @@ import { fetchRugCheck, rugCheckVerdict, type RugCheckVerdict } from '../integra
 import { adaptiveStopMultiplier, mcAgeStopMultiplier, DEFAULT_ADAPTIVE_STOP } from '../executor/adaptive-stop';
 import { edgeGateVerdict, probeTurn, DEFAULT_EDGE_GATE } from './edge-gate';
 import { sniperEntryFails } from './sniper';
+import { launchFeatures } from './launch-features';
 import { sniperOn } from '../config/sniper';
 import { crowdQuality, type CrowdQuality } from './crowd-quality';
 import type { DeployerBook, DeployerView } from '../learner/deployer-book';
@@ -512,6 +513,12 @@ export class Evaluator {
     const pressure = this.crowd ? flowPressure(this.crowd.trades(mint), Date.now(), prCfg) : null;
     const prWhy = STRATEGY.name === 'SMART_MONEY_COPY' && job.data.wallet && !kolFollow && cfg.copy.skipDipWait === true ? null : pressureFail(pressure, prCfg);
     if (prWhy) ruleFails = [...ruleFails, prWhy];
+    // v11.11 launch covariates (Telegram link, the creator's launch buy) — features only, the learners decide.
+    const launch = launchFeatures({
+      telegram: token.telegram, website: token.website, description: token.description,
+      initVSolLamports: view.curve.initialVirtualSolReserves, initVTokRaw: view.curve.initialVirtualTokenReserves, supplyRaw: view.curve.totalSupply,
+      devBuyLamports: view.devFirstBuyLamports ?? null, devBuyTokens: view.devFirstBuyTokens ?? null, devBoughtRaw: view.devBought, adopted: !!view.adopted || !token.creator,
+    });
     // v11.6 wallet engine: WHO is buying — proven wallets lead → points; a dump crew inside / dumpers buying → no buy.
     // Funders come from the funding-graph cache only (never a new RPC call).
     const wbCfg = cfg.wallets ?? DEFAULT_CONFIG.wallets;
@@ -523,7 +530,7 @@ export class Evaluator {
       cqBuyers = [...new Set(cqTrades.filter((t) => t.buy).map((t) => t.w))].slice(0, 80);
       const launchMs = view.createdAtMs > 0 ? view.createdAtMs : null;
       const funders = await this.cachedFunders(cqTrades, Date.now(), launchMs);
-      cq = crowdQuality({ trades: cqTrades, now: Date.now(), launchMs, creator: token.creator, supply: Number(view.curve.totalSupply || 1_000_000_000_000_000n) }, (w) => this.walletBook!.get(w), (w) => funders.get(w) ?? null, wbCfg, cqCfg);
+      cq = crowdQuality({ trades: cqTrades, now: Date.now(), launchMs, creator: token.creator, supply: Number(view.curve.totalSupply || 1_000_000_000_000_000n) / 10 ** PUMP_TOKEN_DECIMALS }, (w) => this.walletBook!.get(w), (w) => funders.get(w) ?? null, wbCfg, cqCfg);
       if (cq?.fails.length) ruleFails = [...ruleFails, ...cq.fails];
       // Deployer-funded launch snipers are dumpers everywhere from now on (wallet book + rugger memory).
       if (cq?.deployerSniperWallets.length) {
@@ -742,7 +749,7 @@ export class Evaluator {
           combinedScore: result.score,
           decision,
           reasons,
-          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, trusted: kolAct.buyers.filter((b) => b.weight >= (kolCfg.trustedMinWeight ?? Infinity)).length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, copied: job.data.wallet ? 1 : 0, owner: { profile: owner.profile, fails: owner.fails }, pressure, wallets: cq, deployer: deployer ? { class: deployer.class, launches: deployer.launches, graduated: deployer.graduated, diedFastPct: deployer.diedFastPct, rugs: deployer.rugs, linked: deployer.linked, launchesToday: deployer.launchesToday, daysSinceLastLaunch: deployer.daysSinceLastLaunch, points: deployer.points } : null, mood: moodNow(), market: market.raw, shape, tf, pa, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, momentumGate: mgWhy ? { blocked: true, reason: mgWhy } : null, edgeGate: egInfo, sniper: sniperInfo, entryQuality: eq.verdict !== 'ok' ? { verdict: eq.verdict, reason: eq.reason, points: eq.points } : null, rugCheck: rc.result ? { score: rc.score, riskLevel: rc.riskLevel, pass: rc.pass, reasons: rc.reasons } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
+          features: json({ checkpointSec, features, contributions: result.contributions, learnedOdds: odds, preCalibrationScore: result.pre, calibration: result.cal, manipulation: manip, dex: { paid: dexPaid?.paid ?? null, cto: dexPaid?.cto ?? null, trendingRank: dexTrend?.rank ?? null }, chart: chart ? { verdict: chart.verdict, summary: chart.summary, vsVwapPct: chart.vsVwapPct, rsi: chart.rsi, trend: chart.trend, pullbackPct: chart.pullbackPct } : null, newPair: earlyFlow ? { flow: earlyFlow, fails: newPair?.fails ?? [] } : null, ta: taBonus.points ? taBonus : null, trending: trend && (trend.points || trend.fails.length) ? trend : null, kol: kolAct ? { kols: kolAct.buyers.length, trusted: kolAct.buyers.filter((b) => b.weight >= (kolCfg.trustedMinWeight ?? Infinity)).length, names: kolAct.buyers.map((b) => b.name), dumping: kolAct.dumping } : null, copied: job.data.wallet ? 1 : 0, owner: { profile: owner.profile, fails: owner.fails }, pressure, launch, wallets: cq, deployer: deployer ? { class: deployer.class, launches: deployer.launches, graduated: deployer.graduated, diedFastPct: deployer.diedFastPct, rugs: deployer.rugs, linked: deployer.linked, launchesToday: deployer.launchesToday, daysSinceLastLaunch: deployer.daysSinceLastLaunch, points: deployer.points } : null, mood: moodNow(), market: market.raw, shape, tf, pa, x: xv ? { ...xv.features, points: xv.points } : null, winModel: wm && wm.p > 0 ? { p: Math.round(wm.p * 1000) / 1000, baseRate: Math.round(wm.baseRate * 1000) / 1000, points: wm.points } : null, momentumGate: mgWhy ? { blocked: true, reason: mgWhy } : null, edgeGate: egInfo, sniper: sniperInfo, entryQuality: eq.verdict !== 'ok' ? { verdict: eq.verdict, reason: eq.reason, points: eq.points } : null, rugCheck: rc.result ? { score: rc.score, riskLevel: rc.riskLevel, pass: rc.pass, reasons: rc.reasons } : null, creator: profile, crowd, swing, socials: { twitter: token.twitter, telegram: token.telegram, website: token.website, keyword: kw } }),
           weightsVersion: version,
           regime,
         },
@@ -762,6 +769,7 @@ export class Evaluator {
       buyerWallets: cqBuyers, deployerSniperWallets: cq?.deployerSniperWallets ?? [], crowdNote: cq?.note ?? null,
       dumpCrew: (cq?.dumpersInside ?? 0) > 0 || (cq?.deployerSnipers ?? 0) > 0, provenCrowd: (cq?.provenSolPct ?? 0) >= 20,
       creator: token.creator ?? null, deployerClass: deployer?.class ?? null, deployerNote: deployer?.note ?? null,
+      telegram: launch.telegram === 1,
     });
     if (decision === 'REJECT') noteSkip(STRATEGY.name, ruleFails[0] ?? reasons[0] ?? 'rejected');
     if (decision === 'REJECT') {

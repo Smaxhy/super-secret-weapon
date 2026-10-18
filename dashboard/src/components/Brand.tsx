@@ -49,7 +49,7 @@ export function AppFooter({ mode, status, paused, uptimeSec }: { mode: 'PAPER' |
           : { dot: 'bg-good', text: 'Connected' };
   const restarted = restartNote(uptimeSec);
   return (
-    <footer className="mx-auto mt-10 w-full max-w-7xl px-4 pb-2 text-center text-xs text-muted sm:px-6 md:text-left">
+    <footer className="mx-auto mt-10 w-full max-w-[1400px] px-4 pb-2 text-center text-xs text-muted sm:px-6 md:text-left lg:px-8">
       <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 border-t border-line pt-4 md:justify-between">
         <span className="inline-flex items-center gap-1.5" role="status">
           <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.dot}`} aria-hidden="true" />

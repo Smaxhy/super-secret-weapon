@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { useApi } from '../hooks/useApi';
 import { ago } from '../lib/format';
-import { Card } from './ui';
+import { Card, Empty, ErrorBox, HeatRow, Row, Rows, SectionHeader } from './ui';
 
 interface Slot { tradesPerMin: number | null; launchesPerMin: number | null; migrationsPerHour: number | null; activity: number | null; days: number; trades: number; avgPct: number | null; winRatePct: number | null; edgePct: number }
 interface Timing {
@@ -28,66 +28,85 @@ export function BestTimes() {
   const { data, error } = useApi<Timing | null>('/api/timing', 120_000);
   const [hover, setHover] = useState<number | null>(null);
   const nowUtc = new Date().getUTCHours();
+  if (error) return <ErrorBox message={error} />;
+  if (!data) return <Empty>Learning from the live market. The first picture shows after a few hours, a reliable one after about 3 days.</Empty>;
+  const order = Array.from({ length: 24 }, (_, i) => ((Math.round(i - offsetH) % 24) + 24) % 24);
+  const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   return (
-    <Card title="Best times to trade">
-      {error && <p className="text-sm text-down">{error}</p>}
-      {!data && !error && <p className="text-sm text-ink-2">Learning from the live market — the first picture shows up after a few hours, a reliable one after about 3 days.</p>}
-      {data && (
-        <div className="space-y-4 text-sm">
-          <p className="text-xs text-muted">
-            {data.overall.daysRecorded} day{data.overall.daysRecorded === 1 ? '' : 's'} of market activity · {data.overall.trades} of our trades · times in your time zone · {ago(data.at)}
-          </p>
-          <div className="rounded-lg border border-line bg-surface-2 px-3 py-2">
-            <span className="text-muted">Right now: </span>
-            <span className="font-medium text-ink tabular-nums">
-              size ×{data.now.sizeFactor.toFixed(2)} · buy bar {data.now.barDelta > 0 ? `+${data.now.barDelta}` : data.now.barDelta}
-            </span>
-            <span className="text-ink-2"> — {data.now.why}</span>
-          </div>
-          <HourStrip data={data} nowUtc={nowUtc} hover={hover} setHover={setHover} />
-          <div className="grid gap-2 sm:grid-cols-3">
-            <Summary label="Busiest hours" hours={data.busiestHours} empty="needs ~3 days" />
-            <Summary label="Our best hours" hours={data.bestHours} empty="needs more trades" />
-            <Summary label="Our worst hours" hours={data.worstHours} empty="none stand out" />
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[22rem] text-left text-sm">
-              <thead className="text-xs text-muted">
-                <tr>
-                  <th className="py-1 font-normal">Day (UTC)</th>
-                  <th className="py-1 font-normal">Market activity</th>
-                  <th className="py-1 text-right font-normal">Our trades</th>
-                  <th className="py-1 text-right font-normal">Avg result</th>
-                  <th className="py-1 text-right font-normal">Win rate</th>
+    <div className="flex flex-col gap-6">
+      <SectionHeader title="Best times to trade" description={`${data.overall.daysRecorded} day${data.overall.daysRecorded === 1 ? '' : 's'} of market activity · ${data.overall.trades} of our trades · your time zone · ${ago(data.at)}`} />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl border border-line bg-surface-2/60 px-4 py-3 text-sm">
+        <span className="font-semibold text-ink">Right now</span>
+        <span className="tabular text-ink">size ×{data.now.sizeFactor.toFixed(2)} · buy bar {data.now.barDelta > 0 ? `+${data.now.barDelta}` : data.now.barDelta}</span>
+        <span className="text-ink-2">{data.now.why}</span>
+      </div>
+      <div className="grid gap-6 xl:grid-cols-12">
+        <div className="flex min-w-0 flex-col gap-6 xl:col-span-8">
+          <Card title="Market activity per hour" subtitle="How busy pump.fun is, hour by hour (dot = now). Hover a bar for the numbers.">
+            <HourStrip data={data} nowUtc={nowUtc} hover={hover} setHover={setHover} />
+          </Card>
+          <Card title="Hour × day heat" subtitle="Top rows: market activity and our average result per hour. Bottom: the same per weekday.">
+            <div className="flex flex-col gap-4">
+              <div>
+                <div className="mb-1 text-xs font-medium text-muted">Activity per hour</div>
+                <HeatRow ariaLabel="Market activity per hour" cells={order.map((h) => ({ key: `a${h}`, value: data.hours[h]!.activity, title: `${hh(h)}: ${data.hours[h]!.activity === null ? 'no data' : `${data.hours[h]!.activity!.toFixed(2)}× normal`}` }))} />
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-medium text-muted">Our average result per hour</div>
+                <HeatRow signed ariaLabel="Our average result per hour" labels={['00', '06', '12', '18', '24']} cells={order.map((h) => { const r = data.hours[h]!; const ok = r.trades >= 3 && r.avgPct !== null; return { key: `r${h}`, value: ok ? r.avgPct : null, title: `${hh(h)}: ${ok ? `${pct(r.avgPct)} avg on ${r.trades} trades` : 'not enough trades'}` }; })} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="mb-1 text-xs font-medium text-muted">Activity per weekday (UTC)</div>
+                  <HeatRow ariaLabel="Market activity per weekday" labels={DAY_SHORT} cells={data.days.map((d, i) => ({ key: `da${i}`, value: d.activity, title: `${DAYS[i]}: ${d.activity === null ? 'no data' : `${d.activity.toFixed(2)}× normal`}` }))} />
+                </div>
+                <div>
+                  <div className="mb-1 text-xs font-medium text-muted">Our result per weekday</div>
+                  <HeatRow signed ariaLabel="Our result per weekday" labels={DAY_SHORT} cells={data.days.map((d, i) => ({ key: `dr${i}`, value: d.trades >= 3 ? d.avgPct : null, title: `${DAYS[i]}: ${d.avgPct === null ? 'no trades' : `${pct(d.avgPct)} on ${d.trades} trades`}` }))} />
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
+        <div className="flex min-w-0 flex-col gap-6 xl:col-span-4">
+          <Card title="Stand-out hours">
+            <Rows>
+              <Row label="Busiest" value={<Hours hours={data.busiestHours} empty="needs ~3 days" />} />
+              <Row label="Our best" value={<Hours hours={data.bestHours} empty="needs more trades" />} />
+              <Row label="Our worst" value={<Hours hours={data.worstHours} empty="none stand out" />} />
+            </Rows>
+          </Card>
+          <Card title="By weekday" padded={false}>
+            <table className="tabular w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted">
+                  <th className="px-4 py-2 font-medium">Day</th>
+                  <th className="py-2 text-right font-medium">Activity</th>
+                  <th className="py-2 text-right font-medium">Trades</th>
+                  <th className="px-4 py-2 text-right font-medium">Avg</th>
                 </tr>
               </thead>
               <tbody>
                 {data.days.map((d, i) => (
-                  <tr key={i} className={`border-t border-line ${i === new Date().getUTCDay() ? 'font-medium' : ''}`}>
-                    <td className="py-1 text-ink">{DAYS[i]}{data.bestDays.includes(i) ? ' ★' : ''}</td>
-                    <td className="py-1 text-ink-2 tabular-nums">{d.activity === null ? '—' : `${d.activity.toFixed(2)}× normal`}</td>
-                    <td className="py-1 text-right text-ink-2 tabular-nums">{d.trades}</td>
-                    <td className={`py-1 text-right tabular-nums ${d.avgPct === null ? 'text-muted' : d.avgPct >= 0 ? 'text-up' : 'text-down'}`}>{pct(d.avgPct)}</td>
-                    <td className="py-1 text-right text-ink-2 tabular-nums">{d.winRatePct === null ? '—' : `${d.winRatePct}%`}</td>
+                  <tr key={i} className={`border-t border-line ${i === new Date().getUTCDay() ? 'bg-surface-2/60 font-medium' : ''}`}>
+                    <td className="px-4 py-2 text-ink">{DAY_SHORT[i]}{data.bestDays.includes(i) ? ' ★' : ''}</td>
+                    <td className="py-2 text-right text-ink-2">{d.activity === null ? '—' : `${d.activity.toFixed(2)}×`}</td>
+                    <td className="py-2 text-right text-ink-2">{d.trades}</td>
+                    <td className={`px-4 py-2 text-right ${d.avgPct === null ? 'text-muted' : d.avgPct >= 0 ? 'text-up' : 'text-down'}`}>{pct(d.avgPct)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </Card>
           <p className="text-xs text-muted">Busy, well-paying hours trade a bit bigger with an easier buy bar; quiet, losing ones smaller and stricter. It never stops trading by itself.</p>
         </div>
-      )}
-    </Card>
+      </div>
+    </div>
   );
 }
 
-function Summary({ label, hours, empty }: { label: string; hours: number[]; empty: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-muted">{label}</div>
-      <div className="truncate font-medium text-ink tabular-nums">{hours.length ? hours.map(hh).join(', ') : <span className="font-normal text-muted">{empty}</span>}</div>
-    </div>
-  );
+function Hours({ hours, empty }: { hours: number[]; empty: string }) {
+  return <span className="tabular">{hours.length ? hours.map(hh).join(', ') : <span className="font-normal text-muted">{empty}</span>}</span>;
 }
 
 /** 24 bars (market activity per hour, one hue) + a row of cells for our average result that hour. */
@@ -100,7 +119,6 @@ function HourStrip({ data, nowUtc, hover, setHover }: { data: Timing; nowUtc: nu
   return (
     <div>
       <div className="mb-2 text-xs">
-        <div className="text-muted">Market activity per hour</div>
         <div className="text-ink-2 tabular-nums">
           {hh(shown)}{shown === nowUtc && hover === null ? ' (now)' : ''}: {s.activity === null ? 'not enough days yet' : `${s.activity.toFixed(2)}× normal · ${s.tradesPerMin} trades/min · ${s.migrationsPerHour} migrations/h`} · our trades {s.trades}{s.trades ? `, avg ${pct(s.avgPct)}` : ''}
         </div>
@@ -140,7 +158,7 @@ function HourStrip({ data, nowUtc, hover, setHover }: { data: Timing; nowUtc: nu
           <span key={t}>{t}:00</span>
         ))}
       </div>
-      <p className="mt-1 text-xs text-muted">Bars = how busy pump.fun is (dot = now). Strip below = our average result in that hour: green made money, red lost, grey not enough trades.</p>
+      <p className="mt-1 text-xs text-muted">Strip under the bars = our average result in that hour: green made money, red lost, grey not enough trades.</p>
     </div>
   );
 }

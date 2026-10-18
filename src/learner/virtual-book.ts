@@ -68,6 +68,15 @@ interface VPos extends VirtualOpen {
   holders?: WatchedHolder[] | null;
   growthAt?: number;
   growth?: HolderGrowthState | null;
+  /** v11.11 slot ladder: legs already sold */
+  slotLegs?: number;
+}
+
+export interface SlotLeg { afterMs: number; sellPct: number }
+/** The rules' time-based ladder (lab variant E), sorted; null = none. */
+export function slotLadderOf(rules: unknown): SlotLeg[] | null {
+  const l = (rules as { slotLadder?: SlotLeg[] } | null)?.slotLadder;
+  return Array.isArray(l) && l.length ? [...l].sort((a, b) => a.afterMs - b.afterMs) : null;
 }
 
 const priceOfLast = (crowd: CrowdTracker, mint: string): number => {
@@ -220,15 +229,24 @@ export class VirtualBook {
     vp.breachTicks = d.state.breachTicks;
     vp.peakAtMs = d.state.peakAtMs;
     const feeBps = poolFeeBps(p, vp.onAmm, price * 1e9);
-    for (const s of d.sells) {
-      const pct = Math.min(s.pct, vp.remainingPct);
-      if (!(pct > 0)) continue;
-      // Same costs as a paper sell: pool fee, slippage, tx fee.
+    // Same costs as a paper sell: pool fee, slippage, tx fee. true = the position is closed.
+    const sell = (pctOfOriginal: number, why: string): boolean => {
+      const pct = Math.min(pctOfOriginal, vp.remainingPct);
+      if (!(pct > 0)) return false;
       vp.proceedsSol += ((vp.tokens * pct) / 100) * price * (1 - feeBps / 10_000) * (1 - p.slippagePct / 100) - p.txFeeSol;
       vp.remainingPct = Math.max(0, vp.remainingPct - pct);
-      if (vp.remainingPct <= 0.01) {
-        this.finish(vp, price, `${s.reason}: ${s.detail}`, now);
-        return;
+      if (vp.remainingPct > 0.01) return false;
+      this.finish(vp, price, why, now);
+      return true;
+    };
+    for (const s of d.sells) if (sell(s.pct, `${s.reason}: ${s.detail}`)) return;
+    // v11.11 slot ladder (lab variant E): fixed sells by time since the buy, whatever the price.
+    const ladder = slotLadderOf(rules);
+    if (ladder) {
+      let k = vp.slotLegs ?? 0;
+      for (; k < ladder.length && now - vp.openedAt >= ladder[k]!.afterMs; k++) {
+        vp.slotLegs = k + 1;
+        if (sell(ladder[k]!.sellPct, `TAKE_PROFIT: early ladder leg ${k + 1} (${(ladder[k]!.afterMs / 1000).toFixed(1)} s after the buy)`)) return;
       }
     }
   }

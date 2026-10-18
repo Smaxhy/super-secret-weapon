@@ -640,6 +640,10 @@ export const DEFAULT_CONFIG = {
       minProvenSolPct: 20,
       /** v11.8: a deployer-funded launch-block buyer still holding ≥ this % of the supply → no buy (exit-liquidity machine). */
       deployerSniperHoldPct: 1,
+      /** v11.11: launch buyers (first 15 s) still holding more than this % of what they bought → no buy (0 = off). */
+      maxFirstBuyersHoldingPct: 0,
+      /** …only when those bags are at least this % of the supply. */
+      firstBuyersMinBagPct: 5,
       minProvenCount: 3,
       fullPointsProvenSolPct: 40,
       dumperHoldPct: 2,
@@ -962,7 +966,7 @@ export const DEFAULT_CONFIG = {
   rugCheck: { enabled: true as boolean, maxScore: 500, blockDanger: true as boolean, blockMintAuthority: true as boolean, blockFreezeAuthority: true as boolean, maxCallsPerDay: 500 },
 
   /** v11: momentum gate — blocks buying at the peak (69% of losers never went above 1.05x). Uses priceShape data. */
-  momentumGate: { enabled: true as boolean, maxRun1mPct: 18, maxRun3mPct: 30, minOffHighPct: 6, minBuyShare2m: 0.52, maxLastCandlePct: 15, skipForExplore: true as boolean, skipForDipEntry: true as boolean },
+  momentumGate: { enabled: true as boolean, maxRun1mPct: 18, maxRun3mPct: 30, minOffHighPct: 0, minBuyShare2m: 0.52, maxLastCandlePct: 15, skipForExplore: true as boolean, skipForDipEntry: true as boolean },
 
   /** v11: Obsidian vault sync — writes trades, strategies, performance as Markdown files (set OBSIDIAN_VAULT_PATH on the VPS). */
   obsidian: {
@@ -1095,6 +1099,15 @@ export const DEFAULT_CONFIG = {
       { id: 'N', name: 'Live settings without time stops', exit: { timeStop: { enabled: false } } },
       // v11.10: what is the holder-growth exit worth? (live settings without it)
       { id: 'G', name: 'Live settings without the holder-growth exit', exit: { holderGrowth: { enabled: false } } },
+      // v11.11 (D3AD-E live A/B): new pairs / SOON only — 30% one slot (~400 ms) after the buy whatever the price, then
+      // 20/20/15/15 at +6/+9/+13/+18 slots. Judged by the lab / backtester / replay only, never applied automatically.
+      {
+        id: 'E',
+        name: 'Early ladder: 30% one slot after the buy, then 20/20/15/15 over ~7 s (new pairs + SOON)',
+        strategies: ['CURVE_SNIPE', 'SOON'],
+        noAutoApply: true,
+        exit: { slotLadder: [{ afterMs: 400, sellPct: 30 }, { afterMs: 2_400, sellPct: 20 }, { afterMs: 3_600, sellPct: 20 }, { afterMs: 5_200, sellPct: 15 }, { afterMs: 7_200, sellPct: 15 }] },
+      },
       {
         id: 'W',
         name: 'Wider stop (−25 to −30%) — research suggests it; outside your 10–20% rule, so never applied automatically',
@@ -1103,7 +1116,7 @@ export const DEFAULT_CONFIG = {
       },
       // Owner-only: what would selling at the stop straight away (no 5-minute hold) have done? Never auto-applied.
       { id: 'Q', name: 'No 5-minute hold (stop fires straight away)', ownerOnly: true, exit: { stopLoss: { minHoldSec: 0 } } },
-    ] as Array<{ id: string; name: string; ownerOnly?: boolean; exit: Record<string, unknown> }>,
+    ] as Array<{ id: string; name: string; ownerOnly?: boolean; noAutoApply?: boolean; strategies?: StrategyName[]; exit: Record<string, unknown> }>,
   },
 
   /** Copy trading: react when a wallet on your watch list buys. */
@@ -1297,6 +1310,11 @@ export const DEFAULT_CONFIG = {
      * last minute → sell sellPct of what's left (once) and tighten the trail. Never a full exit on growth alone.
      */
     holderGrowth: { enabled: true as boolean, minMultiple: 1.15, collapsePct: 35, holdSec: 45, minSellerSharePct: 45, sellPct: 50, tightenTrailFactor: 0.7, fullTrailFromMultiple: 1.5 },
+    /**
+     * v11.11: Holder Rewards coins (creator fees paid to holders) stretch the TIME limits — stale, max hold, hold-longer
+     * cap — by this factor (1 = off). Stop loss / rug / early bail never change.
+     */
+    holderRewardsHoldFactor: 1.5,
     /** After reaching `afterMultiple`, sell everything if it falls back to `floorMultiple` (before initials are out). */
     protectProfit: { afterMultiple: 1.2, floorMultiple: 1.03 },
     /**

@@ -26,9 +26,10 @@ describe('tape archive + backtester (owner big update, ported)', () => {
   });
   it('replays one trade with the live exits and the lab variants on the real path', () => {
     const trade: BacktestTrade = { id: 'p1', mint: 'M', symbol: 'X', strategy: 'MIGRATION_MOMENTUM', openedAtMs: T0 + 130_000, onAmm: true, actualPnlPct: 5 };
-    const variants = [{ id: 'L', name: 'Live', exit: {} }, ...(DEFAULT_CONFIG.lab.variants as Array<{ id: string; name: string; exit: object }>).filter((v) => v.id !== 'L')];
+    const variants = [{ id: 'L', name: 'Live', exit: {} }, ...(DEFAULT_CONFIG.lab.variants as Array<{ id: string; name: string; exit: object; strategies?: string[] }>).filter((v) => v.id !== 'L')];
     const res = replayTape('M', tape(), [trade], variants);
-    expect(res.size).toBe(variants.length);
+    // v11.11: strategy-limited variants (E: new pairs + SOON) don't run on a migrated trade
+    expect(res.size).toBe(variants.filter((v) => !('strategies' in v) || !v.strategies || v.strategies.includes('MIGRATION_MOMENTUM')).length);
     const live = res.get('p1:L')!;
     expect(live.peakX).toBeGreaterThan(1.4);
     // took profit on the way up → ends in profit even though the coin round-tripped

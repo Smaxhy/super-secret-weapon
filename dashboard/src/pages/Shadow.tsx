@@ -3,7 +3,8 @@
  * Shows what skipping cost: per filter, per refusal reason, and the winners it missed.
  */
 import { useState } from 'react';
-import { Card, Empty, ErrorBox, Loading, PageHeader, Stack, Tabs } from '../components/ui';
+import { Link } from 'react-router-dom';
+import { Badge, Card, Chip, Empty, ErrorBox, Loading, PageHeader, StatTile, Table, Tabs, Th, tdCls, theadCls, trCls, useStored } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { ago, STRATEGY_LABEL } from '../lib/format';
 
@@ -23,83 +24,75 @@ const strat = (s: string) => STRATEGY_LABEL[s] ?? s;
 
 export function Shadow() {
   const { data, error } = useApi<Report | null>('/api/shadow', 60_000);
-  const [tab, setTab] = useState<'filters' | 'missed' | 'recent'>('filters');
+  const [view, setView] = useStored<'filters' | 'missed' | 'recent'>('shadow.view', 'filters', ['filters', 'missed', 'recent']);
+  const [kind, setKind] = useState<'all' | Kind>('all');
+  const rows = (view === 'missed' ? data?.missed : data?.recent) ?? [];
+  const shown = kind === 'all' ? rows : rows.filter((r) => r.kind === kind);
   return (
     <>
       <PageHeader title="Shadow trades" subtitle="Pretend trades on coins it didn't buy (same exits and fees, no money): what skipping cost." />
       {error && <ErrorBox message={error} />}
       {!data && !error && <Loading />}
-      {data && !data.total && (
-        <Empty>
-          No shadow trades closed yet{data.open ? ` — ${data.open} are running right now` : ''}. They fill in as the bot checks coins.
-        </Empty>
-      )}
+      {data && !data.total && <Empty>No shadow trades closed yet{data.open ? `; ${data.open} are running right now` : ''}. They fill in as the bot checks coins.</Empty>}
       {data && data.total > 0 && (
-        <Stack>
-          <Card title="If it had bought them">
-            <ul className="-my-1 divide-y divide-line">
-              {(Object.keys(KIND) as Kind[]).map((k) => {
-                const g = data.byKind[k];
-                return (
-                  <li key={k} className="flex items-start justify-between gap-3 py-2.5">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-ink">{KIND[k].label}</div>
-                      <div className="text-xs text-muted">{KIND[k].sub}</div>
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <div className={`text-lg font-semibold tabular-nums ${g.n ? tone(g.avgPct) : 'text-muted'}`}>{g.n ? pct(g.avgPct) : '—'}</div>
-                      <div className="text-xs text-muted tabular-nums">{g.n} · {g.winRatePct}% wins · {g.went2xPct}% 2x+</div>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </Card>
-          {data.findings.length > 0 && (
-            <Card title="What it found">
-              <ul className="list-disc space-y-1 pl-5 text-sm text-ink-2">
-                {data.findings.map((f) => (
-                  <li key={f}>{f}</li>
-                ))}
-              </ul>
-            </Card>
-          )}
-          <Tabs
-            label="Shadow trade views"
-            value={tab}
-            onChange={setTab}
-            tabs={[
-              { key: 'filters', label: 'Filter cost' },
-              { key: 'missed', label: 'Missed winners' },
-              { key: 'recent', label: 'Latest' },
-            ]}
-          />
-          {tab === 'filters' && (
-            <>
-              <Card title="Skipped by a rule">
-                <GroupTable rows={data.byRule} label="Rule" empty="No skipped coins closed yet." />
+        <div className="flex flex-col gap-6">
+          <section aria-label="If it had bought them" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatTile compact label="Shadow trades" value={data.total.toLocaleString()} sub={`${data.open} still running`} />
+            {(Object.keys(KIND) as Kind[]).map((k) => {
+              const g = data.byKind[k];
+              return <StatTile key={k} compact label={KIND[k].label} value={g.n ? <span className={tone(g.avgPct)}>{pct(g.avgPct)}</span> : '—'} sub={`${g.n} · ${g.winRatePct}% wins · ${g.went2xPct}% 2x+`} />;
+            })}
+          </section>
+
+          <div className="grid gap-6 xl:grid-cols-12">
+            <div className="flex min-w-0 flex-col gap-4 xl:col-span-8">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <Tabs className="w-full sm:w-[24rem]" label="Shadow trade views" value={view} onChange={setView} tabs={[{ key: 'filters', label: 'Filter cost' }, { key: 'missed', label: 'Missed winners' }, { key: 'recent', label: 'Latest' }]} />
+                {view !== 'filters' && (
+                  <div className="no-scrollbar flex gap-1.5 overflow-x-auto" role="group" aria-label="Kind">
+                    <Chip active={kind === 'all'} onClick={() => setKind('all')} count={rows.length}>All</Chip>
+                    {(Object.keys(KIND) as Kind[]).map((k) => (
+                      <Chip key={k} active={kind === k} onClick={() => setKind(k)} count={rows.filter((r) => r.kind === k).length}>{KIND_SHORT[k]}</Chip>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {view === 'filters' ? (
+                <div className="grid gap-6 lg:grid-cols-2">
+                  <Card title="Skipped by a rule" subtitle="What each filter cost or saved">
+                    <GroupTable rows={data.byRule} label="Rule" empty="No skipped coins closed yet." />
+                  </Card>
+                  <Card title="Wanted, but refused" subtitle="Buy signals the trader said no to">
+                    <GroupTable rows={data.byRefusal} label="Why it was refused" empty="No refused buy signals yet." />
+                  </Card>
+                </div>
+              ) : (
+                <RowTable rows={shown} empty={view === 'missed' ? 'No missed 2x coins yet.' : 'None yet.'} />
+              )}
+            </div>
+            <div className="flex min-w-0 flex-col gap-6 xl:col-span-4">
+              {data.findings.length > 0 && (
+                <Card title="What it found">
+                  <ul className="space-y-2 text-sm">
+                    {data.findings.map((f) => (
+                      <li key={f} className="rounded-xl bg-surface-2/60 px-3 py-2.5 leading-relaxed text-ink">{f}</li>
+                    ))}
+                  </ul>
+                </Card>
+              )}
+              <Card title="By strategy">
+                <GroupTable rows={data.byStrategy.map((g) => ({ ...g, example: strat(g.key) }))} label="Strategy" empty="Nothing yet." />
               </Card>
-              <Card title="Wanted, but refused">
-                <GroupTable rows={data.byRefusal} label="Why it was refused" empty="No refused buy signals yet." />
-              </Card>
-            </>
-          )}
-          {tab === 'missed' && (
-            <Card title="Coins it didn't buy that went 2x or more">
-              <RowList rows={data.missed} empty="None yet." />
-            </Card>
-          )}
-          {tab === 'recent' && (
-            <Card title={`Latest shadow trades · ${data.open} still running`}>
-              <RowList rows={data.recent} empty="None yet." />
-            </Card>
-          )}
-          <p className="text-xs text-muted">Counted toward learning: "wanted" and "just under the bar" trades, at half the weight of a real trade. "Skipped by a rule" trades only measure what each filter costs or saves.</p>
-        </Stack>
+              <p className="text-xs text-muted">Counted toward learning: "wanted" and "just under the bar" trades, at half the weight of a real trade. "Skipped by a rule" trades only measure what each filter costs or saves.</p>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
 }
+
+const KIND_SHORT: Record<Kind, string> = { refused: 'Wanted', near: 'Under the bar', skipped: 'Skipped' };
 
 function GroupTable({ rows, label, empty }: { rows: Group[]; label: string; empty: string }) {
   if (!rows.length) return <p className="text-sm text-ink-2">{empty}</p>;
@@ -114,7 +107,7 @@ function GroupTable({ rows, label, empty }: { rows: Group[]; label: string; empt
           <div className="shrink-0 text-right">
             <div className={`font-semibold tabular-nums ${tone(g.avgPct)}`}>{pct(g.avgPct)}</div>
             <div className="text-xs text-muted tabular-nums">
-              {g.n} {label === 'Rule' ? 'coins' : 'signals'} · {g.winRatePct}% wins · {g.went2xPct}% 2x+
+              {g.n} {label === 'Rule' ? 'coins' : label === 'Strategy' ? 'trades' : 'signals'} · {g.winRatePct}% wins
             </div>
           </div>
         </li>
@@ -123,24 +116,58 @@ function GroupTable({ rows, label, empty }: { rows: Group[]; label: string; empt
   );
 }
 
-function RowList({ rows, empty }: { rows: Row[]; empty: string }) {
-  if (!rows.length) return <p className="text-sm text-ink-2">{empty}</p>;
+function RowTable({ rows, empty }: { rows: Row[]; empty: string }) {
+  if (!rows.length) return <Empty>{empty}</Empty>;
   return (
-    <ul className="divide-y divide-line">
-      {rows.map((r) => (
-        <li key={`${r.mint}-${r.openedAtMs}`} className="flex items-start justify-between gap-3 py-2.5">
-          <div className="min-w-0">
-            <div className="truncate font-semibold text-ink">
-              {r.symbol} <span className="text-xs font-normal text-muted">{strat(r.strategy)} · {KIND[r.kind].label.toLowerCase()}</span>
+    <>
+      <ul className="card divide-y divide-line overflow-hidden md:hidden">
+        {rows.map((r) => (
+          <li key={`${r.mint}-${r.openedAtMs}`} className="flex items-start justify-between gap-3 px-4 py-2.5">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <Link to={`/token/${r.mint}`} className="truncate font-semibold text-ink">{r.symbol}</Link>
+                <Badge tone={r.kind === 'refused' ? 'accent' : r.kind === 'near' ? 'warn' : 'neutral'}>{KIND_SHORT[r.kind]}</Badge>
+              </div>
+              <div className="line-clamp-2 text-xs text-muted" title={r.why}>{strat(r.strategy)} · {r.why}</div>
             </div>
-            <div className="break-words text-xs text-muted">{r.why} · score {r.score.toFixed(0)} / bar {r.bar.toFixed(0)} · {ago(new Date(r.closedAtMs).toISOString())}</div>
-          </div>
-          <div className="shrink-0 text-right">
-            <div className={`font-semibold tabular-nums ${tone(r.pnlPct)}`}>{pct(r.pnlPct)}</div>
-            <div className="text-xs text-muted tabular-nums">peak {r.peakX}x</div>
-          </div>
-        </li>
-      ))}
-    </ul>
+            <div className="shrink-0 text-right">
+              <div className={`font-semibold tabular-nums ${tone(r.pnlPct)}`}>{pct(r.pnlPct)}</div>
+              <div className="text-xs text-muted tabular-nums">peak {r.peakX}x</div>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <div className="hidden md:block">
+        <Table minWidth={760}>
+          <thead className={theadCls}>
+            <tr>
+              <Th>Coin</Th>
+              <Th>Kind</Th>
+              <Th>Why it didn't buy</Th>
+              <Th right>Score / bar</Th>
+              <Th right>Result</Th>
+              <Th right>Peak</Th>
+              <Th right>Closed</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={`${r.mint}-${r.openedAtMs}`} className={trCls}>
+                <td className={tdCls}>
+                  <Link to={`/token/${r.mint}`} className="font-semibold text-ink hover:underline">{r.symbol}</Link>
+                  <div className="text-xs text-muted">{strat(r.strategy)}</div>
+                </td>
+                <td className={tdCls}><Badge tone={r.kind === 'refused' ? 'accent' : r.kind === 'near' ? 'warn' : 'neutral'}>{KIND_SHORT[r.kind]}</Badge></td>
+                <td className={`${tdCls} max-w-[22rem] text-ink-2`}><span className="line-clamp-2" title={r.why}>{r.why}</span></td>
+                <td className={`${tdCls} text-right text-ink-2`}>{r.score.toFixed(0)} / {r.bar.toFixed(0)}</td>
+                <td className={`${tdCls} text-right font-semibold ${tone(r.pnlPct)}`}>{pct(r.pnlPct)}</td>
+                <td className={`${tdCls} text-right text-ink-2`}>{r.peakX}x</td>
+                <td className={`${tdCls} text-right text-muted`}>{ago(new Date(r.closedAtMs).toISOString())}</td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </div>
+    </>
   );
 }

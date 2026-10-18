@@ -177,6 +177,7 @@ export const EDITABLE: EditableSetting[] = [
   S('Exit timers — KOL follow', 'exit.maxHoldMinutes.SMART_MONEY_COPY', 'Max hold', 5, 2880, 'min', 5),
   S('Exit timers — every strategy', 'exit.timeStop.minPeakMultiple', 'No follow-through = never reached', 1, 2, '×', 0.01),
   S('Exit timers — every strategy', 'exit.timeStop.maxMultiple', '…and now at or below', 0.8, 1.5, '×', 0.01),
+  S('Exit timers — every strategy', 'exit.holderRewardsHoldFactor', 'Holder Rewards coins (holders earn the creator fees): stretch the stale / max-hold / hold-longer limits by (1 = off)', 1, 3, '×', 0.1),
 
   // ---- Price action (owner's big update) ----
   S('Chart rules — buying (every coin)', 'entry.priceAction.enabled', 'On (1) / off (0)', 0, 1, undefined, 1),
@@ -279,6 +280,8 @@ export const EDITABLE: EditableSetting[] = [
   S('Every coin (safety & holders)', 'entry.confirm.consecutivePasses', 'Confirmation checks that must pass in a row before a buy (1 = the old single check)', 1, 5, undefined, 1),
   S('Every coin (safety & holders)', 'entry.confirm.intervalSec', 'Seconds between confirmation checks', 3, 30, 's', 1),
   S('Wallet engine', 'wallets.entry.deployerSniperHoldPct', 'Dev-funded launch sniper still holding at least this % of the supply → no buy', 0.1, 10, '%', 0.1),
+  S('Wallet engine', 'wallets.entry.maxFirstBuyersHoldingPct', 'Launch buyers (first 15 s) still holding more than this % of what they bought → no buy (0 = off)', 0, 100, '%', 5),
+  S('Wallet engine', 'wallets.entry.firstBuyersMinBagPct', '…only when those bags are at least this % of the supply', 0, 50, '%', 1),
   S('Deployer history', 'deployers.enabled', 'Judge every coin by its creator\'s record (serial launchers / ruggers refused, proven devs get points): on (1) / off (0)', 0, 1, undefined, 1),
   S('Deployer history', 'deployers.serialMinLaunches', 'Launches with 0 graduations before a creator counts as a serial launcher', 2, 50, undefined, 1),
   S('Deployer history', 'deployers.serialDiedFastPct', '…and at least this % of them died within 30 min', 20, 100, '%', 5),

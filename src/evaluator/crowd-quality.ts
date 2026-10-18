@@ -24,6 +24,10 @@ export interface CrowdQualityConfig {
   fails: boolean;
   /** v11.8: a deployer-funded launch-block buyer still holding ≥ this % of the supply → no buy. */
   deployerSniperHoldPct?: number;
+  /** v11.11: launch buyers (first 15 s) still holding more than this % of what they bought → no buy (0 = off). */
+  maxFirstBuyersHoldingPct?: number;
+  /** …only when those bags are at least this % of the supply. */
+  firstBuyersMinBagPct?: number;
 }
 
 export interface CrowdQuality {
@@ -46,6 +50,12 @@ export interface CrowdQuality {
   deployerSnipers: number;
   deployerSniperWallets: string[];
   deployerSniperHoldPct: number;
+  /**
+   * v11.11: of the SOL spent by wallets whose first buy came in the first 15 s of trading (creator excluded), the share
+   * still held now; `firstBuyersBagPct` = those bags as % of the supply. null = the crowd log doesn't reach the launch.
+   */
+  firstBuyersHoldingPct: number | null;
+  firstBuyersBagPct: number | null;
   points: number;
   fails: string[];
   note: string;
@@ -64,6 +74,38 @@ export interface CrowdQualityInput {
 }
 
 const DEFAULT_LAUNCH_WINDOW_MS = 4_000;
+const FIRST_BUYERS_WINDOW_MS = 15_000;
+
+/** Pure: how much of their launch buys the first-15-s buyers still hold (SOL-weighted) and their bags as % of supply. */
+export function firstBuyersHolding(trades: readonly CrowdTrade[], launchMs: number | null, creator: string | null, supply: number, windowMs = FIRST_BUYERS_WINDOW_MS): { holdingPct: number; bagPct: number; wallets: number } | null {
+  if (launchMs === null || !(launchMs > 0) || !trades.length) return null;
+  if (trades[0]!.t > launchMs + windowMs) return null;
+  const first = new Map<string, number>();
+  const bought = new Map<string, { tok: number; sol: number }>();
+  const net = new Map<string, number>();
+  for (const t of trades) {
+    net.set(t.w, (net.get(t.w) ?? 0) + (t.buy ? t.tok : -t.tok));
+    if (!t.buy) continue;
+    if (!first.has(t.w)) first.set(t.w, t.t);
+    const b = bought.get(t.w) ?? { tok: 0, sol: 0 };
+    b.tok += t.tok;
+    b.sol += t.sol;
+    bought.set(t.w, b);
+  }
+  let sol = 0, heldSol = 0, heldTok = 0, n = 0;
+  for (const [w, at] of first) {
+    if (w === creator || at < launchMs - 1_000 || at - launchMs > windowMs) continue;
+    const b = bought.get(w)!;
+    if (!(b.tok > 0)) continue;
+    const held = Math.min(b.tok, Math.max(0, net.get(w) ?? 0));
+    sol += b.sol;
+    heldSol += b.sol * (held / b.tok);
+    heldTok += held;
+    n++;
+  }
+  if (!n || !(sol > 0)) return null;
+  return { holdingPct: Math.round((heldSol / sol) * 1000) / 10, bagPct: Math.round((heldTok / supply) * 10000) / 100, wallets: n };
+}
 
 const r1 = (x: number) => Math.round(x * 10) / 10;
 
@@ -159,12 +201,21 @@ export function crowdQuality(
     deployerSnipers: sniperWallets.length,
     deployerSniperWallets: sniperWallets,
     deployerSniperHoldPct: Math.round(sniperHold * 100) / 100,
+    firstBuyersHoldingPct: null,
+    firstBuyersBagPct: null,
     points: 0,
     fails: [],
     note: '',
   };
+  const fb = firstBuyersHolding(i.trades, launchMs, creator, supply);
+  if (fb) {
+    q.firstBuyersHoldingPct = fb.holdingPct;
+    q.firstBuyersBagPct = fb.bagPct;
+  }
   if (!c.enabled) return q;
   if (c.fails) {
+    const maxFb = c.maxFirstBuyersHoldingPct ?? 0;
+    if (fb && maxFb > 0 && fb.holdingPct > maxFb && fb.bagPct >= (c.firstBuyersMinBagPct ?? 5)) q.fails.push(`launch buyers still hold ${fb.holdingPct}% of their bags (${fb.bagPct}% of the supply)`);
     if (dumpersInside >= 1 && dumperHold >= c.dumperHoldPct) q.fails.push(`dump crew inside: ${dumpersInside} known dumper${dumpersInside > 1 ? 's' : ''} still holding ${q.dumperHoldPct}% of the supply`);
     if (q.dumperSolPct >= c.maxDumperSolPct) q.fails.push(`known dumpers are ${q.dumperSolPct}% of the buying`);
     const minHold = c.deployerSniperHoldPct ?? 1;

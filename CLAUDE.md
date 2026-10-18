@@ -909,6 +909,25 @@ December (small wallet in Nov if paper edge is positive).
     `growthFor` ≤ once per 2 s per position, the state carries "below since"), VirtualBook `growthOf` (labs + replay).
     Strategy-lab variant **G** = live without it (what the exit is worth). Editable groups "Deployer history", "Holder
     growth exit", Sniper mode. tests/deployer-book.test.ts, tests/holder-growth.test.ts.
+- **v11.11 (Oct 18): research ports** (Oct 17 deep research; migration v42; zero new RPC). (1) **Launch covariates**
+  (`src/evaluator/launch-features.ts`, arXiv 2607.02823: Telegram link 8.9×, launch MC above the 30 SOL default 4.5×
+  graduation hazard) → `features.launch` {telegram 0/1 (`hasTelegramLink`: socials / website / description),
+  initialBuySol, initialMcSol, devSelfBuyPct} on every evaluation, AI / rule-search / win-model section `launch` — NO rule,
+  NO points. The creator's launch buy is captured by live-state (`devFirstBuyLam` / `devFirstBuyTok`, creator buy ≤2 s after
+  create; no creator buy = the default launch; older / adopted coins → null). Obsidian coin notes get `telegram`.
+  (2) **First buyers still holding** (`crowd-quality.firstBuyersHolding`): of the SOL spent by wallets whose first buy came in
+  the first 15 s (creator excluded), the share still held + those bags as % of supply → `features.wallets.firstBuyersHoldingPct`
+  / `firstBuyersBagPct` (null if the crowd log doesn't reach the launch); rule `wallets.entry.maxFirstBuyersHoldingPct`
+  (default 0 = OFF) + `firstBuyersMinBagPct` 5 → "launch buyers still hold X% of their bags". **Bug fixed on the way**: the
+  evaluator passed crowd quality the RAW supply (10¹⁵) while trade sizes are whole tokens, so every "% of supply" there was
+  10⁶× too small — the v11.6 "dump crew inside ≥2%" and v11.8 "deployer sniper ≥1%" rules could never fire; now ÷10⁶.
+  (3) **Holder Rewards coins hold longer** (`holderRewardsTimeLimits`, `exit.holderRewardsHoldFactor` 1.5, 1 = off):
+  `LiveTokenView.isHolderReward` (curve poll) → stale / max-hold / hold-longer cap × factor in the sell manager; the sell
+  detail says "holder-rewards coin: time limits ×1.5"; stop / rug / early bail unchanged. (4) **Lab variant E** (D3AD-E
+  live A/B): CURVE_SNIPE + SOON signals only (`LabVariant.strategies`, also honoured by the backtester), `exit.slotLadder`
+  sells 30% at 0.4 s then 20/20/15/15 at 2.4 / 3.6 / 5.2 / 7.2 s after the buy whatever the price (VirtualBook
+  `slotLadderOf`; steps ≥200 ms apart so a leg can land up to ~1 s late); `noAutoApply` → `autoApplicable()` false — judged
+  by the lab / backtester / replay only. Editable: Wallet engine, Exit timers — every strategy. tests/research-ports-2.test.ts.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

@@ -3,15 +3,17 @@
  * screens — and a bottom bar on phones), theme toggle and routes. Hash routing so GitHub Pages can
  * serve every page from one index.html.
  */
-import { useEffect, useState } from 'react';
-import { HashRouter, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { HashRouter, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AppFooter, Brand, ModePill } from './components/Brand';
 import { Icon, type IconName } from './components/Icon';
 import { InstallButton } from './components/InstallButton';
 import { Toasts } from './components/Toasts';
-import { BotStatusBadge } from './components/StatusBadge';
 import { useApi } from './hooks/useApi';
 import { disconnectSocket, useBotUptime, useSocketStatus } from './hooks/useWebSocket';
+import { useStreamRates } from './hooks/useStreamRates';
+import { refreshAll } from './lib/refresh';
+import { sol } from './lib/format';
 import { getToken, setToken } from './lib/api';
 import type { Overview as OverviewData } from './lib/types';
 import { History } from './pages/History';
@@ -151,19 +153,125 @@ function ThemeCycle({ theme, setTheme }: { theme: Theme; setTheme: (t: Theme) =>
   );
 }
 
+/** Name + one-line purpose per route, for the desktop top bar. */
+function pageMeta(pathname: string): { title: string; desc: string } {
+  if (pathname.startsWith('/token/')) return { title: 'Coin', desc: 'One coin: price, safety, score and what the bot did' };
+  const n = NAV.find((x) => (x.to === '/' ? pathname === '/' : pathname.startsWith(x.to)));
+  return n ? { title: n.label, desc: n.desc } : { title: 'Solbot', desc: '' };
+}
+
+/** Search box in the top bar: a coin symbol, a mint or a wallet → the right page, filtered. */
+function GlobalSearch() {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => !box.current?.contains(e.target as Node) && setOpen(false);
+    window.addEventListener('mousedown', h);
+    return () => window.removeEventListener('mousedown', h);
+  }, [open]);
+  const term = q.trim();
+  const addr = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(term);
+  const go = (to: string) => {
+    setOpen(false);
+    setQ('');
+    navigate(to);
+  };
+  const enc = encodeURIComponent(term);
+  const options: Array<{ label: string; sub: string; to: string; icon: IconName }> = term
+    ? [
+        ...(addr ? [{ label: 'Open coin page', sub: 'if this is a coin address', to: `/token/${term}`, icon: 'radar' as IconName }] : []),
+        { label: 'Trades', sub: 'History filtered by this coin', to: `/history?q=${enc}`, icon: 'clock' },
+        { label: 'Open positions', sub: 'What it holds that matches', to: `/positions?q=${enc}`, icon: 'layers' },
+        { label: 'Wallets', sub: 'KOLs and smart money that match', to: `/wallets?q=${enc}`, icon: 'wallet' },
+      ]
+    : [];
+  return (
+    <div ref={box} className="relative w-full max-w-[18rem] lg:max-w-[22rem]">
+      <form
+        role="search"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (options[0]) go(options[0].to);
+        }}
+      >
+        <label className="flex min-h-10 items-center gap-2 rounded-xl border border-line-strong bg-surface px-3 text-sm text-muted transition-colors focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/30">
+          <Icon name="search" size={16} />
+          <span className="sr-only">Search coins, mints or wallets</span>
+          <input
+            value={q}
+            onChange={(e) => {
+              setQ(e.target.value);
+              setOpen(true);
+            }}
+            onFocus={() => setOpen(true)}
+            onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
+            placeholder="Search coin, mint or wallet"
+            className="min-w-0 flex-1 bg-transparent text-ink outline-none placeholder:text-muted"
+          />
+        </label>
+      </form>
+      {open && options.length > 0 && (
+        <ul role="listbox" aria-label="Search in" className="pop absolute inset-x-0 top-full z-40 mt-1.5 overflow-hidden rounded-xl border border-line bg-surface p-1 shadow-card-hover">
+          {options.map((o) => (
+            <li key={o.to}>
+              <button type="button" role="option" aria-selected="false" onClick={() => go(o.to)} className="flex min-h-11 w-full items-center gap-3 rounded-lg px-2.5 text-left hover:bg-surface-2">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent/12 text-accent-text">
+                  <Icon name={o.icon} size={16} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-ink">{o.label}</span>
+                  <span className="block truncate text-xs text-muted">{o.sub}</span>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** Online / paused / reconnecting + live stream speed. */
+function StatusChip({ status, paused, tpm }: { status: string; paused?: boolean; tpm: number | null }) {
+  const online = status === 'online';
+  const st = !online ? (status === 'reconnecting' ? { dot: 'animate-pulse bg-warning', t: 'Reconnecting' } : { dot: 'bg-critical', t: 'Offline' }) : paused ? { dot: 'bg-warning', t: 'Paused' } : { dot: 'bg-good', t: 'Online' };
+  return (
+    <span role="status" className="inline-flex min-h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-line bg-surface px-3 text-sm font-medium text-ink" title={tpm !== null ? `${tpm.toLocaleString()} trades a minute on the stream` : undefined}>
+      <span className={`h-2 w-2 rounded-full ${st.dot}`} aria-hidden="true" />
+      {st.t}
+      {online && tpm !== null && (
+        <span className="tabular hidden border-l border-line pl-2 text-xs font-normal text-muted lg:inline">
+          {tpm >= 1000 ? `${(tpm / 1000).toFixed(1)}k` : tpm}/min
+        </span>
+      )}
+    </span>
+  );
+}
+
 function Shell() {
   const [theme, setTheme] = useTheme();
   const status = useSocketStatus();
   const botUptime = useBotUptime();
+  const tpm = useStreamRates().tradesPerMin;
   const [more, setMore] = useState(false);
+  const [spin, setSpin] = useState(false);
   const { pathname } = useLocation();
   useEffect(() => setMore(false), [pathname]);
-  // Mode (PAPER/LIVE) + paused state for the header pill and footer. Light poll; also refreshes on trades.
-  const ov = useApi<OverviewData>('/api/overview', 60_000);
+  // Mode (PAPER/LIVE), paused state and balance for the top bar and footer. Light poll; also refreshes on trades.
+  const ov = useApi<OverviewData>('/api/overview', 60_000, ['trade']);
   const mode = ov.data?.mode;
   const paused = ov.data?.paused || ov.data?.killSwitch;
   const inMore = NAV.some((n) => n.to !== '/' && !PHONE_MAIN.includes(n.to) && pathname.startsWith(n.to));
   const online = status === 'online';
+  const meta = pageMeta(pathname);
+  const refresh = () => {
+    refreshAll();
+    setSpin(true);
+    setTimeout(() => setSpin(false), 700);
+  };
   const linkCls = ({ isActive }: { isActive: boolean }) =>
     `group relative flex min-h-10 items-center gap-3 rounded-xl px-2.5 text-sm font-medium transition-colors duration-150 lg:px-3 ${isActive ? 'bg-accent/12 text-accent-text' : 'text-ink-2 hover:bg-surface-2 hover:text-ink'}`;
 
@@ -174,7 +282,7 @@ function Shell() {
       </a>
 
       {/* Desktop sidebar: icons only on tablets, icon + label from lg. */}
-      <aside className="hidden w-[4.5rem] shrink-0 flex-col border-r border-line bg-surface px-2 py-4 md:sticky md:top-0 md:flex md:h-screen md:overflow-y-auto lg:w-64 lg:px-3">
+      <aside className="hidden w-[4.5rem] shrink-0 flex-col border-r border-line bg-surface px-2 py-4 md:sticky md:top-0 md:flex md:h-screen md:overflow-y-auto lg:w-60 lg:px-3">
         <div className="mb-6 flex items-center justify-center gap-2 px-1 lg:justify-between lg:px-2">
           <Brand compact />
           <span className="hidden lg:inline-flex">
@@ -208,18 +316,6 @@ function Shell() {
           <span className="hidden lg:block">
             <InstallButton />
           </span>
-          <div className="hidden lg:block">
-            <BotStatusBadge status={status} paused={paused} />
-          </div>
-          <span className="mx-auto lg:hidden" title={online ? 'Connected' : 'Offline'}>
-            <span className={`block h-2.5 w-2.5 rounded-full ${online ? (paused ? 'bg-warning' : 'bg-good') : 'bg-critical'}`} aria-hidden="true" />
-          </span>
-          <div className="hidden lg:block">
-            <ThemeSwitch theme={theme} setTheme={setTheme} />
-          </div>
-          <div className="lg:hidden">
-            <ThemeCycle theme={theme} setTheme={setTheme} />
-          </div>
           <button type="button" onClick={logOut} title="Log out" className="flex min-h-10 items-center justify-center gap-2 rounded-xl px-2.5 text-left text-sm text-ink-2 hover:bg-surface-2 hover:text-ink lg:justify-start">
             <Icon name="logout" size={17} />
             <span className="hidden lg:inline">Log out</span>
@@ -234,20 +330,43 @@ function Shell() {
             <Brand size="sm" />
             <ModePill mode={mode} />
           </span>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5">
             <InstallButton compact />
+            <button type="button" onClick={refresh} aria-label="Refresh everything" className="grid h-11 w-11 place-items-center rounded-full text-ink-2 hover:bg-surface-2 hover:text-ink">
+              <Icon name="refresh" size={19} className={spin ? 'animate-spin' : ''} />
+            </button>
             <ThemeCycle theme={theme} setTheme={setTheme} />
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink" role="status">
+            <span className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink" role="status">
               <span className={`h-2 w-2 rounded-full ${online ? (paused ? 'bg-warning' : 'bg-good') : status === 'reconnecting' ? 'animate-pulse bg-warning' : 'bg-critical'}`} aria-hidden="true" />
-              {online ? (paused ? 'Paused' : 'Online') : status === 'reconnecting' ? 'Reconnecting' : 'Offline'}
+              {online ? (paused ? 'Paused' : 'Online') : status === 'reconnecting' ? 'Wait' : 'Offline'}
             </span>
           </div>
         </div>
       </header>
 
-      {/* Page column: content, then the footer. The bottom padding keeps everything clear of the phone tab bar. */}
+      {/* Page column: desktop top bar, content, then the footer. Bottom padding keeps clear of the phone tab bar. */}
       <div className="flex min-w-0 flex-1 flex-col pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:min-h-screen md:pb-6">
-        <main id="main" className="mx-auto w-full max-w-7xl flex-1 px-4 pt-4 sm:px-6 md:pt-8">
+        <header className="glass sticky top-0 z-20 hidden h-16 items-center gap-4 border-b border-line px-6 md:flex">
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-lg font-bold leading-tight tracking-tight text-ink" aria-hidden="true">{meta.title}</div>
+            <div className="hidden truncate text-xs text-muted lg:block">{meta.desc}</div>
+          </div>
+          <GlobalSearch />
+          <StatusChip status={status} paused={paused} tpm={tpm} />
+          {ov.data && (
+            <span className="hidden min-h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-line bg-surface px-3 text-sm xl:inline-flex" title={mode === 'PAPER' ? 'Paper balance (simulated money)' : 'Wallet balance'}>
+              <Icon name="wallet" size={15} className="text-muted" />
+              <span className="tabular font-semibold text-ink">{sol(ov.data.balanceSol, 2)}</span>
+            </span>
+          )}
+          <button type="button" onClick={refresh} aria-label="Refresh everything" title="Refresh everything" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-line text-ink-2 hover:bg-surface-2 hover:text-ink">
+            <Icon name="refresh" size={17} className={spin ? 'animate-spin' : ''} />
+          </button>
+          <div className="w-[6.5rem] shrink-0">
+            <ThemeSwitch theme={theme} setTheme={setTheme} compact />
+          </div>
+        </header>
+        <main id="main" className="mx-auto w-full max-w-[1400px] flex-1 px-4 pt-4 sm:px-6 md:pt-6 lg:px-8">
           <div key={pathname} className="page-enter">
             <Routes>
               <Route path="/" element={<Overview />} />

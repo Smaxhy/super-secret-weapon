@@ -1,10 +1,12 @@
 /**
- * Brain: what the self-improving learners know — the win-probability model (and whether it has earned a say),
- * rules the statistical search discovered (testing → live), how the budget is shifted between strategies,
- * the learned entry styles and every change the bot made.
+ * Brain: what the self-improving learners know.
+ *  - Status strip: models (on / off + AUC), rules live / testing, AI budget today, budget shifts, coins learned from.
+ *  - Two columns: "Talk to the brain" (tips + its answers) and "What it changed" (vertical timeline).
+ *  - Sections: Models (exam results vs the score), Rules (discovered rules, entry styles, exit timers, loss exits),
+ *    Budget (allocation as a stacked bar + the multiplier per strategy).
  */
 import { BrainTips } from '../components/BrainTips';
-import { Card, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Stack, Stat, Tabs, useTab } from '../components/ui';
+import { Card, Empty, ErrorBox, Loading, PageHeader, Row, Rows, SectionHeader, StackedBar, Stat, StatTile, Tabs, Timeline, useTab } from '../components/ui';
 import { useApi } from '../hooks/useApi';
 import { ago, STRATEGY_LABEL } from '../lib/format';
 
@@ -33,28 +35,77 @@ const STATUS: Record<Discovered['status'], string> = { testing: 'testing on new 
 const r2 = (x: number | undefined) => (typeof x === 'number' && Number.isFinite(x) ? x.toFixed(2) : '—');
 
 const TABS = [
-  { key: 'talk', label: 'Talk' },
   { key: 'models', label: 'Models' },
   { key: 'rules', label: 'Rules' },
   { key: 'budget', label: 'Budget' },
-  { key: 'changes', label: 'Changes' },
 ] as const;
+interface CoachLite { hasKey: boolean; spentTodayUsd: number; budgetUsd: number }
+
+/** Model AUC vs the score's AUC on one 0.5–1 track (0.5 = coin flip). */
+function AucMeter({ model, baseline }: { model: number; baseline: number }) {
+  const at = (x: number) => `${Math.max(0, Math.min(100, ((x - 0.5) / 0.5) * 100))}%`;
+  return (
+    <div className="mt-3" role="img" aria-label={`Model AUC ${model.toFixed(2)} vs current score ${baseline.toFixed(2)}`}>
+      <div className="relative h-2 rounded-full bg-surface-3">
+        <div className={`absolute inset-y-0 left-0 rounded-full ${model > baseline ? 'bg-good/70' : 'bg-accent/60'}`} style={{ width: at(model) }} />
+        <span className="absolute -top-1 h-4 w-0.5 rounded bg-ink" style={{ left: at(baseline) }} title={`score ${baseline.toFixed(2)}`} />
+      </div>
+      <div className="mt-1 flex justify-between text-[10px] text-muted tabular">
+        <span>0.5 coin flip</span>
+        <span>bar = current score</span>
+        <span>1.0</span>
+      </div>
+    </div>
+  );
+}
 type Tab = (typeof TABS)[number]['key'];
 
 export function Brain() {
   const { data, error } = useApi<BrainData | null>('/api/brain', 60_000);
-  const [tab, setTab] = useTab<Tab>('brain', TABS.map((t) => t.key), 'talk');
+  const coach = useApi<CoachLite | null>('/api/ai-coach', 120_000);
+  const [tab, setTab] = useTab<Tab>('brain', TABS.map((t) => t.key), 'models');
+  const live = data?.discoveredRules.filter((r) => r.status === 'live').length ?? 0;
+  const testing = data?.discoveredRules.filter((r) => r.status === 'testing').length ?? 0;
+  const auc = data?.model?.report?.valAuc ?? data?.model?.tree?.report.valAuc;
+  const up = data?.allocation?.filter((a) => a.multiplier > 1.05).length ?? 0;
+  const down = data?.allocation?.filter((a) => a.multiplier < 0.95).length ?? 0;
   return (
     <>
       <PageHeader title="Brain" subtitle="What it learned on its own. Nothing goes live before it proves itself on new trades." />
+      {error && <ErrorBox message={error} />}
+      <section aria-label="Brain status" className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+        <StatTile compact label="Win models" value={data?.model ? (data.model.active ? 'On' : 'Not trusted') : '—'} sub={auc !== undefined ? `AUC ${r2(auc)} vs score ${r2(data?.model?.report?.baselineAuc)}` : 'training soon'} tone={data?.model?.active ? 'up' : undefined} />
+        <StatTile compact label="Rules" value={`${live} live`} sub={`${testing} testing on new trades`} tone={live ? 'up' : undefined} />
+        <StatTile compact label="AI budget today" value={coach.data ? `$${coach.data.spentTodayUsd.toFixed(2)}` : '—'} sub={coach.data ? `of $${coach.data.budgetUsd.toFixed(2)}${coach.data.hasKey ? '' : ' · no key'}` : 'AI coach'} tone={coach.data && coach.data.spentTodayUsd >= coach.data.budgetUsd ? 'warn' : undefined} />
+        <StatTile compact label="Budget shifts" value={data?.allocation?.length ? `${up} up · ${down} down` : 'normal'} sub="strategies given more / less" />
+        <div className="col-span-2 sm:col-span-1">
+          <StatTile compact label="Coins learned from" value={data?.coinsChecked ? data.coinsChecked.stored.toLocaleString() : '—'} sub={data?.coinsChecked ? `${data.coinsChecked.pending.toLocaleString()} waiting` : 'replayed 45 min later'} />
+        </div>
+      </section>
+
+      <div className="mb-8 grid gap-6 xl:grid-cols-12">
+        <div className="min-w-0 xl:col-span-7">
+          <BrainTips />
+        </div>
+        <Card title="What it changed" subtitle="Every adjustment the learners and you made, newest first" className="xl:col-span-5">
+          {!data ? (
+            <Loading kind="rows" />
+          ) : !data.changes.length ? (
+            <p className="text-sm text-ink-2">No changes yet.</p>
+          ) : (
+            <div className="max-h-[36rem] overflow-y-auto pr-1">
+              <Timeline items={data.changes.slice(0, 40).map((c, i) => ({ key: `${c.at}-${i}`, when: ago(c.at), title: c.what, body: c.why, tone: c.source === 'owner' ? 'up' : c.source === 'ai-coach' ? 'accent' : 'muted' }))} />
+            </div>
+          )}
+        </Card>
+      </div>
+
       <Tabs tabs={[...TABS]} value={tab} onChange={setTab} sticky label="Brain sections" />
-      {tab === 'talk' && <BrainTips />}
-      {tab !== 'talk' && error && <ErrorBox message={error} />}
-      {tab !== 'talk' && !data && !error && <Loading />}
-      {tab !== 'talk' && data === null && !error && <Empty>The brain starts a few minutes after the bot starts.</Empty>}
+      {!data && !error && <Loading kind="rows" />}
+      {data === null && !error && <Empty>The brain starts a few minutes after the bot starts.</Empty>}
       {tab === 'models' && data && (
-        <Stack>
-          <Card title="Win-probability models">
+        <div className="grid items-start gap-6 xl:grid-cols-12">
+          <Card title="Win-probability models" subtitle="They only get a say after beating the score on the newest, unseen trades." className="xl:col-span-7">
             {!data.model ? (
               <p className="text-sm text-ink-2">Training soon (first run ~2 min after start, then hourly).</p>
             ) : (
@@ -63,7 +114,7 @@ export function Brain() {
                   <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${data.model.active ? 'bg-up/15 text-up' : 'bg-surface-2 text-ink-2'}`}>
                     {data.model.using === 'both' ? 'ON — both models together' : data.model.using === 'trees' ? 'ON — tree model' : data.model.using === 'logistic' ? 'ON — straight-line model' : 'not trusted yet'}
                   </span>
-                  <span className="ml-2 text-xs text-muted">trained {ago(data.model.trainedAt)} · they only get a say after beating the score on the newest, unseen trades</span>
+                  <span className="ml-2 text-xs text-muted">trained {ago(data.model.trainedAt)}</span>
                 </div>
                 {[
                   { title: 'Straight-line model', sub: 'learns "more of this → more wins"', r: data.model.report, ex: data.model.explain, extra: null as string | null },
@@ -84,6 +135,7 @@ export function Brain() {
                           <Stat label="Learned from" value={m.r.n.toLocaleString()} sub={`${m.r.nVal.toLocaleString()} kept for the exam`} />
                           <Stat label="Features" value={String(m.r.features)} sub={m.extra ?? undefined} />
                         </div>
+                        <AucMeter model={m.r.valAuc} baseline={m.r.baselineAuc} />
                       </>
                     )}
                     {m.ex.length > 0 && (
@@ -102,7 +154,7 @@ export function Brain() {
             )}
           </Card>
 
-          <Card title="Learning from every coin it checks">
+          <Card title="Learning from every coin it checks" className="xl:col-span-5">
             {!data.coinsChecked ? (
               <p className="text-sm text-ink-2">Starting — every coin it looks at and doesn't buy is replayed 45 min later with its own exits.</p>
             ) : (
@@ -139,10 +191,10 @@ export function Brain() {
               </div>
             )}
           </Card>
-        </Stack>
+        </div>
       )}
       {tab === 'rules' && data && (
-        <Stack>
+        <div className="grid items-start gap-6 xl:grid-cols-2">
           <Card title="Rules it discovered">
             <div className="space-y-3 text-sm">
               <p className="text-xs text-muted">
@@ -213,14 +265,20 @@ export function Brain() {
               </Rows>
             )}
           </Card>
-        </Stack>
+        </div>
       )}
       {tab === 'budget' && data && (
-        <Stack>
-          <Card title="Budget per strategy" subtitle="Strategies that earn get more money per trade; losing ones get less.">
-            {!data.allocation?.length ? (
-              <p className="text-sm text-ink-2">Every strategy on its normal budget until there's enough evidence (~10 trades each).</p>
-            ) : (
+        <div className="flex flex-col gap-6">
+          <SectionHeader title="Budget per strategy" description="Strategies that earn get more money per trade; losing ones get less." />
+          {!data.allocation?.length ? (
+            <Empty>Every strategy is on its normal budget until there's enough evidence (about 10 trades each).</Empty>
+          ) : (
+            <div className="grid gap-6 xl:grid-cols-12">
+              <Card title="Share of the budget" className="xl:col-span-5">
+                <StackedBar height={16} parts={[...data.allocation].sort((x, y) => y.fraction - x.fraction).map((a) => ({ label: strat(a.strategy), value: a.fraction }))} />
+                <p className="mt-3 text-xs text-muted">After the multipliers: what part of the money each strategy may use.</p>
+              </Card>
+              <Card title="Multiplier per strategy" className="xl:col-span-7">
               <Rows>
                 {data.allocation.map((a) => (
                   <Row
@@ -232,30 +290,10 @@ export function Brain() {
                   />
                 ))}
               </Rows>
-            )}
-          </Card>
-        </Stack>
-      )}
-      {tab === 'changes' && data && (
-        <Stack>
-          <Card title="Everything it changed">
-            {!data.changes.length ? (
-              <p className="text-sm text-ink-2">No changes yet.</p>
-            ) : (
-              <ul className="divide-y divide-line text-sm">
-                {data.changes.map((c, i) => (
-                  <li key={`${c.at}-${i}`} className="py-2 first:pt-0 last:pb-0">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="min-w-0 break-words font-medium text-ink">{c.what}</span>
-                      <span className="shrink-0 text-xs text-muted">{ago(c.at)}</span>
-                    </div>
-                    <div className="break-words text-xs text-muted">{c.why}</div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
-        </Stack>
+              </Card>
+            </div>
+          )}
+        </div>
       )}
     </>
   );

@@ -51,7 +51,7 @@ export interface BacktestReport {
 const r1 = (x: number) => Math.round(x * 10) / 10;
 
 /** Pure-ish: replay one coin's tape for the given trades × variants. Returns results keyed `${tradeId}:${variantId}`. */
-export function replayTape(mint: string, tape: readonly CrowdTrade[], trades: readonly BacktestTrade[], variants: ReadonlyArray<Pick<LabVariant, 'id' | 'exit' | 'ownerOnly'>>): Map<string, VirtualResult> {
+export function replayTape(mint: string, tape: readonly CrowdTrade[], trades: readonly BacktestTrade[], variants: ReadonlyArray<Pick<LabVariant, 'id' | 'exit' | 'ownerOnly' | 'strategies'>>): Map<string, VirtualResult> {
   const out = new Map<string, VirtualResult>();
   if (!tape.length || !trades.length) return out;
   // Trades seen so far (grows as the replay moves on — no copying).
@@ -77,7 +77,7 @@ export function replayTape(mint: string, tape: readonly CrowdTrade[], trades: re
     while (pending.length && pending[0]!.openedAtMs <= t.t) {
       const p = pending.shift()!;
       const price = t.pp && t.pp > 0 ? t.pp : t.px;
-      for (const v of variants) book.add({ key: `${p.id}:${v.id}`, mint: p.mint, symbol: p.symbol, strategy: p.strategy, onAmm: p.onAmm, priceSol: price, tag: { variant: v.id } }, t.t);
+      for (const v of variants) if (!v.strategies || v.strategies.includes(p.strategy)) book.add({ key: `${p.id}:${v.id}`, mint: p.mint, symbol: p.symbol, strategy: p.strategy, onAmm: p.onAmm, priceSol: price, tag: { variant: v.id } }, t.t);
     }
     book.onTrade(mint, t.t);
     book.stepAll(t.t);

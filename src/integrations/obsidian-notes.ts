@@ -89,6 +89,8 @@ export interface CoinState {
   creator?: string | null;
   deployerClass?: string | null;
   deployerNote?: string | null;
+  /** v11.11 */
+  telegram?: boolean;
 }
 
 export function coinNote(c: CoinState): Note {
@@ -118,7 +120,7 @@ export function coinNote(c: CoinState): Note {
     path: `${DIRS.coins}/${coinFile(c.symbol, c.mint)}.md`,
     content: fm({
       type: 'coin', mint: c.mint, symbol: sym, name: c.name, strategy_seen: c.strategies, first_seen: new Date(c.firstSeenMs).toISOString(),
-      mc_usd: c.mcUsd, migrated: c.migrated, verdict: c.verdict, score: c.score, dump_crew: c.dumpCrew, proven_crowd: c.provenCrowd, deployer_class: c.deployerClass ?? null,
+      mc_usd: c.mcUsd, migrated: c.migrated, verdict: c.verdict, score: c.score, dump_crew: c.dumpCrew, proven_crowd: c.provenCrowd, deployer_class: c.deployerClass ?? null, telegram: c.telegram ?? null,
       wallets: wallets.length, trades: c.trades.length, updated: new Date(c.updatedMs).toISOString(), tags,
     }) + body,
   };

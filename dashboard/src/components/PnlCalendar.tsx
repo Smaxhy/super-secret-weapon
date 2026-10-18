@@ -24,7 +24,7 @@ const pad = (n: number) => String(n).padStart(2, '0');
 const keyOf = (y: number, m: number, d: number) => `${y}-${pad(m + 1)}-${pad(d)}`;
 const short = (v: number) => `${v > 0 ? '+' : ''}${Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2)}`;
 
-export function PnlCalendar({ picked, onPick }: { picked: string | null; onPick: (day: string | null) => void }) {
+export function PnlCalendar({ picked, onPick, bare = false }: { picked: string | null; onPick: (day: string | null) => void; bare?: boolean }) {
   const tz = new Date().getTimezoneOffset();
   const { data, error } = useApi<Calendar>(`/api/pnl-calendar?tz=${tz}`, 60_000, ['trade']);
   const now = new Date();
@@ -48,7 +48,7 @@ export function PnlCalendar({ picked, onPick }: { picked: string | null; onPick:
   const max = Math.max(0.0001, ...inMonth.map((d) => Math.abs(d.pnlSol)));
 
   return (
-    <div className="pop rounded-2xl border border-line bg-surface-2/40 p-3 sm:p-4">
+    <div className={bare ? '' : 'pop rounded-2xl border border-line bg-surface-2/40 p-3 sm:p-4'}>
       {error && <p className="mb-2 text-sm text-down">{error}</p>}
       <div className="mb-3 flex items-center justify-between gap-2">
         <button type="button" aria-label="Previous month" onClick={() => step(-1)} className="grid h-10 w-10 place-items-center rounded-full text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink">

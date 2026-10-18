@@ -1,118 +1,110 @@
-/** One completed trade in the history table. */
-import { useState } from 'react';
+/** One completed trade: the details panel (drawer) and the phone list row. */
 import { Link } from 'react-router-dom';
-import { duration, EXIT_LABEL, pct, price, sol, STRATEGY_LABEL } from '../lib/format';
+import { duration, EXIT_LABEL, multiple, pct, price, sol, STRATEGY_LABEL } from '../lib/format';
 import type { TradeRowData } from '../lib/types';
-import { Badge, Pnl } from './ui';
+import { PnlChip } from './PositionRow';
+import { Badge, Pnl, SectionLabel } from './ui';
 
-function Why({ t }: { t: TradeRowData }) {
+export function TradeWhy({ t }: { t: TradeRowData }) {
+  if (!t.buyReason && !t.sellReasons.length && !t.lesson) return <p className="text-sm text-muted">No explanation stored for this trade.</p>;
   return (
-    <div className="space-y-2 text-sm leading-relaxed text-ink">
+    <div className="space-y-3 text-sm leading-relaxed text-ink">
       {t.buyReason && (
-        <p>
-          <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-muted">Bought</span> {t.buyReason}
-        </p>
+        <div>
+          <SectionLabel>Why it bought</SectionLabel>
+          <p className="rounded-xl bg-surface-2/60 p-3">{t.buyReason}</p>
+        </div>
       )}
-      {t.sellReasons.map((r, i) => (
-        <p key={i}>
-          <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-muted">Sell {i + 1}</span> {r}
-        </p>
-      ))}
+      {t.sellReasons.length > 0 && (
+        <div>
+          <SectionLabel>Why it sold</SectionLabel>
+          <ol className="space-y-2">
+            {t.sellReasons.map((r, i) => (
+              <li key={i} className="flex gap-2.5 rounded-xl bg-surface-2/60 p-3">
+                <span className="tabular shrink-0 text-xs font-semibold text-muted">{i + 1}</span>
+                <span className="min-w-0 break-words">{r}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
       {t.lesson && (
-        <p className="rounded-lg bg-accent/10 px-3 py-2 text-accent-text">
-          <span className="mr-1 text-xs font-semibold uppercase tracking-wide">Lesson</span> {t.lesson.lesson}
-        </p>
+        <div>
+          <SectionLabel>Coach's lesson</SectionLabel>
+          <p className="rounded-xl bg-accent/10 p-3 text-accent-text">{t.lesson.lesson}</p>
+        </div>
       )}
     </div>
   );
 }
 
-export function TradeRow({ t }: { t: TradeRowData }) {
-  const [open, setOpen] = useState(false);
-  const hasWhy = !!t.buyReason || t.sellReasons.length > 0;
+export function TradeDetails({ t }: { t: TradeRowData }) {
   return (
-    <>
-      <tr className="border-t border-line transition-colors hover:bg-surface-2/60">
-        <td className="py-3 pr-4">
-          <Link to={`/token/${t.mint}`} className="font-semibold text-ink underline-offset-2 hover:underline">
-            {t.symbol}
-          </Link>
-          <div className="text-xs text-muted">{t.closedAt ? new Date(t.closedAt).toLocaleString() : ''}</div>
-        </td>
-        <td className="pr-4">
-          <Badge>{STRATEGY_LABEL[t.strategy] ?? t.strategy}</Badge>
-        </td>
-        <td className="pr-4 text-right text-ink-2">{sol(t.sizeSol, 2)}</td>
-        <td className="pr-4 text-right text-ink-2">{price(t.entryPriceSol)}</td>
-        <td className="pr-4 text-right text-ink-2">{price(t.exitPriceSol)}</td>
-        <td className="pr-4 text-right">
-          <Pnl value={t.pnlSol} />
-          <div className={`text-xs ${t.pnlPct >= 0 ? 'text-up' : 'text-down'}`}>{pct(t.pnlPct, 1, true)}</div>
-        </td>
-        <td className="pr-4 text-right">
-          <span className={t.peakMultiple >= 1 ? 'text-up' : 'text-ink-2'}>{pct((t.peakMultiple - 1) * 100, 0, true)}</span>
-          <div className="text-xs text-muted">
-            peak {t.peakMultiple.toFixed(2)}×{t.bestWithin1hMultiple && t.bestWithin1hMultiple > t.peakMultiple * 1.05 ? ` · later ${t.bestWithin1hMultiple.toFixed(1)}×` : ''}
-          </div>
-        </td>
-        <td className="pr-4 text-right text-ink-2">{duration(t.holdSeconds)}</td>
-        <td className="pr-4 text-ink-2">{t.exitReason ? (EXIT_LABEL[t.exitReason] ?? t.exitReason) : '—'}</td>
-        <td className="pr-2 text-right text-ink-2">{t.scoreAtEntry?.toFixed(0) ?? '—'}</td>
-        <td className="pr-2">
-          {hasWhy && (
-            <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="min-h-8 rounded-lg border border-line-strong px-2.5 text-xs font-medium text-ink transition-colors hover:bg-surface-2">
-              {open ? 'Hide' : 'Why?'}
-            </button>
-          )}
-        </td>
-      </tr>
-      {open && (
-        <tr className="fade-in bg-surface-2/50">
-          <td colSpan={11} className="px-3 py-3">
-            <Why t={t} />
-          </td>
-        </tr>
-      )}
-    </>
+    <div className="flex flex-col gap-5">
+      <div className="grid grid-cols-3 gap-3">
+        <Big label="Result" value={<Pnl value={t.pnlSol} dp={2} />} />
+        <Big label="Return" value={<span className={t.pnlPct >= 0 ? 'text-up' : 'text-down'}>{pct(t.pnlPct, 1, true)}</span>} />
+        <Big label="Peak" value={<span className={t.peakMultiple >= 1 ? 'text-up' : 'text-ink-2'}>{multiple(t.peakMultiple)}</span>} />
+      </div>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+        <Fact label="Strategy">{STRATEGY_LABEL[t.strategy] ?? t.strategy}</Fact>
+        <Fact label="How it ended">{t.exitReason ? (EXIT_LABEL[t.exitReason] ?? t.exitReason) : '—'}</Fact>
+        <Fact label="Size">{sol(t.sizeSol, 3)}</Fact>
+        <Fact label="Held">{duration(t.holdSeconds)}</Fact>
+        <Fact label="Entry price">{price(t.entryPriceSol)}</Fact>
+        <Fact label="Exit price">{price(t.exitPriceSol)}</Fact>
+        <Fact label="Most it was up">{sol(t.maxProfitSol, 3)}</Fact>
+        <Fact label="Best within 1 h">{t.bestWithin1hMultiple ? multiple(t.bestWithin1hMultiple) : '—'}</Fact>
+        <Fact label="Score at entry">{t.scoreAtEntry?.toFixed(0) ?? '—'}</Fact>
+        <Fact label="Closed">{t.closedAt ? new Date(t.closedAt).toLocaleString() : '—'}</Fact>
+      </dl>
+      <TradeWhy t={t} />
+      <Link to={`/token/${t.mint}`} className="inline-flex min-h-11 items-center text-sm font-medium text-accent-text hover:underline">
+        Coin details
+      </Link>
+    </div>
   );
 }
 
-/** Phone version of a completed trade: a compact card with an expandable "why". */
-export function TradeCard({ t }: { t: TradeRowData }) {
-  const [open, setOpen] = useState(false);
-  const up = t.pnlSol >= 0;
+/** Phone list row: symbol, strategy, exit + hold, P&L chip. Tap → details sheet. */
+export function TradeListRow({ t, onOpen }: { t: TradeRowData; onOpen: () => void }) {
   return (
-    <li className={`card min-w-0 border-l-[3px] p-3.5 ${up ? 'border-l-good' : 'border-l-critical'}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <Link to={`/token/${t.mint}`} className="block truncate font-semibold text-ink">
-            {t.symbol}
-          </Link>
-          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted">
+    <li>
+      <button type="button" onClick={onOpen} className="flex min-h-14 w-full items-center gap-3 px-4 py-2.5 text-left active:bg-surface-2/60">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate font-semibold text-ink">{t.symbol}</span>
             <Badge>{STRATEGY_LABEL[t.strategy] ?? t.strategy}</Badge>
-            <span className="truncate">{t.exitReason ? (EXIT_LABEL[t.exitReason] ?? t.exitReason) : '—'} · {duration(t.holdSeconds)}</span>
+          </div>
+          <div className="tabular mt-0.5 truncate text-xs text-muted">
+            {t.exitReason ? (EXIT_LABEL[t.exitReason] ?? t.exitReason) : '—'} · {duration(t.holdSeconds)} · {t.closedAt ? new Date(t.closedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : ''}
           </div>
         </div>
-        <div className="shrink-0 whitespace-nowrap text-right">
-          <Pnl value={t.pnlSol} />
-          <div className={`text-xs ${t.pnlPct >= 0 ? 'text-up' : 'text-down'}`}>{pct(t.pnlPct, 1, true)}</div>
+        <div className="shrink-0 text-right">
+          <Pnl value={t.pnlSol} className="text-sm" />
+          <div className="mt-0.5">
+            <PnlChip value={t.pnlPct} />
+          </div>
         </div>
-      </div>
-      <div className="mt-2.5 flex items-center justify-between gap-2 text-xs text-ink-2">
-        <span className="tabular min-w-0 truncate">
-          {sol(t.sizeSol, 2)} · peak {t.peakMultiple.toFixed(2)}× · score {t.scoreAtEntry?.toFixed(0) ?? '—'}
-        </span>
-        {(t.buyReason || t.sellReasons.length > 0) && (
-          <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="min-h-8 shrink-0 rounded-lg border border-line-strong px-2.5 text-ink transition-colors hover:bg-surface-2">
-            {open ? 'Hide' : 'Why?'}
-          </button>
-        )}
-      </div>
-      {open && (
-        <div className="fade-in mt-3 border-t border-line pt-3">
-          <Why t={t} />
-        </div>
-      )}
+      </button>
     </li>
+  );
+}
+
+function Big({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="min-w-0 rounded-xl bg-surface-2 px-3 py-2.5">
+      <div className="truncate text-xs font-medium text-muted">{label}</div>
+      <div className="tabular mt-1 truncate text-base font-semibold leading-tight sm:text-lg">{value}</div>
+    </div>
+  );
+}
+
+function Fact({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="truncate text-xs font-medium text-muted">{label}</dt>
+      <dd className="tabular mt-0.5 break-words text-ink">{children}</dd>
+    </div>
   );
 }

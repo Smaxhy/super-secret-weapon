@@ -133,6 +133,8 @@ export interface ExitInput {
   riskWhy: string;
   openedAtMs: number;
   maxHoldMinutes: number;
+  /** v11.11: appended to max-hold / stale sell details (e.g. a Holder Rewards coin's longer limits). */
+  timeLimitNote?: string | null;
   /** Price keeps getting rejected at the same ceiling (see detectResistance). */
   resistance: { hit: boolean; level: number; touches: number };
   /** SOL we put into the position (no fees). */
@@ -589,6 +591,16 @@ function sniperKey(e: SniperExits): string {
 }
 
 /**
+ * v11.11: Holder Rewards coins pay their holders the creator fees several times an hour, so the hold itself yields —
+ * stretch the TIME limits only (stale, max hold, hold-longer cap). Stop loss, rug and early-bail exits never change.
+ */
+export function holderRewardsTimeLimits(t: { staleMinutes: number; maxHoldMinutes: number; holdLongerMaxHours: number }, isHolderReward: boolean, factor: number | undefined): { staleMinutes: number; maxHoldMinutes: number; holdLongerMaxHours: number; note: string | null } {
+  const f = factor ?? 1;
+  if (!isHolderReward || !(f > 1)) return { ...t, note: null };
+  return { staleMinutes: t.staleMinutes * f, maxHoldMinutes: t.maxHoldMinutes * f, holdLongerMaxHours: t.holdLongerMaxHours * f, note: `holder-rewards coin: time limits ×${f}` };
+}
+
+/**
  * "Allowed to hold bigger MC coins if it sees potential" (owner): profit is already banked
  * (initials out or a take-profit hit), the market cap is ≥ holdLonger.minMarketCapUsd, the chart
  * still trends up (uptrend, or a range of higher lows — not breaking down), the risk score is low,
@@ -966,7 +978,7 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
     return { sells, state };
   }
   if (remaining > 0 && i.nowMs - i.openedAtMs >= maxHold * 60_000) {
-    sells.push({ pct: remaining, reason: multiple >= 1 ? 'TAKE_PROFIT' : 'STALE', detail: `max hold ${maxHold}m reached at ${multiple.toFixed(2)}x` });
+    sells.push({ pct: remaining, reason: multiple >= 1 ? 'TAKE_PROFIT' : 'STALE', detail: `max hold ${maxHold}m reached at ${multiple.toFixed(2)}x${i.timeLimitNote ? ` (${i.timeLimitNote})` : ''}` });
     return { sells, state };
   }
 
@@ -974,7 +986,7 @@ export function decideExit(i: ExitInput, rules: BotConfigShape['exit']): ExitDec
     state.refPriceSol = i.priceSol;
     state.lastMoveAtMs = i.nowMs;
   } else if (remaining > 0 && !potential && i.nowMs - state.lastMoveAtMs >= i.staleMinutes * 60_000) {
-    sells.push({ pct: remaining, reason: 'STALE', detail: `no movement for ${i.staleMinutes}m` });
+    sells.push({ pct: remaining, reason: 'STALE', detail: `no movement for ${i.staleMinutes}m${i.timeLimitNote ? ` (${i.timeLimitNote})` : ''}` });
   }
   return { sells, state };
 }
@@ -1277,6 +1289,7 @@ export class SellManager {
       return;
     }
     const m = deriveMetrics(view);
+    const hr = holderRewardsTimeLimits({ staleMinutes: ex.staleMinutes[p.strategy], maxHoldMinutes: ex.maxHoldMinutes[p.strategy], holdLongerMaxHours: ex.holdLonger?.maxHours ?? 0 }, !!view.isHolderReward, (ex as { holderRewardsHoldFactor?: number }).holderRewardsHoldFactor);
     const entry = (p.entryContext ?? {}) as { devHoldingPct?: number; top10HolderPct?: number; earlyBuyerPct?: number };
     // Migrated but no PumpSwap trades seen 10 min later → we can't price it anymore.
     const completedLongAgo = view.complete && view.ammTrades === 0 && Date.now() - (view.migratedAtMs ?? view.lastTradeAtMs ?? 0) > 10 * 60_000;
@@ -1381,7 +1394,7 @@ export class SellManager {
         trailingActive: p.trailingActive,
         refPriceSol: p.refPriceSol ?? p.entryPriceSol,
         lastMoveAtMs: (p.lastMoveAt ?? p.openedAt).getTime(),
-        staleMinutes: ex.staleMinutes[p.strategy],
+        staleMinutes: hr.staleMinutes,
         priceSol: m.priceSol,
         chart: ex.priceAction?.enabled ? priceActionFor(p.mint, crowdTrades, now) : null,
         liquiditySol: m.liquiditySol,
@@ -1400,7 +1413,8 @@ export class SellManager {
         risk,
         riskWhy: why,
         openedAtMs: p.openedAt.getTime(),
-        maxHoldMinutes: ex.maxHoldMinutes[p.strategy],
+        maxHoldMinutes: hr.maxHoldMinutes,
+        timeLimitNote: hr.note,
         resistance: detectResistance(hist, now, ex.resistance),
         sizeSol: p.sizeSol,
         costSol,
@@ -1426,7 +1440,7 @@ export class SellManager {
         smartSell: chartSell,
         peakAtMs: tr.peakAtMs ?? null,
         migratedAgoSec: view.complete && view.migratedAtMs ? Math.max(0, (now - view.migratedAtMs) / 1000) : null,
-        holdLonger: holdLongerNow({ rules: ex, tpTiersHit: tiers, marketCapUsd: solUsd ? m.marketCapSol * solUsd : null, chart: read, risk, heldMs: now - p.openedAt.getTime() }),
+        holdLonger: holdLongerNow({ rules: hr.note && ex.holdLonger ? ({ ...ex, holdLonger: { ...ex.holdLonger, maxHours: hr.holdLongerMaxHours } } as unknown as typeof ex) : ex, tpTiersHit: tiers, marketCapUsd: solUsd ? m.marketCapSol * solUsd : null, chart: read, risk, heldMs: now - p.openedAt.getTime() }),
         spikeRisePct: ex.spikeSell?.enabled ? spikeRisePct(crowdTrades, m.priceSol, Math.max(p.openedAt.getTime(), now - ex.spikeSell.windowSec * 1000)) : null,
         adaptiveStopFactor: Number((p.entryContext as { adaptiveStopFactor?: number } | null)?.adaptiveStopFactor ?? 1),
         recentTradeCount: crowdTrades.filter((t) => t.t >= now - 60_000).length,

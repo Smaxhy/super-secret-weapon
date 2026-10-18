@@ -1,14 +1,14 @@
 /** Performance page: "What the bot changed" — how each strategy enters / sizes now, and every change the learners made. */
 import { useApi } from '../hooks/useApi';
 import { ago, STRATEGY_LABEL } from '../lib/format';
-import { Card } from './ui';
+import { Card, ErrorBox, SectionHeader, Timeline } from './ui';
 
 interface Change { at: string; source: string; strategy: string | null; what: string; why: string }
 interface Style { strategy: string; minOffHighPct: number; maxRun3mPct: number | null; why: string[] }
 interface Tune { strategy: string; barDelta: number; sizeFactor: number; trailFactor: number; why: string }
 interface Data { changes: Change[]; entryStyles: Style[]; tuning: Tune[] }
 
-const SOURCE: Record<string, string> = { autopsy: 'Loss report', 'entry-style': 'Entries', 'ai-coach': 'AI coach', 'strategy-lab': 'Exit lab' };
+const SOURCE: Record<string, string> = { autopsy: 'Loss report', 'entry-style': 'Entries', 'ai-coach': 'AI coach', 'strategy-lab': 'Exit lab', owner: 'You', 'exit-tuner': 'Exit tuner', brain: 'Brain' };
 const strat = (s: string) => STRATEGY_LABEL[s] ?? s;
 
 export function BotChanges() {
@@ -16,55 +16,55 @@ export function BotChanges() {
   const tunes = (data?.tuning ?? []).filter((t) => t.barDelta || t.sizeFactor !== 1 || t.trailFactor !== 1);
   const styles = data?.entryStyles ?? [];
   return (
-    <Card title="What the bot changed">
-      {error && <p className="text-sm text-down">{error}</p>}
+    <div className="flex flex-col gap-4">
+      <SectionHeader title="What the bot changed" description="How each strategy trades right now, and every adjustment the learners made." />
+      {error && <ErrorBox message={error} />}
       {data && (
-        <div className="space-y-4 text-sm">
-          <div>
-            <div className="mb-1 font-medium text-ink">How it trades right now</div>
+        <div className="grid gap-6 xl:grid-cols-12">
+          <Card title="How it trades right now" className="xl:col-span-5">
             {!styles.length && !tunes.length ? (
-              <p className="text-ink-2">Everything on normal settings — nothing has lost often enough yet to change (needs ~15 trades of a kind).</p>
+              <p className="text-sm text-ink-2">Everything on normal settings. Nothing has lost often enough yet to change (needs ~15 trades of a kind).</p>
             ) : (
-              <ul className="space-y-1.5">
+              <ul className="divide-y divide-line text-sm">
                 {styles.map((s) => (
-                  <li key={`s-${s.strategy}`} className="text-ink-2">
-                    <span className="font-medium text-ink">{strat(s.strategy)} entries:</span>{' '}
-                    {[s.minOffHighPct ? `waits until it's ${s.minOffHighPct}%+ under the 10-min high` : '', s.maxRun3mPct !== null ? `won't chase more than +${s.maxRun3mPct}% in 3 min` : ''].filter(Boolean).join(' · ')}
+                  <li key={`s-${s.strategy}`} className="py-2.5 first:pt-0 last:pb-0">
+                    <div className="font-medium text-ink">{strat(s.strategy)} entries</div>
+                    <div className="text-ink-2">{[s.minOffHighPct ? `waits until ${s.minOffHighPct}%+ under the 10-min high` : '', s.maxRun3mPct !== null ? `won't chase more than +${s.maxRun3mPct}% in 3 min` : ''].filter(Boolean).join(' · ')}</div>
                     <div className="text-xs text-muted">{s.why.join(' · ')}</div>
                   </li>
                 ))}
                 {tunes.map((t) => (
-                  <li key={`t-${t.strategy}`} className="text-ink-2">
-                    <span className="font-medium text-ink">{strat(t.strategy)}:</span> buy bar {t.barDelta > 0 ? `+${t.barDelta} (stricter)` : `${t.barDelta} (easier)`} · size ×{t.sizeFactor}
-                    {t.trailFactor !== 1 ? ` · sells ${t.trailFactor < 1 ? 'sooner' : 'later'} after a peak` : ''}
+                  <li key={`t-${t.strategy}`} className="py-2.5 first:pt-0 last:pb-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-ink">{strat(t.strategy)}</span>
+                      <span className="tabular text-xs text-muted">bar {t.barDelta > 0 ? `+${t.barDelta}` : t.barDelta} · size ×{t.sizeFactor}</span>
+                    </div>
+                    <div className="text-ink-2">
+                      Buy bar {t.barDelta > 0 ? 'stricter' : 'easier'}{t.trailFactor !== 1 ? ` · sells ${t.trailFactor < 1 ? 'sooner' : 'later'} after a peak` : ''}
+                    </div>
                     {t.why && <div className="text-xs text-muted">{t.why}</div>}
                   </li>
                 ))}
               </ul>
             )}
-          </div>
-          <div>
-            <div className="mb-1 font-medium text-ink">Change log</div>
+          </Card>
+          <Card title="Change log" subtitle="Newest first" className="xl:col-span-7">
             {!data.changes.length ? (
-              <p className="text-ink-2">No changes yet. Every adjustment the bot makes shows up here.</p>
+              <p className="text-sm text-ink-2">No changes yet. Every adjustment the bot makes shows up here.</p>
             ) : (
-              <ul className="divide-y divide-line">
-                {data.changes.slice(0, 20).map((c, i) => (
-                  <li key={`${c.at}-${i}`} className="py-2">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="min-w-0 break-words font-medium text-ink">{c.what}</span>
-                      <span className="shrink-0 text-xs text-muted">{ago(c.at)}</span>
-                    </div>
-                    <div className="break-words text-xs text-muted">
-                      {SOURCE[c.source] ?? c.source} · {c.why}
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <Timeline
+                items={data.changes.slice(0, 25).map((c, i) => ({
+                  key: `${c.at}-${i}`,
+                  when: ago(c.at),
+                  title: c.what,
+                  body: `${SOURCE[c.source] ?? c.source}${c.strategy ? ` · ${strat(c.strategy)}` : ''} · ${c.why}`,
+                  tone: c.source === 'owner' ? 'up' : c.source === 'ai-coach' ? 'accent' : 'muted',
+                }))}
+              />
             )}
-          </div>
+          </Card>
         </div>
       )}
-    </Card>
+    </div>
   );
 }
