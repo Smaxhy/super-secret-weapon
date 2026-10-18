@@ -62,7 +62,7 @@ describe('elite launch test', () => {
       for (const e of entriesOf(DEFAULT_ELITE_TEST)) for (const h of DEFAULT_ELITE_TEST.maxHoldMins) for (const tp of DEFAULT_ELITE_TEST.takeProfitX) res.push(simulate(l, tape.map((t) => ({ ...t, mint: l.mint })), e, tp, h, DEFAULT_ELITE_TEST));
     }
     const rep = buildReport(Array.from({ length: 12 }, (_, i) => ({ ...launch, mint: `m${i}` })), res, DEFAULT_ELITE_TEST, { from: T0, to: T0 + D, withTape: 12 });
-    expect(rep.grid.length).toBe(27); // 3 entries × 3 holds × 3 sell rules
+    expect(rep.grid.length).toBe(20); // 5 entries × 2 holds × 2 sell rules
     expect(rep.best).not.toBeNull();
     expect(rep.grid.find((g) => g.entry === rep.best!.entry && g.holdMin === rep.best!.holdMin && g.tpX === rep.best!.tpX)!.totalSol).toBeGreaterThan(0);
     expect(rep.splits.length).toBe(5);

@@ -42,7 +42,7 @@ export function EliteTest() {
   return (
     <Card
       title="Elite launch test"
-      subtitle="Every launch by a creator who was a repeat graduator at that moment: buy 60 s in, or on a 30% / 50% dip off the first-minute high; hold up to 1 / 6 / 12 h; sell into graduation, at 3× / 5×, or at −60% — on the recorded tape, all costs in."
+      subtitle="Every launch by a creator who was a repeat graduator at that moment: buy 2 / 5 / 15 / 60 s after the first trade, or on a 30% dip off the first-minute high; hold up to 10 min / 1 h; sell into graduation, at 3×, or at −60% — on the recorded tape, all costs in."
       action={
         <div className="flex items-center gap-2">
           <NumberInput size="sm" label="Days" value={days} onChange={setDays} min={1} max={7} step={1} unit="d" className="w-24" />

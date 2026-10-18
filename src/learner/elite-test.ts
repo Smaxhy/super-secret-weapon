@@ -37,11 +37,12 @@ export interface EliteTestConfig {
 
 export const DEFAULT_ELITE_TEST: EliteTestConfig = {
   sizeSol: 0.5,
-  entryDelaysSec: [60],
-  dipEntriesPct: [30, 50],
+  // v3: the elite graduates fill the curve in the first minute — how early must we be? (2 s ≈ our realistic latency)
+  entryDelaysSec: [2, 5, 15, 60],
+  dipEntriesPct: [30],
   dipWindowMin: 30,
-  maxHoldMins: [60, 360, 720],
-  takeProfitX: [0, 3, 5],
+  maxHoldMins: [10, 60],
+  takeProfitX: [0, 3],
   stopPct: 60,
   feePct: 1.25,
   slippagePct: 0.8,
