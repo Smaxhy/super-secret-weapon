@@ -25,7 +25,7 @@ describe('crypto reset (v15.4)', () => {
     for (const off of ['CURVE_SNIPE', 'SWING', 'RUNNER']) expect(get('trading', ['enabledStrategies', off])).toBe(false);
     expect(get('copy', ['onlyConsistent'])).toBe(true);
     expect(get('entry', ['confirmDelaySec'])).toBe(8);
-    expect(Math.max(...MIGRATIONS.map((x) => x.version))).toBe(55);
+    expect(Math.max(...MIGRATIONS.map((x) => x.version))).toBeGreaterThanOrEqual(55);
   });
 
   it('the trusted wallet is a valid Solana address', () => {

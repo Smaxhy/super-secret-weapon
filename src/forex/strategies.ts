@@ -112,6 +112,15 @@ const lastHighs = (c: Ctx, i: number, n: number) => c.sw.highs.slice(Math.max(0,
 const lastLows = (c: Ctx, i: number, n: number) => c.sw.lows.slice(Math.max(0, c.loPtr[i]! - n + 1), c.loPtr[i]! + 1);
 const body = (c: Ctx, i: number) => Math.abs(c.bars[i]!.c - c.bars[i]!.o);
 
+/** v16: crosses of closely linked currencies — where a stretched price tends to come back (the stat-arb candidates) */
+export const STAT_ARB_PAIRS = ['EURGBP', 'AUDNZD', 'EURCHF'];
+/** v16: the "big figure" step of a market: 100 pips for FX (1.1700, 150.00), $10 for gold, $0.50 for silver */
+export function roundStep(pair: string): number {
+  if (pair === 'XAUUSD') return 10;
+  if (pair === 'XAGUSD') return 0.5;
+  return pair.endsWith('JPY') ? 1 : 0.01;
+}
+
 export const STRATEGIES: Strategy[] = [
   // ── trend ──
   {
@@ -883,6 +892,155 @@ export const STRATEGIES: Strategy[] = [
       const maxBars = 22 - h;
       if (c.close[i]! > pd.h && c.close[i - 1]! <= pd.h) return levelSig(c, i, 1, mid, 2, { maxBars });
       if (c.close[i]! < pd.l && c.close[i - 1]! >= pd.l) return levelSig(c, i, -1, mid, 2, { maxBars });
+      return null;
+    },
+  },
+  // ── v16 quant pack: momentum + carry, volatility forecast, stat-arb, round numbers, positioning ──
+  {
+    id: 'mom_blend',
+    name: 'Momentum blend (1, 5, 20 days)',
+    family: 'trend',
+    style: 'trend',
+    slow: true,
+    desc: 'Evidence-backed (time-series momentum, several horizons): go with the trend only when the 1-day, 5-day and 20-day returns all point the same way, the moment the last one joins; 3 ATR stop, 4 ATR trail, out after about 2 weeks.',
+    signal(c, i) {
+      const hs = [24, 120, 480].map((h) => Math.max(2, Math.round((h * 60) / c.barMin)));
+      const L = hs[2]!;
+      if (i < L + 1) return null;
+      const score = (k: number) => hs.reduce((a, n) => a + Math.sign(c.close[k]! - c.close[k - n]!), 0);
+      const now = score(i);
+      const prev = score(i - 1);
+      const maxBars = Math.round((14 * 1440) / c.barMin);
+      if (now === 3 && prev < 3) return atrSig(c, i, 1, 3, null, { trailAtr: 4, maxBars });
+      if (now === -3 && prev > -3) return atrSig(c, i, -1, 3, null, { trailAtr: 4, maxBars });
+      return null;
+    },
+  },
+  {
+    id: 'carry_trend',
+    name: 'Carry + trend',
+    family: 'trend',
+    style: 'trend',
+    slow: true,
+    desc: 'Evidence-backed (carry and momentum are the two best-documented currency factors): buy the higher-interest currency (rate gap ≥ 1%) when its 5-day trend turns its way, sell it when it turns against; needs the central-bank rates feed; 3 ATR stop, 5 ATR trail.',
+    signal(c, i) {
+      const cr = c.ext?.carry?.[i];
+      const n = Math.max(2, Math.round((120 * 60) / c.barMin));
+      if (cr === undefined || !Number.isFinite(cr) || i < n + 1) return null;
+      const now = c.close[i]! - c.close[i - n]!;
+      const prev = c.close[i - 1]! - c.close[i - 1 - n]!;
+      if (cr >= 1 && now > 0 && prev <= 0) return atrSig(c, i, 1, 3, null, { trailAtr: 5 });
+      if (cr <= -1 && now < 0 && prev >= 0) return atrSig(c, i, -1, 3, null, { trailAtr: 5 });
+      return null;
+    },
+  },
+  {
+    id: 'vol_breakout',
+    name: 'Volatility forecast breakout',
+    family: 'breakout',
+    style: 'neutral',
+    desc: 'The volatility forecast (HAR model) says moves are about to get at least 25% bigger and price breaks the 20-bar high / low: go with the break; 1.5 ATR stop, 2.5 ATR trail, out after about 2 days.',
+    signal(c, i) {
+      const v = c.quant?.volF[i];
+      if (v === undefined || !Number.isFinite(v) || v < 1.25 || i < 21) return null;
+      const hi = c.hi20[i - 1]!;
+      const lo = c.lo20[i - 1]!;
+      const px = c.close[i]!;
+      const maxBars = Math.round((2 * 1440) / c.barMin);
+      if (ok(hi) && px > hi && c.close[i - 1]! <= hi) return atrSig(c, i, 1, 1.5, null, { trailAtr: 2.5, maxBars });
+      if (ok(lo) && px < lo && c.close[i - 1]! >= lo) return atrSig(c, i, -1, 1.5, null, { trailAtr: 2.5, maxBars });
+      return null;
+    },
+  },
+  {
+    id: 'stat_arb',
+    name: 'Stat-arb snap-back (linked crosses)',
+    family: 'reversion',
+    style: 'revert',
+    desc: 'On crosses of closely linked currencies (EUR/GBP, AUD/NZD, EUR/CHF): when the price sits 2.2+ standard deviations from its 120-bar average, the market has been snapping back (Hurst < 0.5) and a gap has halved within 60 bars in the past, bet on it returning to the average; 2 ATR stop, target the average, out after 3 half-lives.',
+    signal(c, i) {
+      if (!STAT_ARB_PAIRS.includes(c.pair)) return null;
+      const q = c.quant;
+      if (!q) return null;
+      const z = q.z120[i]!;
+      const hl = q.hl120[i]!;
+      const h = q.hurst[i]!;
+      if (!ok(z, hl, h) || Math.abs(z) < 2.2 || hl > 60 || h >= 0.5) return null;
+      const prevZ = q.z120[i - 1]!;
+      if (ok(prevZ) && Math.abs(prevZ) >= 2.2) return null; // only on the bar it first stretches that far
+      const side: 1 | -1 = z > 0 ? -1 : 1;
+      const target = Math.exp(q.m120[i]!);
+      const a = c.atr14[i]!;
+      const px = c.close[i]!;
+      if (!ok(a, target) || !(a > 0) || (target - px) * side < 0.8 * a) return null;
+      return { side, stop: px - side * 2 * a, target, maxBars: Math.max(6, Math.min(120, Math.round(3 * hl))) };
+    },
+  },
+  {
+    id: 'round_break',
+    name: 'Round-number break',
+    family: 'breakout',
+    style: 'neutral',
+    desc: 'Researched (Osler 2003, NY Fed): stop-loss orders cluster just beyond big round numbers (1.1700, 150.00, gold $10 steps), so a close through one tends to run on; stop 1 ATR back behind the level, 2R target.',
+    signal(c, i) {
+      if (i < 2) return null;
+      const step = roundStep(c.pair);
+      const a = c.atr14[i]!;
+      const px = c.close[i]!;
+      const prev = c.close[i - 1]!;
+      if (!ok(a, px, prev) || !(a > 0) || !step) return null;
+      const up = Math.floor(px / step) * step;
+      if (prev <= up && px > up + 0.1 * a && px - up < 1.5 * a) return levelSig(c, i, 1, up - a, 2);
+      const dn = Math.ceil(px / step) * step;
+      if (prev >= dn && px < dn - 0.1 * a && dn - px < 1.5 * a) return levelSig(c, i, -1, dn + a, 2);
+      return null;
+    },
+  },
+  {
+    id: 'round_fade',
+    name: 'Round-number first touch fade',
+    family: 'reversion',
+    style: 'revert',
+    desc: 'Researched (Osler 2000/2003): take-profit orders cluster AT round numbers, so the first touch after a day away tends to bounce off; enter on the close back away from it; stop 1 ATR beyond the level, 2R target.',
+    signal(c, i) {
+      const L = Math.max(4, Math.round(1440 / c.barMin));
+      if (i < L + 1) return null;
+      const step = roundStep(c.pair);
+      const a = c.atr14[i]!;
+      const b = c.bars[i]!;
+      if (!step || !ok(a) || !(a > 0)) return null;
+      // resistance: touched from below, closed back under, and the day before stayed well under it
+      const r = Math.ceil(b.c / step) * step;
+      if (b.h >= r - 0.15 * a && b.c <= r - 0.25 * a) {
+        let fresh = true;
+        for (let k = i - L; k < i; k++) if (c.bars[k]!.h >= r - 0.5 * a) fresh = false;
+        if (fresh) return levelSig(c, i, -1, r + a, 2);
+      }
+      const s2 = Math.floor(b.c / step) * step;
+      if (b.l <= s2 + 0.15 * a && b.c >= s2 + 0.25 * a) {
+        let fresh = true;
+        for (let k = i - L; k < i; k++) if (c.bars[k]!.l <= s2 + 0.5 * a) fresh = false;
+        if (fresh) return levelSig(c, i, 1, s2 - a, 2);
+      }
+      return null;
+    },
+  },
+  {
+    id: 'cot_squeeze',
+    name: 'Crowded positioning squeeze',
+    family: 'flow',
+    style: 'neutral',
+    slow: true,
+    desc: 'CFTC data: when hedge funds are near their most-short on the pair (positioning ≤ −1.5 of ±2) and the 5-day trend turns up, the short-covering squeeze tends to run (and the mirror for crowded longs); 3 ATR stop, 4 ATR trail, out after about 2 weeks.',
+    signal(c, i) {
+      const pos = c.ext?.cot?.[i];
+      const n = Math.max(2, Math.round((120 * 60) / c.barMin));
+      if (pos === undefined || !Number.isFinite(pos) || i < n + 1) return null;
+      const now = c.close[i]! - c.close[i - n]!;
+      const prev = c.close[i - 1]! - c.close[i - 1 - n]!;
+      const maxBars = Math.round((14 * 1440) / c.barMin);
+      if (pos <= -1.5 && now > 0 && prev <= 0) return atrSig(c, i, 1, 3, null, { trailAtr: 4, maxBars });
+      if (pos >= 1.5 && now < 0 && prev >= 0) return atrSig(c, i, -1, 3, null, { trailAtr: 4, maxBars });
       return null;
     },
   },

@@ -2,6 +2,7 @@
  * Forex indicators. All causal: value i uses bars ≤ i only. Swings are reported at the bar where they
  * become CONFIRMED (k bars later), never at the pivot itself — no look-ahead.
  */
+import { buildQuant, type Quant } from './quant';
 import { bollinger, emaSeries, macd, rsiSeries, sma } from '../evaluator/ta/indicators';
 import type { Bar } from './types';
 
@@ -193,6 +194,10 @@ export interface CtxExt {
   zDollar: Float64Array;
   /** S&P futures return since the start of the month, % */
   spxMtd: Float64Array;
+  /** v16: carry = policy rate of the base − the quote, % (NaN = no rates feed) */
+  carry?: Float64Array;
+  /** v16: CFTC positioning of the pair, base − quote, −2 (crowd very short) … +2 (very long) (NaN = unknown) */
+  cot?: Float64Array;
 }
 
 /** Everything a strategy may read at bar i, computed once per series. */
@@ -240,6 +245,8 @@ export interface Ctx {
   nr7: boolean[];
   /** v14: cross-market readings (absent in plain backtests → strategies that need them stay silent) */
   ext?: CtxExt;
+  /** v16: volatility forecast, Hurst exponent, OU z-score / half-life (see quant.ts) */
+  quant?: Quant;
   /** memo for `volRatioAt` (−1 = not computed yet, NaN = unknown) */
   vrCache?: Float64Array;
 }
@@ -341,6 +348,7 @@ export function buildCtx(bars: Bar[], barMin: number, pair = ''): Ctx {
     cci20: cci(bars, 20),
     er20: efficiencyRatio(close, 20),
     nr7,
+    quant: buildQuant(close, barMin),
   };
 }
 

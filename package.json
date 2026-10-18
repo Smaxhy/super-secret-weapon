@@ -44,6 +44,7 @@
     "bs58": "^6.0.0",
     "bullmq": "^6.3.12",
     "dotenv": "^16.6.1",
+    "dukascopy-node": "1.50.0",
     "fastify": "^5.12.5",
     "ioredis": "^6.0.0",
     "node-cron": "^4.6.0",

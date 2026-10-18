@@ -296,6 +296,50 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   `riskMode` + `riskModes`. Honest test levels now 0.5 / 1 / 2 / 3 / 5% — 3% and 5% use the aggressive / max limits.
   Dashboard Auto-bot card "How hard it trades" (3 buttons, each mode's honest-test month avg / worst month / biggest drop).
   Owner told: 10%/month needs ~3% risk a trade, and losing months scale the same way.
+- **v16 (Oct 19): quant pack + sniper, forex first** (owner: "do it all … make forex the priority, crypto in the
+  background, I need forex to improve A LOT"; built in the order a quant desk would: data → engines measured one by one →
+  sniper last, only if proven). No OANDA (owner won't send ID) — every new source is free with no account.
+  - **Crypto in the background**: migration v56 (create) — `ta.labEnabled` false, `tournament.enabled` false,
+    `outcomes.maxPerTick` 40, `outcomes.altVariants` [] (crypto still paper-trades and learns; the heavy research jobs
+    that shared the CPU with forex are off / slower).
+  - **Dukascopy** (`src/forex/dukascopy.ts`, npm `dukascopy-node` 1.50.0 pinned, MIT, no install scripts): hourly bid +
+    ask candles for every traded market + strength cross → Redis `fx:bars:dk:<id>` [t,o,h,l,c,spreadPips], first pull
+    `DK.historyDays` 1100 back in 90-day pieces, then the newest days every 6 h (`fx:dk:meta`, 24 h freshness). The lab
+    `stitchHistory` puts the older bars in front of Yahoo's (FX only — metals are futures on Yahoo; only when the seam is
+    within 0.4%) → ~3 years to test on. **Real spreads** (`src/forex/spreads.ts`): median close spread per UTC hour
+    (newest 120 days) → `spreadMultAt` = typical retail spread × (that hour ÷ the median hour), 1–6×, ×4 after the
+    weekend; used by the engine and the practice account's synthetic Yahoo spread. Without a profile: the old rollover ×3.
+  - **Macro** (`src/forex/macro.ts`, Redis `fx:macro`, 12 h): CFTC Traders in Financial Futures (Socrata
+    `publicreporting.cftc.gov/resource/gpe5-46if.json`, fallback the weekly `FinFutWk.txt`): leveraged funds' net ÷ open
+    interest per currency, public from the Friday 20:30 UTC after the Tuesday (`cotPublicAt`); `cotScoreAt` = rank within
+    its own last 156 weeks (−1…+1, ≥ 26 weeks); pair score = base − quote (USD 0, metals NaN) → `ctx.ext.cot`. BIS policy
+    rates (SDMX CSV `WS_CBPOL`, monthly, in force from the next month) → `carrySeries` (base − quote %, metals −USD) →
+    `ctx.ext.carry`. Feed URLs unverified from the sandbox — Setup → "Extra data" shows what arrived / failed.
+  - **Option expiries** (`headlines.ts` `parseExpiries`, `nyCutOn`, `currentExpiries`): ForexLive "FX option expiries"
+    posts → pair / level / size (bn) / 10:00 New York cut. Live-only (no history) → heatmap + display, never a tested rule.
+  - **Quant readings** (`src/forex/quant.ts`, causal, O(n), in `buildCtx` → `ctx.quant`): `volF` HAR volatility forecast
+    ratio (fixed 0.4 / 0.35 / 0.25 day / week / month weights, nothing fitted), `hurst` (variance ratio, 120 bars, k 8),
+    `z120` / `hl120` / `m120` (OU z-score, half-life, mean of the log price).
+  - **Filters** (filters.ts): `volf` (trend / breakout need volF ≥ 1, fades ≤ 1.05), `hurst` (trend ≥ 0.52, fades ≤ 0.48),
+    `crowd` (no long when positioning ≥ +1.2 of ±2, no short ≤ −1.2). 9 filter variants now.
+  - **Strategies** (+7, all graded by the lab like the rest): `mom_blend` (1 / 5 / 20-day returns all agree, slow),
+    `carry_trend` (rate gap ≥ 1% + 5-day trend turns its way, slow), `vol_breakout` (volF ≥ 1.25 + 20-bar break),
+    `stat_arb` (only `STAT_ARB_PAIRS` EURGBP / AUDNZD / EURCHF: |z| ≥ 2.2, half-life ≤ 60, Hurst < 0.5, target the
+    mean), `round_break` / `round_fade` (Osler: stops beyond / take-profits at big figures; `roundStep` 100 pips, JPY 1.00,
+    gold $10, silver $0.50), `cot_squeeze` (crowded positioning ≤ −1.5 / ≥ +1.5 + 5-day trend turns, slow).
+    **New traded markets AUDNZD + EURCHF** (removed from STRENGTH_PAIRS; 14 markets).
+  - **Sniper** (`src/forex/sniper.ts`): votes at the signal close = `agreeCount` (4 market checks) + `extraVotes`
+    (momentum blend, carry, volF / Hurst fitting the style, not crowded, room to the next round number ≥ 1 ATR) + judge
+    points (top 30% / 10%). `gradeSniper`: K picked on the FIRST 70% (25+ trades, ≥ 0.25R, best R/trade), active only if
+    unseen K+ trades made ≥ max(0.3R, all + 0.25R) with PF ≥ 1.5 on 15+ trades. Active → `LabOpenTrade.sniper.on` → the
+    bot risks `SNIPER.riskPct` 8% (× drawdown factor, never under the mode's base) at 200×, past the currency cap, one
+    sniper position at a time (`PracticePosition.sniper`); plan line "SNIPER trade". Redis `fx:sniper`, report `sniper`,
+    portfolio `sniped` row (PTrade `sniper` skips the ccy cap, one at a time). `/api/forex/bot` → `sniper`.
+  - **Heatmap** (`src/forex/heatmap.ts`, `MarketNow.heat`): levels within 4 hourly ATRs (round / half figures, swing
+    clusters, yesterday H / L, today's expiries; weight 1–5) + read (positioning, carry, volF, Hurst, sniper checks long /
+    short). Dashboard: market drawer "Heatmap", Auto-bot "Sniper" card + honest-test sniper row, Setup "Extra data".
+  - Report `extFeeds` {dukascopy meta, spread profiles, macro now, history start}. Synthetic e2e: 14 markets × 9k bars ≈
+    13 s per hourly run in the sandbox (3 years real ≈ 2×). tests/forex-v16.test.ts (20). Verified on SYNTHETIC data only.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

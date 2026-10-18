@@ -6,6 +6,12 @@
  *  - mood:     no risk-on trade in a clear risk-off market and no safe-haven trade in a clear risk-on one.
  *  - regime:   (v14) trend strategies only in a clean directional market (efficiency ratio ≥ ER_TREND), dip / fade
  *              strategies only in a choppy one; timing and pullback strategies pass.
+ *  - volf:     (v16) breakout / trend strategies only when the volatility forecast says moves are about to get bigger
+ *              (volF ≥ 1), fades only when they are expected to calm down (volF ≤ 1.05).
+ *  - hurst:    (v16) trend strategies only when moves have been continuing (Hurst ≥ 0.52), fades only when they have
+ *              been snapping back (≤ 0.48).
+ *  - crowd:    (v16) no long when hedge funds are already near their most-long on the pair (CFTC positioning ≥ 1.2 of ±2),
+ *              no short when near their most-short — the crowded side is where the squeeze comes from.
  *  - all:      strength + bigger chart + mood.
  * Missing strength / mood data (a feed down) never blocks. The bigger-chart check needs a clear trend, so it also
  * holds back trades in the first weeks of history while the 4h / daily averages warm up.
@@ -15,9 +21,15 @@ import { MOOD_MIN } from './mood';
 import type { Style } from './strategies';
 import type { Timeframe } from './types';
 
-export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'all';
-export const FILTERS: FilterKind[] = ['none', 'strength', 'mtf', 'mood', 'regime', 'all'];
-export const FILTER_LABEL: Record<FilterKind, string> = { none: 'no filter', strength: 'strong vs weak currency', mtf: 'bigger chart agrees', mood: 'market mood', regime: 'right market regime', all: 'strength + bigger chart + mood' };
+export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'volf' | 'hurst' | 'crowd' | 'all';
+export const FILTERS: FilterKind[] = ['none', 'strength', 'mtf', 'mood', 'regime', 'volf', 'hurst', 'crowd', 'all'];
+export const FILTER_LABEL: Record<FilterKind, string> = { none: 'no filter', strength: 'strong vs weak currency', mtf: 'bigger chart agrees', mood: 'market mood', regime: 'right market regime', volf: 'volatility forecast fits', hurst: 'trend / chop measure fits', crowd: 'not on the crowded side', all: 'strength + bigger chart + mood' };
+/** v16 thresholds */
+export const VOLF_UP = 1;
+export const VOLF_CALM = 1.05;
+export const HURST_TREND = 0.52;
+export const HURST_REVERT = 0.48;
+export const CROWD_MAX = 1.2;
 /** efficiency ratio (20 bars) above which a market counts as trending */
 export const ER_TREND = 0.3;
 export const STRENGTH_MIN = 0.15;
@@ -39,6 +51,11 @@ export interface FilterEnv {
   riskLong: number;
   /** v14: efficiency ratio per bar (NaN = unknown) */
   er?: Float64Array;
+  /** v16: volatility forecast ratio, Hurst exponent, carry (%), CFTC positioning (±2) per bar (NaN = unknown) */
+  volF?: Float64Array;
+  hurst?: Float64Array;
+  carry?: Float64Array;
+  cot?: Float64Array;
 }
 
 const passStrength = (e: FilterEnv, i: number, side: 1 | -1) => {
@@ -63,10 +80,29 @@ const passRegime = (e: FilterEnv, i: number, style: Style) => {
   return style === 'trend' ? er >= ER_TREND : er < ER_TREND;
 };
 
+const fin = (x: number | undefined): x is number => x !== undefined && Number.isFinite(x);
+export const passVolF = (e: FilterEnv, i: number, style: Style) => {
+  const v = e.volF?.[i];
+  if (!fin(v) || style === 'pullback') return true;
+  return style === 'revert' ? v <= VOLF_CALM : v >= VOLF_UP;
+};
+export const passHurst = (e: FilterEnv, i: number, style: Style) => {
+  const h = e.hurst?.[i];
+  if (!fin(h) || style === 'neutral' || style === 'pullback') return true;
+  return style === 'trend' ? h >= HURST_TREND : h <= HURST_REVERT;
+};
+export const passCrowd = (e: FilterEnv, i: number, side: 1 | -1) => {
+  const c = e.cot?.[i];
+  return !fin(c) || side * c < CROWD_MAX;
+};
+
 /** Why a filter would block this entry (null = allowed). Pure. */
 export function blockReason(kind: FilterKind, e: FilterEnv, i: number, side: 1 | -1, style: Style = 'neutral'): string | null {
   if (kind === 'none') return null;
   if (kind === 'regime') return passRegime(e, i, style) ? null : style === 'trend' ? 'the market is choppy, not trending' : 'the market is trending, not choppy';
+  if (kind === 'volf') return passVolF(e, i, style) ? null : style === 'revert' ? 'moves are expected to get bigger' : 'moves are expected to calm down';
+  if (kind === 'hurst') return passHurst(e, i, style) ? null : style === 'trend' ? 'moves have been snapping back, not continuing' : 'moves have been continuing, not snapping back';
+  if (kind === 'crowd') return passCrowd(e, i, side) ? null : `hedge funds are already crowded ${side === 1 ? 'long' : 'short'} on it`;
   if ((kind === 'strength' || kind === 'all') && !passStrength(e, i, side)) return 'the currency it buys is not the stronger one';
   if ((kind === 'mtf' || kind === 'all') && !passMtf(e, i, side)) return 'the bigger chart does not agree';
   if ((kind === 'mood' || kind === 'all') && !passMood(e, i, side)) return 'the market mood is against it';
@@ -77,6 +113,8 @@ export function blockReason(kind: FilterKind, e: FilterEnv, i: number, side: 1 |
 export function allowFor(kind: FilterKind, e: FilterEnv | null, style: Style = 'neutral'): ((i: number, side: 1 | -1) => boolean) | undefined {
   if (kind === 'none' || !e) return undefined;
   if (kind === 'regime' && (style === 'neutral' || style === 'pullback')) return undefined;
+  if (kind === 'hurst' && (style === 'neutral' || style === 'pullback')) return undefined;
+  if (kind === 'volf' && style === 'pullback') return undefined;
   return (i, side) => blockReason(kind, e, i, side, style) === null;
 }
 

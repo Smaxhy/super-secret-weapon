@@ -9,7 +9,7 @@ import { api } from '../lib/api';
 import { ago } from '../lib/format';
 import { Icon } from './Icon';
 import { Badge, Button, Card, Empty, Row, Rows, Stack, StatTile, Tabs, Timeline, useTab } from './ui';
-import { ConvictionCard, PortfolioCard, RiskCard, type ConvictionReport, type JudgeReport, type PortfolioReport, type RiskSummary } from './FxInsights';
+import { ConvictionCard, PortfolioCard, RiskCard, SniperCard, type ConvictionReport, type JudgeReport, type PortfolioReport, type RiskSummary, type SniperReport } from './FxInsights';
 
 interface Conviction { tier: 'normal' | 'sure' | 'verySure'; conf: number; of: number; mult: number; lev: number | null }
 interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number; tf?: string; conviction?: Conviction | null }
@@ -23,7 +23,7 @@ interface RunNote { t: number; tf: string; signals: number; chosen: number; open
 interface BotPlan { at: number; summary: string; next: Array<{ tf: string; at: number }>; markets: PlanMarket[]; trades: PlanTrade[]; timeline: RunNote[]; trading: Record<string, number> }
 type RiskMode = 'normal' | 'aggressive' | 'max';
 interface RiskLimits { label: string; riskPct: number; leverage: number; maxOpen: number; ccyCapPct: number; maxPerStrategy: number; convMaxRiskPct: number }
-interface Data { riskMode?: RiskMode; riskModes?: Record<RiskMode, RiskLimits>; plan?: BotPlan | null; account: Acct | null; risk?: RiskSummary | null; portfolio?: PortfolioReport | null; judge?: JudgeReport | null; conviction?: Partial<Record<'hourly' | '15m' | '1m', ConvictionReport | null>> | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
+interface Data { sniper?: SniperReport | null; riskMode?: RiskMode; riskModes?: Record<RiskMode, RiskLimits>; plan?: BotPlan | null; account: Acct | null; risk?: RiskSummary | null; portfolio?: PortfolioReport | null; judge?: JudgeReport | null; conviction?: Partial<Record<'hourly' | '15m' | '1m', ConvictionReport | null>> | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
 
 const dp = (id: string) => (id.includes('JPY') ? 3 : id === 'XAUUSD' ? 2 : id === 'XAGUSD' ? 3 : 5);
 const usd = (x: number) => `${x < 0 ? '−' : ''}$${Math.abs(x).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -68,6 +68,7 @@ export function FxBot() {
       <TradesCard plan={plan} positions={a?.positions ?? []} onClose={(id) => void close(id)} />
       <MarketsCard plan={plan} />
       <ChecksCard plan={plan} log={data?.log ?? []} />
+      <SniperCard s={data?.sniper} />
       <ConvictionCard c={data?.conviction} />
       <PortfolioCard p={data?.portfolio} judgeOn={!!data?.judge?.active} />
       <RiskCard r={data?.risk} />

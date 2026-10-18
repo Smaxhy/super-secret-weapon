@@ -32,6 +32,9 @@ export const INSTRUMENTS: Instrument[] = [
   { id: 'EURJPY', label: 'EUR/JPY', yahoo: 'EURJPY=X', pip: 0.01, spreadPips: 1.5, kind: 'fx' },
   { id: 'GBPJPY', label: 'GBP/JPY', yahoo: 'GBPJPY=X', pip: 0.01, spreadPips: 2.5, kind: 'fx' },
   { id: 'EURGBP', label: 'EUR/GBP', yahoo: 'EURGBP=X', pip: 0.0001, spreadPips: 1.2, kind: 'fx' },
+  // v16: two crosses of closely linked currencies (the stat-arb candidates)
+  { id: 'AUDNZD', label: 'AUD/NZD', yahoo: 'AUDNZD=X', pip: 0.0001, spreadPips: 2.5, kind: 'fx' },
+  { id: 'EURCHF', label: 'EUR/CHF', yahoo: 'EURCHF=X', pip: 0.0001, spreadPips: 1.8, kind: 'fx' },
   { id: 'XAUUSD', label: 'Gold', yahoo: 'GC=F', pip: 0.01, spreadPips: 30, kind: 'metal' },
   { id: 'XAGUSD', label: 'Silver', yahoo: 'SI=F', pip: 0.001, spreadPips: 30, kind: 'metal' },
 ];
@@ -45,11 +48,9 @@ export const STRENGTH_PAIRS: Array<{ id: string; yahoo: string }> = [
   { id: 'NZDJPY', yahoo: 'NZDJPY=X' },
   { id: 'CHFJPY', yahoo: 'CHFJPY=X' },
   { id: 'EURAUD', yahoo: 'EURAUD=X' },
-  { id: 'EURCHF', yahoo: 'EURCHF=X' },
   { id: 'EURCAD', yahoo: 'EURCAD=X' },
   { id: 'GBPCHF', yahoo: 'GBPCHF=X' },
   { id: 'GBPAUD', yahoo: 'GBPAUD=X' },
-  { id: 'AUDNZD', yahoo: 'AUDNZD=X' },
 ];
 
 /** v13: the wider market the bot reads for its "mood" (risk-on / risk-off). Stored as `fx:bars:mood:<id>`. */

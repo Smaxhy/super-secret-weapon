@@ -4,6 +4,7 @@
  * gaps fill at the open, stops slip an extra quarter spread. Results are in R so any account size or leverage
  * can be applied afterwards (`equityCurve`).
  */
+import { spreadMultAt } from './spreads';
 import type { Ctx } from './ta';
 import type { Strategy } from './strategies';
 import type { Instrument, Signal, Timeframe, Trade } from './types';
@@ -72,7 +73,8 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
   const bars = c.bars;
   const n = bars.length;
   const base = inst.spreadPips * inst.pip;
-  const spr = (i: number) => (o.sessionSpreads ? base * spreadMult(bars[i]!.t, i > 0 ? bars[i - 1]!.t : null) : base);
+  // v16: the hour-by-hour shape of the real spread (Dukascopy) when measured, else the rollover rule
+  const spr = (i: number) => (o.sessionSpreads ? base * spreadMultAt(inst.id, bars[i]!.t, i > 0 ? bars[i - 1]!.t : null) : base);
   const out: Trade[] = [];
   type Pos = {
     side: 1 | -1;

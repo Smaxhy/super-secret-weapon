@@ -19,6 +19,54 @@ export interface Headline {
   ccys: string[];
   severity: 'high' | 'normal';
   why: string | null;
+  /** v16: big option expiries listed in a ForexLive "FX option expiries" post */
+  expiries?: Expiry[];
+}
+
+/** v16: one option expiry level (price is pulled toward big ones into the 10:00 New York cut). */
+export interface Expiry {
+  pair: string;
+  level: number;
+  /** size in billions of the base currency (null = not stated) */
+  sizeBn: number | null;
+  /** the cut: 10:00 New York on the post's day */
+  cutT: number;
+}
+
+/** 10:00 New York on the New York date of `t` (handles summer / winter time). Pure. */
+export function nyCutOn(t: number): number {
+  const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(t));
+  const base = Date.parse(`${ymd}T00:00:00Z`);
+  for (const h of [14, 15]) {
+    const c = base + h * 3_600_000;
+    const ny = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }).format(new Date(c)));
+    if (ny === 10) return c;
+  }
+  return base + 14 * 3_600_000;
+}
+
+const PAIR_RE = /\b(EUR|GBP|USD|AUD|NZD|CAD|CHF|XAU)\s*\/\s*(USD|JPY|GBP|CHF|CAD|NZD|AUD|EUR)\b/g;
+
+/** Expiry levels from the text of a ForexLive option-expiries post. Pure. */
+export function parseExpiries(text: string, postT: number): Expiry[] {
+  const cutT = nyCutOn(postT);
+  const out: Expiry[] = [];
+  const marks = [...text.matchAll(PAIR_RE)];
+  for (let k = 0; k < marks.length; k++) {
+    const m = marks[k]!;
+    const pair = `${m[1]}${m[2]}`;
+    const seg = text.slice(m.index! + m[0].length, k + 1 < marks.length ? marks[k + 1]!.index! : undefined);
+    const jpy = pair.endsWith('JPY');
+    const numRe = jpy || pair === 'XAUUSD' ? /\b(\d{2,4}\.\d{1,2})\b(\s*\(([^)]*)\))?/g : /\b(\d\.\d{3,5})\b(\s*\(([^)]*)\))?/g;
+    for (const n of seg.matchAll(numRe)) {
+      const level = Number(n[1]);
+      if (!(level > 0)) continue;
+      const sz = /(\d+(?:\.\d+)?)\s*(bn|b|billion|m|mn|mln|million)\b/i.exec(n[3] ?? '');
+      const sizeBn = sz ? Number(sz[1]) / (/^(m|mn|mln|million)$/i.test(sz[2]!) ? 1000 : 1) : null;
+      if (!out.some((e) => e.pair === pair && e.level === level)) out.push({ pair, level, sizeBn, cutT });
+    }
+  }
+  return out;
 }
 
 const CCY_WORDS: Array<[string, RegExp]> = [
@@ -51,8 +99,22 @@ export function parseRss(xml: string, source: string): Headline[] {
     const link = dec(/<link>([\s\S]*?)<\/link>/i.exec(it)?.[1] ?? '');
     const t = Date.parse(dec(/<pubDate>([\s\S]*?)<\/pubDate>/i.exec(it)?.[1] ?? ''));
     if (!title || !Number.isFinite(t)) continue;
-    out.push({ t, title, link, source, ...classify(title) });
+    const h: Headline = { t, title, link, source, ...classify(title) };
+    // v16: option expiries are listed in the body of these posts
+    if (/option expir/i.test(title)) {
+      const body = dec(/<content:encoded>([\s\S]*?)<\/content:encoded>/i.exec(it)?.[1] ?? /<description>([\s\S]*?)<\/description>/i.exec(it)?.[1] ?? '');
+      const ex = parseExpiries(body, t);
+      if (ex.length) h.expiries = ex;
+    }
+    out.push(h);
   }
+  return out;
+}
+
+/** Expiries from today's posts whose cut hasn't passed by more than an hour (newest post wins). Pure. */
+export function currentExpiries(items: readonly Headline[], now: number): Expiry[] {
+  const out: Expiry[] = [];
+  for (const h of items) for (const e of h.expiries ?? []) if (now - e.cutT < 3_600_000 && e.cutT - now < 30 * 3_600_000 && !out.some((x) => x.pair === e.pair && x.level === e.level)) out.push(e);
   return out;
 }
 
@@ -125,5 +187,9 @@ export class ForexHeadlines {
   }
   blockFor(pair: string, now = Date.now()): string | null {
     return headlineBlock(pair, now, this.items);
+  }
+  /** v16: option expiries whose cut is today and not more than an hour past. */
+  expiries(now = Date.now()): Expiry[] {
+    return currentExpiries(this.items, now);
   }
 }

@@ -184,7 +184,9 @@ export function tradeLines(p: PracticePosition & { px: number }, now: number, pn
   const tf = p.tf ?? (tfOfRef(p.ref) || '1h');
   const word = TF_WORD[tf] ?? tf;
   const cv = p.conviction;
-  if (cv) {
+  if (p.sniper) {
+    out.push({ k: 'size', text: `SNIPER trade: ${p.sniper.votes} of ${p.sniper.of} independent checks agreed (a level that proved itself on unseen history), so it risks ${p.riskPct ?? '?'}% of the account at ${p.leverage}× — the one big bet it allows at a time.` });
+  } else if (cv) {
     const risk = p.riskPct !== undefined ? `${p.riskPct}% of the account` : 'its risk';
     out.push({
       k: 'size',

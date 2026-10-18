@@ -23,9 +23,12 @@ interface VariantRow { filter: FilterKind; inN: number; inAvgR: number; outN: nu
 interface ExitVariantRow extends Omit<VariantRow, 'filter'> { exit: ExitKind }
 interface RowT { id: string; name: string; family: string; desc: string; tf: string; filter?: FilterKind; variants?: VariantRow[]; exit?: ExitKind; exitVariants?: ExitVariantRow[]; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string }
 interface Trade { strategy: string; tf: string; pair: string; side: 1 | -1; entryT: number; exitT: number; entry: number; exit: number; r: number; reason: string; stop: number; stop0: number; target: number | null }
-interface MarketNow { id: string; label: string; price: number; t: number; change24hPct: number; closes: number[]; trend: 'up' | 'down' | 'flat'; rsi: number; atrPips: number; firing: Array<{ id: string; name: string; tf: string; side: 1 | -1; allowed?: boolean; why?: string | null }>; openPaper: number; bars: number[][]; drawings: ChartDrawings; mtf?: { h1: number; h4: number; d1: number }; strength?: { base: string; quote: string; baseScore: number | null; quoteScore: number | null; gap: number | null }; risk?: number }
+interface MarketNow { id: string; label: string; price: number; t: number; change24hPct: number; closes: number[]; trend: 'up' | 'down' | 'flat'; rsi: number; atrPips: number; firing: Array<{ id: string; name: string; tf: string; side: 1 | -1; allowed?: boolean; why?: string | null }>; openPaper: number; bars: number[][]; drawings: ChartDrawings; mtf?: { h1: number; h4: number; d1: number }; strength?: { base: string; quote: string; baseScore: number | null; quoteScore: number | null; gap: number | null }; risk?: number; heat?: Heatmap }
+interface HeatLevel { price: number; kind: 'round' | 'half' | 'swing' | 'yesterday' | 'expiry'; label: string; weight: number; distAtr: number }
+interface Heatmap { levels: HeatLevel[]; read: { positioning: number | null; carry: number | null; volF: number | null; hurst: number | null; long: number; short: number; of: number; why: string[] } }
+interface ExtFeeds { dukascopy: { at: number; ids: Record<string, { bars: number; firstT: number | null; lastT: number | null; error: string | null }> } | null; spreadProfiles: string[]; macro: { cot: Array<{ ccy: string; score: number; net: number; asOf: number }>; rates: Array<{ ccy: string; rate: number }>; errors: string[]; at: number | null }; historyFrom: number }
 interface PaperRow { id: string; name: string; tf: string; stats: RStats; risk1: Risk; open: number }
-interface Report { at: number; durationMs: number; feed: Array<{ id: string; role?: 'traded' | 'strength' | 'mood'; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; markets?: MarketNow[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string; strength?: StrengthNow; mood?: MoodNow; filters?: FilterSummary[]; exits?: ExitSummary[]; judge?: JudgeReport | null; portfolio?: PortfolioReport | null; news?: NewsStudy | null }
+interface Report { at: number; durationMs: number; feed: Array<{ id: string; role?: 'traded' | 'strength' | 'mood'; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; markets?: MarketNow[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string; strength?: StrengthNow; mood?: MoodNow; filters?: FilterSummary[]; exits?: ExitSummary[]; judge?: JudgeReport | null; portfolio?: PortfolioReport | null; news?: NewsStudy | null; extFeeds?: ExtFeeds }
 interface FastFeed { id: string; tf: '15m' | '1m'; bars: number; firstT: number | null; lastT: number | null; source: 'oanda' | 'yahoo' | null; error: string | null }
 interface FastReport { at: number; durationMs: number; feed: FastFeed[]; spans: Record<'15m' | '1m', { from: number | null; to: number | null; oosFrom: number | null; markets: number }>; rows: RowT[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string }
 interface Data { running: boolean; last: Report | null; fast?: FastReport | null }
@@ -205,6 +208,7 @@ function MarketDetail({ m, r, onTrade }: { m: MarketNow; r: Report; onTrade: () 
         <MarketChart bars={m.bars} drawings={m.drawings} trades={all.map((t) => ({ side: t.side, entryT: t.entryT, entry: t.entry, stop: t.stop, target: t.target, strategy: t.strategy }))} digits={DIGITS(m.id)} show={show} />
       </div>
       <p className="text-xs text-muted">Green lines = support (rising trendline or a floor price kept bouncing off), red = resistance; dashed = broken. Purple dots = yesterday's high / low, blue band = today's Asian session range. Blue line = a bot entry, dashed red / green = its stop / target.</p>
+      {m.heat && <HeatmapBox m={m} />}
       <Button onClick={onTrade}>Trade {m.label} yourself</Button>
       <div className="grid gap-4 md:grid-cols-2">
         <div>
@@ -476,9 +480,60 @@ function TradeList({ ts, open = false }: { ts: Trade[]; open?: boolean }) {
   );
 }
 
+const KIND_TONE: Record<HeatLevel['kind'], string> = { round: 'bg-accent', half: 'bg-accent/50', swing: 'bg-warning', yesterday: 'bg-ink-2', expiry: 'bg-up' };
+
+/** v16: where orders are likely to sit near the price, and what the quant engines read right now. */
+function HeatmapBox({ m }: { m: MarketNow }) {
+  const h = m.heat!;
+  const d = DIGITS(m.id);
+  const above = h.levels.filter((l) => l.distAtr > 0);
+  const below = h.levels.filter((l) => l.distAtr <= 0);
+  const row = (l: HeatLevel) => (
+    <div key={`${l.kind}:${l.price}`} className="flex items-center gap-2 py-1 text-sm">
+      <span className="w-20 shrink-0 tabular text-ink">{l.price.toFixed(d)}</span>
+      <span className="h-2 shrink-0 rounded-full" style={{ width: `${Math.round(l.weight * 14)}px` }}>
+        <span className={`block h-2 rounded-full ${KIND_TONE[l.kind]}`} />
+      </span>
+      <span className="min-w-0 flex-1 truncate text-ink-2">{l.label}</span>
+      <span className="shrink-0 text-xs text-muted">{l.distAtr > 0 ? '+' : ''}{l.distAtr.toFixed(1)} ATR</span>
+    </div>
+  );
+  const r = h.read;
+  const pos = r.positioning;
+  return (
+    <div className="rounded-xl border border-line p-3">
+      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Heatmap: where orders likely sit</div>
+      <p className="mb-2 text-xs text-muted">Big round numbers (stops cluster just beyond, take-profits at them), swing levels the price respected, yesterday's high / low and today's big option expiries (10:00 New York cut). Longer bar = more orders tend to sit there.</p>
+      <div>{above.map(row)}</div>
+      <div className="my-1 flex items-center gap-2 text-sm font-semibold text-ink"><span className="w-20 tabular">{m.price.toFixed(d)}</span><span className="h-px flex-1 bg-line-strong" /><span className="text-xs text-muted">price now</span></div>
+      <div>{below.map(row)}</div>
+      <Rows className="mt-3">
+        <Row label="Hedge-fund positioning (CFTC)" sub="−2 = very short the pair … +2 = very long; crowded sides get squeezed" value={pos === null ? <span className="text-muted">no data</span> : <span className={Math.abs(pos) >= 1.2 ? 'text-warning' : 'text-ink'}>{pos > 0 ? '+' : ''}{pos.toFixed(2)}</span>} />
+        <Row label="Carry (interest-rate gap)" sub="what holding a long earns (+) or costs (−) per year" value={r.carry === null ? <span className="text-muted">no rates feed</span> : <span className={tone(r.carry)}>{r.carry > 0 ? '+' : ''}{r.carry.toFixed(2)}%</span>} />
+        <Row label="Volatility forecast" sub="above 1 = moves expected to get bigger, below 1 = calmer" value={r.volF === null ? '—' : `${r.volF.toFixed(2)}×`} />
+        <Row label="Trend or chop (Hurst)" sub="above 0.5 = moves continue, below 0.5 = they snap back" value={r.hurst === null ? '—' : r.hurst.toFixed(2)} />
+        <Row label="Sniper checks right now" sub={r.why.length ? r.why.join(' · ') : 'none agree'} value={<span className="text-xs">long {r.long} / short {r.short} of {r.of}</span>} />
+      </Rows>
+    </div>
+  );
+}
+
 function Setup({ r, fast }: { r: Report; fast: FastReport | null }) {
+  const x = r.extFeeds;
   return (
     <Stack>
+      {x && (
+        <Card title="Extra data: history, real spreads, positioning, interest rates" subtitle="All free, no account. Dukascopy (bank-grade candles, open-source dukascopy-node) gives years more history for the honest test and the real spread at each hour of the day; the CFTC report shows hedge funds' positions in the currency futures every week; the BIS publishes the central banks' policy rates (carry). Option expiries come from ForexLive's daily post.">
+          <Rows>
+            <Row label="Test history starts" value={day(x.historyFrom)} sub="Yahoo gives about 2 years; Dukascopy adds older years for the currency pairs" />
+            <Row label="Dukascopy history" value={x.dukascopy ? `${Object.values(x.dukascopy.ids).filter((v) => v.bars > 0).length}/${Object.keys(x.dukascopy.ids).length} markets` : <span className="text-muted">first download a few minutes after start</span>} sub={x.dukascopy ? `${Object.values(x.dukascopy.ids).reduce((a, v) => a + v.bars, 0).toLocaleString()} hourly bars · ${Object.values(x.dukascopy.ids).filter((v) => v.error).length} failed · updated ${ago(new Date(x.dukascopy.at).toISOString())}` : undefined} />
+            <Row label="Real spread by hour" value={`${x.spreadProfiles.length} markets`} sub="the backtest charges the measured hour-of-day shape (never cheaper than a retail spread)" />
+            <Row label="Hedge-fund positioning (CFTC)" value={x.macro.cot.length ? `${x.macro.cot.length} currencies` : <span className="text-muted">no data yet</span>} sub={x.macro.cot.map((c) => `${c.ccy} ${c.score > 0 ? '+' : ''}${c.score}`).join(' · ') || undefined} />
+            <Row label="Central-bank rates (BIS)" value={x.macro.rates.length ? `${x.macro.rates.length} currencies` : <span className="text-muted">no data yet</span>} sub={x.macro.rates.map((c) => `${c.ccy} ${c.rate}%`).join(' · ') || undefined} />
+            {x.macro.errors.map((e, k) => <Row key={k} label={<span className="text-down">Feed problem</span>} value="" sub={e} />)}
+          </Rows>
+        </Card>
+      )}
       {fast && (
         <Card title="15-minute and 1-minute candles" subtitle={`From OANDA when connected (deeper history, 1-minute checks every minute), else Yahoo (60 days of 15-minute, up to 3 weeks of 1-minute, checked every 2 minutes). The server keeps collecting them. Last test ${ago(new Date(fast.at).toISOString())}.`}>
           <Rows>
@@ -491,7 +546,7 @@ function Setup({ r, fast }: { r: Report; fast: FastReport | null }) {
           </Rows>
         </Card>
       )}
-      <Card title="Markets and costs" subtitle="Hourly candles from Yahoo Finance (free, about 2 years back). Spreads are typical retail costs, charged on every trade. The 10 extra crosses only feed the strength meter; the dollar index, yields, S&P futures, VIX and oil feed the market mood.">
+      <Card title="Markets and costs" subtitle="Hourly candles from Yahoo Finance (free, about 2 years back; Dukascopy adds older years, see above). Spreads are typical retail costs shaped by the measured hour of day, charged on every trade. The extra crosses only feed the strength meter; the dollar index, yields, S&P futures, VIX and oil feed the market mood.">
         <Rows>
           {r.feed.map((f) => (
             <Row key={`${f.role ?? 'traded'}:${f.id}`} label={<>{f.id} {f.role === 'strength' ? <Badge tone="neutral">strength meter</Badge> : f.role === 'mood' ? <Badge tone="neutral">market mood</Badge> : null}</>} value={f.error ? <span className="text-down">failed</span> : `${f.bars.toLocaleString()} bars`} sub={f.error ? f.error : `${day(f.firstT)} → ${day(f.lastT)}`} />

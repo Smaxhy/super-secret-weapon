@@ -14,6 +14,9 @@
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
 import { refreshInstrument, refreshSeries, loadBars, type FeedStatus } from './data';
+import { DK_META, installSpreadProfiles, loadDk, refreshDukascopy, stitchHistory, type DkMeta } from './dukascopy';
+import { hasSpreadProfile } from './spreads';
+import { carrySeries, cotSeries, loadMacro, macroNow, refreshMacro, type MacroData } from './macro';
 import { RISK_MODES, newSyncReport, type LabOpenTrade, type Practice, type SyncReport } from './practice';
 import type { ForexCalendar } from './calendar';
 import type { ForexHeadlines } from './headlines';
@@ -31,6 +34,8 @@ import { newsStudy, type NewsStudy } from './news-study';
 import { EXITS, EXIT_LABEL, OWNER_EXITS, applyExit, type ExitKind } from './exits';
 import { judgeFeatures, judgeProb, trainJudge, type JudgeModel, type JudgeReport, type JudgeRow } from './judge';
 import { alignAt, mtdSeries, pairRanks, strengthRanks, z24Series, type TimeSeries } from './intermarket';
+import { extraVotes, gradeSniper, SNIPER, type SniperReport } from './sniper';
+import { heatmapFor, type Heatmap } from './heatmap';
 import { agreeCount, boostFor, confirmations, CONVICTION, gradeConviction, judgeCuts, maxConfirmations, tierOf, type ConvictionReport } from './conviction';
 
 const log = moduleLogger('forex-lab');
@@ -121,6 +126,8 @@ export interface MarketNow {
   /** last 150 hourly bars [t,o,h,l,c] for the chart */
   bars: number[][];
   drawings: Drawings;
+  /** v16: where orders likely sit near the price + what the quant engines read now */
+  heat?: Heatmap;
   /** v13: trend on the 1h / 4h / daily chart (+1 up, −1 down, 0 none) */
   mtf: { h1: number; h4: number; d1: number };
   /** v13: strength of its two currencies and the gap (base − quote) */
@@ -170,6 +177,8 @@ export interface PortfolioReport {
   judged: PortfolioResult | null;
   /** v14: re-picking strategies every month from the months before (raw rules), over the whole history */
   walkForward: WalkForward | null;
+  /** v16: the upgraded bot at 1% with the sniper trades at the sniper size (null = sniper not proven) */
+  sniped?: PortfolioResult | null;
   /** v15.2: the upgraded bot at 1% with bigger size + leverage on the 'sure' trades (null = conviction not proven) */
   convicted?: PortfolioResult | null;
   note: string;
@@ -195,6 +204,10 @@ export interface FxReport {
   judge?: JudgeReport | null;
   /** v15.2: bigger size when more sure — the tiers and whether they proved themselves */
   conviction?: ConvictionReport | null;
+  /** v16: the sniper vote level and whether it proved itself */
+  sniper?: SniperReport | null;
+  /** v16: extra data feeds (Dukascopy history + spreads, CFTC positioning, policy rates) */
+  extFeeds?: { dukascopy: DkMeta | null; spreadProfiles: string[]; macro: ReturnType<typeof macroNow>; historyFrom: number };
 }
 
 export const FX_REPORT = 'fx:report';
@@ -208,6 +221,8 @@ export const FX_JUDGE = 'fx:judge';
 export const FX_BOT_RUNS = 'fx:bot:runs';
 /** v15.2: conviction tiers (hourly charts) */
 export const FX_CONVICTION = 'fx:conviction';
+/** v16: sniper grade */
+export const FX_SNIPER = 'fx:sniper';
 
 const yieldNow = () => new Promise((r) => setImmediate(r));
 const HOUR = 3_600_000;
@@ -342,7 +357,7 @@ export function slimTrade(t: Trade): Trade {
 export const tradeKey = (t: { strategy: string; tf: string; pair: string; entryT: number; keyT?: number }) => `${t.strategy}:${t.tf}:${t.pair}:${t.keyT ?? t.entryT}`;
 
 /** A lab trade as the bot account takes it (v15: with its trailing take-profit and the exit rules still in force). */
-export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction'] }): LabOpenTrade {
+export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction']; sniper?: LabOpenTrade['sniper'] }): LabOpenTrade {
   return {
     ref: tradeKey(t),
     strategy: t.strategy,
@@ -357,6 +372,7 @@ export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: 
     prio: o.prio,
     judge: o.judge,
     conviction: o.conviction ?? null,
+    sniper: o.sniper ?? null,
     beAt: t.beAt ?? null,
     scaleAt: t.scaleAt ?? null,
     scaleFrac: t.scaleFrac ?? null,
@@ -392,6 +408,8 @@ export interface MarketBook {
   spxMtd: TimeSeries | null;
   /** traded markets' hourly bars */
   h1: Map<string, Bar[]>;
+  /** v16: CFTC positioning + policy rates (null until the first fetch) */
+  macro?: MacroData | null;
 }
 
 /** A bigger chart's finished bars and its trend. */
@@ -419,7 +437,13 @@ export function makeSeries(inst: Instrument, tf: Timeframe, bars: Bar[], book: M
   const ctx = buildCtx(bars, barMin, inst.id);
   env.er = Float64Array.from(ctx.er20);
   const pr = pairRanks(book.strength, book.ranks, inst.id, bars, barMin);
-  ctx.ext = { gap: env.gap, rankBase: pr.base, rankQuote: pr.quote, zOil: alignAt(book.zOil, bars, barMin), zYield: alignAt(book.zYield, bars, barMin), zStocks: alignAt(book.zStocks, bars, barMin), zDollar: alignAt(book.zDollar, bars, barMin), spxMtd: alignAt(book.spxMtd, bars, barMin) };
+  ctx.ext = { gap: env.gap, rankBase: pr.base, rankQuote: pr.quote, zOil: alignAt(book.zOil, bars, barMin), zYield: alignAt(book.zYield, bars, barMin), zStocks: alignAt(book.zStocks, bars, barMin), zDollar: alignAt(book.zDollar, bars, barMin), spxMtd: alignAt(book.spxMtd, bars, barMin), carry: carrySeries(book.macro ?? null, inst.id, bars, barMin), cot: cotSeries(book.macro ?? null, inst.id, bars, barMin) };
+  env.carry = ctx.ext.carry;
+  env.cot = ctx.ext.cot;
+  if (ctx.quant) {
+    env.volF = ctx.quant.volF;
+    env.hurst = ctx.quant.hurst;
+  }
   return { inst, tf, ctx, env };
 }
 
@@ -596,6 +620,7 @@ export function runNoteText(r: Omit<RunNote, 'note'>): string {
 
 export class ForexLab {
   private timer: NodeJS.Timeout | null = null;
+  private dkTimer: NodeJS.Timeout | null = null;
   private running: Promise<FxReport | null> | null = null;
   /** set by index.ts: the account the bot auto-trades */
   practice: Practice | null = null;
@@ -642,6 +667,17 @@ export class ForexLab {
       })
       .catch(() => undefined);
     setTimeout(() => void this.run().catch(() => undefined), 45_000);
+    // v16: Dukascopy history + real spreads — installed from Redis at once, refreshed 3 min after start, then daily
+    void installSpreadProfiles(this.redis).catch(() => undefined);
+    const dk = () => {
+      void refreshDukascopy(this.redis).catch((err: Error) => log.warn({ err: err.message }, 'dukascopy failed'));
+      // v16: CFTC positioning + central-bank rates (each refreshes itself at most every 12 h)
+      void refreshMacro(this.redis).catch((err: Error) => log.warn({ err: err.message }, 'macro failed'));
+    };
+    this.dkTimer = setTimeout(() => {
+      dk();
+      this.dkTimer = setInterval(dk, 6 * 3_600_000);
+    }, 3 * 60_000);
     // then 90 s after every full hour: the hourly candle has just closed (Yahoo / OANDA publish it within a minute)
     const next = () => {
       const now = Date.now();
@@ -655,6 +691,7 @@ export class ForexLab {
   }
   stop(): void {
     if (this.timer) clearTimeout(this.timer);
+    if (this.dkTimer) clearTimeout(this.dkTimer as NodeJS.Timeout);
   }
   isRunning(): boolean {
     return this.running !== null;
@@ -731,11 +768,13 @@ export class ForexLab {
 
     // ── market read: strength (traded FX + crosses), mood ──
     const h1ById = new Map<string, Bar[]>();
-    for (const inst of INSTRUMENTS) h1ById.set(inst.id, await loadBars(this.redis, inst.id));
+    // v16: Dukascopy's older bars in front of Yahoo's (FX only, when the seam lines up) → years more history to test on
+    const nowT = Date.now();
+    for (const inst of INSTRUMENTS) h1ById.set(inst.id, stitchHistory(inst.id, await loadBars(this.redis, inst.id), await loadDk(this.redis, inst.id), nowT));
     const strengthInput: Record<string, Bar[]> = {};
     for (const inst of INSTRUMENTS) if (inst.kind === 'fx') strengthInput[inst.id] = h1ById.get(inst.id)!;
     for (const p of STRENGTH_PAIRS) {
-      const b = await loadBars(this.redis, p.id);
+      const b = stitchHistory(p.id, await loadBars(this.redis, p.id), await loadDk(this.redis, p.id), nowT);
       strengthInput[p.id] = b;
       if (!refresh) feed.push({ id: p.id, role: 'strength', bars: b.length, firstT: b[0]?.t ?? null, lastT: b[b.length - 1]?.t ?? null, error: null });
     }
@@ -762,6 +801,7 @@ export class ForexLab {
       zDollar: moodInput.DXY ? z24Series(moodInput.DXY) : null,
       spxMtd: moodInput.SPX ? mtdSeries(moodInput.SPX) : null,
       h1: h1ById,
+      macro: await loadMacro(this.redis),
     };
     this.book = book;
     await yieldNow();
@@ -820,8 +860,10 @@ export class ForexLab {
     const judgeRows: JudgeRow[] = [];
     const judgeX = new Map<string, Float64Array>();
     /** v15.2 conviction: closed trades of the picked strategies (market checks + judge features), and every open trade's checks */
-    const convPend: Array<{ key: string; t: number; r: number; agree: number; x: Float64Array }> = [];
+    const convPend: Array<{ key: string; t: number; r: number; agree: number; x: Float64Array; extra: number }> = [];
     const openAgree = new Map<string, number>();
+    /** v16 sniper: the extra votes (and their words) of every open trade */
+    const openExtra = new Map<string, { total: number; yes: string[]; of: number }>();
     const seriesOf = new Map(series.map((se) => [`${se.inst.id}:${se.tf}`, se]));
     const weeks = Math.max(1, (to - from) / (7 * 86_400_000));
     for (const tf of FX_CONFIG.timeframes) {
@@ -853,13 +895,15 @@ export class ForexLab {
           const tgt = t.target0 !== undefined ? t.target0 : t.target;
           const fx = judgeFeatures(se.ctx, se.env, si, t.side, t.stop0, tgt, { style: x.style, prior: x.ch.inSample.avgR, form: formAt(t.entryT), tf });
           const agree = agreeCount(se.env, si, t.side);
+          const ex = extraVotes(se.ctx, se.env, si, t.side, x.style);
           if (t.reason === 'open') {
             judgeX.set(tradeKey(t), fx);
             openAgree.set(tradeKey(t), agree);
+            openExtra.set(tradeKey(t), ex);
           } else {
             judgeRows.push({ x: fx, r: t.r, t: t.entryT });
             if (t.entryT >= oosFrom) judgeX.set(tradeKey(t), fx);
-            if (picked) convPend.push({ key: tradeKey(t), t: t.entryT, r: t.r, agree, x: fx });
+            if (picked) convPend.push({ key: tradeKey(t), t: t.entryT, r: t.r, agree, x: fx, extra: ex.total });
           }
         }
         // walk-forward pool: the raw rules
@@ -906,8 +950,13 @@ export class ForexLab {
     const confOf = new Map<string, number>();
     for (const c of convPend) confOf.set(c.key, confirmations(c.agree, pOf(c.x), cuts));
     const conviction = gradeConviction(convPend.map((c) => ({ t: c.t, r: c.r, conf: confOf.get(c.key)! })), oosFrom, 'hourly', hasJudge, cuts);
+    // ── v16 sniper: every check's vote (market checks + quant engines + judge), K picked on the first 70%, graded unseen ──
+    const votesOf = new Map<string, number>();
+    for (const c of convPend) votesOf.set(c.key, confOf.get(c.key)! + c.extra);
+    const sniper = gradeSniper(convPend.map((c) => ({ t: c.t, r: c.r, votes: votesOf.get(c.key)! })), oosFrom);
     convPend.length = 0;
     await this.redis.set(FX_CONVICTION, JSON.stringify(conviction)).catch(() => undefined);
+    await this.redis.set(FX_SNIPER, JSON.stringify(sniper)).catch(() => undefined);
     rows.sort((a, b) => b.outSample.avgR * Math.min(1, b.outSample.n / 30) - a.outSample.avgR * Math.min(1, a.outSample.n / 30));
     paperRows.sort((a, b) => b.stats.totalR - a.stats.totalR);
     recent.sort((a, b) => b.exitT - a.exitT);
@@ -945,6 +994,14 @@ export class ForexLab {
             { ...base, ...upgraded, label: 'bigger size when sure', baseRiskPct: 1 },
           )
         : null;
+      // v16: the same bot with the sniper trades (K+ votes) at the sniper size (only when proven)
+      const sniped =
+        sniper.active && sniper.k !== null
+          ? simulatePortfolio(
+              poolNew.map((t) => ((votesOf.get(tradeKey(t)) ?? 0) >= sniper.k! ? { ...t, sizeF: SNIPER.riskPct, maxMult: SNIPER.riskPct, lev: SNIPER.leverage, sniper: true } : t)),
+              { ...base, ...upgraded, label: `sniper (${sniper.k}+ checks at ${SNIPER.riskPct}%)`, baseRiskPct: 1 },
+            )
+          : null;
       await yieldNow();
       const wf = walkForward(wfPool, {
         ...FX_CONFIG.walkForward,
@@ -961,6 +1018,7 @@ export class ForexLab {
         judged,
         walkForward: wf,
         convicted,
+        sniped,
         note: `Strategies, their checks and their exits were picked on the first 70% of the history only; this is what the whole bot would have done on the last 30%, which it never saw: real spreads, max ${SIZING.maxOpen} trades at once (${SIZING.maxPerStrategy} per strategy), ${SIZING.leverage}× margin, the currency limit and the sizing rules.`,
       };
       await this.redis.set(FX_PORTFOLIO, JSON.stringify(portfolio)).catch(() => undefined);
@@ -1002,6 +1060,7 @@ export class ForexLab {
       const quoteScore = scoreAt(strength, isMetal ? 'USD' : inst.id.slice(3, 6), gNow);
       const gap = se.env.gap[n - 1]!;
       const fin = (x: number | null) => (x !== null && Number.isFinite(x) ? Math.round(x * 100) / 100 : null);
+      const dr = drawingsFor(c);
       markets.push({
         id: inst.id,
         label: inst.label,
@@ -1015,7 +1074,8 @@ export class ForexLab {
         firing,
         openPaper: open.filter((t) => t.pair === inst.id).length,
         bars: c.bars.slice(-150).map((b) => [b.t, px7(b.o), px7(b.h), px7(b.l), px7(b.c)]),
-        drawings: drawingsFor(c),
+        drawings: dr,
+        heat: heatmapFor(c, se.env, dr, this.headlines?.expiries() ?? []),
         mtf: trendNow.get(inst.id) ?? { h1: 0, h4: 0, d1: 0 },
         strength: { base: inst.id.slice(0, 3), quote: inst.id.slice(3, 6), baseScore: fin(baseScore), quoteScore: fin(quoteScore), gap: fin(gap) },
         risk: Math.round(riskOfLong(inst.id) * 10) / 10,
@@ -1052,6 +1112,16 @@ export class ForexLab {
       portfolio,
       news,
       conviction,
+      sniper,
+      extFeeds: await (async () => {
+        let dk: DkMeta | null = null;
+        try {
+          dk = JSON.parse((await this.redis.get(DK_META)) ?? 'null') as DkMeta | null;
+        } catch {
+          dk = null;
+        }
+        return { dukascopy: dk, spreadProfiles: INSTRUMENTS.filter((x) => hasSpreadProfile(x.id)).map((x) => x.id), macro: macroNow(book.macro ?? null), historyFrom: from };
+      })(),
     };
     await this.redis.set(FX_REPORT, JSON.stringify(report)).catch(() => undefined);
     this.marketsNow = markets;
@@ -1076,6 +1146,12 @@ export class ForexLab {
               prio: row ? row.all.avgR : -1,
               judge: p === null ? null : { p: Math.round(p * 100) / 100, ok: judgeOk, need: judgeModel ? Math.round(judgeModel.threshold * 100) / 100 : null },
               conviction: { tier: b.tier, conf, of: maxConfirmations(t.tf, hasJudge), mult: b.mult, lev: b.lev },
+              sniper: (() => {
+                const ex = openExtra.get(tradeKey(t));
+                if (!ex) return null;
+                const votes = conf + ex.total;
+                return { votes, of: maxConfirmations(t.tf, hasJudge) + ex.of, k: sniper.k, on: sniper.active && sniper.k !== null && votes >= sniper.k, yes: ex.yes };
+              })(),
             });
           }),
           (pair) => this.calendar?.blockFor(pair) ?? this.headlines?.blockFor(pair) ?? null,

@@ -11,8 +11,10 @@ import { oandaCandles, oandaPrices, oandaReady, loadOanda, type Granularity } fr
 import { INSTRUMENTS, instrument, type Bar, type Instrument } from './types';
 import { marketClock } from './calendar';
 import { priceShock } from './headlines';
+import { spreadMultAt } from './spreads';
 import { SIZING, addExposure, clampRisk, ddFactor, exposureBlock, type Exposure } from './portfolio';
 import type { Tier } from './conviction';
+import { SNIPER } from './sniper';
 
 const log = moduleLogger('forex-practice');
 export type AcctId = 'me' | 'bot';
@@ -112,6 +114,8 @@ export interface PracticePosition {
   tpHit?: boolean;
   /** bot trades (v15.2): how sure it was of the entry and what size that earned */
   conviction?: Conviction | null;
+  /** bot trades (v16): opened at the sniper size (votes it had) */
+  sniper?: { votes: number; of: number } | null;
   /** bot trades (v15.3): USD already banked by parts taken off (and legs before a weekend pause) */
   bankedUsd?: number;
   /** bot trades (v15): the strategy's chart and the exit rules still in force (shown as the trade's plan); v15.1:
@@ -419,7 +423,8 @@ async function fetchQuote(inst: Instrument): Promise<Quote | null> {
       });
       const mid = r?.meta?.regularMarketPrice ?? bars[bars.length - 1]?.[3];
       if (!mid || !(mid > 0)) continue;
-      const half = (inst.spreadPips * inst.pip) / 2;
+      // v16: the synthetic spread follows the measured hour-of-day profile (wider at rollover)
+      const half = (inst.spreadPips * inst.pip * spreadMultAt(inst.id, Date.now(), null)) / 2;
       const prev = r?.meta?.chartPreviousClose;
       return { id: inst.id, mid, bid: mid - half, ask: mid + half, t: Date.now(), bars: bars.slice(-180), dayChangePct: prev ? Math.round(((mid / prev - 1) * 100) * 100) / 100 : null, source: 'yahoo' };
     } catch {
@@ -446,6 +451,8 @@ export interface LabOpenTrade {
   judge?: { p: number; ok: boolean; need: number | null } | null;
   /** v15.2: how sure the bot is (confirmations out of `of`) and the size multiple + leverage that earns (proven tiers only) */
   conviction?: Conviction | null;
+  /** v16: the sniper's vote count, the level it needs, whether this trade gets the sniper size, and the votes in words */
+  sniper?: SniperTag | null;
   beAt?: number | null;
   scaleAt?: number | null;
   scaleFrac?: number | null;
@@ -459,6 +466,17 @@ export interface LabOpenTrade {
   trailAtr?: number | null;
   maxBars?: number | null;
   exitWhen?: string | null;
+}
+
+/** v16: a trade's sniper votes. */
+export interface SniperTag {
+  votes: number;
+  of: number;
+  /** votes needed (null = no level proved itself) */
+  k: number | null;
+  /** risks the sniper size */
+  on: boolean;
+  yes: string[];
 }
 
 /** v15.2: how sure the bot was of an entry, and what that earned it. */
@@ -488,7 +506,7 @@ export interface ExitPlan {
   exitWhen?: string | null;
 }
 
-export interface OpenReq extends ExitPlan { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null; bankedUsd?: number }
+export interface OpenReq extends ExitPlan { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; bankedUsd?: number }
 
 /** The exit-plan fields of a lab trade, ready for `openIn`. Pure. */
 export function planOf(t: LabOpenTrade): ExitPlan {
@@ -724,6 +742,7 @@ export class Practice {
         ...(req.ref ? { ref: req.ref } : {}),
         ...(req.riskPct !== undefined ? { riskPct: req.riskPct } : {}),
         ...(req.conviction ? { conviction: req.conviction } : {}),
+        ...(req.sniper ? { sniper: req.sniper } : {}),
         ...(req.bankedUsd ? { bankedUsd: req.bankedUsd } : {}),
         ...(req.beAt != null ? { beAt: req.beAt } : {}),
         ...(req.scaleAt != null ? { scaleAt: req.scaleAt, scaleFrac: req.scaleFrac ?? 0.5, scaled: !!req.scaled } : {}),
@@ -929,11 +948,14 @@ export class Practice {
         const v = view(a, mids);
         // v15.2: a proven 'sure' / 'very sure' entry risks 1.5× / 2× (at most 2% of the account) at 50× / 100× leverage
         const conv = t.conviction && t.conviction.mult > 1 ? t.conviction : null;
+        // v16: a proven sniper setup (enough independent checks agree) risks the sniper size — one at a time, never
+        // less than the mode's own size, still smaller after a drawdown
+        const snipe = t.sniper?.on && !a.open.some((p) => p.sniper) ? t.sniper : null;
         // v15.6: the risk mode scales the base risk, leverage and every cap together
-        const lev = Math.max(conv?.lev ?? 0, L.leverage);
-        const riskPct = clampRisk(L.riskPct, L.riskPct * (t.sizeF ?? 1) * ddF * (conv?.mult ?? 1), conv ? L.convMaxRiskPct / L.riskPct : undefined);
+        const lev = snipe ? Math.max(SNIPER.leverage, L.leverage) : Math.max(conv?.lev ?? 0, L.leverage);
+        const riskPct = snipe ? Math.max(SNIPER.riskPct, L.riskPct) * ddF : clampRisk(L.riskPct, L.riskPct * (t.sizeF ?? 1) * ddF * (conv?.mult ?? 1), conv ? L.convMaxRiskPct / L.riskPct : undefined);
         const exp = currencyExposure(a.open, mids, v.equityUsd);
-        const over = exposureBlock(exp, t.pair, t.side, riskPct, L.ccyCapPct);
+        const over = snipe ? null : exposureBlock(exp, t.pair, t.side, riskPct, L.ccyCapPct);
         if (over) {
           note(`${t.ref}:ccy`, `skipped ${t.pair} (${t.strategy}): already ${Math.abs(exp[over] ?? 0).toFixed(1)}% of the account riding on ${over}`);
           skip(t, `already ${Math.abs(exp[over] ?? 0).toFixed(1)}% of the account riding on ${over}`);
@@ -947,8 +969,8 @@ export class Practice {
           continue;
         }
         const actual = Math.round(((margin * lev * (dist / entry)) / v.equityUsd) * 10_000) / 100;
-        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, ...(t.conviction ? { conviction: t.conviction } : {}) });
-        const sure = conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
+        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}) });
+        const sure = snipe ? ` — SNIPER: ${snipe.votes} of ${snipe.of} checks agree, risking ${actual}% at ${lev}×` : conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
         events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${sure}${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}` : `skipped ${t.pair}: ${r.error}`);
         if (r.ok) {
           perStrategy.set(sk, (perStrategy.get(sk) ?? 0) + 1);

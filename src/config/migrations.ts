@@ -751,6 +751,17 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['copy', ['nightlyTest'], { enabled: true, hourUtc: 4, days: 3 }],
     ],
   },
+  {
+    version: 56,
+    note: 'v16 (owner: "make forex the priority, crypto runs in the background"): crypto keeps paper trading and its learners, but the heavy research jobs that share the CPU with forex are switched off or slowed — the TA strategy lab (150 coins every 15 s; nothing it found was proven), the Sniper-variant tournament, and the outcome tracker\'s replays (a third of the rate, no extra exit variants)',
+    create: true,
+    set: [
+      ['ta', ['labEnabled'], false],
+      ['tournament', ['enabled'], false],
+      ['outcomes', ['maxPerTick'], 40],
+      ['outcomes', ['altVariants'], []],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

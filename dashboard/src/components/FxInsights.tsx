@@ -8,7 +8,7 @@ import { Badge, Button, Card, Row, Rows, Sparkline, Stack, StatTile } from './ui
 
 export interface StrengthNow { at: number | null; ccys: Array<{ ccy: string; score: number; today: number; week: number }> }
 export interface MoodNow { at: number | null; score: number | null; label: 'risk-on' | 'risk-off' | 'calm'; inputs: Array<{ id: string; label: string; value: number | null; change: number | null; unit: '%' | 'bp' }>; note: string }
-export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'all';
+export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'volf' | 'hurst' | 'crowd' | 'all';
 export interface FilterSummary { filter: FilterKind; label: string; chosenBy: number; compared: number; inDeltaR: number; outDeltaR: number; outBetterPct: number; keptPct: number; random: { inAvgR: number; outAvgR: number; outN: number } }
 interface StudyCell { n: number; avgAtr: number[]; contPct: number[] }
 export interface NewsStudy { horizons: number[]; shocks: number; overall: StudyCell; byHour: Array<{ key: string; label: string } & StudyCell>; byPair: Array<{ pair: string } & StudyCell>; byEvent: Array<{ key: string; label: string } & StudyCell>; recent: Array<{ pair: string; t: number; dir: 1 | -1; sizeAtr: number; moves: Array<number | null>; event: string | null }>; eventsKnown: number }
@@ -17,12 +17,12 @@ export type ExitKind = 'designed' | 'breakeven' | 'scale' | 'tight' | 'runner' |
 export interface WalkForward { from: number; to: number; lookbackMonths: number; result: PortfolioResult; months: Array<{ month: string; picked: number; trades: number }> }
 export interface TierStats { tier: 'sure' | 'verySure'; label: string; from: number; mult: number; lev: number; inN: number; inAvgR: number; outN: number; outAvgR: number; active: boolean }
 export interface ConvictionReport { scope: string; judge: boolean; all: { inN: number; inAvgR: number; outN: number; outAvgR: number }; tiers: TierStats[]; active: boolean; why: string }
-export interface PortfolioReport { from: number; to: number; picked: Array<{ id: string; name: string; tf: string; filter: FilterKind; exit?: ExitKind; inAvgR: number; inN: number; unseenN: number }>; oldPicked: number; levels: PortfolioResult[]; old: PortfolioResult; judged?: PortfolioResult | null; walkForward?: WalkForward | null; convicted?: PortfolioResult | null; note: string }
+export interface PortfolioReport { from: number; to: number; picked: Array<{ id: string; name: string; tf: string; filter: FilterKind; exit?: ExitKind; inAvgR: number; inN: number; unseenN: number }>; oldPicked: number; levels: PortfolioResult[]; old: PortfolioResult; judged?: PortfolioResult | null; walkForward?: WalkForward | null; convicted?: PortfolioResult | null; sniped?: PortfolioResult | null; note: string }
 export interface ExitSummary { exit: ExitKind; label: string; chosenBy: number; compared: number; inDeltaR: number; outDeltaR: number; outBetterPct: number }
 export interface JudgeReport { active: boolean; why: string; trainedOn: number; tested: number; auc: number | null; threshold: number | null; keepPct: number; allR: number; keptR: number; skippedR: number; allWinPct: number; keptWinPct: number; importance: Array<{ feature: string; label: string; share: number }> }
 export interface RiskSummary { exposure: Array<{ ccy: string; pct: number }>; capPct: number; ddPct: number; ddFactor: number; baseRiskPct: number; openRiskPct: number }
 
-export const FILTER_SHORT: Record<FilterKind | 'regime', string> = { none: 'no filter', strength: '+ strength', mtf: '+ bigger chart', mood: '+ mood', regime: '+ regime', all: '+ all 3 checks' };
+export const FILTER_SHORT: Record<FilterKind | 'regime', string> = { none: 'no filter', strength: '+ strength', mtf: '+ bigger chart', mood: '+ mood', regime: '+ regime', volf: '+ vol forecast', hurst: '+ trend/chop', crowd: '+ not crowded', all: '+ all 3 checks' };
 export const EXIT_SHORT: Record<ExitKind, string> = { designed: 'exits as designed', breakeven: 'break-even at +1R', scale: 'half off at +1R', tight: 'closer target', runner: 'runner exit', quick: 'quick exit', wide: 'bigger target', trail_tp: 'trailing take-profit', half_trail: 'half at target, rest trails', trail_sl: 'trailing stop-loss' };
 const signed = (x: number, dp = 1) => {
   const v = Number(x.toFixed(dp));
@@ -268,9 +268,9 @@ export function PortfolioCard({ p, judgeOn }: { p: PortfolioReport | null | unde
               </tr>
             </thead>
             <tbody>
-              {[...p.levels, ...(p.judged ? [p.judged] : []), ...(p.convicted ? [p.convicted] : []), o].map((k) => (
+              {[...p.levels, ...(p.judged ? [p.judged] : []), ...(p.convicted ? [p.convicted] : []), ...(p.sniped ? [p.sniped] : []), o].map((k) => (
                 <tr key={k.label} className={`border-t border-line ${k === o ? 'text-muted' : ''}`}>
-                  <td className="py-1.5 text-ink">{k === o ? 'Before the upgrade (1%)' : k === p.judged ? `With the signal judge (1%${judgeOn ? '' : ', judge not on yet'})` : k === p.convicted ? 'Bigger size when sure (1%, sure 1.5×, very sure 2×)' : `${k.baseRiskPct}%`}</td>
+                  <td className="py-1.5 text-ink">{k === o ? 'Before the upgrade (1%)' : k === p.judged ? `With the signal judge (1%${judgeOn ? '' : ', judge not on yet'})` : k === p.convicted ? 'Bigger size when sure (1%, sure 1.5×, very sure 2×)' : k === p.sniped ? `With the sniper (1%, ${k.label.replace(/^sniper \(|\)$/g, '')})` : k.label.includes('(') ? k.label.replace(' risk', '') : `${k.baseRiskPct}%`}</td>
                   <td className={`py-1.5 text-right ${tone(k.avgWeekPct)}`}>{signed(k.avgWeekPct)}%</td>
                   <td className={`py-1.5 text-right ${tone(k.medianWeekPct)}`}>{signed(k.medianWeekPct)}%</td>
                   <td className="py-1.5 text-right">{k.greenWeeksPct}%</td>
@@ -429,6 +429,61 @@ export function ConvictionCard({ c }: { c: Partial<Record<'hourly' | '15m' | '1m
               )}
             </div>
           ))}
+        </Stack>
+      )}
+    </Card>
+  );
+}
+
+export interface SniperLevel { k: number; inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null }
+export interface SniperReport { active: boolean; k: number | null; levels: SniperLevel[]; all: { inN: number; inAvgR: number; outN: number; outAvgR: number }; riskPct: number; leverage: number; why: string }
+
+/** v16: the sniper — one big bet only when many independent checks agree, and only once that proved itself. */
+export function SniperCard({ s }: { s: SniperReport | null | undefined }) {
+  return (
+    <Card
+      title="Sniper: one big bet when everything agrees"
+      subtitle="Every trade gets a vote from each independent check at the candle close: stronger currency, bigger charts, market mood, momentum on 1 / 5 / 20 days, carry (interest-rate gap), the volatility forecast, the trend / chop measure, hedge-fund positioning (CFTC), room to the next round number, and the signal judge. A vote level is picked on the first 70% of the history; the sniper only turns on if those trades also made 0.3R+ each (profit factor 1.5+) on the 30% it never saw. Then such a trade risks the sniper size, one at a time."
+    >
+      {!s ? (
+        <p className="text-sm text-ink-2">Graded with the next hourly update.</p>
+      ) : (
+        <Stack>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={s.active ? 'up' : 'neutral'}>{s.active ? `On: ${s.k}+ checks → ${s.riskPct}% risk at ${s.leverage}×` : 'Off: not proven yet, normal size'}</Badge>
+          </div>
+          <p className="text-sm text-ink-2">{s.why}.</p>
+          {s.all.outN > 0 && (
+            <div className="overflow-x-auto">
+              <table className="tabular w-full min-w-[30rem] text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-muted">
+                    <th className="py-1 font-medium">Checks agreeing</th>
+                    <th className="py-1 text-right font-medium">First 70%</th>
+                    <th className="py-1 text-right font-medium">Unseen 30%</th>
+                    <th className="py-1 text-right font-medium">Profit factor</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-t border-line">
+                    <td className="py-1.5 text-ink">All trades</td>
+                    <td className={`py-1.5 text-right ${tone(s.all.inAvgR)}`}>{signed(s.all.inAvgR, 2)}R <span className="text-xs text-muted">({s.all.inN})</span></td>
+                    <td className={`py-1.5 text-right ${tone(s.all.outAvgR)}`}>{signed(s.all.outAvgR, 2)}R <span className="text-xs text-muted">({s.all.outN})</span></td>
+                    <td className="py-1.5 text-right text-muted">—</td>
+                  </tr>
+                  {s.levels.filter((l) => l.inN > 0 || l.outN > 0).map((l) => (
+                    <tr key={l.k} className={`border-t border-line ${s.k === l.k ? 'font-semibold' : ''}`}>
+                      <td className="py-1.5 text-ink">{l.k}+{s.k === l.k ? (s.active ? ' ✓' : ' (picked)') : ''}</td>
+                      <td className={`py-1.5 text-right ${tone(l.inAvgR)}`}>{signed(l.inAvgR, 2)}R <span className="text-xs font-normal text-muted">({l.inN})</span></td>
+                      <td className={`py-1.5 text-right ${tone(l.outAvgR)}`}>{signed(l.outAvgR, 2)}R <span className="text-xs font-normal text-muted">({l.outN})</span></td>
+                      <td className="py-1.5 text-right">{l.outPf ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="text-xs text-muted">At {s.riskPct}% risk one sniper loss costs {s.riskPct}% of the account and a 4R winner makes about {s.riskPct * 4}%. Few trades means a lot of luck either way: the paper account decides.</p>
         </Stack>
       )}
     </Card>

@@ -73,6 +73,8 @@ export interface PTrade {
   /** v15.2: a 'sure' trade may risk up to this multiple of the base (default `SIZING.maxMult`) at this leverage */
   maxMult?: number;
   lev?: number;
+  /** v16: a sniper trade — its own size, not held back by the currency cap, one at a time */
+  sniper?: boolean;
 }
 
 export interface PortfolioOpts {
@@ -223,7 +225,11 @@ export function simulatePortfolio(trades: readonly PTrade[], o: PortfolioOpts): 
       }
       const ddPct = (1 - eq / peak) * 100;
       let riskPct = o.flatSizing ? o.baseRiskPct : clampRisk(o.baseRiskPct, o.baseRiskPct * tr.sizeF * (o.ddSizing ? ddFactor(ddPct) : 1), tr.maxMult);
-      if (o.ccyCapPct !== null) {
+      if (tr.sniper && [...open.keys()].some((x) => x.sniper)) {
+        skipped.full++;
+        continue;
+      }
+      if (o.ccyCapPct !== null && !tr.sniper) {
         const exp: Exposure = {};
         for (const [t, p] of open) addExposure(exp, t.pair, t.side, (p.riskAbs / eq) * 100);
         if (exposureBlock(exp, tr.pair, tr.side, riskPct, o.ccyCapPct)) {
