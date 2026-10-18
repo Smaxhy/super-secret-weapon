@@ -63,6 +63,7 @@ import { Tournament } from './learner/tournament';
 import { ForexLab } from './forex/lab';
 import { Practice } from './forex/practice';
 import { ForexCalendar } from './forex/calendar';
+import { ForexHeadlines } from './forex/headlines';
 import { MemeReader } from './evaluator/meme-reader';
 import { NewPairWatcher } from './scanner/new-pair-watcher';
 import { TaLab } from './learner/ta-lab';
@@ -368,6 +369,9 @@ async function main(): Promise<void> {
   const fxCalendar = new ForexCalendar(redis);
   void fxCalendar.start();
   forex.calendar = fxCalendar;
+  const fxNews = new ForexHeadlines(redis);
+  void fxNews.start();
+  forex.headlines = fxNews;
   // Shadow trades: pretend trades on coins it didn't buy (refused / just under the bar / skipped by a rule).
   const shadow = new ShadowTrades(redis, crowd);
   evaluator.shadow = shadow;
@@ -754,7 +758,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament, meme: memeReader, forex, practice, fxCalendar }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament, meme: memeReader, forex, practice, fxCalendar, fxNews }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -840,6 +844,7 @@ async function main(): Promise<void> {
       forex.stop();
       practice.stop();
       fxCalendar.stop();
+      fxNews.stop();
       shadow.stop();
       brain.stop();
       stopPush();

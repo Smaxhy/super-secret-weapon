@@ -181,7 +181,8 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       reply.header('Cache-Control', 'no-store');
       const c = deps.fxCalendar?.get() ?? { at: 0, events: [] };
       const now = Date.now();
-      return { at: c.at, clock: marketClock(now), events: c.events.filter((e) => e.t >= now - 12 * 3_600_000 && e.t <= now + 8 * 86_400_000 && e.impact !== 'Non-Economic') };
+      const heads = (deps.fxNews?.get() ?? []).slice(0, 80);
+      return { at: c.at, clock: marketClock(now), headlines: heads, events: c.events.filter((e) => e.t >= now - 12 * 3_600_000 && e.t <= now + 8 * 86_400_000 && e.impact !== 'Non-Economic') };
     });
     // OANDA demo token = a free DATA feed only (no trading through it); masked on read.
     secured.get('/api/forex/oanda', async () => {

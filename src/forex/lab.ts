@@ -10,6 +10,7 @@ import { moduleLogger } from '../lib/logger';
 import { refreshInstrument, loadBars, type FeedStatus } from './data';
 import type { Practice } from './practice';
 import type { ForexCalendar } from './calendar';
+import type { ForexHeadlines } from './headlines';
 import { equityCurve, rStats, runSeries, type RiskResult, type RStats } from './engine';
 import { STRATEGIES, type Family } from './strategies';
 import { buildCtx, to4h, type Ctx } from './ta';
@@ -111,6 +112,7 @@ export class ForexLab {
   /** set by index.ts: the account the bot auto-trades */
   practice: Practice | null = null;
   calendar: ForexCalendar | null = null;
+  headlines: ForexHeadlines | null = null;
   /** strategies dropped by the bot because they lose in real time */
   dropped: string[] = [];
   botLog: Array<{ t: number; e: string }> = [];
@@ -299,7 +301,7 @@ export class ForexLab {
       this.dropped = Object.entries(res).filter(([, v]) => v.n >= 12 && v.pnlUsd < 0).map(([k]) => k);
       const chosen = new Set(rows.filter((x) => (x.verdict !== 'no' || FX_CONFIG.botAlways.includes(x.id)) && !this.dropped.includes(x.id)).map((x) => `${x.id}:${x.tf}`));
       const ev = await this.practice
-        .syncBot(open.map((t) => ({ ref: `${t.strategy}:${t.tf}:${t.pair}:${t.entryT}`, strategy: t.strategy, pair: t.pair, side: t.side, entryT: t.entryT, stop: t.stop, target: t.target, chosen: chosen.has(`${t.strategy}:${t.tf}`) })), (pair) => this.calendar?.blockFor(pair) ?? null)
+        .syncBot(open.map((t) => ({ ref: `${t.strategy}:${t.tf}:${t.pair}:${t.entryT}`, strategy: t.strategy, pair: t.pair, side: t.side, entryT: t.entryT, stop: t.stop, target: t.target, chosen: chosen.has(`${t.strategy}:${t.tf}`) })), (pair) => this.calendar?.blockFor(pair) ?? this.headlines?.blockFor(pair) ?? null, Object.fromEntries(markets.map((m) => [m.id, m.atrPips * (INSTRUMENTS.find((i) => i.id === m.id)?.pip ?? 0)])))
         .catch((err: Error) => [`bot sync failed: ${err.message}`]);
       for (const e of ev) this.botLog.unshift({ t: Date.now(), e });
       this.botLog = this.botLog.slice(0, 100);

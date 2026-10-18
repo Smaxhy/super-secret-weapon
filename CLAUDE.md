@@ -104,6 +104,14 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   market clock bar (`components/FxNews.tsx` `MarketClockBar`), Live shows "News, central banks and holidays". Crypto costs:
   migration v53 — AI coach + AI meme reader off (Anthropic credits), live dry-run off (RPC), Helius 5k / FluxRPC 50k a day.
   The Chainstack Yellowstone add-on ($49) is the owner's call (free feed works for paper). tests/forex-calendar.test.ts.
+- **v12.5 (Oct 19)** (owner: "know when there are presidential speeches or anything that could affect price action").
+  `src/forex/headlines.ts`: ForexLive + FXStreet RSS every 5 min (Redis `fx:news`, 300, 3 days) → `classify` (currency
+  keyword map incl. Fed/Powell/Trump/ECB/BoJ/intervention…, severity high on breaking / speech / tariff / war / surprise /
+  rate-move / named leaders) → `headlineBlock` (high headline on either currency ≤30 min ago → no new bot trade);
+  `priceShock` (last 15 one-minute bars' range > 1.5 × the 1h ATR → no new bot trade on that pair). Calendar
+  `newsBlock` now also blocks Medium-impact speeches / testimony / press conferences. Bot log says why it waited.
+  `/api/forex/calendar` returns `headlines`; Live news card has "Live headlines" + "Calendar" tabs.
+  tests/forex-headlines.test.ts.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

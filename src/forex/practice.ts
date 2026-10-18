@@ -10,6 +10,7 @@ import { moduleLogger } from '../lib/logger';
 import { oandaCandles, oandaPrices, oandaReady, loadOanda, type Granularity } from './oanda';
 import { INSTRUMENTS, instrument, type Bar, type Instrument } from './types';
 import { marketClock } from './calendar';
+import { priceShock } from './headlines';
 
 const log = moduleLogger('forex-practice');
 export type AcctId = 'me' | 'bot';
@@ -391,7 +392,7 @@ export class Practice {
    * stop loses `BOT.riskPct` of equity at `BOT.leverage`×. A held trade the lab no longer has open (its trail / time /
    * signal exit fired) is closed at the market. Returns what happened.
    */
-  async syncBot(labOpen: Array<{ ref: string; strategy: string; pair: string; side: 1 | -1; entryT: number; stop: number; target: number | null; chosen: boolean }>, blockFor: (pair: string) => string | null = () => null): Promise<string[]> {
+  async syncBot(labOpen: Array<{ ref: string; strategy: string; pair: string; side: 1 | -1; entryT: number; stop: number; target: number | null; chosen: boolean }>, blockFor: (pair: string) => string | null = () => null, atr1h: Record<string, number> = {}): Promise<string[]> {
     return this.serial(async () => {
       const a = await this.load('bot');
       const events: string[] = [];
@@ -411,7 +412,8 @@ export class Practice {
       const noted = new Set<string>();
       for (const t of labOpen) {
         if (!t.chosen || held.has(t.ref) || Date.now() - t.entryT > BOT.freshMs) continue;
-        const why = clock.noNewTrades ? (clock.open ? 'weekly close is near' : 'market closed') : blockFor(t.pair);
+        const qs = q[t.pair];
+        const why = clock.noNewTrades ? (clock.open ? 'weekly close is near' : 'market closed') : blockFor(t.pair) ?? (qs && priceShock(qs.bars, atr1h[t.pair] ?? 0) ? 'price shock: unusually big move in the last 15 min' : null);
         if (why) {
           if (!noted.has(`${t.pair}:${why}`)) events.push(`waited on ${t.pair} (${t.strategy}): ${why}`);
           noted.add(`${t.pair}:${why}`);

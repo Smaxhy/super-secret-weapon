@@ -13,6 +13,7 @@ import type { Tournament } from '../learner/tournament';
 import type { ForexLab } from '../forex/lab';
 import type { Practice } from '../forex/practice';
 import type { ForexCalendar } from '../forex/calendar';
+import type { ForexHeadlines } from '../forex/headlines';
 import type { MemeReader } from '../evaluator/meme-reader';
 import type { TaLab } from '../learner/ta-lab';
 import type { TrendingHub } from '../scanner/trending-hub';
@@ -66,6 +67,8 @@ export interface ApiDeps {
   practice?: Practice | null;
   /** v12.4: economic calendar + market clock. */
   fxCalendar?: ForexCalendar | null;
+  /** v12.5: live headlines. */
+  fxNews?: ForexHeadlines | null;
 }
 
 /** Classify a token for the live feed colour code. */

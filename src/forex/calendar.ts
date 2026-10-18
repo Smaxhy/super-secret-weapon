@@ -44,7 +44,8 @@ export function newsBlock(pair: string, now: number, events: readonly CalEvent[]
   const day = (t: number) => new Date(t).toISOString().slice(0, 10);
   for (const e of events) {
     if (!ccys.includes(e.ccy)) continue;
-    if (e.impact === 'High' && Math.abs(e.t - now) <= windowMin * 60_000) return `${e.ccy} news: ${e.title}`;
+    const speech = e.impact === 'Medium' && /speaks|testif|press conference|remarks|statement/i.test(e.title);
+    if ((e.impact === 'High' || speech) && Math.abs(e.t - now) <= windowMin * 60_000) return `${e.ccy} ${speech ? 'speech' : 'news'}: ${e.title}`;
     if (e.impact === 'Holiday' && day(e.t) === day(now)) return `${e.ccy} bank holiday: ${e.title}`;
   }
   return null;
