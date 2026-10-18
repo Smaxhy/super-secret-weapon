@@ -158,6 +158,50 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     vs new, Monte Carlo) → "Risk right now" (exposure vs cap). Setup lists the extra feeds. Lab run ≈ 10 s / hour.
   tests/forex-v13.test.ts (15). Numbers so far were only checked on SYNTHETIC candles (sandbox can't reach Yahoo):
   read the real "Honest test" card on the VPS before trusting anything.
+- **v14 (Oct 19): skills pack** (owner: "a lot more skills that give us the edge"). Everything is still picked on the
+  first 70% only and graded on the unseen 30%; nothing is used live unless it proves itself.
+  - **Engine realism** (`engine.ts`): `spreadMult` (21:00 / 22:00 UTC bars ×3, first bar after a weekend ×4);
+    `SimOpts.weekendPause` (default ON, = the live bot): an open trade banks its leg at Friday's close; if Monday's
+    open is past the stop / target it ends there (reason 'weekend'), else it re-enters at the open (gap excluded, extra
+    spread paid). R accounting with legs (`legEntry`, `frac`, `realized`). Signals may carry `beAtR` (stop → entry +
+    costs at +1R, reason 'breakeven') and `scaleAtR` / `scaleFrac` (part off at +1R, then break-even); a candle that
+    reaches the level and comes back is assumed to hit the new stop (pessimistic). Trades carry `beAt` / `scaleAt` /
+    `scaleFrac` / `scaled`. `volRatioAt` is memoised per ctx (`vrCache`) — it was 50% of the lab's CPU.
+  - **Exit lab** (`exits.ts`): designed / breakeven / scale (half at +1R) / tight (0.6× target, or 1.5R) / runner (no
+    target, trail 2.5 ATR) / quick (12 bars 1h, 6 bars 4h). Pass 2 per strategy under its chosen filter;
+    `chooseVariant` (generic: avgR × √n, margin, ≥ 40 trades, hysteresis — Redis `fx:filters:chosen` now {f, e});
+    `summarizeExits` → report `exits`; rows carry `exit` + `exitVariants`.
+  - **Regime filter** (`filters.ts` 'regime', `ER_TREND` 0.3 on `ctx.er20` Kaufman efficiency ratio): `styleOf`
+    (strategies.ts: trend / revert / pullback / neutral; pullbacks and timing rules pass) → trend rules need ER ≥ 0.3,
+    fade rules ER < 0.3.
+  - **New strategies**: `ccy_momentum` (Menkhoff et al.: base top-2 vs quote bottom-2 on 5-day strength, newly),
+    intermarket catch-ups `oil_cad`, `yield_jpy`, `stocks_jpy`, `dollar_gold` (linked market 24 h z crosses ±1.5 and
+    the pair's own `pairZ` hasn't followed; 1.5 ATR, 2R, 24 h), flows `weekend_gap` (gap ≥ 0.5 ATR still open after
+    the first hour → back to Friday's close), `month_end_flow` (Melvin & Prins: last weekday, 14→16 UTC, S&P MTD ±2%
+    → sell / buy USD), `nr7_break` (Crabel NR7, 07–16 UTC break of yesterday's range, stop mid-range, 2R, flat by 22).
+    Families 'intermarket' / 'flow'. `ctx.ext` (`CtxExt`, set by the lab from `intermarket.ts`: `z24Series` (time-based
+    24 h log change ÷ rolling sd of ~400 readings, causal), `mtdSeries`, `strengthRanks` / `pairRanks`, `alignAt`).
+    `ctx.nr7`, `ctx.er20` in buildCtx.
+  - **Signal judge** (`judge.ts`, meta-labeling): 24 context features at the signal bar (`judgeFeatures`: side,
+    strength / 4h / daily / mood alignment, wildness, ADX, RSI, ER, ATR %, distance to EMA50 / 200, squeeze, hour, day,
+    candle size, style, the row's first-70% avg R, the strategy's last 10 results before entry, JPY / metal, tf, stop
+    and target size) → GBDT (crypto `tree-model.ts` `boost` / `cutPoints` / `sigmoid` now exported; depth 3, lr .06,
+    min child 20, ≤ 200 rounds, early stop on the newest 20% of the first 70%) → keep share picked there (90…40% by
+    avgR × √n) → ONE exam on the unseen 30%: active only if AUC ≥ 0.53, kept avg R ≥ all + 0.03R, ≥ 60 kept. Redis
+    `fx:judge` (model) + `fx:judge:report`; live: open paper trades get `judge` {p, ok, need} → `syncBot` skips "the
+    signal judge gives it X%". Report `judge`; portfolio `judged` (upgraded bot at 1% with the gate, unseen).
+  - **Walk-forward** (`portfolio.walkForward`): every month re-pick strategies (raw rules) on trades closed in the
+    previous 6 months (n ≥ 15, avgR ≥ .05, PF ≥ 1.15, + botAlways) → trade only those that month → one long honest
+    record (~18 months) at 1% → portfolio `walkForward`.
+  - **Bot account** (practice.ts): positions carry `beAt` / `scaleAt` / `scaleFrac` / `scaled` / `be`; `tick` takes the
+    part off at `scaleAt` (`closePart`, closed row reason 'partial') and moves the stop to entry; weekend flatten
+    stores `account.resume` and `syncBot` re-opens still-running lab trades once `sinceOpenMin ≥ 120` and not in the
+    rollover (unless the gap went past stop / target); no new trades in the rollover (`marketClock().rollover`
+    20:45–23:15 UTC) or the first 2 h of the week; `botResults` counts partial / weekend legs as money, not trades.
+  - Dashboard: Strategies = Signal judge card, "Do other exits help?" card, exit badge + "Exits tried" table; Auto-bot =
+    judge + rolling-test rows in the Honest test, half-off / break-even on open trades, explanation updated.
+    Report trimmed (`slimTrade`, 7-digit prices, slim per-pair stats): ~410 KB. Lab ≈ 12 s per hourly run (sandbox).
+  tests/forex-v14.test.ts (20). Again: verified on SYNTHETIC candles only — read the real cards on the VPS.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

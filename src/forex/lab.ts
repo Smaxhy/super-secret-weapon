@@ -1,6 +1,8 @@
 /**
- * Forex lab (v12 → v13): every hour — refresh the candles, run EVERY strategy on every instrument on 1h and 4h bars,
- * raw and with each trade filter (currency strength, bigger-chart trend, market mood, all three), and publish
+ * Forex lab (v12 → v14): every hour — refresh the candles, run EVERY strategy on every instrument on 1h and 4h bars,
+ * raw and with each trade filter (currency strength, bigger-chart trend, market mood, regime, all three), then with
+ * each exit variant (break-even, half off at +1R, closer target, runner, shorter time) — both picked on the first 70%
+ * only — train the signal judge (meta-labeling) on the first 70% and grade it on the rest, and publish
  * (a) the backtest over the full history with an in-sample / out-of-sample split and weekly results at several risk
  * levels, (b) the PAPER results = trades opened after the lab first started (a true forward test), (c) the whole-bot
  * backtest on the unseen last 30% (strategies AND filters picked on the first 70% only), (d) the live market read:
@@ -14,16 +16,19 @@ import type { Practice } from './practice';
 import type { ForexCalendar } from './calendar';
 import type { ForexHeadlines } from './headlines';
 import { equityCurve, rStats, signalsFor, simulate, type RiskResult, type RStats } from './engine';
-import { STRATEGIES, type Family } from './strategies';
+import { STRATEGIES, styleOf, type Family } from './strategies';
 import { buildCtx, to4h, type Ctx } from './ta';
 import { drawingsFor, type Drawings } from './drawings';
-import { INSTRUMENTS, MOOD_SYMBOLS, STRENGTH_PAIRS, type Bar, type Instrument, type Timeframe, type Trade } from './types';
+import { INSTRUMENTS, MOOD_SYMBOLS, STRENGTH_PAIRS, type Bar, type Instrument, type Signal, type Timeframe, type Trade } from './types';
 import { buildStrength, gapSeries, scoreAt, strengthNow, type StrengthNow } from './strength';
 import { alignTrend, decisionTimes, toDaily, trendSeries, withEnd } from './mtf';
 import { buildMood, moodNow, moodSeries, riskOfLong, type MoodNow } from './mood';
-import { FILTERS, FILTER_LABEL, allowFor, blockReason, chooseFilter, type FilterEnv, type FilterKind, type VariantStats } from './filters';
-import { SIZING, simulatePortfolio, stratFactorFromStats, stratFactorFromVerdict, volFactor, type PortfolioResult, type PTrade } from './portfolio';
+import { FILTERS, FILTER_LABEL, allowFor, blockReason, chooseFilter, chooseVariant, type FilterEnv, type FilterKind } from './filters';
+import { SIZING, simulatePortfolio, stratFactorFromStats, stratFactorFromVerdict, volFactor, walkForward, type PortfolioResult, type PTrade, type WalkForward, type WTrade } from './portfolio';
 import { newsStudy, type NewsStudy } from './news-study';
+import { EXITS, EXIT_LABEL, applyExit, type ExitKind } from './exits';
+import { judgeFeatures, judgeProb, trainJudge, type JudgeModel, type JudgeReport, type JudgeRow } from './judge';
+import { alignAt, mtdSeries, pairRanks, strengthRanks, z24Series } from './intermarket';
 
 const log = moduleLogger('forex-lab');
 
@@ -40,6 +45,8 @@ export const FX_CONFIG = {
   /** whole-bot backtest: base risk levels tried, and what a strategy needs on the first 70% to be picked */
   portfolioRiskPct: [0.5, 1, 2, 3],
   pick: { minN: 40, minAvgR: 0.05, minPf: 1.15 },
+  /** walk-forward: re-pick every month from the trades closed in the previous N months */
+  walkForward: { lookbackMonths: 6, minN: 15, minAvgR: 0.05, minPf: 1.15 },
 };
 
 export interface VariantRow {
@@ -52,6 +59,10 @@ export interface VariantRow {
   allN: number;
 }
 
+export interface ExitVariantRow extends Omit<VariantRow, 'filter'> {
+  exit: ExitKind;
+}
+
 export interface Row {
   id: string;
   name: string;
@@ -60,8 +71,11 @@ export interface Row {
   tf: Timeframe;
   /** v13: the filter it trades with (picked on the first 70% only) */
   filter: FilterKind;
-  /** raw and every filter, side by side */
+  /** raw and every filter, side by side (exits as designed) */
   variants: VariantRow[];
+  /** v14: the exit it trades with (picked on the first 70% only, under its filter) */
+  exit: ExitKind;
+  exitVariants: ExitVariantRow[];
   all: RStats;
   inSample: RStats;
   outSample: RStats;
@@ -126,15 +140,29 @@ export interface FilterSummary {
   random: { inAvgR: number; outAvgR: number; outN: number };
 }
 
+export interface ExitSummary {
+  exit: ExitKind;
+  label: string;
+  chosenBy: number;
+  compared: number;
+  inDeltaR: number;
+  outDeltaR: number;
+  outBetterPct: number;
+}
+
 export interface PortfolioReport {
   from: number;
   to: number;
-  picked: Array<{ id: string; name: string; tf: Timeframe; filter: FilterKind; inAvgR: number; inN: number; unseenN: number }>;
+  picked: Array<{ id: string; name: string; tf: Timeframe; filter: FilterKind; exit: ExitKind; inAvgR: number; inN: number; unseenN: number }>;
   oldPicked: number;
   /** the upgraded bot at several base risk levels */
   levels: PortfolioResult[];
   /** the bot as it was before v13 (no filters, flat 1% risk, no currency cap) on the same unseen weeks */
   old: PortfolioResult;
+  /** v14: the upgraded bot at 1% with the signal judge's gate (judge trained on the first 70% only) */
+  judged: PortfolioResult | null;
+  /** v14: re-picking strategies every month from the months before (raw rules), over the whole history */
+  walkForward: WalkForward | null;
   note: string;
 }
 
@@ -154,13 +182,17 @@ export interface FxReport {
   filters?: FilterSummary[];
   portfolio?: PortfolioReport | null;
   news?: NewsStudy | null;
+  exits?: ExitSummary[];
+  judge?: JudgeReport | null;
 }
 
 export const FX_REPORT = 'fx:report';
 export const FX_PAPER_SINCE = 'fx:paper:since';
 export const FX_PORTFOLIO = 'fx:portfolio';
-/** last hour's filter per strategy × timeframe (keeps near-ties from flipping) */
+/** last hour's filter + exit per strategy × timeframe (keeps near-ties from flipping) */
 export const FX_FILTERS_CHOSEN = 'fx:filters:chosen';
+/** the signal judge (trees + threshold), for the live bot */
+export const FX_JUDGE = 'fx:judge';
 
 const yieldNow = () => new Promise((r) => setImmediate(r));
 const HOUR = 3_600_000;
@@ -225,6 +257,61 @@ export function summarizeFilters(rows: ReadonlyArray<Pick<Row, 'id' | 'filter' |
   }
   return out;
 }
+
+/** Pure: how each exit did across all strategies (each under its own chosen filter). */
+export function summarizeExits(rows: ReadonlyArray<Pick<Row, 'id' | 'exit' | 'exitVariants'>>): ExitSummary[] {
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  return EXITS.filter((e) => e !== 'designed').map((e) => {
+    let compared = 0;
+    let inD = 0;
+    let outD = 0;
+    let outN = 0;
+    let better = 0;
+    for (const r of rows) {
+      if (r.id === 'random') continue;
+      const base = r.exitVariants.find((v) => v.exit === 'designed');
+      const v = r.exitVariants.find((x) => x.exit === e);
+      if (!base || !v || base.inN < 30 || v.inN < 30) continue;
+      compared++;
+      inD += v.inAvgR - base.inAvgR;
+      if (base.outN >= 15 && v.outN >= 15) {
+        outN++;
+        outD += v.outAvgR - base.outAvgR;
+        if (v.outAvgR > base.outAvgR) better++;
+      }
+    }
+    return { exit: e, label: EXIT_LABEL[e], chosenBy: rows.filter((r) => r.id !== 'random' && r.exit === e).length, compared, inDeltaR: compared ? r2(inD / compared) : 0, outDeltaR: outN ? r2(outD / outN) : 0, outBetterPct: outN ? Math.round((better / outN) * 100) : 0 };
+  });
+}
+
+/** closed trades → all / first 70% / unseen 30% stats */
+function statsOf(trades: readonly Trade[], oosFrom: number): { all: RStats; inSample: RStats; outSample: RStats } {
+  const done = trades.filter((t) => t.reason !== 'open');
+  return { all: rStats(done), inSample: rStats(done.filter((t) => t.entryT < oosFrom)), outSample: rStats(done.filter((t) => t.entryT >= oosFrom)) };
+}
+
+/** index of the bar opening at t (−1 if none) */
+function indexOfT(bars: readonly Bar[], t: number): number {
+  let lo = 0;
+  let hi = bars.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const v = bars[mid]!.t;
+    if (v === t) return mid;
+    if (v < t) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return -1;
+}
+
+/** 7 significant digits are plenty for a price (keeps the report small). */
+const px7 = (x: number) => (Number.isFinite(x) ? Number(x.toPrecision(7)) : x);
+/** A trade as the dashboard needs it. */
+export function slimTrade(t: Trade): Trade {
+  return { strategy: t.strategy, tf: t.tf, pair: t.pair, side: t.side, entryT: t.entryT, exitT: t.exitT, entry: px7(t.entry), exit: px7(t.exit), r: Math.round(t.r * 100) / 100, stopPct: Math.round(t.stopPct * 1000) / 1000, reason: t.reason, bars: t.bars, stop: px7(t.stop), stop0: px7(t.stop0), target: t.target === null ? null : px7(t.target), ...(t.scaled ? { scaled: true } : {}) };
+}
+
+const tradeKey = (t: { strategy: string; tf: string; pair: string; entryT: number }) => `${t.strategy}:${t.tf}:${t.pair}:${t.entryT}`;
 
 interface Series {
   inst: Instrument;
@@ -334,6 +421,15 @@ export class ForexLab {
     const mood = buildMood(moodInput);
     await yieldNow();
 
+    // ── cross-market readings for the intermarket / momentum / flow strategies ──
+    const ranks = strengthRanks(strength);
+    const zOil = moodInput.OIL ? z24Series(moodInput.OIL) : null;
+    const zYield = moodInput.US10Y ? z24Series(moodInput.US10Y) : null;
+    const zStocks = moodInput.SPX ? z24Series(moodInput.SPX) : null;
+    const zDollar = moodInput.DXY ? z24Series(moodInput.DXY) : null;
+    const spxMtd = moodInput.SPX ? mtdSeries(moodInput.SPX) : null;
+    await yieldNow();
+
     // ── series + their filter readings ──
     const series: Series[] = [];
     const trendNow = new Map<string, { h1: number; h4: number; d1: number }>();
@@ -363,7 +459,11 @@ export class ForexLab {
           mood: moodSeries(mood, bars, barMin),
           riskLong,
         };
-        series.push({ inst, tf, ctx: buildCtx(bars, barMin, inst.id), env });
+        const ctx = buildCtx(bars, barMin, inst.id);
+        env.er = Float64Array.from(ctx.er20);
+        const pr = pairRanks(strength, ranks, inst.id, bars, barMin);
+        ctx.ext = { gap: env.gap, rankBase: pr.base, rankQuote: pr.quote, zOil: alignAt(zOil, bars, barMin), zYield: alignAt(zYield, bars, barMin), zStocks: alignAt(zStocks, bars, barMin), zDollar: alignAt(zDollar, bars, barMin), spxMtd: alignAt(spxMtd, bars, barMin) };
+        series.push({ inst, tf, ctx, env });
         if (tf === '1h') {
           const t1 = trendSeries(bars);
           trendNow.set(inst.id, { h1: t1[t1.length - 1] ?? 0, h4: env.h4[env.h4.length - 1] ?? 0, d1: env.d1[env.d1.length - 1] ?? 0 });
@@ -377,59 +477,93 @@ export class ForexLab {
       return empty;
     }
     const oosFrom = from + (1 - FX_CONFIG.oosFraction) * (to - from);
-    let prevChosen: Record<string, FilterKind> = {};
+    const prevChosen: Record<string, { f?: FilterKind; e?: ExitKind }> = {};
     try {
-      prevChosen = JSON.parse((await this.redis.get(FX_FILTERS_CHOSEN).catch(() => null)) ?? '{}') as Record<string, FilterKind>;
+      const raw = JSON.parse((await this.redis.get(FX_FILTERS_CHOSEN).catch(() => null)) ?? '{}') as Record<string, FilterKind | { f?: FilterKind; e?: ExitKind }>;
+      for (const [k, v] of Object.entries(raw)) prevChosen[k] = typeof v === 'string' ? { f: v } : v;
     } catch {
-      prevChosen = {};
+      // first run: nothing to keep
     }
     const rows: Row[] = [];
     const paperRows: PaperRow[] = [];
     const open: Trade[] = [];
     const recent: Trade[] = [];
-    /** unseen trades of the strategies the whole-bot test picks (new = with filters, old = raw) */
+    /** unseen trades of the strategies the whole-bot test picks (new = with filters + exits, old = raw) */
     const poolNew: PTrade[] = [];
     const poolOld: PTrade[] = [];
     const pickedNew: PortfolioReport['picked'] = [];
     const pickedOld = new Set<string>();
+    /** every raw (unfiltered, designed-exit) closed trade, for the walk-forward test */
+    const wfPool: WTrade[] = [];
+    /** context of every closed trade of the final variants (judge training); unseen + open ones by key (judge use) */
+    const judgeRows: JudgeRow[] = [];
+    const judgeX = new Map<string, Float64Array>();
+    const seriesOf = new Map(series.map((se) => [`${se.inst.id}:${se.tf}`, se]));
     const weeks = Math.max(1, (to - from) / (7 * 86_400_000));
+    type Bucket = { trades: Trade[]; perPair: Row['pairs'] };
     for (const tf of FX_CONFIG.timeframes) {
+      const seriesTf = series.filter((se) => se.tf === tf);
       for (const s of STRATEGIES) {
         if (s.onlyHourly && tf !== '1h') continue;
-        const byVariant = new Map<FilterKind, { trades: Trade[]; perPair: Row['pairs'] }>(FILTERS.map((f) => [f, { trades: [], perPair: [] }]));
-        for (const se of series) {
-          if (se.tf !== tf) continue;
+        const style = styleOf(s);
+        const key = `${s.id}:${tf}`;
+        const prev = prevChosen[key];
+        // pass 1: every filter, exits as designed
+        const sigsBy = new Map<Series, Array<Signal | null>>();
+        const byFilter = new Map<FilterKind, Bucket>(FILTERS.map((f) => [f, { trades: [], perPair: [] }]));
+        for (const se of seriesTf) {
           const sigs = signalsFor(se.ctx, s);
+          sigsBy.set(se, sigs);
           for (const f of FILTERS) {
-            const ts = simulate(se.inst, tf, se.ctx, s.id, sigs, allowFor(f, se.env));
-            const v = byVariant.get(f)!;
-            v.trades.push(...ts);
-            v.perPair.push({ pair: se.inst.id, ...rStats(ts) });
+            const ts = simulate(se.inst, tf, se.ctx, s.id, sigs, allowFor(f, se.env, style));
+            const b = byFilter.get(f)!;
+            b.trades.push(...ts);
+            b.perPair.push({ pair: se.inst.id, ...rStats(ts) });
           }
           await yieldNow();
         }
-        const stats: VariantStats[] = FILTERS.map((f) => {
-          const done = byVariant.get(f)!.trades.filter((t) => t.reason !== 'open');
-          return { filter: f, all: rStats(done), inSample: rStats(done.filter((t) => t.entryT < oosFrom)), outSample: rStats(done.filter((t) => t.entryT >= oosFrom)) };
-        });
-        const chosen = s.id === 'random' ? 'none' : chooseFilter(stats, 40, prevChosen[`${s.id}:${tf}`]);
-        const ch = stats.find((x) => x.filter === chosen)!;
-        const v = byVariant.get(chosen)!;
+        const fStats = FILTERS.map((f) => ({ filter: f, ...statsOf(byFilter.get(f)!.trades, oosFrom) }));
+        const filter: FilterKind = s.id === 'random' ? 'none' : chooseFilter(fStats, 40, prev?.f);
+        // pass 2: every exit under that filter
+        const byExit = new Map<ExitKind, Bucket>([['designed', byFilter.get(filter)!]]);
+        if (s.id !== 'random') {
+          for (const k of EXITS) if (k !== 'designed') byExit.set(k, { trades: [], perPair: [] });
+          for (const se of seriesTf) {
+            const sigs = sigsBy.get(se)!;
+            const allow = allowFor(filter, se.env, style);
+            for (const k of EXITS) {
+              if (k === 'designed') continue;
+              const ts = simulate(se.inst, tf, se.ctx, s.id, sigs.map((sg, i) => applyExit(sg, k, se.ctx, i)), allow);
+              const b = byExit.get(k)!;
+              b.trades.push(...ts);
+              b.perPair.push({ pair: se.inst.id, ...rStats(ts) });
+            }
+            await yieldNow();
+          }
+        }
+        sigsBy.clear();
+        const eStats = [...byExit.keys()].map((k) => ({ exit: k, ...statsOf(byExit.get(k)!.trades, oosFrom) }));
+        const exit: ExitKind = s.id === 'random' ? 'designed' : chooseVariant(eStats.map((x) => ({ key: x.exit, inSample: x.inSample })), 'designed' as ExitKind, 40, prev?.e);
+        const ch = eStats.find((x) => x.exit === exit)!;
+        const v = byExit.get(exit)!;
         const done = v.trades.filter((t) => t.reason !== 'open');
+        const vRow = (x: { all: RStats; inSample: RStats; outSample: RStats }) => ({ inN: x.inSample.n, inAvgR: x.inSample.avgR, outN: x.outSample.n, outAvgR: x.outSample.avgR, outPf: x.outSample.pf, allN: x.all.n });
         rows.push({
           id: s.id,
           name: s.name,
           family: s.family,
           desc: s.desc,
           tf,
-          filter: chosen,
-          variants: stats.map((x) => ({ filter: x.filter, inN: x.inSample.n, inAvgR: x.inSample.avgR, outN: x.outSample.n, outAvgR: x.outSample.avgR, outPf: x.outSample.pf, allN: x.all.n })),
+          filter,
+          variants: fStats.map((x) => ({ filter: x.filter, ...vRow(x) })),
+          exit,
+          exitVariants: eStats.map((x) => ({ exit: x.exit, ...vRow(x) })),
           all: ch.all,
           inSample: ch.inSample,
           outSample: ch.outSample,
           tradesPerWeek: Math.round((done.length / weeks) * 10) / 10,
           risk: FX_CONFIG.riskLevelsPct.map((r) => equityCurve(done, r, FX_CONFIG.maxLeverage)),
-          pairs: v.perPair.sort((a, b) => b.totalR - a.totalR),
+          pairs: v.perPair.sort((a, b) => b.totalR - a.totalR).map((x) => ({ pair: x.pair, n: x.n, winPct: x.winPct, pf: x.pf, totalR: x.totalR })) as Row['pairs'],
           verdict: 'no',
           why: '',
         });
@@ -439,20 +573,48 @@ export class ForexLab {
         paperRows.push({ id: s.id, name: s.name, tf, stats: rStats(pDone), risk1: equityCurve(pDone, 1, FX_CONFIG.maxLeverage), open: pOpen.length });
         open.push(...pOpen);
         recent.push(...pDone);
+        if (s.id === 'random') continue;
+        // the judge's view of every trade: its context at the signal bar (and the strategy's last 10 results before it)
+        const byExitT = [...done].sort((a, b) => a.exitT - b.exitT);
+        const exitTs = byExitT.map((t) => t.exitT);
+        const prefix = [0];
+        for (const t of byExitT) prefix.push(prefix[prefix.length - 1]! + t.r);
+        const formAt = (entryT: number) => {
+          let lo = 0;
+          let hi = exitTs.length;
+          while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (exitTs[mid]! < entryT) lo = mid + 1;
+            else hi = mid;
+          }
+          return prefix[lo]! - prefix[Math.max(0, lo - 10)]!;
+        };
+        for (const t of v.trades) {
+          const se = seriesOf.get(`${t.pair}:${tf}`);
+          if (!se) continue;
+          const ei = indexOfT(se.ctx.bars, t.entryT);
+          if (ei < 1) continue;
+          const x = judgeFeatures(se.ctx, se.env, ei - 1, t.side, t.stop0, t.target, { style, prior: ch.inSample.avgR, form: formAt(t.entryT), tf });
+          if (t.reason === 'open') judgeX.set(tradeKey(t), x);
+          else {
+            judgeRows.push({ x, r: t.r, t: t.entryT });
+            if (t.entryT >= oosFrom) judgeX.set(tradeKey(t), x);
+          }
+        }
+        // walk-forward pool: the raw rules
+        for (const t of byFilter.get('none')!.trades) if (t.reason !== 'open') wfPool.push({ pair: t.pair, side: t.side, entryT: t.entryT, exitT: t.exitT, r: t.r, stopPct: t.stopPct, strategy: t.strategy, tf: t.tf, sizeF: 1, key, vf: volFactor(t.volRatio) });
         // whole-bot test: picked on the first 70% only, traded on the unseen 30%
-        if (s.id !== 'random') {
-          const always = FX_CONFIG.botAlways.includes(s.id);
-          if (always || pickedOnInSample(ch.inSample)) {
-            const sf = stratFactorFromStats(ch.inSample.avgR, ch.inSample.pf);
-            const unseen = done.filter((t) => t.entryT >= oosFrom);
-            for (const t of unseen) poolNew.push({ pair: t.pair, side: t.side, entryT: t.entryT, exitT: t.exitT, r: t.r, stopPct: t.stopPct, strategy: t.strategy, tf: t.tf, sizeF: sf * volFactor(t.volRatio), prio: ch.inSample.avgR });
-            pickedNew.push({ id: s.id, name: s.name, tf, filter: chosen, inAvgR: ch.inSample.avgR, inN: ch.inSample.n, unseenN: unseen.length });
-          }
-          const raw = stats.find((x) => x.filter === 'none')!;
-          if (always || pickedOnInSample(raw.inSample)) {
-            pickedOld.add(`${s.id}:${tf}`);
-            for (const t of byVariant.get('none')!.trades) if (t.reason !== 'open' && t.entryT >= oosFrom) poolOld.push({ pair: t.pair, side: t.side, entryT: t.entryT, exitT: t.exitT, r: t.r, stopPct: t.stopPct, strategy: t.strategy, tf: t.tf, sizeF: 1 });
-          }
+        const always = FX_CONFIG.botAlways.includes(s.id);
+        if (always || pickedOnInSample(ch.inSample)) {
+          const sf = stratFactorFromStats(ch.inSample.avgR, ch.inSample.pf);
+          const unseen = done.filter((t) => t.entryT >= oosFrom);
+          for (const t of unseen) poolNew.push({ pair: t.pair, side: t.side, entryT: t.entryT, exitT: t.exitT, r: t.r, stopPct: t.stopPct, strategy: t.strategy, tf: t.tf, sizeF: sf * volFactor(t.volRatio), prio: ch.inSample.avgR });
+          pickedNew.push({ id: s.id, name: s.name, tf, filter, exit, inAvgR: ch.inSample.avgR, inN: ch.inSample.n, unseenN: unseen.length });
+        }
+        const raw = fStats.find((x) => x.filter === 'none')!;
+        if (always || pickedOnInSample(raw.inSample)) {
+          pickedOld.add(key);
+          for (const t of byFilter.get('none')!.trades) if (t.reason !== 'open' && t.entryT >= oosFrom) poolOld.push({ pair: t.pair, side: t.side, entryT: t.entryT, exitT: t.exitT, r: t.r, stopPct: t.stopPct, strategy: t.strategy, tf: t.tf, sizeF: 1 });
         }
       }
     }
@@ -468,7 +630,22 @@ export class ForexLab {
       }
     }
     const filters = summarizeFilters(rows);
-    await this.redis.set(FX_FILTERS_CHOSEN, JSON.stringify(Object.fromEntries(rows.map((r) => [`${r.id}:${r.tf}`, r.filter])))).catch(() => undefined);
+    const exits = summarizeExits(rows);
+    await this.redis.set(FX_FILTERS_CHOSEN, JSON.stringify(Object.fromEntries(rows.map((r) => [`${r.id}:${r.tf}`, { f: r.filter, e: r.exit }])))).catch(() => undefined);
+
+    // ── signal judge: learns on the first 70%, graded once on the unseen 30% ──
+    let judgeModel: JudgeModel | null = null;
+    let judge: JudgeReport | null = null;
+    try {
+      const j = await trainJudge(judgeRows, oosFrom);
+      judgeModel = j.model;
+      judge = j.report;
+      await this.redis.set(FX_JUDGE, JSON.stringify({ active: j.report.active, model: j.model })).catch(() => undefined);
+      await this.redis.set('fx:judge:report', JSON.stringify(j.report)).catch(() => undefined);
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'signal judge failed');
+    }
+    judgeRows.length = 0;
     rows.sort((a, b) => b.outSample.avgR * Math.min(1, b.outSample.n / 30) - a.outSample.avgR * Math.min(1, a.outSample.n / 30));
     paperRows.sort((a, b) => b.stats.totalR - a.stats.totalR);
     recent.sort((a, b) => b.exitT - a.exitT);
@@ -481,6 +658,22 @@ export class ForexLab {
       const base = { maxOpen: SIZING.maxOpen, leverage: SIZING.leverage, marginShare: SIZING.marginShare, from: oosFrom, to };
       const levels = FX_CONFIG.portfolioRiskPct.map((rp) => simulatePortfolio(poolNew, { ...base, label: `${rp}% risk`, baseRiskPct: rp, maxPerStrategy: SIZING.maxPerStrategy, prioritise: true, ccyCapPct: SIZING.ccyCapPct * rp, ddSizing: true, flatSizing: false }));
       const old = simulatePortfolio(poolOld, { ...base, label: 'before the upgrade', baseRiskPct: 1, maxPerStrategy: null, prioritise: false, ccyCapPct: null, ddSizing: false, flatSizing: true });
+      const upgraded = { maxPerStrategy: SIZING.maxPerStrategy, prioritise: true, ccyCapPct: SIZING.ccyCapPct, ddSizing: true, flatSizing: false };
+      const judged = judgeModel
+        ? simulatePortfolio(
+            poolNew.filter((t) => {
+              const x = judgeX.get(tradeKey(t));
+              return !x || judgeProb(judgeModel!, x) >= judgeModel!.threshold;
+            }),
+            { ...base, ...upgraded, label: 'with the signal judge', baseRiskPct: 1 },
+          )
+        : null;
+      await yieldNow();
+      const wf = walkForward(wfPool, {
+        ...FX_CONFIG.walkForward,
+        always: (k) => FX_CONFIG.botAlways.includes(k.split(':')[0]!),
+        sim: { maxOpen: SIZING.maxOpen, leverage: SIZING.leverage, marginShare: SIZING.marginShare, baseRiskPct: 1, ...upgraded },
+      });
       portfolio = {
         from: oosFrom,
         to,
@@ -488,10 +681,13 @@ export class ForexLab {
         oldPicked: pickedOld.size,
         levels,
         old,
-        note: `Strategies and their checks were picked on the first 70% of the history only; this is what the whole bot would have done on the last 30%, which it never saw: real spreads, max ${SIZING.maxOpen} trades at once (${SIZING.maxPerStrategy} per strategy), ${SIZING.leverage}× margin, the currency limit and the sizing rules.`,
+        judged,
+        walkForward: wf,
+        note: `Strategies, their checks and their exits were picked on the first 70% of the history only; this is what the whole bot would have done on the last 30%, which it never saw: real spreads, max ${SIZING.maxOpen} trades at once (${SIZING.maxPerStrategy} per strategy), ${SIZING.leverage}× margin, the currency limit and the sizing rules.`,
       };
       await this.redis.set(FX_PORTFOLIO, JSON.stringify(portfolio)).catch(() => undefined);
     }
+    wfPool.length = 0;
     await yieldNow();
 
     // ── live market view ──
@@ -510,7 +706,7 @@ export class ForexLab {
           const sig = s.signal(x.ctx, x.ctx.bars.length - 1);
           if (!sig) continue;
           const f = rows.find((r) => r.id === s.id && r.tf === x.tf)?.filter ?? 'none';
-          const why = blockReason(f, x.env, x.ctx.bars.length - 1, sig.side);
+          const why = blockReason(f, x.env, x.ctx.bars.length - 1, sig.side, styleOf(s));
           firing.push({ id: s.id, name: s.name, tf: x.tf, side: sig.side, allowed: why === null, why });
         }
       }
@@ -527,13 +723,13 @@ export class ForexLab {
         price: last.c,
         t: last.t,
         change24hPct: n > 24 ? Math.round((last.c / c.bars[n - 25]!.c - 1) * 10000) / 100 : 0,
-        closes: c.close.slice(-72),
+        closes: c.close.slice(-72).map(px7),
         trend: e50 > e200 * 1.0005 ? 'up' : e50 < e200 * 0.9995 ? 'down' : 'flat',
         rsi: Math.round(c.rsi14[n - 1]!),
         atrPips: Math.round((c.atr14[n - 1]! / inst.pip) * 10) / 10,
         firing,
         openPaper: open.filter((t) => t.pair === inst.id).length,
-        bars: c.bars.slice(-150).map((b) => [b.t, b.o, b.h, b.l, b.c]),
+        bars: c.bars.slice(-150).map((b) => [b.t, px7(b.o), px7(b.h), px7(b.l), px7(b.c)]),
         drawings: drawingsFor(c),
         mtf: trendNow.get(inst.id) ?? { h1: 0, h4: 0, d1: 0 },
         strength: { base: inst.id.slice(0, 3), quote: inst.id.slice(3, 6), baseScore: fin(baseScore), quoteScore: fin(quoteScore), gap: fin(gap) },
@@ -560,11 +756,13 @@ export class ForexLab {
       oosFrom,
       rows,
       markets,
-      paper: { since, rows: paperRows, open: open.slice(0, 300), recent: recent.slice(0, 150) },
-      note: `${rows.length} strategy × timeframe combinations on ${INSTRUMENTS.length} markets, each tried raw and with ${FILTERS.length - 1} filters (${filtered} kept a filter). ${edges} pass on unseen data. Many were tested at once, so expect a few to pass by luck: the paper results decide.`,
+      paper: { since, rows: paperRows, open: open.slice(0, 300).map(slimTrade), recent: recent.slice(0, 150).map(slimTrade) },
+      note: `${rows.length} strategy × timeframe combinations on ${INSTRUMENTS.length} markets, each tried raw and with ${FILTERS.length - 1} filters (${filtered} kept one) and ${EXITS.length - 1} exit variants (${rows.filter((r) => r.id !== 'random' && r.exit !== 'designed').length} kept one). ${edges} pass on unseen data. Many were tested at once, so expect a few to pass by luck: the paper results decide.`,
       strength: strengthNow(strength),
       mood: moodNow(mood),
       filters,
+      exits,
+      judge,
       portfolio,
       news,
     };
@@ -582,7 +780,27 @@ export class ForexLab {
           open.map((t) => {
             const row = rowOf.get(`${t.strategy}:${t.tf}`);
             const sizeF = (row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (proven.has(t.strategy) ? 1.15 : 1);
-            return { ref: `${t.strategy}:${t.tf}:${t.pair}:${t.entryT}`, strategy: t.strategy, tf: t.tf, pair: t.pair, side: t.side, entryT: t.entryT, stop: t.stop, target: t.target, chosen: chosen.has(`${t.strategy}:${t.tf}`), sizeF: Math.round(sizeF * 100) / 100, prio: row ? row.all.avgR : -1 };
+            const x = judgeX.get(tradeKey(t));
+            const p = judgeModel && x ? judgeProb(judgeModel, x) : null;
+            const judgeOk = !judge?.active || !judgeModel || p === null || p >= judgeModel.threshold;
+            return {
+              ref: tradeKey(t),
+              strategy: t.strategy,
+              tf: t.tf,
+              pair: t.pair,
+              side: t.side,
+              entryT: t.entryT,
+              stop: t.stop,
+              target: t.target,
+              chosen: chosen.has(`${t.strategy}:${t.tf}`),
+              sizeF: Math.round(sizeF * 100) / 100,
+              prio: row ? row.all.avgR : -1,
+              judge: p === null ? null : { p: Math.round(p * 100) / 100, ok: judgeOk, need: judgeModel ? Math.round(judgeModel.threshold * 100) / 100 : null },
+              beAt: t.beAt ?? null,
+              scaleAt: t.scaleAt ?? null,
+              scaleFrac: t.scaleFrac ?? null,
+              scaled: t.scaled ?? false,
+            };
           }),
           (pair) => this.calendar?.blockFor(pair) ?? this.headlines?.blockFor(pair) ?? null,
           Object.fromEntries(markets.map((m) => [m.id, m.atrPips * (INSTRUMENTS.find((i) => i.id === m.id)?.pip ?? 0)])),

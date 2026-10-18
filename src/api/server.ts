@@ -144,7 +144,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     });
     secured.get('/api/forex/bot', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
-      const [snap, logRaw, chosenRaw, droppedRaw, portfolioRaw] = await Promise.all([deps.practice ? deps.practice.snapshot('bot') : null, redis.get('fx:bot:log').catch(() => null), redis.get('fx:bot:chosen').catch(() => null), redis.get('fx:bot:dropped').catch(() => null), redis.get('fx:portfolio').catch(() => null)]);
+      const [snap, logRaw, chosenRaw, droppedRaw, portfolioRaw, judgeRaw] = await Promise.all([deps.practice ? deps.practice.snapshot('bot') : null, redis.get('fx:bot:log').catch(() => null), redis.get('fx:bot:chosen').catch(() => null), redis.get('fx:bot:dropped').catch(() => null), redis.get('fx:portfolio').catch(() => null), redis.get('fx:judge:report').catch(() => null)]);
       const parse = <T,>(x: string | null, d: T): T => {
         try {
           return x ? (JSON.parse(x) as T) : d;
@@ -158,6 +158,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         account: snap?.account ?? null,
         risk: snap ? riskSummary(snap.account, mids, snap.account.equityUsd) : null,
         portfolio: parse(portfolioRaw, null as unknown),
+        judge: parse(judgeRaw, null as unknown),
         log: parse(logRaw, [] as Array<{ t: number; e: string }>),
         chosen: parse(chosenRaw, [] as string[]),
         dropped: parse(droppedRaw, [] as string[]),

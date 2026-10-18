@@ -58,13 +58,30 @@ export interface PracticePosition {
   ref?: string;
   /** bot trades (v13): % of the account it risked at the stop */
   riskPct?: number;
+  /** bot trades (v14): price that moves the stop to break-even, price where `scaleFrac` is taken off, and their state */
+  beAt?: number | null;
+  scaleAt?: number | null;
+  scaleFrac?: number;
+  scaled?: boolean;
+  be?: boolean;
 }
 
 export interface ClosedPractice extends PracticePosition {
   exit: number;
   closedAt: number;
   pnlUsd: number;
-  reason: 'manual' | 'stop' | 'target' | 'stop-out' | 'signal' | 'weekend';
+  reason: 'manual' | 'stop' | 'target' | 'stop-out' | 'signal' | 'weekend' | 'partial';
+}
+
+/** v14: a bot trade paused for the weekend, re-opened after Monday's open if its lab trade is still running */
+export interface ResumeItem {
+  ref: string;
+  strategy?: string;
+  pair: string;
+  side: 1 | -1;
+  riskPct?: number;
+  scaled?: boolean;
+  at: number;
 }
 
 export interface PracticeAccount {
@@ -72,6 +89,8 @@ export interface PracticeAccount {
   balanceUsd: number;
   /** v13: highest equity seen (the bot trades smaller after a drop) */
   peakUsd?: number;
+  /** v14: trades closed for the weekend, waiting to be re-opened */
+  resume?: ResumeItem[];
   open: PracticePosition[];
   closed: ClosedPractice[];
   createdAt: number;
@@ -189,6 +208,19 @@ function closePos(a: PracticeAccount, p: PracticePosition, px: number, mids: Rec
   a.closed = a.closed.slice(0, 200);
 }
 
+/** Close part of a position (a scale-out): realise its P&L, keep the rest open. Mutates `a`. */
+function closePart(a: PracticeAccount, p: PracticePosition, frac: number, px: number, mids: Record<string, number>, at: number): number {
+  const units = p.units * frac;
+  const part = { ...p, units, marginUsd: Math.round(p.marginUsd * frac * 100) / 100 };
+  const pl = Math.round(pnlUsd(part, px, mids) * 100) / 100;
+  a.balanceUsd = Math.round((a.balanceUsd + pl) * 100) / 100;
+  p.units -= units;
+  p.marginUsd = Math.round(p.marginUsd * (1 - frac) * 100) / 100;
+  a.closed.unshift({ ...part, id: `${p.id}-part`, exit: px, closedAt: at, pnlUsd: pl, reason: 'partial' });
+  a.closed = a.closed.slice(0, 200);
+  return pl;
+}
+
 /** Check stops / targets on the new 1-minute bars, then the stop-out. Mutates `a`. Pure apart from that. */
 export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: number): string[] {
   const mids: Record<string, number> = {};
@@ -217,6 +249,20 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
         closePos(a, p, p.target, mids, 'target', now);
         events.push(`${p.pair} target hit`);
         break;
+      }
+      // v14: take part off at +1R / move the stop to break-even (the lab trade's rules)
+      let toBe = false;
+      if (!p.scaled && p.scaleAt != null && (p.side === 1 ? best >= p.scaleAt : best <= p.scaleAt)) {
+        const frac = Math.min(0.9, Math.max(0.1, p.scaleFrac ?? 0.5));
+        closePart(a, p, frac, p.scaleAt, mids, now);
+        p.scaled = true;
+        toBe = true;
+        events.push(`${p.pair} took ${Math.round(frac * 100)}% off at +1R`);
+      }
+      if (!p.be && p.beAt != null && (p.side === 1 ? best >= p.beAt : best <= p.beAt)) toBe = true;
+      if (toBe && !p.be) {
+        if (p.stop === null || (p.side === 1 ? p.entry > p.stop : p.entry < p.stop)) p.stop = p.entry;
+        p.be = true;
       }
       p.checkedT = t;
     }
@@ -260,7 +306,28 @@ async function fetchQuote(inst: Instrument): Promise<Quote | null> {
   return null;
 }
 
-export interface OpenReq { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number }
+/** A lab paper trade as the bot sees it (v14: + the judge's score and the trade's exit rules). */
+export interface LabOpenTrade {
+  ref: string;
+  strategy: string;
+  tf?: string;
+  pair: string;
+  side: 1 | -1;
+  entryT: number;
+  stop: number;
+  target: number | null;
+  chosen: boolean;
+  sizeF?: number;
+  prio?: number;
+  /** the signal judge: win probability, whether it passes, the bar it needs (null = no judge view) */
+  judge?: { p: number; ok: boolean; need: number | null } | null;
+  beAt?: number | null;
+  scaleAt?: number | null;
+  scaleFrac?: number | null;
+  scaled?: boolean;
+}
+
+export interface OpenReq { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; beAt?: number | null; scaleAt?: number | null; scaleFrac?: number | null; scaled?: boolean }
 
 export class Practice {
   private cache = new Map<string, Quote>();
@@ -376,8 +443,9 @@ export class Practice {
         for (const p of [...a.open]) {
           const qq = q[p.pair];
           closePos(a, p, qq ? (p.side === 1 ? qq.bid : qq.ask) : exitPx(p, mids[p.pair] ?? p.entry), mids, 'weekend', Date.now());
+          if (p.ref) a.resume = [...(a.resume ?? []), { ref: p.ref, ...(p.strategy ? { strategy: p.strategy } : {}), pair: p.pair, side: p.side, ...(p.riskPct !== undefined ? { riskPct: p.riskPct } : {}), scaled: !!p.scaled, at: Date.now() }];
         }
-        ev.push('weekend: every bot trade closed before the Friday close');
+        ev.push('weekend: every bot trade closed before the Friday close (re-opened after Monday\'s open if still running)');
       }
       if (ev.length) {
         log.info({ acct, ev }, 'practice account event');
@@ -432,7 +500,7 @@ export class Practice {
       const target = req.target ?? null;
       if (stop !== null && (req.side === 1 ? stop >= entry : stop <= entry)) return { ok: false, error: 'stop must be on the losing side of the price' };
       if (target !== null && (req.side === 1 ? target <= entry : target >= entry)) return { ok: false, error: 'target must be on the winning side of the price' };
-      a.open.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, pair: inst.id, side: req.side, units, entry, marginUsd: Math.round(req.marginUsd * 100) / 100, leverage: lev, stop, target, openedAt: Date.now(), checkedT: quote.bars[quote.bars.length - 1]?.[0] ?? Date.now(), ...(req.strategy ? { strategy: req.strategy } : {}), ...(req.ref ? { ref: req.ref } : {}), ...(req.riskPct !== undefined ? { riskPct: req.riskPct } : {}) });
+      a.open.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, pair: inst.id, side: req.side, units, entry, marginUsd: Math.round(req.marginUsd * 100) / 100, leverage: lev, stop, target, openedAt: Date.now(), checkedT: quote.bars[quote.bars.length - 1]?.[0] ?? Date.now(), ...(req.strategy ? { strategy: req.strategy } : {}), ...(req.ref ? { ref: req.ref } : {}), ...(req.riskPct !== undefined ? { riskPct: req.riskPct } : {}), ...(req.beAt != null ? { beAt: req.beAt } : {}), ...(req.scaleAt != null ? { scaleAt: req.scaleAt, scaleFrac: req.scaleFrac ?? 0.5, scaled: !!req.scaled } : {}) });
       return { ok: true };
     }
   }
@@ -444,7 +512,7 @@ export class Practice {
    * `BOT.maxCcyRiskPct` of the account on one currency in one direction. Held trades follow the lab's trailing stop;
    * one the lab no longer has open (its trail / time / signal exit fired) is closed at the market.
    */
-  async syncBot(labOpen: Array<{ ref: string; strategy: string; tf?: string; pair: string; side: 1 | -1; entryT: number; stop: number; target: number | null; chosen: boolean; sizeF?: number; prio?: number }>, blockFor: (pair: string) => string | null = () => null, atr1h: Record<string, number> = {}): Promise<string[]> {
+  async syncBot(labOpen: LabOpenTrade[], blockFor: (pair: string) => string | null = () => null, atr1h: Record<string, number> = {}): Promise<string[]> {
     return this.serial(async () => {
       const a = await this.load('bot');
       const events: string[] = [];
@@ -484,6 +552,41 @@ export class Practice {
         if (!noted.has(key)) events.push(e);
         noted.add(key);
       };
+      const canOpen = clock.open && !clock.noNewTrades && !clock.rollover && clock.sinceOpenMin >= 120;
+      // v14: trades paused for the weekend come back once Monday's market has settled, if the lab still holds them
+      if (a.resume?.length) {
+        const keep: ResumeItem[] = [];
+        for (const r of a.resume) {
+          if (Date.now() - r.at > 4 * 86_400_000) continue;
+          const lab = byRef.get(r.ref);
+          if (!lab) {
+            events.push(`${r.pair} (${r.strategy ?? 'bot'}) ended over the weekend, not re-opened`);
+            continue;
+          }
+          if (!canOpen) {
+            keep.push(r);
+            continue;
+          }
+          const qq = q[r.pair];
+          if (!qq || qq.tradeable === false) {
+            keep.push(r);
+            continue;
+          }
+          const entry = r.side === 1 ? qq.ask : qq.bid;
+          const dist = (entry - lab.stop) * r.side;
+          if (!(dist > 0) || (lab.target !== null && (r.side === 1 ? entry >= lab.target : entry <= lab.target))) {
+            events.push(`${r.pair} (${r.strategy ?? 'bot'}) moved past its stop / target over the weekend, not re-opened`);
+            continue;
+          }
+          const v = view(a, mids);
+          const risk = (r.riskPct ?? BOT.riskPct) * (r.scaled ? 1 - (lab.scaleFrac ?? 0.5) : 1);
+          const margin = Math.min((v.equityUsd * risk) / 100 / (dist / entry) / BOT.leverage, v.freeMarginUsd * SIZING.marginShare);
+          if (margin < 1) continue;
+          const res = await this.openIn(a, { pair: r.pair, side: r.side, marginUsd: margin, leverage: BOT.leverage, stop: lab.stop, target: lab.target, ...(r.strategy ? { strategy: r.strategy } : {}), ref: r.ref, riskPct: Math.round(risk * 100) / 100, beAt: lab.beAt ?? null, scaleAt: lab.scaleAt ?? null, scaleFrac: lab.scaleFrac ?? null, scaled: !!r.scaled });
+          events.push(res.ok ? `re-opened ${r.side === 1 ? 'long' : 'short'} ${r.pair} (${r.strategy ?? 'bot'}) after the weekend` : `could not re-open ${r.pair}: ${res.error}`);
+        }
+        a.resume = keep;
+      }
       // best-tested signals get the free slots first; one strategy holds at most `maxPerStrategy` trades
       const stratKey = (ref: string) => ref.split(':').slice(0, 2).join(':');
       const perStrategy = new Map<string, number>();
@@ -495,8 +598,20 @@ export class Practice {
           note(`${t.ref}:strat`, `skipped ${t.pair} (${t.strategy}): it already has ${SIZING.maxPerStrategy} trades open`);
           continue;
         }
+        if (t.judge && !t.judge.ok) {
+          note(`${t.ref}:judge`, `skipped ${t.pair} (${t.strategy}): the signal judge gives it a ${Math.round(t.judge.p * 100)}% chance (needs ${Math.round((t.judge.need ?? 0) * 100)}%)`);
+          continue;
+        }
         const qs = q[t.pair];
-        const why = clock.noNewTrades ? (clock.open ? 'weekly close is near' : 'market closed') : blockFor(t.pair) ?? (qs && priceShock(qs.bars, atr1h[t.pair] ?? 0) ? 'price shock: unusually big move in the last 15 min' : null);
+        const why = clock.noNewTrades
+          ? clock.open
+            ? 'weekly close is near'
+            : 'market closed'
+          : clock.rollover
+            ? 'daily rollover (20:45–23:15 UTC): spreads are wide'
+            : clock.sinceOpenMin < 120
+              ? 'the week just opened: spreads are still wide'
+              : blockFor(t.pair) ?? (qs && priceShock(qs.bars, atr1h[t.pair] ?? 0) ? 'price shock: unusually big move in the last 15 min' : null);
         if (why) {
           note(`${t.pair}:${why}`, `waited on ${t.pair} (${t.strategy}): ${why}`);
           continue;
@@ -520,7 +635,7 @@ export class Practice {
         margin = Math.min(margin, v.freeMarginUsd * SIZING.marginShare);
         if (margin < 1) continue;
         const actual = Math.round(((margin * BOT.leverage * (dist / entry)) / v.equityUsd) * 10_000) / 100;
-        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: BOT.leverage, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual });
+        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: BOT.leverage, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, beAt: t.beAt ?? null, scaleAt: t.scaleAt ?? null, scaleFrac: t.scaleFrac ?? null, scaled: !!t.scaled });
         events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}), risking ${actual}% of the account${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}` : `skipped ${t.pair}: ${r.error}`);
         if (r.ok) perStrategy.set(sk, (perStrategy.get(sk) ?? 0) + 1);
       }
@@ -538,7 +653,8 @@ export class Practice {
       if (!c.strategy) continue;
       const k = c.strategy;
       out[k] = out[k] ?? { n: 0, pnlUsd: 0 };
-      out[k].n++;
+      // a scale-out or a weekend pause is part of one trade: its money counts, not as an extra trade
+      if (c.reason !== 'partial' && c.reason !== 'weekend') out[k].n++;
       out[k].pnlUsd += c.pnlUsd;
     }
     return out;

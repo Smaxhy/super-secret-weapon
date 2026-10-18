@@ -8,15 +8,20 @@ import { Badge, Button, Card, Row, Rows, Sparkline, Stack, StatTile } from './ui
 
 export interface StrengthNow { at: number | null; ccys: Array<{ ccy: string; score: number; today: number; week: number }> }
 export interface MoodNow { at: number | null; score: number | null; label: 'risk-on' | 'risk-off' | 'calm'; inputs: Array<{ id: string; label: string; value: number | null; change: number | null; unit: '%' | 'bp' }>; note: string }
-export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'all';
+export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'all';
 export interface FilterSummary { filter: FilterKind; label: string; chosenBy: number; compared: number; inDeltaR: number; outDeltaR: number; outBetterPct: number; keptPct: number; random: { inAvgR: number; outAvgR: number; outN: number } }
 interface StudyCell { n: number; avgAtr: number[]; contPct: number[] }
 export interface NewsStudy { horizons: number[]; shocks: number; overall: StudyCell; byHour: Array<{ key: string; label: string } & StudyCell>; byPair: Array<{ pair: string } & StudyCell>; byEvent: Array<{ key: string; label: string } & StudyCell>; recent: Array<{ pair: string; t: number; dir: 1 | -1; sizeAtr: number; moves: Array<number | null>; event: string | null }>; eventsKnown: number }
 export interface PortfolioResult { label: string; baseRiskPct: number; trades: number; skipped: { full: number; ccy: number; margin: number; strategy?: number }; finalX: number; totalPct: number; weeks: number; avgWeekPct: number; medianWeekPct: number; greenWeeksPct: number; weeks5Pct: number; bigWeeksPct: number; bestWeekPct: number; worstWeekPct: number; months: number; avgMonthPct: number; medianMonthPct: number; greenMonthsPct: number; bigMonthsPct: number; worstMonthPct: number; maxDdPct: number; blown: boolean; mc: { paths: number; quarterP10: number; quarterMedian: number; quarterP90: number; pLoss: number; pDd20: number; pDd40: number } | null; equity: number[] }
-export interface PortfolioReport { from: number; to: number; picked: Array<{ id: string; name: string; tf: string; filter: FilterKind; inAvgR: number; inN: number; unseenN: number }>; oldPicked: number; levels: PortfolioResult[]; old: PortfolioResult; note: string }
+export type ExitKind = 'designed' | 'breakeven' | 'scale' | 'tight' | 'runner' | 'quick';
+export interface WalkForward { from: number; to: number; lookbackMonths: number; result: PortfolioResult; months: Array<{ month: string; picked: number; trades: number }> }
+export interface PortfolioReport { from: number; to: number; picked: Array<{ id: string; name: string; tf: string; filter: FilterKind; exit?: ExitKind; inAvgR: number; inN: number; unseenN: number }>; oldPicked: number; levels: PortfolioResult[]; old: PortfolioResult; judged?: PortfolioResult | null; walkForward?: WalkForward | null; note: string }
+export interface ExitSummary { exit: ExitKind; label: string; chosenBy: number; compared: number; inDeltaR: number; outDeltaR: number; outBetterPct: number }
+export interface JudgeReport { active: boolean; why: string; trainedOn: number; tested: number; auc: number | null; threshold: number | null; keepPct: number; allR: number; keptR: number; skippedR: number; allWinPct: number; keptWinPct: number; importance: Array<{ feature: string; label: string; share: number }> }
 export interface RiskSummary { exposure: Array<{ ccy: string; pct: number }>; capPct: number; ddPct: number; ddFactor: number; baseRiskPct: number; openRiskPct: number }
 
-export const FILTER_SHORT: Record<FilterKind, string> = { none: 'no filter', strength: '+ strength', mtf: '+ bigger chart', mood: '+ mood', all: '+ all 3 checks' };
+export const FILTER_SHORT: Record<FilterKind | 'regime', string> = { none: 'no filter', strength: '+ strength', mtf: '+ bigger chart', mood: '+ mood', regime: '+ regime', all: '+ all 3 checks' };
+export const EXIT_SHORT: Record<ExitKind, string> = { designed: 'exits as designed', breakeven: 'break-even at +1R', scale: 'half off at +1R', tight: 'closer target', runner: 'runner exit', quick: 'quick exit' };
 const signed = (x: number, dp = 1) => {
   const v = Number(x.toFixed(dp));
   return v === 0 ? (0).toFixed(dp) : `${v > 0 ? '+' : ''}${v.toFixed(dp)}`;
@@ -111,6 +116,69 @@ export function FiltersCard({ f }: { f: FilterSummary[] | undefined }) {
   );
 }
 
+/** Do the new exits help? Each strategy under its own filter, exits swapped. */
+export function ExitsCard({ e }: { e: ExitSummary[] | undefined }) {
+  if (!e?.length) return null;
+  return (
+    <Card title="Do other exits help?" subtitle="Same entries, different ways out: stop to break-even once +1R up, half off at +1R, a closer target, no target with a trailing stop, or a shorter time limit. Each strategy keeps the exit that did best on the first 70% only.">
+      <div className="overflow-x-auto">
+        <table className="tabular w-full min-w-[34rem] text-sm">
+          <thead>
+            <tr className="text-left text-xs text-muted">
+              <th className="py-1 font-medium">Exit</th>
+              <th className="py-1 text-right font-medium">Picked by</th>
+              <th className="py-1 text-right font-medium">R/trade first 70%</th>
+              <th className="py-1 text-right font-medium">R/trade unseen</th>
+              <th className="py-1 text-right font-medium">Better unseen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {e.map((x) => (
+              <tr key={x.exit} className="border-t border-line">
+                <td className="py-1.5 text-ink">{x.label}</td>
+                <td className="py-1.5 text-right text-ink-2">{x.chosenBy} {x.chosenBy === 1 ? 'strategy' : 'strategies'}</td>
+                <td className={`py-1.5 text-right ${tone(x.inDeltaR)}`}>{signed(x.inDeltaR, 2)}</td>
+                <td className={`py-1.5 text-right font-semibold ${tone(x.outDeltaR)}`}>{signed(x.outDeltaR, 2)}</td>
+                <td className="py-1.5 text-right text-ink-2">{x.outBetterPct}% of {x.compared}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+/** The signal judge: a learned model that scores every signal from its context. */
+export function JudgeCard({ j }: { j: JudgeReport | null | undefined }) {
+  if (!j) return null;
+  return (
+    <Card
+      title="Signal judge"
+      subtitle="A learning model (boosted trees) that scores every signal from its context: currency strength, bigger-chart trend, mood, how wild the market is, the hour, distance from the averages, the strategy's recent results. It learns on the first 70% and must prove itself on the unseen 30% before the bot listens to it."
+      action={<Badge tone={j.active ? 'up' : 'neutral'}>{j.active ? 'On: the bot uses it' : 'Off: not proven yet'}</Badge>}
+    >
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatTile compact label="Unseen trades" value={j.tested.toLocaleString()} sub={`learned from ${j.trainedOn.toLocaleString()}`} />
+        <StatTile compact label="Ranking skill (AUC)" value={j.auc === null ? '—' : j.auc.toFixed(2)} sub="0.50 = coin flip" tone={j.auc !== null && j.auc >= 0.55 ? 'up' : undefined} />
+        <StatTile compact label="Trades it keeps" value={`${j.keepPct}%`} sub={`win rate ${j.keptWinPct}% vs ${j.allWinPct}%`} />
+        <StatTile compact label="R per trade, kept" value={`${signed(j.keptR, 2)}R`} sub={`all ${signed(j.allR, 2)}R · skipped ${signed(j.skippedR, 2)}R`} tone={j.keptR > j.allR ? 'up' : undefined} />
+      </div>
+      <p className="mt-3 text-sm text-ink-2">{j.why}.</p>
+      {j.importance.length > 0 && (
+        <div className="mt-3">
+          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">What it looks at most</div>
+          <div className="flex flex-wrap gap-1.5">
+            {j.importance.map((x) => (
+              <Badge key={x.feature} tone="neutral">{x.label} {x.share}%</Badge>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 const HZ = (h: number) => (h === 1 ? '1 h' : `${h} h`);
 
 /** What prices did after past shock candles (big news hours). */
@@ -168,7 +236,7 @@ export function NewsStudyCard({ n }: { n: NewsStudy | null | undefined }) {
 }
 
 /** The whole bot on the unseen weeks, at several risk levels, against the bot before v13. */
-export function PortfolioCard({ p }: { p: PortfolioReport | null | undefined }) {
+export function PortfolioCard({ p, judgeOn }: { p: PortfolioReport | null | undefined; judgeOn?: boolean }) {
   const [showPicked, setShowPicked] = useState(false);
   if (!p) return <Card title="Honest test of the whole bot"><p className="text-sm text-ink-2">Runs with the next hourly update.</p></Card>;
   const one = p.levels.find((x) => x.baseRiskPct === 1) ?? p.levels[0]!;
@@ -198,9 +266,9 @@ export function PortfolioCard({ p }: { p: PortfolioReport | null | undefined }) 
               </tr>
             </thead>
             <tbody>
-              {[...p.levels, o].map((k) => (
+              {[...p.levels, ...(p.judged ? [p.judged] : []), o].map((k) => (
                 <tr key={k.label} className={`border-t border-line ${k === o ? 'text-muted' : ''}`}>
-                  <td className="py-1.5 text-ink">{k === o ? 'Before the upgrade (1%)' : `${k.baseRiskPct}%`}</td>
+                  <td className="py-1.5 text-ink">{k === o ? 'Before the upgrade (1%)' : k === p.judged ? `With the signal judge (1%${judgeOn ? '' : ', judge not on yet'})` : `${k.baseRiskPct}%`}</td>
                   <td className={`py-1.5 text-right ${tone(k.avgWeekPct)}`}>{signed(k.avgWeekPct)}%</td>
                   <td className={`py-1.5 text-right ${tone(k.medianWeekPct)}`}>{signed(k.medianWeekPct)}%</td>
                   <td className="py-1.5 text-right">{k.greenWeeksPct}%</td>
@@ -222,18 +290,41 @@ export function PortfolioCard({ p }: { p: PortfolioReport | null | undefined }) 
         <p className="text-xs text-muted">
           The bot before this upgrade (no checks, every trade 1%, no currency limit) on the same weeks: {signed(o.avgWeekPct)}% a week, worst week {signed(o.worstWeekPct)}%, biggest drop −{o.maxDdPct}%. Slots were full {one.skipped.full.toLocaleString()} times, {one.skipped.ccy} trades were skipped for piling onto one currency{one.skipped.strategy ? ` and ${one.skipped.strategy} because one strategy already had 3 open` : ''}. Past weeks don't promise future ones; the paper results are the real test.
         </p>
+        {p.walkForward && <WalkForwardBox w={p.walkForward} />}
         <div>
           <Button size="sm" variant="ghost" onClick={() => setShowPicked(!showPicked)}>{showPicked ? 'Hide' : 'Show'} the {p.picked.length} strategies it picked</Button>
           {showPicked && (
             <Rows className="mt-2">
               {p.picked.map((x) => (
-                <Row key={`${x.id}:${x.tf}`} label={`${x.name} · ${x.tf}`} sub={`${FILTER_SHORT[x.filter]} · first 70%: ${x.inN} trades, ${signed(x.inAvgR, 2)}R each`} value={`${x.unseenN} unseen trades`} />
+                <Row key={`${x.id}:${x.tf}`} label={`${x.name} · ${x.tf}`} sub={`${FILTER_SHORT[x.filter]}${x.exit && x.exit !== 'designed' ? ` · ${EXIT_SHORT[x.exit]}` : ''} · first 70%: ${x.inN} trades, ${signed(x.inAvgR, 2)}R each`} value={`${x.unseenN} unseen trades`} />
               ))}
             </Rows>
           )}
         </div>
       </Stack>
     </Card>
+  );
+}
+
+/** Rolling test: strategies re-picked every month from the months before, over the whole history. */
+function WalkForwardBox({ w }: { w: WalkForward }) {
+  const k = w.result;
+  return (
+    <div className="rounded-xl border border-line p-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="text-sm font-semibold text-ink">Rolling test: {k.weeks} weeks, re-picked every month</div>
+        <div className={`tabular text-sm font-semibold ${tone(k.totalPct)}`}>{signed(k.totalPct, 0)}% at 1% risk</div>
+      </div>
+      <p className="mt-1 text-xs text-muted">At the start of every month it picks the strategies whose trades in the previous {w.lookbackMonths} months were good, and trades only those that month. Nothing a month uses comes from that month or later, so this is a much longer fair test ({day(w.from)} → {day(w.to)}).</p>
+      <div className="mt-2 grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
+        <div><div className="text-xs text-muted">Avg week</div><div className={`tabular font-semibold ${tone(k.avgWeekPct)}`}>{signed(k.avgWeekPct)}%</div></div>
+        <div><div className="text-xs text-muted">Green weeks</div><div className="tabular font-semibold text-ink">{k.greenWeeksPct}%</div></div>
+        <div><div className="text-xs text-muted">Avg month</div><div className={`tabular font-semibold ${tone(k.avgMonthPct)}`}>{signed(k.avgMonthPct)}%</div></div>
+        <div><div className="text-xs text-muted">Worst month</div><div className="tabular font-semibold text-down">{signed(k.worstMonthPct)}%</div></div>
+        <div><div className="text-xs text-muted">Biggest drop</div><div className="tabular font-semibold text-ink">−{k.maxDdPct}%</div></div>
+      </div>
+      {k.equity.length > 1 && <Sparkline points={k.equity} width={600} height={44} tone={k.finalX >= 1 ? 'up' : 'down'} className="mt-2 w-full" />}
+    </div>
   );
 }
 

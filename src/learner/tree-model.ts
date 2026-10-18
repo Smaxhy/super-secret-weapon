@@ -107,7 +107,7 @@ export interface TreeReport {
 }
 
 const yieldNow = () => new Promise<void>((r) => setImmediate(r));
-const sigmoid = (z: number): number => (z >= 0 ? 1 / (1 + Math.exp(-z)) : Math.exp(z) / (1 + Math.exp(z)));
+export const sigmoid = (z: number): number => (z >= 0 ? 1 / (1 + Math.exp(-z)) : Math.exp(z) / (1 + Math.exp(z)));
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 const rowW = (r: LearnRow): number => (Number.isFinite(r.weight) && r.weight > 0 ? r.weight : 0);
 const STRAT_PREFIX = 'strategy=';
@@ -156,7 +156,8 @@ function valueOf(name: string, flat: Readonly<Record<string, number>>, strategy:
   return v === undefined || !Number.isFinite(v) ? NaN : v;
 }
 
-interface Matrix {
+/** Column-major training matrix (exported for other learners, e.g. the forex signal judge). */
+export interface Matrix {
   n: number;
   F: number;
   /** column-major raw values (NaN = missing) */
@@ -181,7 +182,7 @@ function matrix(rows: readonly LearnRow[], features: readonly string[], winPct: 
 }
 
 /** Pure: quantile cut points per feature from the training matrix (≤ bins−1 cuts; distinct). */
-function cutPoints(m: Matrix, bins: number): Float64Array[] {
+export function cutPoints(m: Matrix, bins: number): Float64Array[] {
   const cuts: Float64Array[] = [];
   for (let f = 0; f < m.F; f++) {
     const vals: number[] = [];
@@ -348,7 +349,7 @@ function logLoss(p: ArrayLike<number>, y: ArrayLike<number>, w: ArrayLike<number
 }
 
 /** Fit boosted trees on `tr`; optionally watch `va` for early stopping. Returns trees, base, best round count, gains. */
-async function boost(
+export async function boost(
   tr: Matrix,
   cuts: readonly Float64Array[],
   o: TreeOptions,

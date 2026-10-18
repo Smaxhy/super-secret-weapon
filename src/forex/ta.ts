@@ -179,6 +179,22 @@ export function cci(b: readonly Bar[], n = 20): number[] {
   });
 }
 
+/** v14: cross-market readings aligned to a series' bars (read at each bar's close). Set by the lab. */
+export interface CtxExt {
+  /** strength gap base − quote (≈ normal moves) */
+  gap: Float64Array;
+  /** rank of the base / quote currency on 5-day strength: 0 = strongest … 7 = weakest (NaN = unknown; metals: base NaN) */
+  rankBase: Float64Array;
+  rankQuote: Float64Array;
+  /** 24-hour move of the linked markets in normal 24-hour moves (z): oil, US 10-year yield, S&P futures, dollar index */
+  zOil: Float64Array;
+  zYield: Float64Array;
+  zStocks: Float64Array;
+  zDollar: Float64Array;
+  /** S&P futures return since the start of the month, % */
+  spxMtd: Float64Array;
+}
+
 /** Everything a strategy may read at bar i, computed once per series. */
 export interface Ctx {
   bars: Bar[];
@@ -218,6 +234,26 @@ export interface Ctx {
   psar: { sar: number[]; dir: number[] };
   stoch: { k: number[]; d: number[] };
   cci20: number[];
+  /** v14: efficiency ratio over 20 bars = |net move| ÷ path length (≈1 straight line, ≈0 chop) */
+  er20: number[];
+  /** v14: yesterday's range was the narrowest of the last 7 days (NR7) */
+  nr7: boolean[];
+  /** v14: cross-market readings (absent in plain backtests → strategies that need them stay silent) */
+  ext?: CtxExt;
+  /** memo for `volRatioAt` (−1 = not computed yet, NaN = unknown) */
+  vrCache?: Float64Array;
+}
+
+/** Efficiency ratio (Kaufman) over n bars. */
+export function efficiencyRatio(close: readonly number[], n = 20): number[] {
+  const out: number[] = new Array(close.length).fill(NaN);
+  let path = 0;
+  for (let i = 1; i < close.length; i++) {
+    path += Math.abs(close[i]! - close[i - 1]!);
+    if (i > n) path -= Math.abs(close[i - n]! - close[i - n - 1]!);
+    if (i >= n) out[i] = path > 0 ? Math.abs(close[i]! - close[i - n]!) / path : 0;
+  }
+  return out;
 }
 
 export function buildCtx(bars: Bar[], barMin: number, pair = ''): Ctx {
@@ -237,6 +273,9 @@ export function buildCtx(bars: Bar[], barMin: number, pair = ''): Ctx {
   const lows = bars.map((b) => b.l);
   const prevDay: Ctx['prevDay'] = [];
   const asia: Ctx['asia'] = [];
+  const nr7: boolean[] = [];
+  const ranges: number[] = [];
+  let nr7Today = false;
   let day = -1;
   let cur = { h: -Infinity, l: Infinity, c: NaN };
   let prev: { h: number; l: number; c: number } | null = null;
@@ -246,7 +285,12 @@ export function buildCtx(bars: Bar[], barMin: number, pair = ''): Ctx {
     const d = Math.floor(b.t / 86_400_000);
     const hr = new Date(b.t).getUTCHours();
     if (d !== day) {
-      if (day >= 0 && Number.isFinite(cur.c)) prev = { ...cur };
+      if (day >= 0 && Number.isFinite(cur.c)) {
+        prev = { ...cur };
+        ranges.push(cur.h - cur.l);
+        const last7 = ranges.slice(-7);
+        nr7Today = last7.length === 7 && ranges[ranges.length - 1]! <= Math.min(...last7);
+      }
       day = d;
       cur = { h: -Infinity, l: Infinity, c: NaN };
       ah = -Infinity;
@@ -261,6 +305,7 @@ export function buildCtx(bars: Bar[], barMin: number, pair = ''): Ctx {
     }
     prevDay.push(prev);
     asia.push(hr >= 7 && Number.isFinite(ah) ? { h: ah, l: al } : null);
+    nr7.push(nr7Today);
   }
   return {
     bars,
@@ -294,6 +339,8 @@ export function buildCtx(bars: Bar[], barMin: number, pair = ''): Ctx {
     psar: psar(bars),
     stoch: stochastic(bars),
     cci20: cci(bars, 20),
+    er20: efficiencyRatio(close, 20),
+    nr7,
   };
 }
 

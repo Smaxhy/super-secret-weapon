@@ -311,3 +311,77 @@ export function simulatePortfolio(trades: readonly PTrade[], o: PortfolioOpts): 
     equity: equity.filter((_, k) => k % step === 0 || k === equity.length - 1),
   };
 }
+
+/** A raw trade for the walk-forward test: its strategy × timeframe key and its wildness factor. */
+export interface WTrade extends PTrade {
+  key: string;
+  vf: number;
+}
+
+export interface WalkForward {
+  from: number;
+  to: number;
+  lookbackMonths: number;
+  result: PortfolioResult;
+  months: Array<{ month: string; picked: number; trades: number }>;
+}
+
+/**
+ * Walk-forward test: at the start of every month, pick the strategies whose trades closed in the previous
+ * `lookbackMonths` months pass the bar (n, avg R, profit factor) — plus the always-on ones — and trade only their
+ * signals that month. Nothing a month uses comes from that month or later, so every month is a fair test. Pure.
+ */
+export function walkForward(
+  trades: readonly WTrade[],
+  o: { lookbackMonths: number; minN: number; minAvgR: number; minPf: number; always: (key: string) => boolean; sim: Omit<PortfolioOpts, 'from' | 'to' | 'label'> },
+): WalkForward | null {
+  if (!trades.length) return null;
+  let first = Infinity;
+  let last = -Infinity;
+  for (const t of trades) {
+    first = Math.min(first, t.entryT);
+    last = Math.max(last, t.entryT);
+  }
+  const f = new Date(first);
+  const l = new Date(last);
+  const startIdx = f.getUTCFullYear() * 12 + f.getUTCMonth() + o.lookbackMonths;
+  const endIdx = l.getUTCFullYear() * 12 + l.getUTCMonth();
+  if (startIdx > endIdx) return null;
+  const at = (m: number) => Date.UTC(Math.floor(m / 12), m % 12, 1);
+  const pool: PTrade[] = [];
+  const months: WalkForward['months'] = [];
+  for (let m = startIdx; m <= endIdx; m++) {
+    const start = at(m);
+    const end = at(m + 1);
+    const winStart = at(m - o.lookbackMonths);
+    const stats = new Map<string, { n: number; sum: number; gw: number; gl: number }>();
+    for (const t of trades) {
+      if (t.exitT < winStart || t.exitT >= start) continue;
+      const s = stats.get(t.key) ?? { n: 0, sum: 0, gw: 0, gl: 0 };
+      s.n++;
+      s.sum += t.r;
+      if (t.r > 0) s.gw += t.r;
+      else s.gl -= t.r;
+      stats.set(t.key, s);
+    }
+    const picked = new Map<string, { avgR: number; pf: number | null }>();
+    for (const [k, s] of stats) {
+      const avgR = s.sum / s.n;
+      const pf = s.gl > 0 ? s.gw / s.gl : null;
+      if ((s.n >= o.minN && avgR >= o.minAvgR && (pf ?? 99) >= o.minPf) || o.always(k)) picked.set(k, { avgR, pf });
+    }
+    let count = 0;
+    for (const t of trades) {
+      if (t.entryT < start || t.entryT >= end) continue;
+      const p = picked.get(t.key);
+      if (!p) continue;
+      pool.push({ ...t, sizeF: stratFactorFromStats(p.avgR, p.pf) * t.vf, prio: p.avgR });
+      count++;
+    }
+    const d = new Date(start);
+    months.push({ month: `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`, picked: picked.size, trades: count });
+  }
+  const from = at(startIdx);
+  const to = Math.min(at(endIdx + 1) - 1, last + 7 * DAY);
+  return { from, to, lookbackMonths: o.lookbackMonths, result: simulatePortfolio(pool, { ...o.sim, label: 'walk-forward', from, to }), months };
+}

@@ -78,6 +78,11 @@ export interface Signal {
   maxBars?: number;
   /** close when this returns true at a bar close (mean-reversion exits) */
   exitWhen?: 'aboveSma5' | 'midBand' | 'ema20' | null;
+  /** v14: move the stop to break-even (entry + costs) once price is this many R in profit */
+  beAtR?: number | null;
+  /** v14: take `scaleFrac` of the position off at this many R in profit, then stop to break-even */
+  scaleAtR?: number | null;
+  scaleFrac?: number;
 }
 
 export interface Trade {
@@ -93,7 +98,7 @@ export interface Trade {
   r: number;
   /** stop distance as % of price — sets the leverage needed */
   stopPct: number;
-  reason: 'stop' | 'target' | 'trail' | 'time' | 'exit' | 'open';
+  reason: 'stop' | 'target' | 'trail' | 'time' | 'exit' | 'open' | 'breakeven' | 'weekend';
   bars: number;
   /** stop at the end (trailed) / at entry, and the target */
   stop: number;
@@ -101,4 +106,9 @@ export interface Trade {
   target: number | null;
   /** v13: ATR at the signal ÷ its median over the 100 bars before (1 = normal, 2 = twice as wild) */
   volRatio?: number;
+  /** v14: price that moves the stop to break-even, price where part is taken off (and how much), and whether it was */
+  beAt?: number;
+  scaleAt?: number;
+  scaleFrac?: number;
+  scaled?: boolean;
 }

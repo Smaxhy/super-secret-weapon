@@ -20,29 +20,57 @@ export function signalsFor(c: Ctx, s: Strategy): Array<Signal | null> {
 
 /** ATR at bar i ÷ the median ATR of the 100 bars before it (how wild the market is right now vs normal). */
 export function volRatioAt(c: Ctx, i: number): number | undefined {
+  if (!c.vrCache || c.vrCache.length !== c.bars.length) c.vrCache = new Float64Array(c.bars.length).fill(-1);
+  const hit = c.vrCache[i]!;
+  if (hit !== -1) return Number.isNaN(hit) ? undefined : hit;
+  let out: number | undefined;
   const a = c.atr14[i]!;
-  if (!Number.isFinite(a)) return undefined;
-  const xs: number[] = [];
-  for (let j = Math.max(0, i - 100); j < i; j++) if (Number.isFinite(c.atr14[j]!)) xs.push(c.atr14[j]!);
-  if (xs.length < 30) return undefined;
-  xs.sort((x, y) => x - y);
-  const med = xs[Math.floor(xs.length / 2)]!;
-  return med > 0 ? Math.round((a / med) * 100) / 100 : undefined;
+  if (Number.isFinite(a)) {
+    const xs: number[] = [];
+    for (let j = Math.max(0, i - 100); j < i; j++) if (Number.isFinite(c.atr14[j]!)) xs.push(c.atr14[j]!);
+    if (xs.length >= 30) {
+      const f = Float64Array.from(xs).sort();
+      const med = f[Math.floor(f.length / 2)]!;
+      out = med > 0 ? Math.round((a / med) * 100) / 100 : undefined;
+    }
+  }
+  c.vrCache[i] = out === undefined ? NaN : out;
+  return out;
 }
 
 /** `allow(i, side)` = false vetoes the entry signalled at bar i (filters); exits are never touched. */
 export type Allow = (i: number, side: 1 | -1) => boolean;
 
-export function runSeries(inst: Instrument, tf: Timeframe, c: Ctx, s: Strategy, allow?: Allow): Trade[] {
-  return simulate(inst, tf, c, s.id, signalsFor(c, s), allow);
+export function runSeries(inst: Instrument, tf: Timeframe, c: Ctx, s: Strategy, allow?: Allow, opts?: SimOpts): Trade[] {
+  return simulate(inst, tf, c, s.id, signalsFor(c, s), allow, opts);
 }
 
-export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: string, sigs: ReadonlyArray<Signal | null>, allow?: Allow): Trade[] {
+const HOUR = 3_600_000;
+
+/** v14: real spreads widen at the daily rollover (the 21:00 and 22:00 UTC bars) and right after the weekend open. */
+export function spreadMult(t: number, prevT: number | null): number {
+  if (prevT !== null && t - prevT > 30 * HOUR) return 4;
+  const h = new Date(t).getUTCHours();
+  return h === 21 || h === 22 ? 3 : 1;
+}
+
+export interface SimOpts {
+  /** close before a weekend gap and re-enter at the first bar after it, unless the gap went through the stop or target
+   * (exactly what the live bot does: it never holds over the weekend) */
+  weekendPause?: boolean;
+  /** charge the wider rollover / weekly-open spreads */
+  sessionSpreads?: boolean;
+}
+export const DEFAULT_SIM: Required<SimOpts> = { weekendPause: true, sessionSpreads: true };
+
+export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: string, sigs: ReadonlyArray<Signal | null>, allow?: Allow, opts: SimOpts = DEFAULT_SIM): Trade[] {
+  const o = { ...DEFAULT_SIM, ...opts };
   const bars = c.bars;
   const n = bars.length;
-  const spread = inst.spreadPips * inst.pip;
+  const base = inst.spreadPips * inst.pip;
+  const spr = (i: number) => (o.sessionSpreads ? base * spreadMult(bars[i]!.t, i > 0 ? bars[i - 1]!.t : null) : base);
   const out: Trade[] = [];
-  let pos: {
+  type Pos = {
     side: 1 | -1;
     entryIdx: number;
     entry: number;
@@ -54,11 +82,25 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
     exitWhen: string | null;
     best: number;
     volRatio: number | undefined;
-  } | null = null;
-  const close = (i: number, px: number, reason: Trade['reason']) => {
+    /** |entry − first stop| = 1R */
+    risk: number;
+    /** fill of the current leg (changes after a weekend re-entry) */
+    legEntry: number;
+    /** share of the position still open */
+    frac: number;
+    /** R already banked by scale-outs and weekend legs */
+    realized: number;
+    beAt: number | null;
+    scaleAt: number | null;
+    scaleFrac: number;
+    scaled: boolean;
+    be: boolean;
+    trailed: boolean;
+  };
+  let pos: Pos | null = null;
+  const finish = (i: number, fill: number, reason: Trade['reason']) => {
     const p = pos!;
-    const fill = px - (p.side * spread) / 2 - (reason === 'stop' || reason === 'trail' ? p.side * spread * 0.25 : 0);
-    const risk = Math.abs(p.entry - p.stop0);
+    const r = p.realized + (p.frac * p.side * (fill - p.legEntry)) / p.risk;
     out.push({
       strategy: strategyId,
       tf,
@@ -68,49 +110,88 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
       exitT: bars[i]!.t,
       entry: p.entry,
       exit: fill,
-      r: (p.side * (fill - p.entry)) / risk,
-      stopPct: (risk / p.entry) * 100,
+      r,
+      stopPct: (p.risk / p.entry) * 100,
       reason,
       bars: i - p.entryIdx + 1,
       stop: p.stop,
       stop0: p.stop0,
       target: p.target,
       ...(p.volRatio !== undefined ? { volRatio: p.volRatio } : {}),
+      ...(p.beAt !== null ? { beAt: p.beAt } : {}),
+      ...(p.scaleAt !== null ? { scaleAt: p.scaleAt, scaleFrac: p.scaleFrac, scaled: p.scaled } : {}),
     });
     pos = null;
   };
+  /** exit side of the book; stops slip an extra quarter spread */
+  const exitFill = (i: number, side: 1 | -1, px: number, slip: boolean) => px - (side * spr(i)) / 2 - (slip ? side * spr(i) * 0.25 : 0);
+  const stopReason = (p: Pos): Trade['reason'] => (p.trailed ? 'trail' : p.be ? 'breakeven' : 'stop');
   for (let i = WARMUP; i < n; i++) {
     const b = bars[i]!;
+    // weekend: bank the leg at Friday's close; skip the gap; carry on from the first bar after it
+    if (pos && o.weekendPause && pos.entryIdx < i && b.t - bars[i - 1]!.t > 30 * HOUR) {
+      const p: Pos = pos;
+      const legOut = exitFill(i - 1, p.side, bars[i - 1]!.c, false);
+      p.realized += (p.frac * p.side * (legOut - p.legEntry)) / p.risk;
+      p.legEntry = legOut;
+      const through = (p.side === 1 ? b.o <= p.stop : b.o >= p.stop) || (p.target !== null && (p.side === 1 ? b.o >= p.target : b.o <= p.target));
+      if (through) {
+        p.frac = 0; // flat over the weekend and the gap went past a level: the trade ended at Friday's close
+        finish(i - 1, legOut, 'weekend');
+      } else p.legEntry = b.o + (p.side * spr(i)) / 2;
+    }
     if (pos && pos.entryIdx <= i) {
-      const p = pos;
+      const p: Pos = pos;
       const hitStop = p.side === 1 ? b.l <= p.stop : b.h >= p.stop;
       const hitTgt = p.target !== null && (p.side === 1 ? b.h >= p.target : b.l <= p.target);
-      const trailed = p.stop !== p.stop0;
-      if (hitStop) close(i, p.side === 1 ? Math.min(b.o, p.stop) : Math.max(b.o, p.stop), trailed ? 'trail' : 'stop');
-      else if (hitTgt) close(i, p.side === 1 ? Math.max(b.o, p.target!) : Math.min(b.o, p.target!), 'target');
+      if (hitStop) finish(i, exitFill(i, p.side, p.side === 1 ? Math.min(b.o, p.stop) : Math.max(b.o, p.stop), true), stopReason(p));
+      else if (hitTgt) finish(i, exitFill(i, p.side, p.side === 1 ? Math.max(b.o, p.target!) : Math.min(b.o, p.target!), false), 'target');
       else {
-        const held = i - p.entryIdx + 1;
-        const ew = p.exitWhen;
-        const exitNow =
-          (ew === 'aboveSma5' && (p.side === 1 ? b.c > c.sma5[i]! : b.c < c.sma5[i]!)) ||
-          (ew === 'midBand' && (p.side === 1 ? b.c >= c.bb.mid[i]! : b.c <= c.bb.mid[i]!)) ||
-          (ew === 'ema20' && (p.side === 1 ? b.c >= c.ema20[i]! : b.c <= c.ema20[i]!));
-        if (exitNow) close(i, b.c, 'exit');
-        else if (p.maxBars !== null && held >= p.maxBars) close(i, b.c, 'time');
-        else if (p.trailAtr !== null && Number.isFinite(c.atr14[i]!)) {
-          p.best = p.side === 1 ? Math.max(p.best, b.c) : Math.min(p.best, b.c);
-          const t = p.best - p.side * p.trailAtr * c.atr14[i]!;
-          p.stop = p.side === 1 ? Math.max(p.stop, t) : Math.min(p.stop, t);
+        // take part off / move the stop to break-even (checked after the stop: the pessimistic order)
+        let toBe = false;
+        if (!p.scaled && p.scaleAt !== null && (p.side === 1 ? b.h >= p.scaleAt : b.l <= p.scaleAt)) {
+          const fill = exitFill(i, p.side, p.side === 1 ? Math.max(b.o, p.scaleAt) : Math.min(b.o, p.scaleAt), false);
+          p.realized += (p.scaleFrac * p.side * (fill - p.legEntry)) / p.risk;
+          p.frac -= p.scaleFrac;
+          p.scaled = true;
+          toBe = true;
+        }
+        if (!p.be && p.beAt !== null && (p.side === 1 ? b.h >= p.beAt : b.l <= p.beAt)) toBe = true;
+        if (toBe && !p.be) {
+          const beStop = p.entry + p.side * spr(i);
+          if (p.side === 1 ? beStop > p.stop : beStop < p.stop) p.stop = beStop;
+          p.be = true;
+          // the same candle may have come back to the new stop afterwards: assume it did (the order inside a candle is unknown)
+          if (p.side === 1 ? b.l <= p.stop : b.h >= p.stop) finish(i, exitFill(i, p.side, p.stop, true), 'breakeven');
+        }
+        if (pos) {
+          const held = i - p.entryIdx + 1;
+          const ew = p.exitWhen;
+          const exitNow =
+            (ew === 'aboveSma5' && (p.side === 1 ? b.c > c.sma5[i]! : b.c < c.sma5[i]!)) ||
+            (ew === 'midBand' && (p.side === 1 ? b.c >= c.bb.mid[i]! : b.c <= c.bb.mid[i]!)) ||
+            (ew === 'ema20' && (p.side === 1 ? b.c >= c.ema20[i]! : b.c <= c.ema20[i]!));
+          if (exitNow) finish(i, exitFill(i, p.side, b.c, false), 'exit');
+          else if (p.maxBars !== null && held >= p.maxBars) finish(i, exitFill(i, p.side, b.c, false), 'time');
+          else if (p.trailAtr !== null && Number.isFinite(c.atr14[i]!)) {
+            p.best = p.side === 1 ? Math.max(p.best, b.c) : Math.min(p.best, b.c);
+            const t = p.best - p.side * p.trailAtr * c.atr14[i]!;
+            if (p.side === 1 ? t > p.stop : t < p.stop) {
+              p.stop = t;
+              p.trailed = true;
+            }
+          }
         }
       }
     }
     if (!pos && i < n - 1) {
       const sig = sigs[i];
       if (sig && (!allow || allow(i, sig.side))) {
-        const entry = bars[i + 1]!.o + (sig.side * spread) / 2;
+        const entry = bars[i + 1]!.o + (sig.side * spr(i + 1)) / 2;
         const ok = sig.side === 1 ? sig.stop < entry && (sig.target === null || sig.target > entry) : sig.stop > entry && (sig.target === null || sig.target < entry);
         // the stop must be worth more than the spread, else the trade is all cost
-        if (ok && Math.abs(entry - sig.stop) > 2 * spread) {
+        if (ok && Math.abs(entry - sig.stop) > 2 * spr(i + 1)) {
+          const risk = Math.abs(entry - sig.stop);
           pos = {
             side: sig.side,
             entryIdx: i + 1,
@@ -123,12 +204,22 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
             exitWhen: sig.exitWhen ?? null,
             best: entry,
             volRatio: volRatioAt(c, i),
+            risk,
+            legEntry: entry,
+            frac: 1,
+            realized: 0,
+            beAt: sig.beAtR ? entry + sig.side * sig.beAtR * risk : null,
+            scaleAt: sig.scaleAtR ? entry + sig.side * sig.scaleAtR * risk : null,
+            scaleFrac: Math.min(0.9, Math.max(0.1, sig.scaleFrac ?? 0.5)),
+            scaled: false,
+            be: false,
+            trailed: false,
           };
         }
       }
     }
   }
-  if (pos) close(n - 1, bars[n - 1]!.c, 'open');
+  if (pos) finish(n - 1, bars[n - 1]!.c, 'open');
   return out;
 }
 

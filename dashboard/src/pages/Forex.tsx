@@ -13,17 +13,18 @@ import { Icon } from '../components/Icon';
 import { FxTrade } from '../components/FxTrade';
 import { OandaCard } from '../components/OandaCard';
 import { MarketChart, type ChartDrawings } from '../components/MarketChart';
-import { FILTER_SHORT, FiltersCard, MoodCard, NewsStudyCard, StrengthCard, TrendArrows, type FilterKind, type FilterSummary, type MoodNow, type NewsStudy, type PortfolioReport, type StrengthNow } from '../components/FxInsights';
+import { EXIT_SHORT, ExitsCard, FILTER_SHORT, FiltersCard, JudgeCard, MoodCard, NewsStudyCard, StrengthCard, TrendArrows, type ExitKind, type ExitSummary, type FilterKind, type FilterSummary, type JudgeReport, type MoodNow, type NewsStudy, type PortfolioReport, type StrengthNow } from '../components/FxInsights';
 import { Badge, Button, Card, Chip, Drawer, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Sparkline, Stack, StatTile, useStored } from '../components/ui';
 
 interface RStats { n: number; winPct: number; avgR: number; medianR: number; pf: number | null; totalR: number; maxDdR: number }
 interface Risk { riskPct: number; finalX: number; avgWeekPct: number; medianWeekPct: number; greenWeeksPct: number; bigWeeksPct: number; bestWeekPct: number; worstWeekPct: number; maxDdPct: number; blown: boolean; medianLeverage: number; weeks: number }
 interface VariantRow { filter: FilterKind; inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number }
-interface RowT { id: string; name: string; family: string; desc: string; tf: '1h' | '4h'; filter?: FilterKind; variants?: VariantRow[]; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string }
+interface ExitVariantRow extends Omit<VariantRow, 'filter'> { exit: ExitKind }
+interface RowT { id: string; name: string; family: string; desc: string; tf: '1h' | '4h'; filter?: FilterKind; variants?: VariantRow[]; exit?: ExitKind; exitVariants?: ExitVariantRow[]; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string }
 interface Trade { strategy: string; tf: string; pair: string; side: 1 | -1; entryT: number; exitT: number; entry: number; exit: number; r: number; reason: string; stop: number; stop0: number; target: number | null }
 interface MarketNow { id: string; label: string; price: number; t: number; change24hPct: number; closes: number[]; trend: 'up' | 'down' | 'flat'; rsi: number; atrPips: number; firing: Array<{ id: string; name: string; tf: string; side: 1 | -1; allowed?: boolean; why?: string | null }>; openPaper: number; bars: number[][]; drawings: ChartDrawings; mtf?: { h1: number; h4: number; d1: number }; strength?: { base: string; quote: string; baseScore: number | null; quoteScore: number | null; gap: number | null }; risk?: number }
 interface PaperRow { id: string; name: string; tf: string; stats: RStats; risk1: Risk; open: number }
-interface Report { at: number; durationMs: number; feed: Array<{ id: string; role?: 'traded' | 'strength' | 'mood'; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; markets?: MarketNow[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string; strength?: StrengthNow; mood?: MoodNow; filters?: FilterSummary[]; portfolio?: PortfolioReport | null; news?: NewsStudy | null }
+interface Report { at: number; durationMs: number; feed: Array<{ id: string; role?: 'traded' | 'strength' | 'mood'; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; markets?: MarketNow[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string; strength?: StrengthNow; mood?: MoodNow; filters?: FilterSummary[]; exits?: ExitSummary[]; judge?: JudgeReport | null; portfolio?: PortfolioReport | null; news?: NewsStudy | null }
 interface Data { running: boolean; last: Report | null }
 
 const signed = (x: number, dp = 1) => `${x >= 0 ? '+' : ''}${x.toFixed(dp)}`;
@@ -93,7 +94,9 @@ export function Forex() {
           )}
           {section === 'live' && <FxNews />}
           {section === 'live' && <Markets r={r} onTrade={(id) => { try { localStorage.setItem('fx.pair', id); } catch { /* ignore */ } navigate('/forex/practice'); }} />}
+          {section === 'strategies' && <JudgeCard j={r.judge} />}
           {section === 'strategies' && <FiltersCard f={r.filters} />}
+          {section === 'strategies' && <ExitsCard e={r.exits} />}
           {section === 'strategies' && <Strategies r={r} />}
           {section === 'strategies' && <NewsStudyCard n={r.news} />}
           {section === 'paper' && <Paper r={r} />}
@@ -269,6 +272,7 @@ function Strategies({ r }: { r: Report }) {
                     <span className="truncate font-medium text-ink">{x.name}</span>
                     <Badge tone="neutral">{x.tf}</Badge>
                     {x.filter && x.filter !== 'none' && <Badge tone="accent">{FILTER_SHORT[x.filter]}</Badge>}
+                    {x.exit && x.exit !== 'designed' && <Badge tone="accent">{EXIT_SHORT[x.exit]}</Badge>}
                     <Badge tone={VERDICT[x.verdict].tone}>{VERDICT[x.verdict].label}</Badge>
                   </div>
                   <div className="mt-0.5 truncate text-xs text-muted">
@@ -353,6 +357,33 @@ function Detail({ x }: { x: RowT }) {
                 {x.variants.map((v) => (
                   <tr key={v.filter} className={`border-t border-line ${v.filter === (x.filter ?? 'none') ? 'font-semibold' : ''}`}>
                     <td className="py-1.5 text-ink">{v.filter === 'none' ? 'No check' : FILTER_SHORT[v.filter]}{v.filter === (x.filter ?? 'none') ? ' ✓' : ''}</td>
+                    <td className={`py-1.5 text-right ${tone(v.inAvgR)}`}>{signed(v.inAvgR, 2)}R <span className="text-xs font-normal text-muted">({v.inN})</span></td>
+                    <td className={`py-1.5 text-right ${tone(v.outAvgR)}`}>{signed(v.outAvgR, 2)}R <span className="text-xs font-normal text-muted">({v.outN})</span></td>
+                    <td className="py-1.5 text-right text-ink-2">{v.allN}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {x.exitVariants && x.exitVariants.length > 1 && (
+        <div>
+          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Exits tried (with its check, picked on the first 70% only)</div>
+          <div className="overflow-x-auto">
+            <table className="tabular w-full min-w-[30rem] text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted">
+                  <th className="py-1 font-medium">Exit</th>
+                  <th className="py-1 text-right font-medium">First 70%</th>
+                  <th className="py-1 text-right font-medium">Unseen 30%</th>
+                  <th className="py-1 text-right font-medium">Trades</th>
+                </tr>
+              </thead>
+              <tbody>
+                {x.exitVariants.map((v) => (
+                  <tr key={v.exit} className={`border-t border-line ${v.exit === (x.exit ?? 'designed') ? 'font-semibold' : ''}`}>
+                    <td className="py-1.5 text-ink">{v.exit === 'designed' ? 'As designed' : EXIT_SHORT[v.exit]}{v.exit === (x.exit ?? 'designed') ? ' ✓' : ''}</td>
                     <td className={`py-1.5 text-right ${tone(v.inAvgR)}`}>{signed(v.inAvgR, 2)}R <span className="text-xs font-normal text-muted">({v.inN})</span></td>
                     <td className={`py-1.5 text-right ${tone(v.outAvgR)}`}>{signed(v.outAvgR, 2)}R <span className="text-xs font-normal text-muted">({v.outN})</span></td>
                     <td className="py-1.5 text-right text-ink-2">{v.allN}</td>

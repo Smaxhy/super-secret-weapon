@@ -70,6 +70,10 @@ export interface MarketClock {
   /** close all auto-bot trades now (last 30 min of the week) */
   flattenNow: boolean;
   sessions: string[];
+  /** v14: minutes since the weekly open (Sunday 17:00 New York); −1 while closed */
+  sinceOpenMin: number;
+  /** v14: daily rollover (20:45–23:15 UTC): spreads widen, no new auto-bot trades */
+  rollover: boolean;
 }
 
 /** Pure: the forex market clock at `t`. */
@@ -83,7 +87,9 @@ export function marketClock(t: number): MarketClock {
   if (toChange < 0) toChange += 7 * 1440;
   const h = new Date(t).getUTCHours();
   const sessions = [h >= 21 || h < 6 ? 'Sydney' : '', h < 9 ? 'Tokyo' : '', h >= 7 && h < 16 ? 'London' : '', h >= 12 && h < 21 ? 'New York' : ''].filter(Boolean);
-  return { open, minutesToChange: toChange, noNewTrades: !open || toChange <= 120, flattenNow: open && toChange <= 30, sessions: open ? sessions : [] };
+  const sinceOpenMin = open ? dow * 1440 + min - CLOSE : -1;
+  const um = new Date(t).getUTCHours() * 60 + new Date(t).getUTCMinutes();
+  return { open, minutesToChange: toChange, noNewTrades: !open || toChange <= 120, flattenNow: open && toChange <= 30, sessions: open ? sessions : [], sinceOpenMin, rollover: um >= 20 * 60 + 45 && um < 23 * 60 + 15 };
 }
 
 /** Merge new events into the kept history (high impact + speeches, newest 400 days, deduped). Pure. */

@@ -22,7 +22,12 @@ export function shockDir(c: Ctx, i: number, k = 2.2): 1 | -1 | 0 {
   return 0;
 }
 
-export type Family = 'trend' | 'breakout' | 'session' | 'reversion' | 'pattern' | 'news' | 'control';
+export type Family = 'trend' | 'breakout' | 'session' | 'reversion' | 'pattern' | 'news' | 'intermarket' | 'flow' | 'control';
+/**
+ * v14: what market a strategy needs (the regime check): 'trend' = a clean directional market, 'revert' = a choppy one,
+ * 'pullback' = buys dips inside a bigger trend (the bigger-chart check covers it), 'neutral' = timing / flow rules.
+ */
+export type Style = 'trend' | 'revert' | 'pullback' | 'neutral';
 
 export interface Strategy {
   id: string;
@@ -32,7 +37,53 @@ export interface Strategy {
   desc: string;
   /** session strategies need hourly bars */
   onlyHourly?: boolean;
+  /** v14: the market it needs (defaults from the family) */
+  style?: Style;
   signal(c: Ctx, i: number): Signal | null;
+}
+
+const STYLE_OVERRIDES: Record<string, Style> = {
+  ema_pullback: 'pullback',
+  fib_pullback: 'pullback',
+  stoch_trend: 'pullback',
+  williams_r: 'pullback',
+  rsi_dip: 'pullback',
+  rsi2: 'pullback',
+  momentum_bar: 'trend',
+  news_drift: 'trend',
+  news_fade: 'revert',
+  bb_squeeze: 'neutral',
+  donchian20: 'neutral',
+  donchian55: 'neutral',
+  keltner: 'neutral',
+  inside_bar: 'neutral',
+  breakout_retest: 'neutral',
+  cci_break: 'neutral',
+};
+/** The market a strategy needs (pure). */
+export function styleOf(s: Pick<Strategy, 'id' | 'family' | 'style'>): Style {
+  if (s.style) return s.style;
+  if (STYLE_OVERRIDES[s.id]) return STYLE_OVERRIDES[s.id]!;
+  return s.family === 'trend' ? 'trend' : s.family === 'reversion' || s.family === 'pattern' ? 'revert' : 'neutral';
+}
+
+/** The pair's own move over the last `hours`, in normal moves (ATR-scaled, like the strength meter). NaN if unknown. */
+export function pairZ(c: Ctx, i: number, hours = 24): number {
+  const L = Math.max(1, Math.round((hours * 60) / c.barMin));
+  if (i - L < 0) return NaN;
+  const px = c.close[i]!;
+  const vol = c.atr14[i]! / px;
+  if (!(vol > 0)) return NaN;
+  return Math.log(px / c.close[i - L]!) / (vol * Math.sqrt(L));
+}
+
+/** Last UTC weekday of its month (holidays ignored). Pure. */
+export function lastWeekdayOfMonth(t: number): boolean {
+  const d = new Date(t);
+  const dow = d.getUTCDay();
+  if (dow === 0 || dow === 6) return false;
+  const next = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + (dow === 5 ? 3 : 1)));
+  return next.getUTCMonth() !== d.getUTCMonth();
 }
 
 const ok = (...xs: number[]) => xs.every((x) => Number.isFinite(x));
@@ -676,6 +727,159 @@ export const STRATEGIES: Strategy[] = [
         const sig = levelSig(c, i, 1, Math.min(s0.l, b.l) - 0.15 * a, null, { maxBars: 12 });
         return sig && s0.o > b.c ? { ...sig, target: s0.o } : null;
       }
+      return null;
+    },
+  },
+  // ── v14: cross-sectional currency momentum ──
+  {
+    id: 'ccy_momentum',
+    name: 'Strongest vs weakest currency',
+    family: 'trend',
+    style: 'trend',
+    desc: 'Evidence-backed (Menkhoff et al. 2012, currency momentum): when the pair becomes one of the 2 strongest currencies against one of the 2 weakest (5-day strength, all 20 pairs), go with it; 2.5 ATR stop, 3.5 ATR trail, out after about 5 days.',
+    signal(c, i) {
+      const e = c.ext;
+      if (!e || i < 1) return null;
+      const rb = e.rankBase[i]!;
+      const rq = e.rankQuote[i]!;
+      const pb = e.rankBase[i - 1]!;
+      const pq = e.rankQuote[i - 1]!;
+      if (!ok(rb, rq, pb, pq)) return null;
+      const maxBars = c.barMin === 60 ? 120 : 30;
+      if (rb <= 1 && rq >= 6 && !(pb <= 1 && pq >= 6)) return atrSig(c, i, 1, 2.5, null, { trailAtr: 3.5, maxBars });
+      if (rq <= 1 && rb >= 6 && !(pq <= 1 && pb >= 6)) return atrSig(c, i, -1, 2.5, null, { trailAtr: 3.5, maxBars });
+      return null;
+    },
+  },
+  // ── v14: intermarket (a linked market moved hard, this pair hasn't followed yet) ──
+  {
+    id: 'oil_cad',
+    name: 'Oil → Canadian dollar catch-up',
+    family: 'intermarket',
+    style: 'neutral',
+    desc: 'The Canadian dollar tends to follow oil. Oil makes a big 24-hour move (1.5+ normal moves) while USD/CAD has not moved its way yet: trade the catch-up; 1.5 ATR stop, 2R, out after a day.',
+    onlyHourly: true,
+    signal(c, i) {
+      if (c.pair !== 'USDCAD' || !c.ext) return null;
+      const z = c.ext.zOil;
+      const zp = pairZ(c, i);
+      if (!ok(z[i]!, z[i - 1]!, zp)) return null;
+      if (z[i]! >= 1.5 && z[i - 1]! < 1.5 && zp > -0.3) return atrSig(c, i, -1, 1.5, 2, { maxBars: 24 });
+      if (z[i]! <= -1.5 && z[i - 1]! > -1.5 && zp < 0.3) return atrSig(c, i, 1, 1.5, 2, { maxBars: 24 });
+      return null;
+    },
+  },
+  {
+    id: 'yield_jpy',
+    name: 'US yields → USD/JPY catch-up',
+    family: 'intermarket',
+    style: 'neutral',
+    desc: 'USD/JPY tracks the US 10-year yield. The yield makes a big 24-hour move while USD/JPY has not followed: trade the catch-up; 1.5 ATR stop, 2R, out after a day.',
+    onlyHourly: true,
+    signal(c, i) {
+      if (c.pair !== 'USDJPY' || !c.ext) return null;
+      const z = c.ext.zYield;
+      const zp = pairZ(c, i);
+      if (!ok(z[i]!, z[i - 1]!, zp)) return null;
+      if (z[i]! >= 1.5 && z[i - 1]! < 1.5 && zp < 0.3) return atrSig(c, i, 1, 1.5, 2, { maxBars: 24 });
+      if (z[i]! <= -1.5 && z[i - 1]! > -1.5 && zp > -0.3) return atrSig(c, i, -1, 1.5, 2, { maxBars: 24 });
+      return null;
+    },
+  },
+  {
+    id: 'stocks_jpy',
+    name: 'Stocks → yen crosses catch-up',
+    family: 'intermarket',
+    style: 'neutral',
+    desc: 'Yen pairs rise with stocks (risk-on) and fall with them. S&P futures make a big 24-hour move while the yen pair has not followed: trade the catch-up; 1.5 ATR stop, 2R, out after a day.',
+    onlyHourly: true,
+    signal(c, i) {
+      if (!c.pair.endsWith('JPY') || !c.ext) return null;
+      const z = c.ext.zStocks;
+      const zp = pairZ(c, i);
+      if (!ok(z[i]!, z[i - 1]!, zp)) return null;
+      if (z[i]! >= 1.5 && z[i - 1]! < 1.5 && zp < 0.3) return atrSig(c, i, 1, 1.5, 2, { maxBars: 24 });
+      if (z[i]! <= -1.5 && z[i - 1]! > -1.5 && zp > -0.3) return atrSig(c, i, -1, 1.5, 2, { maxBars: 24 });
+      return null;
+    },
+  },
+  {
+    id: 'dollar_gold',
+    name: 'Dollar → gold catch-up',
+    family: 'intermarket',
+    style: 'neutral',
+    desc: 'Gold usually moves against the dollar. The dollar index makes a big 24-hour move while gold has not reacted: trade the catch-up; 1.5 ATR stop, 2R, out after a day.',
+    onlyHourly: true,
+    signal(c, i) {
+      if (c.pair !== 'XAUUSD' || !c.ext) return null;
+      const z = c.ext.zDollar;
+      const zp = pairZ(c, i);
+      if (!ok(z[i]!, z[i - 1]!, zp)) return null;
+      if (z[i]! <= -1.5 && z[i - 1]! > -1.5 && zp < 0.3) return atrSig(c, i, 1, 1.5, 2, { maxBars: 24 });
+      if (z[i]! >= 1.5 && z[i - 1]! < 1.5 && zp > -0.3) return atrSig(c, i, -1, 1.5, 2, { maxBars: 24 });
+      return null;
+    },
+  },
+  // ── v14: calendar flows and range patterns ──
+  {
+    id: 'weekend_gap',
+    name: 'Weekend gap fill',
+    family: 'flow',
+    style: 'neutral',
+    desc: "Monday's open often gaps away from Friday's close and drifts back. A gap of half a normal hour or more that is still open after the first hour → trade back toward Friday's close; stop past the gap's extreme.",
+    onlyHourly: true,
+    signal(c, i) {
+      if (i < 2) return null;
+      const b = c.bars[i]!;
+      const p = c.bars[i - 1]!;
+      if (b.t - p.t <= 30 * 3_600_000) return null;
+      const a = c.atr14[i - 1]!;
+      const gap = b.o - p.c;
+      if (!ok(a) || Math.abs(gap) < 0.5 * a) return null;
+      if (gap > 0 && b.c > p.c + 0.25 * gap) {
+        const sig = levelSig(c, i, -1, b.h + 0.5 * a, null, { maxBars: 24 });
+        return sig ? { ...sig, target: p.c } : null;
+      }
+      if (gap < 0 && b.c < p.c + 0.25 * gap) {
+        const sig = levelSig(c, i, 1, b.l - 0.5 * a, null, { maxBars: 24 });
+        return sig ? { ...sig, target: p.c } : null;
+      }
+      return null;
+    },
+  },
+  {
+    id: 'month_end_flow',
+    name: 'Month-end dollar rebalancing',
+    family: 'flow',
+    style: 'neutral',
+    desc: 'Evidence-backed (Melvin & Prins 2015, London 4pm fix): on the last trading day of a month foreign investors re-hedge their US stocks. After a strong S&P month (+2%) the dollar tends to weaken into the 16:00 fix, after a weak one it tends to rise. 14:00 → 16:00 UTC.',
+    onlyHourly: true,
+    signal(c, i) {
+      const p = c.pair;
+      if (!c.ext || !p.includes('USD') || p.startsWith('XA')) return null;
+      if ((c.hour[i]! + 1) % 24 !== 14 || !lastWeekdayOfMonth(c.bars[i]!.t)) return null;
+      const m = c.ext.spxMtd[i]!;
+      if (!ok(m) || Math.abs(m) < 2) return null;
+      const sellUsd = m > 0;
+      const side: 1 | -1 = p.startsWith('USD') ? (sellUsd ? -1 : 1) : sellUsd ? 1 : -1;
+      return atrSig(c, i, side, 1.5, null, { maxBars: 2 });
+    },
+  },
+  {
+    id: 'nr7_break',
+    name: 'NR7 breakout (narrowest day)',
+    family: 'breakout',
+    style: 'neutral',
+    desc: "Crabel's NR7: when yesterday was the narrowest day of the last 7, today's break of its high (or low) during London / New York often runs. Stop mid-range, 2R, flat by 22:00 UTC.",
+    onlyHourly: true,
+    signal(c, i) {
+      const pd = c.prevDay[i];
+      const h = c.hour[i]!;
+      if (!pd || !c.nr7[i] || h < 7 || h > 16 || i < 1) return null;
+      const mid = (pd.h + pd.l) / 2;
+      const maxBars = 22 - h;
+      if (c.close[i]! > pd.h && c.close[i - 1]! <= pd.h) return levelSig(c, i, 1, mid, 2, { maxBars });
+      if (c.close[i]! < pd.l && c.close[i - 1]! >= pd.l) return levelSig(c, i, -1, mid, 2, { maxBars });
       return null;
     },
   },

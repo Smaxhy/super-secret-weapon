@@ -4,17 +4,22 @@
  *  - strength: buy the stronger currency against the weaker one (gap ≥ STRENGTH_MIN in the trade's direction).
  *  - mtf:      the bigger chart agrees (1h trades: 4h trend with it AND the daily not against; 4h trades: daily with it).
  *  - mood:     no risk-on trade in a clear risk-off market and no safe-haven trade in a clear risk-on one.
- *  - all:      all three.
+ *  - regime:   (v14) trend strategies only in a clean directional market (efficiency ratio ≥ ER_TREND), dip / fade
+ *              strategies only in a choppy one; timing and pullback strategies pass.
+ *  - all:      strength + bigger chart + mood.
  * Missing strength / mood data (a feed down) never blocks. The bigger-chart check needs a clear trend, so it also
  * holds back trades in the first weeks of history while the 4h / daily averages warm up.
  */
 import type { RStats } from './engine';
 import { MOOD_MIN } from './mood';
+import type { Style } from './strategies';
 import type { Timeframe } from './types';
 
-export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'all';
-export const FILTERS: FilterKind[] = ['none', 'strength', 'mtf', 'mood', 'all'];
-export const FILTER_LABEL: Record<FilterKind, string> = { none: 'no filter', strength: 'strong vs weak currency', mtf: 'bigger chart agrees', mood: 'market mood', all: 'all three checks' };
+export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'all';
+export const FILTERS: FilterKind[] = ['none', 'strength', 'mtf', 'mood', 'regime', 'all'];
+export const FILTER_LABEL: Record<FilterKind, string> = { none: 'no filter', strength: 'strong vs weak currency', mtf: 'bigger chart agrees', mood: 'market mood', regime: 'right market regime', all: 'strength + bigger chart + mood' };
+/** efficiency ratio (20 bars) above which a market counts as trending */
+export const ER_TREND = 0.3;
 export const STRENGTH_MIN = 0.15;
 /** risk exposure above this counts as a clear risk-on (or, negative, safe-haven) trade */
 export const RISK_TRADE = 0.4;
@@ -32,6 +37,8 @@ export interface FilterEnv {
   mood: Float64Array;
   /** risk exposure of buying this pair (+ risk-on, − safe haven) */
   riskLong: number;
+  /** v14: efficiency ratio per bar (NaN = unknown) */
+  er?: Float64Array;
 }
 
 const passStrength = (e: FilterEnv, i: number, side: 1 | -1) => {
@@ -48,9 +55,16 @@ const passMood = (e: FilterEnv, i: number, side: 1 | -1) => {
   return true;
 };
 
+const passRegime = (e: FilterEnv, i: number, style: Style) => {
+  const er = e.er?.[i];
+  if (er === undefined || !Number.isFinite(er) || style === 'neutral' || style === 'pullback') return true;
+  return style === 'trend' ? er >= ER_TREND : er < ER_TREND;
+};
+
 /** Why a filter would block this entry (null = allowed). Pure. */
-export function blockReason(kind: FilterKind, e: FilterEnv, i: number, side: 1 | -1): string | null {
+export function blockReason(kind: FilterKind, e: FilterEnv, i: number, side: 1 | -1, style: Style = 'neutral'): string | null {
   if (kind === 'none') return null;
+  if (kind === 'regime') return passRegime(e, i, style) ? null : style === 'trend' ? 'the market is choppy, not trending' : 'the market is trending, not choppy';
   if ((kind === 'strength' || kind === 'all') && !passStrength(e, i, side)) return 'the currency it buys is not the stronger one';
   if ((kind === 'mtf' || kind === 'all') && !passMtf(e, i, side)) return 'the bigger chart does not agree';
   if ((kind === 'mood' || kind === 'all') && !passMood(e, i, side)) return 'the market mood is against it';
@@ -58,9 +72,10 @@ export function blockReason(kind: FilterKind, e: FilterEnv, i: number, side: 1 |
 }
 
 /** Entry veto for the engine (undefined = allow everything). */
-export function allowFor(kind: FilterKind, e: FilterEnv | null): ((i: number, side: 1 | -1) => boolean) | undefined {
+export function allowFor(kind: FilterKind, e: FilterEnv | null, style: Style = 'neutral'): ((i: number, side: 1 | -1) => boolean) | undefined {
   if (kind === 'none' || !e) return undefined;
-  return (i, side) => blockReason(kind, e, i, side) === null;
+  if (kind === 'regime' && (style === 'neutral' || style === 'pullback')) return undefined;
+  return (i, side) => blockReason(kind, e, i, side, style) === null;
 }
 
 export interface VariantStats {
@@ -74,22 +89,27 @@ export interface VariantStats {
 const score = (s: RStats) => s.avgR * Math.sqrt(Math.max(0, s.n));
 
 /**
- * Pick the filter on the FIRST 70% only. A filter must keep ≥ `minN` in-sample trades (and ≥ 25% of the raw count) and
- * beat the raw score by a clear margin, else the strategy stays unfiltered. `prev` (last hour's pick) is kept unless
- * the new best beats it by the same margin, so a near-tie can't flip the bot's trades back and forth. Pure.
+ * Pick a variant on the FIRST 70% only. A variant must keep ≥ `minN` in-sample trades (and ≥ 25% of the base
+ * variant's count) and beat the base's score by a clear margin, else the base stays. `prev` (last hour's pick) is kept
+ * unless the new best beats it by the same margin, so a near-tie can't flip the bot's trades back and forth. Pure.
  */
-export function chooseFilter(v: readonly VariantStats[], minN = 40, prev?: FilterKind): FilterKind {
-  const raw = v.find((x) => x.filter === 'none');
-  if (!raw) return 'none';
-  const valid = (x: VariantStats) => x.filter === 'none' || x.inSample.n >= Math.max(minN, raw.inSample.n * 0.25);
-  let best: VariantStats = raw;
+export function chooseVariant<K extends string>(v: ReadonlyArray<{ key: K; inSample: RStats }>, baseKey: K, minN = 40, prev?: K): K {
+  const raw = v.find((x) => x.key === baseKey);
+  if (!raw) return baseKey;
+  const valid = (x: { key: K; inSample: RStats }) => x.key === baseKey || x.inSample.n >= Math.max(minN, raw.inSample.n * 0.25);
+  let best = raw;
   for (const x of v) {
-    if (x.filter === 'none' || !valid(x)) continue;
+    if (x.key === baseKey || !valid(x)) continue;
     if (score(x.inSample) > score(best.inSample)) best = x;
   }
   const margin = Math.max(0.5, Math.abs(score(raw.inSample)) * 0.1);
   const pick = best !== raw && score(best.inSample) >= score(raw.inSample) + margin ? best : raw;
-  const kept = prev ? v.find((x) => x.filter === prev) : undefined;
-  if (kept && kept !== pick && valid(kept) && (kept === raw || score(kept.inSample) >= score(raw.inSample) + margin) && score(pick.inSample) < score(kept.inSample) + margin) return kept.filter;
-  return pick.filter;
+  const kept = prev ? v.find((x) => x.key === prev) : undefined;
+  if (kept && kept !== pick && valid(kept) && (kept === raw || score(kept.inSample) >= score(raw.inSample) + margin) && score(pick.inSample) < score(kept.inSample) + margin) return kept.key;
+  return pick.key;
+}
+
+/** Filter pick (see `chooseVariant`). */
+export function chooseFilter(v: readonly VariantStats[], minN = 40, prev?: FilterKind): FilterKind {
+  return chooseVariant(v.map((x) => ({ key: x.filter, inSample: x.inSample })), 'none', minN, prev);
 }

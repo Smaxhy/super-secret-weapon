@@ -3,16 +3,17 @@ import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 import { ago } from '../lib/format';
 import { Badge, Button, Card, Row, Rows, Stack, StatTile } from './ui';
-import { PortfolioCard, RiskCard, type PortfolioReport, type RiskSummary } from './FxInsights';
+import { PortfolioCard, RiskCard, type JudgeReport, type PortfolioReport, type RiskSummary } from './FxInsights';
 
-interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number }
+interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number; scaleAt?: number | null; scaled?: boolean; beAt?: number | null; be?: boolean }
 interface Closed { id: string; pair: string; side: 1 | -1; entry: number; exit: number; pnlUsd: number; reason: string; closedAt: number; strategy?: string }
 interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[] }
-interface Data { account: Acct | null; risk?: RiskSummary | null; portfolio?: PortfolioReport | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
+interface Data { account: Acct | null; risk?: RiskSummary | null; portfolio?: PortfolioReport | null; judge?: JudgeReport | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
 
 const dp = (id: string) => (id.includes('JPY') ? 3 : id === 'XAUUSD' ? 2 : id === 'XAGUSD' ? 3 : 5);
 const usd = (x: number) => `${x < 0 ? '−' : ''}$${Math.abs(x).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink-2');
+const REASON: Record<string, string> = { partial: 'half taken at +1R', weekend: 'paused for the weekend', signal: 'strategy exit', 'stop-out': 'margin call' };
 
 export function FxBot() {
   const { data, reload } = useApi<Data>('/api/forex/bot', 10_000);
@@ -37,7 +38,7 @@ export function FxBot() {
           <StatTile compact label="Open" value={`${a.positions.length}`} sub={`margin ${usd(a.marginUsedUsd)}`} />
         </div>
       )}
-      <PortfolioCard p={data?.portfolio} />
+      <PortfolioCard p={data?.portfolio} judgeOn={!!data?.judge?.active} />
       <RiskCard r={data?.risk} />
       <div className="grid gap-4 xl:grid-cols-2">
         <Card title="Open trades">
@@ -51,7 +52,7 @@ export function FxBot() {
                       <span className="font-medium text-ink">{x.pair}</span>
                       <span className="truncate text-xs text-muted">{x.strategy}</span>
                     </div>
-                    <div className="mt-0.5 text-xs text-muted">{x.entry.toFixed(dp(x.pair))} → {x.px.toFixed(dp(x.pair))}{x.stop !== null ? ` · SL ${x.stop.toFixed(dp(x.pair))}` : ''}{x.target !== null ? ` · TP ${x.target.toFixed(dp(x.pair))}` : ''}{x.riskPct !== undefined ? ` · risk ${x.riskPct}%` : ''} · {ago(new Date(x.openedAt).toISOString())}</div>
+                    <div className="mt-0.5 text-xs text-muted">{x.entry.toFixed(dp(x.pair))} → {x.px.toFixed(dp(x.pair))}{x.stop !== null ? ` · SL ${x.stop.toFixed(dp(x.pair))}` : ''}{x.target !== null ? ` · TP ${x.target.toFixed(dp(x.pair))}` : ''}{x.riskPct !== undefined ? ` · risk ${x.riskPct}%` : ''}{x.scaleAt != null ? (x.scaled ? ' · half taken' : ` · half off at ${x.scaleAt.toFixed(dp(x.pair))}`) : ''}{x.be ? ' · stop at break-even' : x.beAt != null ? ` · break-even at ${x.beAt.toFixed(dp(x.pair))}` : ''} · {ago(new Date(x.openedAt).toISOString())}</div>
                   </div>
                   <div className={`tabular shrink-0 text-right font-semibold ${tone(x.pnlUsd)}`}>{usd(x.pnlUsd)}</div>
                   <Button size="sm" variant="ghost" onClick={() => void close(x.id)}>Close</Button>
@@ -77,7 +78,8 @@ export function FxBot() {
         <p className="mt-2 text-sm text-ink-2">
           Size: about <span className="font-semibold text-ink">1% of the account at risk</span> per trade, a bit more for strategies with a proven record, less for unproven ones, half when a market is far wilder than normal, and smaller after the account drops 8%+. Never more than 2.2% riding on one currency, 3 trades per strategy or 8 in total; the best-tested signal gets a free slot first.
         </p>
-        <p className="mt-2 text-sm text-ink-2">It waits 30 min either side of big news and speeches, skips bank holidays and sudden price shocks, opens nothing in the last 2 hours of the week and closes everything 30 min before the Friday close. A strategy that has lost money over 12+ of its trades is dropped.</p>
+        <p className="mt-2 text-sm text-ink-2">Exits: each strategy uses the exit that tested best for it (some move the stop to break-even at +1R, take half off at +1R or let winners run on a trailing stop). The signal judge {data?.judge?.active ? <span className="font-semibold text-ink">is on</span> : 'is off until it proves itself'}: when on, it skips signals it scores low.</p>
+        <p className="mt-2 text-sm text-ink-2">It waits 30 min either side of big news and speeches, skips bank holidays, sudden price shocks and the daily rollover (20:45–23:15 UTC, when spreads are wide), opens nothing in the last 2 hours of the week, pauses everything 30 min before the Friday close and re-opens what is still running after Monday's open has settled. A strategy that has lost money over 12+ of its trades is dropped.</p>
         {!!data?.dropped?.length && <p className="mt-2 text-xs text-down">Dropped for losing: {data.dropped.join(', ')}</p>}
         <p className="mt-2 text-xs text-muted">Chosen: strategies marked Edge or Maybe on unseen data, plus the four with published evidence (time-series momentum ×2, local-hours effect, London fix flow). {data?.chosen.length ? `${data.chosen.length} strategy × timeframe combinations right now.` : ''}</p>
       </Card>
@@ -85,7 +87,7 @@ export function FxBot() {
         {!a?.closed.length ? <p className="text-sm text-ink-2">None yet.</p> : (
           <Rows>
             {a.closed.slice(0, 60).map((x) => (
-              <Row key={x.id} label={`${x.side === 1 ? 'Long' : 'Short'} ${x.pair} · ${x.strategy ?? 'manual'}`} sub={`${x.entry.toFixed(dp(x.pair))} → ${x.exit.toFixed(dp(x.pair))} · ${x.reason} · ${ago(new Date(x.closedAt).toISOString())}`} value={<span className={tone(x.pnlUsd)}>{usd(x.pnlUsd)}</span>} />
+              <Row key={x.id} label={`${x.side === 1 ? 'Long' : 'Short'} ${x.pair} · ${x.strategy ?? 'manual'}`} sub={`${x.entry.toFixed(dp(x.pair))} → ${x.exit.toFixed(dp(x.pair))} · ${REASON[x.reason] ?? x.reason} · ${ago(new Date(x.closedAt).toISOString())}`} value={<span className={tone(x.pnlUsd)}>{usd(x.pnlUsd)}</span>} />
             ))}
           </Rows>
         )}
