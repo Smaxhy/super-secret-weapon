@@ -112,6 +112,12 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   `newsBlock` now also blocks Medium-impact speeches / testimony / press conferences. Bot log says why it waited.
   `/api/forex/calendar` returns `headlines`; Live news card has "Live headlines" + "Calendar" tabs.
   tests/forex-headlines.test.ts.
+- **v12.6 (Oct 19) fix: crypto never traded** (owner's Bot health: 2 signals refused "sniper mode: only full-conviction
+  setups", meme reader still spending, Helius budget still 25k). v52 / v53 only edited sections SAVED before
+  (`applyMigration` skips missing rows), and sniper / meme / aiCoach / usage had never been saved → old defaults kept.
+  New `ConfigMigration.create` (missing section → partial row, deep-merged over defaults; upsert) + migration v54 = the
+  v52 + v53 values again with create. Lesson: a migration that must change a never-saved section needs `create: true`.
+  tests/migration-create.test.ts.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

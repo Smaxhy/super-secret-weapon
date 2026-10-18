@@ -21,6 +21,8 @@ export interface ConfigMigration {
   note: string;
   /** [section, path inside the section, new value] */
   set: Array<[string, string[], unknown]>;
+  /** Also write sections that were never saved (a partial row deep-merges over the defaults). */
+  create?: boolean;
 }
 
 export const MIGRATIONS: ConfigMigration[] = [
@@ -693,6 +695,31 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['usage', ['flux', 'dailyBudget'], 50_000],
     ],
   },
+  {
+    version: 54,
+    note: 'fix: v52 + v53 only touched sections saved before, so sniper / meme / aiCoach / usage (never saved) kept their old defaults — Sniper mode stayed on and refused every buy. Same values again, now also creating the missing rows',
+    create: true,
+    set: [
+      ['sniper', ['enabled'], false],
+      ['trading', ['enabledStrategies', 'CURVE_SNIPE'], true],
+      ['trading', ['enabledStrategies', 'SWING'], true],
+      ['trading', ['enabledStrategies', 'RUNNER'], true],
+      ['trading', ['quietHours', 'enabled'], false],
+      ['trading', ['maxPositionSol'], 0.2],
+      ['trading', ['maxConcurrentPositions'], 20],
+      ['chart', ['dip', 'dipOnly', 'enabled'], false],
+      ['entry', ['minCombinedScore'], 55],
+      ['entry', ['edgeGate', 'enabled'], false],
+      ['explore', ['scoreMargin'], 15],
+      ['explore', ['maxOpen'], 10],
+      ['explore', ['maxPerHour'], 40],
+      ['aiCoach', ['enabled'], false],
+      ['meme', ['enabled'], false],
+      ['live', ['dryRun', 'enabled'], false],
+      ['usage', ['helius', 'dailyBudget'], 5_000],
+      ['usage', ['flux', 'dailyBudget'], 50_000],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */
@@ -739,7 +766,7 @@ export async function strategySince(): Promise<Date | null> {
 export function applyMigration(rows: Record<string, unknown>, m: ConfigMigration): Record<string, unknown> {
   const changed: Record<string, unknown> = {};
   for (const [section, path, value] of m.set) {
-    const base = changed[section] ?? rows[section];
+    const base = changed[section] ?? rows[section] ?? (m.create ? {} : undefined);
     if (!base || typeof base !== 'object' || Array.isArray(base)) continue;
     // Empty path = the whole section (a saved row would otherwise keep its stale values).
     if (path.length === 0) {
@@ -772,7 +799,7 @@ export async function runConfigMigrations(list: readonly ConfigMigration[] = MIG
       if (m.version <= version) continue;
       const changed = applyMigration(saved, m);
       for (const [key, value] of Object.entries(changed)) {
-        await prisma.botConfig.update({ where: { key }, data: { value: value as Prisma.InputJsonValue } });
+        await prisma.botConfig.upsert({ where: { key }, update: { value: value as Prisma.InputJsonValue }, create: { key, value: value as Prisma.InputJsonValue } });
         saved[key] = value;
       }
       version = m.version;
