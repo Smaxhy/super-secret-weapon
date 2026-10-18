@@ -338,22 +338,16 @@ December (small wallet in Nov only if paper edge is positive).
 ## Where things run
 - **Branch:** `claude/festive-albattani-6aufe6` (all work goes here; the VPS and GitHub Pages follow it).
 - **VPS:** Vultr, Ubuntu 24.04, `ssh root@209.250.254.34` (SSH key from the owner's Windows PC).
-  Repo at `/root/bot`. `docker compose` runs postgres (TimescaleDB), redis, bot (= CRYPTO), forex (v15.4), caddy.
-- **v15.4 crypto / forex split** (owner: "a crypto push must not affect forex, and the other way around"): the `forex`
-  container runs `node dist/forex-main.js` (same image; hourly + 15m/1m labs, practice accounts, calendar, headlines,
-  `/api/forex*` on 8081 via `src/api/forex-routes.ts`; same JWT secret → one dashboard login); Caddy routes
-  `/api/forex*` → forex:8081, the rest → bot:8080. The crypto bot no longer imports any forex file. auto-update.sh asks
-  `scripts/which-containers.sh` (rules in `scripts/forex-paths.txt`: forex-only / shared files; other src → crypto;
-  docs / dashboard / tests / scripts → nothing) and runs `docker compose up -d --build --no-deps bot` or `… forex`,
-  both only for shared files (env, logger, prisma, redis, gbdt, ta indicators, package / Dockerfile / compose / db).
-  `tests/deploy-split.test.ts` fails if the forex process imports an unlisted file. The generic GBDT core moved to
-  `src/lib/gbdt.ts` (tree-model re-exports it) so forex doesn't load crypto learners. Forex logs:
-  `docker compose logs -f forex`; health `/api/forex/health`.
-  **v15.4.1 fix (forex broke after the split)**: Caddy's config is a single-FILE bind mount; `git pull` writes a new
-  Caddyfile (new inode), so the running container kept the OLD file and `caddy reload` re-read it → `/api/forex*` still
-  went to the crypto bot (no forex routes any more) → forex dead. auto-update.sh `heal_caddy` (every 5-min run + after
-  each deploy): file inside the container ≠ repo's → `docker compose up -d --force-recreate --no-deps caddy`. Manual:
-  `cd /root/bot && docker compose up -d --force-recreate --no-deps caddy`. Never rely on `caddy reload` after a pull.
+  Repo at `/root/bot`. `docker compose` runs postgres (TimescaleDB), redis, bot (crypto + forex, one process), caddy.
+- **v15.4 crypto / forex split — REVERTED in v15.5** (owner: "just put it together with crypto again, make it all work").
+  The split (own `forex` container, Caddy `/api/forex*` route, `which-containers.sh`) broke forex on the VPS: Caddy's
+  config is a single-FILE bind mount, `git pull` writes a new Caddyfile (new inode), so the container kept the OLD file
+  and `/api/forex*` went to the crypto bot, which no longer had the routes. Forex is back inside the bot process
+  (index.ts starts ForexLab / Practice / Calendar / Headlines / FastLab, server.ts serves `/api/forex*`), every push
+  rebuilds everything again. Kept: `src/lib/gbdt.ts` (tree-model re-exports it) and `heal_caddy` in auto-update.sh
+  (every 5-min run + after a deploy: file inside the container ≠ repo's → `docker compose up -d --force-recreate
+  --no-deps caddy`; never rely on `caddy reload` after a pull). Manual: `cd /root/bot && docker compose up -d
+  --force-recreate --no-deps caddy`. The v15.4 crypto reset (above) stays.
   Cron runs `scripts/auto-update.sh` every minute (GitHub checked every 5 min or on the dashboard's Update button).
   Log: `~/bot-update.log`. Bot logs: `docker compose logs -f bot`.
 - **API:** `https://209-250-254-34.sslip.io` (Caddy → bot:8080, Let's Encrypt).
