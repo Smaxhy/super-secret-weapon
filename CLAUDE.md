@@ -47,6 +47,21 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - API GET `/api/forex`, POST `/api/forex/run`. Dashboard page **Forex** (`pages/Forex.tsx`, tabs Strategies / Paper /
   Setup; tap a strategy → weekly table per risk level). Nav regrouped: Forex / Crypto / Crypto lab / System; phone bar
   Forex · Crypto · Positions · Performance · More. tests/forex.test.ts (incl. a no-peeking test). 896 tests.
+- **v12.1 Practice account** (owner: "practice FX trading with leverage, $1k, very accurate to the real market";
+  "NOT a broker — payouts + many brokers ban bots"). `src/forex/practice.ts`: ONE simulated account in Redis
+  `fx:practice` ($1,000 start, reset any time): open with pair / side / margin $ / leverage 1–500× / SL / TP in price;
+  entry at the ask (buy) or bid (sell); P&L converted to USD (`usdPer`, `unitsFor`, `pnlUsd`; metals = oz in USD);
+  SL / TP checked every 15 s against each 1-minute high / low since the last check (exit side of the book); stop-out
+  closes everything at margin level ≤ 50%; refuses when the market is closed. Prices: **OANDA v20 when a token is
+  saved** (`src/forex/oanda.ts`: live bid / ask, all 12 markets in one call every ≤2 s, M1 candles every 20 s) — the
+  OANDA DEMO account is a free DATA feed only, nothing is ever sent to it; else Yahoo 1-minute (15–20 s cache, synthetic
+  spread). API GET `/api/forex/practice`, POST `/open` `/close` {id|'all'} `/edit` `/reset`; GET `/api/forex/candles`;
+  GET/PUT `/api/forex/oanda` (token tested before saving, stored in BotConfig `_oanda`, masked on read). Dashboard:
+  Forex → **Practice** tab first (`components/FxTrade.tsx`: account tiles, pair strip with live prices, TradingView
+  Advanced Chart widget `components/TvChart.tsx` on `OANDA:<pair>` — display only, TradingView has no data API — order
+  ticket with amount / leverage chips / SL + TP in pips, position size, pip value, risk % of the account; open positions
+  with live P&L and Close; history; reset). Forex → Setup → "Live price feed" (`components/OandaCard.tsx`).
+  tests/forex-practice.test.ts. Real money later = on-chain perps from the owner's own wallet (no broker, no payouts).
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

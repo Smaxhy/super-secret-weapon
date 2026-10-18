@@ -7,6 +7,8 @@ import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 import { ago } from '../lib/format';
 import { Icon } from '../components/Icon';
+import { FxTrade } from '../components/FxTrade';
+import { OandaCard } from '../components/OandaCard';
 import { Badge, Button, Card, Chip, Drawer, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Stack, StatTile, Tabs, useStored, useTab } from '../components/ui';
 
 interface RStats { n: number; winPct: number; avgR: number; medianR: number; pf: number | null; totalR: number; maxDdR: number }
@@ -22,6 +24,7 @@ const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink
 const day = (t: number | null) => (t ? new Date(t).toISOString().slice(0, 10) : '—');
 const VERDICT: Record<RowT['verdict'], { label: string; tone: 'up' | 'warn' | 'neutral' }> = { edge: { label: 'Edge', tone: 'up' }, maybe: { label: 'Maybe', tone: 'warn' }, no: { label: 'No edge', tone: 'neutral' } };
 const SECTIONS = [
+  { key: 'trade', label: 'Practice' },
   { key: 'strategies', label: 'Strategies' },
   { key: 'paper', label: 'Paper' },
   { key: 'setup', label: 'Setup' },
@@ -30,7 +33,7 @@ type Section = (typeof SECTIONS)[number]['key'];
 
 export function Forex() {
   const { data, error, reload } = useApi<Data>('/api/forex', 60_000);
-  const [section, setSection] = useTab<Section>('forex', SECTIONS.map((s) => s.key), 'strategies');
+  const [section, setSection] = useTab<Section>('forex', SECTIONS.map((s) => s.key), 'trade');
   const [busy, setBusy] = useState(false);
   const running = !!data?.running;
   useEffect(() => {
@@ -52,7 +55,7 @@ export function Forex() {
     <>
       <PageHeader
         title="Forex"
-        subtitle="Currency pairs, gold and silver. Every strategy tested on 2 years of hourly candles with real spreads, then paper traded live. No real money yet."
+        subtitle="Practice trading with fake money and real prices, plus every strategy tested on 2 years of history and paper traded live."
         action={
           <Button size="sm" disabled={busy || running} onClick={() => void run()}>
             <Icon name="refresh" size={14} />
@@ -61,15 +64,16 @@ export function Forex() {
         }
       />
       {error && <ErrorBox message={error} />}
-      {!data && !error && <Loading kind="tiles" />}
-      {data && !r && <Empty icon={<Icon name="globe" size={20} />}>{running ? 'First run: downloading 2 years of candles for 12 markets. About a minute.' : 'Not run yet. It starts by itself a minute after the bot starts, or press Update now.'}</Empty>}
-      {r && (
+      <Tabs sticky tabs={SECTIONS.map((x) => ({ key: x.key, label: x.label }))} value={section} onChange={setSection} label="Forex sections" className="mb-4" />
+      {section === 'trade' && <FxTrade />}
+      {section === 'setup' && <Stack><OandaCard />{r && <Setup r={r} />}</Stack>}
+      {(section === 'strategies' || section === 'paper') && !data && !error && <Loading kind="tiles" />}
+      {(section === 'strategies' || section === 'paper') && data && !r && <Empty icon={<Icon name="globe" size={20} />}>{running ? 'First run: downloading 2 years of candles for 12 markets. About a minute.' : 'Not run yet. It starts by itself a minute after the bot starts, or press Update now.'}</Empty>}
+      {r && (section === 'strategies' || section === 'paper') && (
         <Stack>
           <Summary r={r} />
-          <Tabs sticky tabs={SECTIONS.map((x) => ({ key: x.key, label: x.label }))} value={section} onChange={setSection} label="Forex sections" />
           {section === 'strategies' && <Strategies r={r} />}
           {section === 'paper' && <Paper r={r} />}
-          {section === 'setup' && <Setup r={r} />}
         </Stack>
       )}
     </>

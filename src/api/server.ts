@@ -17,6 +17,7 @@
 import { runBacktest } from '../learner/backtester';
 import { copyReplayStatus, startCopyReplay } from '../learner/copy-replay-runner';
 import { cohortTestRunning, lastCohortTest, runCohortTest } from '../learner/cohort-test';
+import { loadOanda, maskToken, oandaReady, saveOanda, testOanda } from '../forex/oanda';
 import { moneyMap } from '../learner/money-map';
 import { DEFAULT_CONFIG as DEFAULTS } from '../config/default';
 import { getConfig as cfgNow } from '../config/runtime-config';
@@ -131,6 +132,66 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       }
       if (deps.forex.isRunning()) return { ok: true, already: true };
       void deps.forex.run(req.body?.refresh !== false).catch(() => undefined);
+      return { ok: true };
+    });
+    // v12.1 forex practice account
+    secured.get('/api/forex/practice', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!deps.practice) return { account: null, quotes: {} };
+      return deps.practice.snapshot();
+    });
+    secured.post<{ Body: { pair?: string; side?: number; marginUsd?: number; leverage?: number; stop?: number | null; target?: number | null } }>('/api/forex/practice/open', async (req, reply) => {
+      const b = req.body ?? {};
+      const r = deps.practice ? await deps.practice.open({ pair: String(b.pair ?? ''), side: b.side === -1 ? -1 : 1, marginUsd: Number(b.marginUsd), leverage: Number(b.leverage), stop: b.stop == null || b.stop === ('' as unknown) ? null : Number(b.stop), target: b.target == null || b.target === ('' as unknown) ? null : Number(b.target) }) : { ok: false, error: 'not running' };
+      if (!r.ok) reply.code(400);
+      return r;
+    });
+    secured.post<{ Body: { id?: string } }>('/api/forex/practice/close', async (req, reply) => {
+      const r = deps.practice ? await deps.practice.close(req.body?.id === 'all' ? 'all' : String(req.body?.id ?? '')) : { ok: false, error: 'not running' };
+      if (!r.ok) reply.code(400);
+      return r;
+    });
+    secured.post<{ Body: { id?: string; stop?: number | null; target?: number | null } }>('/api/forex/practice/edit', async (req, reply) => {
+      const b = req.body ?? {};
+      const r = deps.practice ? await deps.practice.edit(String(b.id ?? ''), b.stop == null ? null : Number(b.stop), b.target == null ? null : Number(b.target)) : { ok: false, error: 'not running' };
+      if (!r.ok) reply.code(400);
+      return r;
+    });
+    secured.get('/api/forex/candles', async (req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      const q = req.query as { pair?: string; tf?: string; count?: string };
+      const tf = (['S5', 'M1', 'M5', 'M15', 'H1', 'H4', 'D'] as const).find((x) => x === q.tf) ?? 'M5';
+      if (!deps.practice) return { source: 'yahoo', bars: [] };
+      return deps.practice.candles(String(q.pair ?? 'EURUSD'), tf, Math.min(500, Math.max(30, Number(q.count ?? 200) || 200)));
+    });
+    // OANDA demo token = a free DATA feed only (no trading through it); masked on read.
+    secured.get('/api/forex/oanda', async () => {
+      const s = await loadOanda();
+      return { connected: oandaReady(s), token: maskToken(s.token), accountId: s.accountId ? `${s.accountId.slice(0, 4)}…${s.accountId.slice(-3)}` : null, env: s.env ?? 'practice', updatedAt: s.updatedAt ?? null };
+    });
+    secured.put<{ Body: { token?: string; accountId?: string; env?: string; clear?: boolean } }>('/api/forex/oanda', async (req, reply) => {
+      const b = req.body ?? {};
+      if (b.clear) {
+        await saveOanda({ updatedAt: new Date().toISOString() });
+        return { ok: true };
+      }
+      const token = String(b.token ?? '').trim();
+      const accountId = String(b.accountId ?? '').trim();
+      if (!/^[A-Za-z0-9-]{20,}$/.test(token) || !/^[0-9-]{6,}$/.test(accountId)) {
+        reply.code(400);
+        return { ok: false, error: 'paste the API token and the account id (like 101-004-1234567-001)' };
+      }
+      const next = { token, accountId, env: b.env === 'live' ? ('live' as const) : ('practice' as const), updatedAt: new Date().toISOString() };
+      const t = await testOanda(next);
+      if (!t.ok) {
+        reply.code(400);
+        return { ok: false, error: `OANDA said no: ${t.error}` };
+      }
+      await saveOanda(next);
+      return { ok: true };
+    });
+    secured.post<{ Body: { startUsd?: number } }>('/api/forex/practice/reset', async (req) => {
+      await deps.practice?.reset(Number(req.body?.startUsd ?? 1000) || 1000);
       return { ok: true };
     });
     // v11.16 AI meme reader: today's reads, spend, cache hits, last 20 verdicts.

@@ -1,0 +1,175 @@
+/** Forex practice account: fake money, live prices, leverage, stop-loss / take-profit, margin call. */
+import { useEffect, useMemo, useState } from 'react';
+import { useApi } from '../hooks/useApi';
+import { api } from '../lib/api';
+import { ago } from '../lib/format';
+import { TvChart } from './TvChart';
+import { Badge, Button, Card, Chip, NumberInput, Row, Rows, Stack, StatTile, useStored } from './ui';
+
+interface Quote { id: string; mid: number; bid: number; ask: number; t: number; dayChangePct: number | null; source: 'oanda' | 'yahoo'; tradeable?: boolean }
+interface Pos { id: string; pair: string; side: 1 | -1; units: number; entry: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; px: number; pnlUsd: number; pnlPct: number }
+interface Closed { id: string; pair: string; side: 1 | -1; entry: number; exit: number; leverage: number; marginUsd: number; pnlUsd: number; reason: string; closedAt: number }
+interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[] }
+interface Data { account: Acct | null; quotes: Record<string, Quote> }
+
+const PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'USDCHF', 'NZDUSD', 'EURJPY', 'GBPJPY', 'EURGBP', 'XAUUSD', 'XAGUSD'];
+const LEVS = [1, 10, 30, 50, 100, 200, 500];
+const TFS: Array<[string, string]> = [['1', '1m'], ['5', '5m'], ['15', '15m'], ['60', '1h'], ['240', '4h'], ['D', '1D']];
+const dp = (id: string) => (id.includes('JPY') ? 3 : id === 'XAUUSD' ? 2 : id === 'XAGUSD' ? 3 : 5);
+const pipOf = (id: string) => (id.includes('JPY') ? 0.01 : id === 'XAUUSD' ? 0.01 : id === 'XAGUSD' ? 0.001 : 0.0001);
+const usd = (x: number) => `${x < 0 ? '−' : ''}$${Math.abs(x).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink-2');
+
+export function FxTrade() {
+  const { data, reload } = useApi<Data>('/api/forex/practice', 4_000);
+  const [pair, setPair] = useStored<string>('fx.pair', 'EURUSD', PAIRS);
+  const [tf, setTf] = useStored<string>('fx.chartTf', '5', TFS.map((t) => t[0]));
+  const [amount, setAmount] = useState('100');
+  const [lev, setLev] = useStored<string>('fx.lev', '30', LEVS.map(String));
+  const [stopPips, setStopPips] = useState('20');
+  const [tpPips, setTpPips] = useState('40');
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const a = data?.account ?? null;
+  const q = data?.quotes?.[pair];
+  const p = pipOf(pair);
+  const notional = (Number(amount) || 0) * Number(lev);
+  // what 1 pip is worth for this size (approx., USD-quoted pairs exact)
+  const pipValue = useMemo(() => {
+    if (!q) return null;
+    const units = pair.startsWith('USD') ? notional : notional / (pair === 'XAUUSD' || pair === 'XAGUSD' ? q.mid : (data?.quotes?.[`${pair.slice(0, 3)}USD`]?.mid ?? q.mid));
+    const quote = pair.slice(3);
+    const qUsd = quote === 'USD' ? 1 : quote === 'JPY' ? 1 / (data?.quotes?.USDJPY?.mid ?? 150) : quote === 'GBP' ? (data?.quotes?.GBPUSD?.mid ?? 1.25) : 1 / (data?.quotes?.[`USD${quote}`]?.mid ?? 1);
+    return units * p * qUsd;
+  }, [q, pair, notional, p, data]);
+
+  const place = async (side: 1 | -1) => {
+    if (!q) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const px = side === 1 ? q.ask : q.bid;
+      const sp = Number(stopPips);
+      const tp = Number(tpPips);
+      await api('/api/forex/practice/open', {
+        method: 'POST',
+        body: JSON.stringify({ pair, side, marginUsd: Number(amount), leverage: Number(lev), stop: sp > 0 ? px - side * sp * p : null, target: tp > 0 ? px + side * tp * p : null }),
+      });
+      setMsg({ ok: true, text: `${side === 1 ? 'Bought' : 'Sold'} ${pair}` });
+      await reload();
+    } catch (e) {
+      setMsg({ ok: false, text: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const close = async (id: string) => {
+    await api('/api/forex/practice/close', { method: 'POST', body: JSON.stringify({ id }) }).catch((e: Error) => setMsg({ ok: false, text: e.message }));
+    await reload();
+  };
+  const reset = async () => {
+    if (!confirm('Reset the practice account to $1,000? All positions and history are cleared.')) return;
+    await api('/api/forex/practice/reset', { method: 'POST', body: JSON.stringify({ startUsd: 1000 }) });
+    await reload();
+  };
+  useEffect(() => setMsg(null), [pair]);
+
+  return (
+    <Stack>
+      {a && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile compact label="Equity" value={usd(a.equityUsd)} sub={`balance ${usd(a.balanceUsd)} · started ${usd(a.startUsd)}`} tone={a.equityUsd > a.startUsd ? 'up' : a.equityUsd < a.startUsd ? 'down' : undefined} />
+          <StatTile compact label="Profit" value={usd(a.equityUsd - a.startUsd)} sub={`${(((a.equityUsd / a.startUsd) - 1) * 100).toFixed(1)}%`} tone={a.equityUsd >= a.startUsd ? 'up' : 'down'} />
+          <StatTile compact label="Margin used" value={usd(a.marginUsedUsd)} sub={`free ${usd(a.freeMarginUsd)}`} />
+          <StatTile compact label="Margin level" value={a.marginLevelPct === null ? '—' : `${a.marginLevelPct}%`} sub="margin call at 50%" tone={a.marginLevelPct !== null && a.marginLevelPct < 100 ? 'down' : undefined} />
+        </div>
+      )}
+      <Card padded={false}>
+        <div className="flex gap-1.5 overflow-x-auto px-4 pt-4 pb-2 sm:px-5">
+          {PAIRS.map((id) => {
+            const x = data?.quotes?.[id];
+            return (
+              <button key={id} type="button" onClick={() => setPair(id)} className={`shrink-0 rounded-xl border px-3 py-1.5 text-left text-xs ${pair === id ? 'border-accent bg-accent/10' : 'border-line'}`}>
+                <div className="font-semibold text-ink">{id}</div>
+                <div className="tabular text-muted">{x ? x.mid.toFixed(dp(id)) : '…'} {x?.dayChangePct != null && <span className={tone(x.dayChangePct)}>{x.dayChangePct > 0 ? '+' : ''}{x.dayChangePct}%</span>}</div>
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex flex-wrap gap-1.5 px-4 pb-3 sm:px-5">
+          {TFS.map(([k, label]) => (
+            <Chip key={k} active={tf === k} onClick={() => setTf(k)}>{label}</Chip>
+          ))}
+        </div>
+        <div className="px-2 pb-2 sm:px-3">
+          <TvChart pair={pair} interval={tf} />
+        </div>
+      </Card>
+      <Card title={`Trade ${pair}`} subtitle={q ? `Bid ${q.bid.toFixed(dp(pair))} · Ask ${q.ask.toFixed(dp(pair))} · spread ${((q.ask - q.bid) / p).toFixed(1)} pips · ${q.source === 'oanda' ? 'live OANDA price' : 'Yahoo price (slower; connect OANDA data in Setup)'}` : 'Loading price…'}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <NumberInput label="Amount (margin)" value={amount} onChange={setAmount} min={1} step={10} unit="$" />
+          <div>
+            <div className="mb-1 text-xs font-medium text-ink-2">Leverage</div>
+            <div className="flex flex-wrap gap-1.5">
+              {LEVS.map((l) => (
+                <Chip key={l} active={lev === String(l)} onClick={() => setLev(String(l))}>{l}×</Chip>
+              ))}
+            </div>
+          </div>
+          <NumberInput label="Stop loss" value={stopPips} onChange={setStopPips} min={0} step={1} unit="pips" />
+          <NumberInput label="Take profit" value={tpPips} onChange={setTpPips} min={0} step={1} unit="pips" />
+        </div>
+        <p className="mt-3 text-xs text-muted">
+          Position {usd(notional)}{pipValue ? ` · 1 pip ≈ ${usd(pipValue)}` : ''}
+          {pipValue && Number(stopPips) > 0 ? ` · stop risks ≈ ${usd(pipValue * Number(stopPips))} (${((pipValue * Number(stopPips) * 100) / Math.max(1, a?.equityUsd ?? 1000)).toFixed(1)}% of the account)` : ''}
+          {pipValue && Number(tpPips) > 0 ? ` · target ≈ +${usd(pipValue * Number(tpPips))}` : ''}
+        </p>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <Button size="lg" variant="primary" disabled={busy || !q} className="!bg-up" onClick={() => void place(1)}>Buy {q ? q.ask.toFixed(dp(pair)) : ''}</Button>
+          <Button size="lg" variant="danger" disabled={busy || !q} onClick={() => void place(-1)}>Sell {q ? q.bid.toFixed(dp(pair)) : ''}</Button>
+        </div>
+        {msg && <p className={`mt-2 text-sm ${msg.ok ? 'text-up' : 'text-down'}`}>{msg.text}</p>}
+      </Card>
+      <Card title="Open positions" action={a?.positions.length ? <Button size="sm" variant="outline" onClick={() => void close('all')}>Close all</Button> : undefined}>
+        {!a?.positions.length ? (
+          <p className="text-sm text-ink-2">No open positions.</p>
+        ) : (
+          <ul className="divide-y divide-line">
+            {a.positions.map((x) => (
+              <li key={x.id} className="flex items-center gap-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <Badge tone={x.side === 1 ? 'up' : 'down'}>{x.side === 1 ? 'Buy' : 'Sell'}</Badge>
+                    <span className="font-medium text-ink">{x.pair}</span>
+                    <span className="text-xs text-muted">{x.leverage}× · {usd(x.marginUsd)}</span>
+                  </div>
+                  <div className="mt-0.5 text-xs text-muted">
+                    {x.entry.toFixed(dp(x.pair))} → {x.px.toFixed(dp(x.pair))}
+                    {x.stop !== null && ` · SL ${x.stop.toFixed(dp(x.pair))}`}
+                    {x.target !== null && ` · TP ${x.target.toFixed(dp(x.pair))}`} · {ago(new Date(x.openedAt).toISOString())}
+                  </div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className={`tabular font-semibold ${tone(x.pnlUsd)}`}>{usd(x.pnlUsd)}</div>
+                  <div className={`text-xs ${tone(x.pnlPct)}`}>{x.pnlPct > 0 ? '+' : ''}{x.pnlPct}%</div>
+                </div>
+                <Button size="sm" variant="outline" onClick={() => void close(x.id)}>Close</Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+      <Card title="History" action={<Button size="sm" variant="ghost" onClick={() => void reset()}>Reset to $1,000</Button>}>
+        {!a?.closed.length ? (
+          <p className="text-sm text-ink-2">No closed trades yet.</p>
+        ) : (
+          <Rows>
+            {a.closed.slice(0, 50).map((x) => (
+              <Row key={x.id} label={`${x.side === 1 ? 'Buy' : 'Sell'} ${x.pair} ${x.leverage}×`} sub={`${x.entry.toFixed(dp(x.pair))} → ${x.exit.toFixed(dp(x.pair))} · ${x.reason} · ${ago(new Date(x.closedAt).toISOString())}`} value={<span className={tone(x.pnlUsd)}>{usd(x.pnlUsd)}</span>} />
+            ))}
+          </Rows>
+        )}
+      </Card>
+    </Stack>
+  );
+}
