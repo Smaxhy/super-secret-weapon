@@ -23,16 +23,16 @@ to confirm they want to end the freeze first. Freeze goal: 5–7 days / 200–30
 strategy on Performance → Mistakes ("Does each strategy deserve to run?") and switch losers OFF (don't tweak).
 Diagnosing (reading code, explaining Bot health, diagnose.sh output) is always fine — it changes nothing.
 
-## Oct 17 build queue (owner: "even if the session runs out, continue when it's back"; owner approved all, no asking)
-Done: v11 … v11.14 (see Current state; live execution built DORMANT), dashboard colour pass (bb75986), 4 GB tuning. Running: dashboard LAYOUT rebuild
-(every page, multi-column; owner: "all you did is change the colour"). Next, in order, one worker at a time per tree:
-(1) research ports — Telegram + launch-size features, first-buyers-still-holding %, holder-rewards longer holds, early-leg
-lab variant; (2) self-improving loop: AI proposes ONE editable change → replay proves it on 2–3 days of tape vs current →
-applyEdit source 'loop' → watch N live trades → auto-revert on divergence; (3) live execution (Phase 4): direct program
-only (pump.fun app fee 0.45% since Oct 17), on-chain max_sol_cost = size on every buy, Helius Sender / FluxRPC shield,
-priority fees, kill switch, daily loss limit, wallet key ONLY in VPS .env, paper-mode tested first, go/no-go Nov 7;
-(4) policy tournament; (5) AI meme-reading. OFF the list (owner): Bonk.fun, market regime gate. Target: real money by
-December (small wallet in Nov if paper edge is positive).
+## Oct 17–18 build queue — DONE (v11 … v11.16, last push 67818ed)
+Shipped: v11 overhaul, tape + replay, wallet engine, Sniper mode, research ports, Obsidian brain, deployer history +
+holder-growth exits, dashboard colour pass + full LAYOUT rebuild, 4 GB tuning, momentum-gate fix (v11.12, after 11 h
+without a buy signal), self-improving loop (v11.13), live execution DORMANT (v11.14), policy tournament (v11.15), AI
+meme-reading (v11.16). OFF the list (owner): Bonk.fun, market regime gate.
+NEXT (no new features unless the owner asks): watch Bot health (signals per hour, "Live path: N simulated, X% OK"),
+the nightly loop's experiments (Brain page), the tournament (Performance → Tests). Open question: the score bar — the
+owner was given three replay commands (sniper as-is / momentum fix / + score bar 55 & margin 4); decide from them.
+Go/no-go for real money Nov 7 on paper edge (owner's go-live checklist is in the v11.14 bullet). Target: real money by
+December (small wallet in Nov only if paper edge is positive).
 
 ## Where things run
 - **Branch:** `claude/festive-albattani-6aufe6` (all work goes here; the VPS and GitHub Pages follow it).
