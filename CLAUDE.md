@@ -8,6 +8,20 @@ Owner has some coding knowledge; explain simply, keep chat short, spend effort o
 Original master plan: 9 phases (scanner → scoring/paper → dashboard → live execution → controls →
 smart money → learning engine → ML → social). See README.md.
 
+## ⛔ VERDICT (Oct 18 2026, end of day) — READ BEFORE PROPOSING ANY CHANGE
+Every edge the research pointed to was tested on the bot's OWN data (Performance → Money) and lost: coin filters /
+score bar (7,365 coins, 11% ever reached break-even, median −5%, perfect exits +3%), the Sniper replay (188 trades,
+−5.7 SOL), copying winners and the owner's wallets (2,966 copies, 13% won, −134 SOL, 0 consistent wallets), elite
+repeat-graduator deployers at launch (2 / 5 / 15 / 60 s, dip entries, 10 min – 12 h holds: best PF 1.03 on 97 trades,
+41 stopped at −67%). The elite signal itself is real (41.9% graduate vs 2.6%) but half of those graduate inside the
+launch's first moments — filled in the creation block by the deployer's bundle; only 1 of 97 followable elite launches
+graduated. Conclusion, matching the public research: on pump.fun in 2026 a bot that reacts to trades (1–3 s late,
+5–8% round trip) is the launch-block snipers' and sandwich bots' exit liquidity. **Do NOT propose rule / bar / exit
+tweaks, more filters, more AI or "one more test" of the same kind.** Owner's options were put plainly: (1) stop
+spending, keep paper running only as a watch (nothing built until the Money tab shows a group with a POSITIVE MEDIAN
+on "Inside your filters"), (2) block-level sniping with Jito bundles against the deployers' own bundles — not
+recommended, (3) a different venue (liquid Solana coins / order books) — a different product.
+
 ## FREEZE ENDED (Oct 17 2026 — owner: "the trades are too bad, upgrade everything, make it profitable")
 The Oct 15 freeze below is over; v11 (below, "Current state") is the new setup. Judge it on Performance → Mistakes
 after 200–300 trades, same rule as before: switch losers OFF, don't tweak.
