@@ -26,6 +26,7 @@ import type { Evaluator } from '../evaluator/evaluator';
 import type { LiveState } from './live-state';
 import { effectiveKols, kolActivity, recordKolTrade, setKolDirectory } from './kol-signal';
 import { KNOWN_KOLS, OWNER_COPY_WALLETS, OWNER_PICKS, PICK_WEIGHT, TOP_PICK_WEIGHT } from '../config/kol-wallets';
+import { copyDecision, latestCopyReport } from '../learner/copy-consistent';
 import { isValidPubkey } from '../lib/pumpfun';
 
 /** Add the starter KOL list once (a marker row remembers it, so KOLs you delete stay deleted). */
@@ -208,6 +209,15 @@ export class WhaleTracker {
         }
       }
       this.onWatchToken?.(mint);
+      // v15.4 (owner): only wallets the latest copy test found consistent are copied; the others' buys stay a KOL signal
+      if (getConfig().copy.onlyConsistent ?? true) {
+        const d = copyDecision(await latestCopyReport(this.redis), wallet);
+        if (!d.ok) {
+          log.info({ wallet, mint }, `👛 ${name} bought — not copied: ${d.why}`);
+          void recordEvent({ module: 'whale-tracker', type: 'copy_skipped', mint, message: `${name} bought — not copied: ${d.why}`, data: { wallet } });
+          return;
+        }
+      }
       await this.evaluator.scheduleCopy(mint, wallet);
     } else {
       log.info({ wallet, mint, sol }, `🐋 ${name} sold for ${sol.toFixed(2)} SOL`);

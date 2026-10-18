@@ -414,6 +414,12 @@ export class Evaluator {
       const why = scanVerdict(organicFlow(this.crowd.trades(mint), Date.now()), market.raw.marketCapUsd ?? null, rc);
       if (why) dexFails.push(`runner flow faded: ${why}`);
     }
+    // v15.4 (owner: "only focus on soon and migrated coins"): copies and KOL follows too — only coins near graduation
+    // (curve ≥ the SOON floor) or already migrated.
+    const copyStages = (cfg.copy as { focusStages?: boolean }).focusStages ?? DEFAULT_CONFIG.copy.focusStages;
+    if (STRATEGY.name === 'SMART_MONEY_COPY' && copyStages && !market.raw.complete && !market.raw.onAmm && market.raw.bondingCurvePct < cfg.focus.soon.minCurvePct) {
+      dexFails.push(`copy / KOL: only near-graduation (${cfg.focus.soon.minCurvePct}%+) or migrated coins (curve ${market.raw.bondingCurvePct.toFixed(0)}%)`);
+    }
     // Staircase chart (owner: "avoid odd-looking staircase charts") → no buy, whatever the score.
     if (stair?.hit) dexFails.push(stair.why);
     const tfWhy = timeframeFail(tf, cfg.entry.timeframes ?? DEFAULT_CONFIG.entry.timeframes);

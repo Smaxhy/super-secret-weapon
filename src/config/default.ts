@@ -1214,6 +1214,16 @@ export const DEFAULT_CONFIG = {
     skipConfirm: false as boolean,
     /** Re-check the token this many seconds after the wallet's buy. */
     checkpointsSec: [0, 30, 90, 180],
+    /**
+     * v15.4 (owner: "I only want the consistent wallets to be copied"): a COPY wallet's buy is copied only when the
+     * latest copy test (Performance → Money → "Who's actually making money?", re-run every night) found its copies
+     * profitable in BOTH halves of the test (6+ copies). Until then its buys only count as a KOL signal.
+     */
+    onlyConsistent: true as boolean,
+    /** the nightly copy test: UTC hour and days of tape (method-only mode) */
+    nightlyTest: { enabled: true as boolean, hourUtc: 4, days: 3 },
+    /** v15.4 (owner: focus on SOON and migrated coins): copies and KOL follows only on coins ≥ the SOON curve floor or migrated */
+    focusStages: true as boolean,
   },
 
   /** X accounts whose posts become "hot keywords" (needs TWITTER_BEARER_TOKEN). */

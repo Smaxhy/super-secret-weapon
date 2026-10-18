@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Pull new code and rebuild the bot — only when something changed.
+# Pull new code and rebuild — only when something changed, and only the container(s) the change touches
+# (v15.4: `bot` = crypto, `forex` = forex; scripts/forex-paths.txt says which files belong to which).
 # Runs every minute from cron (see install-auto-update.sh). Log: ~/bot-update.log
 #   - checks GitHub every 5 minutes, or at once when the dashboard's "Update now" button asked
 #     (Redis key update:request = "normal" | "force"; "force" rebuilds even without new code)
@@ -58,9 +59,32 @@ fi
 # The bot reports this version on the dashboard (spot a stuck update).
 GIT_SHA="$(git rev-parse --short HEAD)"
 export GIT_SHA
-FLAGS=(-d --build --remove-orphans)
+# Which containers does this change touch? (no deployed sha / diff fails / forced → both)
+CRYPTO=0
+FOREX=0
+if [[ -z "$DEPLOYED" || "$REQ" == "force" ]] || ! CHANGED="$(git diff --name-only "$DEPLOYED" HEAD 2>/dev/null)"; then
+  CRYPTO=1
+  FOREX=1
+else
+  PARTS="$(printf '%s\n' "$CHANGED" | bash scripts/which-containers.sh)"
+  [[ "$PARTS" == *crypto* ]] && CRYPTO=1
+  [[ "$PARTS" == *forex* ]] && FOREX=1
+fi
+FLAGS=(-d --build)
 [[ "$REQ" == "force" ]] && FLAGS+=(--force-recreate)
-if ! docker compose up "${FLAGS[@]}"; then
+WHAT="nothing to restart (docs / dashboard / tests only)"
+if [[ $CRYPTO == 1 && $FOREX == 1 ]]; then
+  FLAGS+=(--remove-orphans)
+  WHAT="crypto + forex"
+elif [[ $CRYPTO == 1 ]]; then
+  FLAGS+=(--no-deps bot)
+  WHAT="crypto only (forex untouched)"
+elif [[ $FOREX == 1 ]]; then
+  FLAGS+=(--no-deps forex)
+  WHAT="forex only (crypto untouched)"
+fi
+echo "$(date -u '+%F %T') restarting: $WHAT"
+if [[ $CRYPTO == 1 || $FOREX == 1 ]] && ! docker compose up "${FLAGS[@]}"; then
   echo "$(date -u '+%F %T') BUILD FAILED — retrying in 5 min. Disk: $(df -h / | tail -1)"
   status failed "build failed — retrying in 5 min (disk: $(df -h / | tail -1 | awk '{print $5}') used)"
   exit 1
@@ -71,8 +95,8 @@ if [[ -z "$DEPLOYED" || -n "$(git diff --name-only "$PREV" HEAD -- Caddyfile)" ]
 fi
 echo "$REMOTE" > .deployed-sha
 DEPLOYED="$REMOTE"
-status done "updated to ${GIT_SHA}"
+status done "updated to ${GIT_SHA}: ${WHAT}"
 # Keep the disk from filling up with old images / build cache.
 docker image prune -f >/dev/null 2>&1 || true
 docker builder prune -f --filter until=48h >/dev/null 2>&1 || true
-echo "$(date -u '+%F %T') update done (${GIT_SHA})"
+echo "$(date -u '+%F %T') update done (${GIT_SHA}: ${WHAT})"

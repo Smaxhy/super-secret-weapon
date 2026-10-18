@@ -6,7 +6,7 @@
  * prove itself ONCE on the unseen 30%. Only a judge that passes is used by the bot (it skips the signals it scores
  * low). Pure apart from the yields inside the tree training.
  */
-import { boost, cutPoints, DEFAULT_TREE_OPTIONS, sigmoid, treeValue, type Matrix, type TreeNode } from '../learner/tree-model';
+import { boost, cutPoints, DEFAULT_TREE_OPTIONS, sigmoid, treeValue, type Matrix, type TreeNode } from '../lib/gbdt';
 import type { FilterEnv } from './filters';
 import type { Ctx } from './ta';
 import { volRatioAt } from './engine';

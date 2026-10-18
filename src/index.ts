@@ -9,6 +9,7 @@
  *
  * Shutdown (Ctrl+C or `docker stop`) runs in reverse so nothing is lost.
  */
+import { startNightlyCopyTest } from './learner/copy-consistent';
 import { startMarketMood } from './learner/market-mood';
 import { startApi } from './api/server';
 import { env, redactUrl, rpcEndpoints } from './config/env';
@@ -60,11 +61,6 @@ import { getSolUsd } from './lib/sol-price';
 import { DipWatcher } from './executor/dip-watcher';
 import { StrategyLab } from './learner/strategy-lab';
 import { Tournament } from './learner/tournament';
-import { ForexLab } from './forex/lab';
-import { FastLab } from './forex/fast';
-import { Practice } from './forex/practice';
-import { ForexCalendar } from './forex/calendar';
-import { ForexHeadlines } from './forex/headlines';
 import { MemeReader } from './evaluator/meme-reader';
 import { NewPairWatcher } from './scanner/new-pair-watcher';
 import { TaLab } from './learner/ta-lab';
@@ -141,6 +137,18 @@ async function main(): Promise<void> {
   await oneTimeUpgrade('v11-strategy', async () => {
     await TradeCoach.reset(redis);
     await markStrategySince();
+  });
+  // v15.4 (owner: "reset the crypto strategies, trade smarter and faster, only SOON and migrated coins" — config
+  // migration v55): the coach's lessons and every strategy's record start fresh for the focused setup, once.
+  await oneTimeUpgrade('v15.4-crypto-reset', async () => {
+    await TradeCoach.reset(redis);
+    await markStrategySince();
+  });
+  // v15.4 (owner): track 5aLY… as a trusted COPY wallet (copied only once the copy test finds it consistent).
+  await oneTimeUpgrade('track-5aLY', async () => {
+    const { OWNER_TRUSTED_COPY } = await import('./config/kol-wallets');
+    const data = { kind: 'COPY', weight: 1.5, active: true, label: 'Trusted 5aLY', notes: "owner (Oct 18): trustworthy wallet — copied once the nightly copy test finds it consistent" };
+    await prisma.trackedWallet.upsert({ where: { address: OWNER_TRUSTED_COPY }, update: data, create: { address: OWNER_TRUSTED_COPY, ...data, source: 'MANUAL' } });
   });
   await startConfigRefresh();
 
@@ -361,21 +369,7 @@ async function main(): Promise<void> {
   });
   registry.onTradeApplied.push((mint) => tournament.onTrade(mint));
   tournament.start();
-  // v12 forex lab: hourly candles, every forex strategy backtested + paper traded (no real orders).
-  const forex = new ForexLab(redis);
-  forex.start();
-  const practice = new Practice(redis);
-  practice.start();
-  forex.practice = practice;
-  const fxCalendar = new ForexCalendar(redis);
-  void fxCalendar.start();
-  forex.calendar = fxCalendar;
-  const fxNews = new ForexHeadlines(redis);
-  void fxNews.start();
-  forex.headlines = fxNews;
-  // v15: the same strategies on 15-minute and 1-minute candles (tested hourly, checked live at every close)
-  const fastFx = new FastLab(redis, forex);
-  fastFx.start();
+  // Forex runs in its own process / container (v15.4: src/forex-main.ts), so a crypto deploy never restarts it.
   // Shadow trades: pretend trades on coins it didn't buy (refused / just under the bar / skipped by a rule).
   const shadow = new ShadowTrades(redis, crowd);
   evaluator.shadow = shadow;
@@ -753,6 +747,8 @@ async function main(): Promise<void> {
   };
 
   await whales.start();
+  // v15.4: the copy test re-runs every night so "consistent" follows what the copied wallets do now
+  const nightlyCopy = startNightlyCopyTest(redis, () => getConfig().copy.nightlyTest ?? DEFAULT_CONFIG.copy.nightlyTest);
   const spikeTimer = startSpikeWatcher(liveState, evaluator);
   // Saves each open position's price every 5s (Redis) for the dashboard chart.
   startPositionHistory();
@@ -762,7 +758,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament, meme: memeReader, forex, fastFx, practice, fxCalendar, fxNews }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament, meme: memeReader }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -830,6 +826,7 @@ async function main(): Promise<void> {
       await api?.close();
       for (const src of sources) await src.stop();
       whales.stop();
+      clearInterval(nightlyCopy);
       nightly.stop();
       stopBeliefCache();
       clearInterval(regimeTimer);
@@ -845,11 +842,6 @@ async function main(): Promise<void> {
       dips.stop();
       lab.stop();
       tournament.stop();
-      forex.stop();
-      fastFx.stop();
-      practice.stop();
-      fxCalendar.stop();
-      fxNews.stop();
       shadow.stop();
       brain.stop();
       stopPush();

@@ -15,22 +15,36 @@
 	@notws not path /ws
 	encode @notws gzip
 
-	reverse_proxy bot:8080 {
-		# Stream WebSocket frames immediately, never buffer.
-		flush_interval -1
-		# Long-lived dashboard sockets: no idle cut-off from Caddy's side
-		# (the bot sends a heartbeat every 20s anyway).
-		stream_timeout 24h
-		# On a Caddy config reload keep open sockets alive for a while instead of
-		# dropping every dashboard at once.
-		stream_close_delay 5m
-		# While the bot restarts (deploy), retry for a few seconds instead of
-		# returning 502 straight away.
-		lb_try_duration 10s
-		lb_try_interval 500ms
-		transport http {
-			dial_timeout 5s
-			keepalive 2m
+	# v15.4: forex runs in its own container
+	handle /api/forex* {
+		reverse_proxy forex:8081 {
+			lb_try_duration 10s
+			lb_try_interval 500ms
+			transport http {
+				dial_timeout 5s
+				keepalive 2m
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy bot:8080 {
+			# Stream WebSocket frames immediately, never buffer.
+			flush_interval -1
+			# Long-lived dashboard sockets: no idle cut-off from Caddy's side
+			# (the bot sends a heartbeat every 20s anyway).
+			stream_timeout 24h
+			# On a Caddy config reload keep open sockets alive for a while instead of
+			# dropping every dashboard at once.
+			stream_close_delay 5m
+			# While the bot restarts (deploy), retry for a few seconds instead of
+			# returning 502 straight away.
+			lb_try_duration 10s
+			lb_try_interval 500ms
+			transport http {
+				dial_timeout 5s
+				keepalive 2m
+			}
 		}
 	}
 }

@@ -10,11 +10,6 @@ import type { DipWatcher } from '../executor/dip-watcher';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
 import type { StrategyLab } from '../learner/strategy-lab';
 import type { Tournament } from '../learner/tournament';
-import type { ForexLab } from '../forex/lab';
-import type { FastLab } from '../forex/fast';
-import type { Practice } from '../forex/practice';
-import type { ForexCalendar } from '../forex/calendar';
-import type { ForexHeadlines } from '../forex/headlines';
 import type { MemeReader } from '../evaluator/meme-reader';
 import type { TaLab } from '../learner/ta-lab';
 import type { TrendingHub } from '../scanner/trending-hub';
@@ -62,16 +57,6 @@ export interface ApiDeps {
   tournament?: Tournament | null;
   /** v11.16: AI meme reader (today's reads, spend, recent verdicts). */
   meme?: MemeReader | null;
-  /** v12: forex lab (backtest + paper of every forex strategy). */
-  forex?: ForexLab | null;
-  /** v15: the 15-minute / 1-minute forex lab. */
-  fastFx?: FastLab | null;
-  /** v12.1: forex practice account (manual trades, fake money, leverage). */
-  practice?: Practice | null;
-  /** v12.4: economic calendar + market clock. */
-  fxCalendar?: ForexCalendar | null;
-  /** v12.5: live headlines. */
-  fxNews?: ForexHeadlines | null;
 }
 
 /** Classify a token for the live feed colour code. */

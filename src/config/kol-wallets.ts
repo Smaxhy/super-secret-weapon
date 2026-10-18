@@ -46,5 +46,9 @@ export const OWNER_PICKS: Array<{ address: string; top: boolean }> = [
 ];
 /** Owner: "you're allowed to copy trade him — if you're in a trade with him and he sells, sell instantly". kind COPY. */
 export const OWNER_COPY_WALLETS = ['4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9'];
+
+/** v15.4 (owner, Oct 18: "track this wallet, it's apparently a trustworthy wallet"): tracked as COPY (trusted weight) —
+ *  copied only once the nightly copy test finds it consistent; until then its buys count as a trusted KOL signal. */
+export const OWNER_TRUSTED_COPY = '5aLY85pyxiuX3fd4RgM3Yc1e3MAL6b7UgaZz6MS3JUfG';
 export const PICK_WEIGHT = 1;
 export const TOP_PICK_WEIGHT = 1.5;

@@ -1,0 +1,18 @@
+# Which files each container runs — read by scripts/auto-update.sh to restart ONLY what a push changed
+# (owner: "if I push an update on crypto I don't want forex to be affected, same the other way around").
+# Format: <kind> <extended regex on the repo path>
+#   only   = forex-only: a change restarts the forex container, never the crypto bot
+#   shared = used by both: a change restarts both
+# Anything else under src/ restarts only the crypto bot; docs / dashboard / tests / scripts restart nothing.
+# tests/deploy-split.test.ts fails if the forex process imports a file not listed here.
+only ^src/forex/
+only ^src/forex-main\.ts$
+only ^src/api/forex-routes\.ts$
+shared ^src/config/env\.ts$
+shared ^src/evaluator/ta/indicators\.ts$
+shared ^src/lib/gbdt\.ts$
+shared ^src/lib/logger\.ts$
+shared ^src/lib/prisma\.ts$
+shared ^src/lib/redis\.ts$
+shared ^src/db/
+shared ^(package\.json|package-lock\.json|Dockerfile|tsconfig\.json|\.dockerignore|docker-compose\.yml)$

@@ -291,6 +291,22 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v15.4 crypto reset (Oct 18 night, owner's explicit request — overrides the VERDICT's "no more tweaks" for this one)
+Owner: "copy only the consistent wallets; reset the crypto strategies, trade smarter and faster; track
+5aLY85pyxiuX3fd4RgM3Yc1e3MAL6b7UgaZz6MS3JUfG (trustworthy); only SOON and migrated coins; stick to what worked somewhat
+and improve it". Told plainly: nothing measured so far has an edge, this stays paper. Done:
+- Migration v55 (create): SOON + MIGRATION_MOMENTUM (the two least-bad in every review) + SMART_MONEY_COPY on; new
+  pairs / runners / swings off; allocation 0.55 / 0.35 / 0.1; 12 positions; confirmation 8 s, 1 pass (faster); score
+  bar 60; edge gate ON (records reset → passes until 30 trades); learning trades only SOON / MIGRATION, margin 10, 4
+  open, 12 an hour. One-time `v15.4-crypto-reset`: trade coach + `_strategySince` reset (P&L counter NOT reset).
+- Copies: `copy.onlyConsistent` — a COPY wallet's buy is copied only if the latest copy test (`copyrep:last`) marks it
+  `consistent` (6+ copies, both halves positive; `src/learner/copy-consistent.ts` `copyDecision`), else event
+  `copy_skipped` and its buy stays a KOL signal. Nightly copy test (`copy.nightlyTest` 04:00 UTC, last 3 days,
+  method-only, child process). `copy.focusStages`: copies + KOL follows only on coins ≥ the SOON curve floor (70%) or
+  migrated (evaluator rule fail).
+- 5aLY… added once (`track-5aLY`) as TrackedWallet kind COPY, weight 1.5 (trusted KOL signal now; copied once the
+  copy test finds it consistent). `OWNER_TRUSTED_COPY` in config/kol-wallets.ts.
+
 ## FREEZE ENDED (Oct 17 2026 — owner: "the trades are too bad, upgrade everything, make it profitable")
 The Oct 15 freeze below is over; v11 (below, "Current state") is the new setup. Judge it on Performance → Mistakes
 after 200–300 trades, same rule as before: switch losers OFF, don't tweak.
@@ -322,7 +338,17 @@ December (small wallet in Nov only if paper edge is positive).
 ## Where things run
 - **Branch:** `claude/festive-albattani-6aufe6` (all work goes here; the VPS and GitHub Pages follow it).
 - **VPS:** Vultr, Ubuntu 24.04, `ssh root@209.250.254.34` (SSH key from the owner's Windows PC).
-  Repo at `/root/bot`. `docker compose` runs postgres (TimescaleDB), redis, bot, caddy.
+  Repo at `/root/bot`. `docker compose` runs postgres (TimescaleDB), redis, bot (= CRYPTO), forex (v15.4), caddy.
+- **v15.4 crypto / forex split** (owner: "a crypto push must not affect forex, and the other way around"): the `forex`
+  container runs `node dist/forex-main.js` (same image; hourly + 15m/1m labs, practice accounts, calendar, headlines,
+  `/api/forex*` on 8081 via `src/api/forex-routes.ts`; same JWT secret → one dashboard login); Caddy routes
+  `/api/forex*` → forex:8081, the rest → bot:8080. The crypto bot no longer imports any forex file. auto-update.sh asks
+  `scripts/which-containers.sh` (rules in `scripts/forex-paths.txt`: forex-only / shared files; other src → crypto;
+  docs / dashboard / tests / scripts → nothing) and runs `docker compose up -d --build --no-deps bot` or `… forex`,
+  both only for shared files (env, logger, prisma, redis, gbdt, ta indicators, package / Dockerfile / compose / db).
+  `tests/deploy-split.test.ts` fails if the forex process imports an unlisted file. The generic GBDT core moved to
+  `src/lib/gbdt.ts` (tree-model re-exports it) so forex doesn't load crypto learners. Forex logs:
+  `docker compose logs -f forex`; health `/api/forex/health`.
   Cron runs `scripts/auto-update.sh` every minute (GitHub checked every 5 min or on the dashboard's Update button).
   Log: `~/bot-update.log`. Bot logs: `docker compose logs -f bot`.
 - **API:** `https://209-250-254-34.sslip.io` (Caddy → bot:8080, Let's Encrypt).
