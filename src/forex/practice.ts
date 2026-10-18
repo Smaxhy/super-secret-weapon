@@ -81,8 +81,10 @@ export interface PracticePosition {
   tpTrailPx?: number | null;
   tpFrac?: number;
   tpHit?: boolean;
-  /** bot trades (v15): the strategy's chart and the exit rules still in force (shown as the trade's plan) */
+  /** bot trades (v15): the strategy's chart and the exit rules still in force (shown as the trade's plan); v15.1:
+   * `trailPx` = the trailing stop-loss distance (price) */
   tf?: string;
+  trailPx?: number | null;
   trailAtr?: number | null;
   maxBars?: number | null;
   exitWhen?: string | null;
@@ -378,6 +380,7 @@ export interface LabOpenTrade {
   tpFrac?: number | null;
   tpHit?: boolean;
   /** v15: exit rules still in force (for the trade's plan) */
+  trailPx?: number | null;
   trailAtr?: number | null;
   maxBars?: number | null;
   exitWhen?: string | null;
@@ -393,6 +396,7 @@ export interface ExitPlan {
   tpFrac?: number | null;
   tpHit?: boolean;
   tf?: string;
+  trailPx?: number | null;
   trailAtr?: number | null;
   maxBars?: number | null;
   exitWhen?: string | null;
@@ -411,6 +415,7 @@ export function planOf(t: LabOpenTrade): ExitPlan {
     tpFrac: t.tpFrac ?? null,
     tpHit: !!t.tpHit,
     ...(t.tf ? { tf: t.tf } : {}),
+    trailPx: t.trailPx ?? null,
     trailAtr: t.trailAtr ?? null,
     maxBars: t.maxBars ?? null,
     exitWhen: t.exitWhen ?? null,
@@ -621,6 +626,7 @@ export class Practice {
         ...(req.scaleAt != null ? { scaleAt: req.scaleAt, scaleFrac: req.scaleFrac ?? 0.5, scaled: !!req.scaled } : {}),
         ...(req.tpTrailPx != null ? { tpTrailPx: req.tpTrailPx, tpFrac: req.tpFrac ?? 0, tpHit: !!req.tpHit } : {}),
         ...(req.tf ? { tf: req.tf } : {}),
+        ...(req.trailPx != null ? { trailPx: req.trailPx } : {}),
         ...(req.trailAtr != null ? { trailAtr: req.trailAtr } : {}),
         ...(req.maxBars != null ? { maxBars: req.maxBars } : {}),
         ...(req.exitWhen ? { exitWhen: req.exitWhen } : {}),
@@ -672,6 +678,7 @@ export class Practice {
           events.push(`${p.pair} (${p.strategy}) reached its target on the ${lab.tf ?? ''} chart${frac > 0 ? `: took ${Math.round(frac * 100)}% off` : ''}, now trailing`);
         }
         // the exit rules still in force (for the plan)
+        p.trailPx = lab.trailPx ?? null;
         p.trailAtr = lab.trailAtr ?? null;
         p.maxBars = lab.maxBars ?? null;
         p.exitWhen = lab.exitWhen ?? null;

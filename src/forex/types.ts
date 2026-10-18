@@ -89,6 +89,9 @@ export interface Signal {
    * (0 = none), the stop locks `tpTrail` ATR behind the target and then trails that far behind the best close */
   tpTrail?: number | null;
   tpFrac?: number;
+  /** v15.1: trailing stop-loss — from the entry on, the stop follows the best close at this many R (starting stop
+   * distances) behind it: it moves up with the trade, never back */
+  trailR?: number | null;
 }
 
 export interface Trade {
@@ -124,7 +127,9 @@ export interface Trade {
   tpHit?: boolean;
   /** v15: the target at entry, kept once a trailing take-profit replaced it */
   target0?: number | null;
-  /** v15: the exit rules still in force on an OPEN trade (for the bot's plan): trail ATR, bar limit, indicator exit */
+  /** v15: the exit rules still in force on an OPEN trade (for the bot's plan): trail ATR, bar limit, indicator exit,
+   * (v15.1) the trailing stop-loss distance in price */
+  trailPx?: number;
   trailAtr?: number;
   maxBars?: number;
   exitWhen?: string;

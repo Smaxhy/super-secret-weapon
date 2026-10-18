@@ -1,15 +1,16 @@
 /**
  * Exit lab (v14 → v15). The same entries with different exits: a stop moved to break-even at +1R, half taken off at
  * +1R, a closer target, no target (let winners run on a trail), a shorter time limit — and (v15, "more pips") a
- * bigger target, a trailing take-profit (at the target the stop locks behind it and trails instead of closing) and
- * half off at the target with the rest trailing. Each strategy keeps the exit that did best on the FIRST 70% of the
- * history (same rule as the filters), so the last 30% stays a fair test. Pure.
+ * bigger target, a trailing take-profit (at the target the stop locks behind it and trails instead of closing),
+ * half off at the target with the rest trailing, and (v15.1) a trailing stop-loss that follows the price from the
+ * start. Each strategy keeps the exit that did best on the FIRST 70% of the history (same rule as the filters), so the
+ * last 30% stays a fair test. Pure.
  */
 import type { Ctx } from './ta';
 import type { Signal } from './types';
 
-export type ExitKind = 'designed' | 'breakeven' | 'scale' | 'tight' | 'runner' | 'quick' | 'wide' | 'trail_tp' | 'half_trail';
-export const EXITS: ExitKind[] = ['designed', 'breakeven', 'scale', 'tight', 'runner', 'quick', 'wide', 'trail_tp', 'half_trail'];
+export type ExitKind = 'designed' | 'breakeven' | 'scale' | 'tight' | 'runner' | 'quick' | 'wide' | 'trail_tp' | 'half_trail' | 'trail_sl';
+export const EXITS: ExitKind[] = ['designed', 'breakeven', 'scale', 'tight', 'runner', 'quick', 'wide', 'trail_tp', 'half_trail', 'trail_sl'];
 export const EXIT_LABEL: Record<ExitKind, string> = {
   designed: 'as designed',
   breakeven: 'stop to break-even at +1R',
@@ -20,9 +21,14 @@ export const EXIT_LABEL: Record<ExitKind, string> = {
   wide: 'bigger target (1.6× the distance)',
   trail_tp: 'trailing take-profit: at the target the stop locks behind it and trails',
   half_trail: 'half off at the target, the rest trails',
+  trail_sl: 'trailing stop-loss: the stop follows the price from the start, at the target it keeps trailing',
 };
-/** v15: the trailing take-profit exits (the owner wants them used wherever they test as well as the alternative) */
-export const TRAIL_TP_EXITS: ReadonlySet<ExitKind> = new Set<ExitKind>(['trail_tp', 'half_trail']);
+/**
+ * The owner's exits, in order of preference: the trailing stop-loss first (v15.1, "for safety": the stop moves up with
+ * the trade from the start), then the trailing take-profits. A strategy uses the first one that tests as well as its
+ * best exit on the first 70% (`preferVariant`).
+ */
+export const OWNER_EXITS: readonly ExitKind[] = ['trail_sl', 'trail_tp', 'half_trail'];
 
 /** The signal with the exit variant applied (null stays null; a variant that doesn't apply returns the same object). */
 export function applyExit(sig: Signal | null, kind: ExitKind, c: Ctx, i: number): Signal | null {
@@ -52,6 +58,10 @@ export function applyExit(sig: Signal | null, kind: ExitKind, c: Ctx, i: number)
       return sig.target !== null ? { ...sig, tpTrail: 1.5, tpFrac: 0 } : sig;
     case 'half_trail':
       return sig.target !== null ? { ...sig, tpTrail: 2, tpFrac: 0.5 } : sig;
+    case 'trail_sl':
+      // the stop follows the best close at its starting distance (1R): +1R → break-even, +2R → +1R locked, …;
+      // at the target it does not close but keeps trailing (a trailing take-profit), so the winner keeps running
+      return { ...sig, trailR: 1, ...(sig.target !== null ? { tpTrail: 1.5, tpFrac: 0 } : {}) };
     default:
       return sig;
   }

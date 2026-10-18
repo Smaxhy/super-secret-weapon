@@ -198,7 +198,8 @@ export function tradeLines(p: PracticePosition & { px: number }, now: number, pn
       const part = Math.round((p.tpFrac ?? 0) * 100);
       out.push({ k: 'target', text: `Target ${fmtPx(pair, p.target)} (+${pips(pair, p.target - p.entry)} pips, ${usd(gain)}): there it ${part ? `takes ${part}% off, ` : ''}locks the stop ${pips(pair, p.tpTrailPx)} pips behind and keeps riding with a trailing stop (trailing take-profit).` });
     } else out.push({ k: 'target', text: `Take profit at ${fmtPx(pair, p.target)} (+${pips(pair, p.target - p.entry)} pips, ${usd(gain)}).` });
-  } else if (!p.trailAtr) out.push({ k: 'target', text: 'No fixed target: its strategy decides when to get out.' });
+  } else if (!p.trailAtr && !p.trailPx) out.push({ k: 'target', text: 'No fixed target: its strategy decides when to get out.' });
+  if (p.trailPx) out.push({ k: 'trail', text: `Trailing stop-loss: the stop follows the price ${pips(pair, p.trailPx)} pips behind its best ${word} close (its starting distance), moving up with the trade at every ${word} close and never back down — at +1R it is at break-even.` });
   if (p.trailAtr) out.push({ k: 'trail', text: `Trailing stop ${p.trailAtr} × the normal ${word} candle range behind the best ${word} close, updated every ${word} close (only ever tighter).` });
   if (p.maxBars) {
     const entryT = Number((p.ref ?? '').split(':')[3]) || p.openedAt;

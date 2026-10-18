@@ -28,7 +28,7 @@ import { buildMood, moodNow, moodSeries, riskOfLong, type MoodBook, type MoodNow
 import { FILTERS, FILTER_LABEL, allowFor, blockReason, chooseFilter, chooseVariant, preferVariant, type FilterEnv, type FilterKind } from './filters';
 import { SIZING, simulatePortfolio, stratFactorFromStats, stratFactorFromVerdict, volFactor, walkForward, type PortfolioResult, type PTrade, type WalkForward, type WTrade } from './portfolio';
 import { newsStudy, type NewsStudy } from './news-study';
-import { EXITS, EXIT_LABEL, TRAIL_TP_EXITS, applyExit, type ExitKind } from './exits';
+import { EXITS, EXIT_LABEL, OWNER_EXITS, applyExit, type ExitKind } from './exits';
 import { judgeFeatures, judgeProb, trainJudge, type JudgeModel, type JudgeReport, type JudgeRow } from './judge';
 import { alignAt, mtdSeries, pairRanks, strengthRanks, z24Series, type TimeSeries } from './intermarket';
 
@@ -49,8 +49,9 @@ export const FX_CONFIG = {
   pick: { minN: 40, minAvgR: 0.05, minPf: 1.15 },
   /** walk-forward: re-pick every month from the trades closed in the previous N months */
   walkForward: { lookbackMonths: 6, minN: 15, minAvgR: 0.05, minPf: 1.15 },
-  /** v15 (owner: "more pips"): use a trailing take-profit exit wherever it tests as well as the best pick */
-  preferTrailTp: true,
+  /** owner (v15 "more pips", v15.1 "a trailing SL for safety"): use a trailing stop-loss, else a trailing take-profit,
+   * wherever it tests as well as the best exit */
+  preferTrailing: true,
 };
 
 export interface VariantRow {
@@ -354,6 +355,7 @@ export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: 
     tpTrailPx: t.tpTrailPx ?? null,
     tpFrac: t.tpFrac ?? null,
     tpHit: t.tpHit ?? false,
+    trailPx: t.trailPx ?? null,
     trailAtr: t.trailAtr ?? null,
     maxBars: t.maxBars ?? null,
     exitWhen: t.exitWhen ?? null,
@@ -500,12 +502,13 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
     designedBy.clear();
     const eStats = [...byExit.keys()].map((k) => ({ exit: k, ...statsOf(byExit.get(k)!.trades, o.oosFrom) }));
     let exit: ExitKind = s.id === 'random' ? 'designed' : chooseVariant(eStats.map((x) => ({ key: x.exit, inSample: x.inSample })), 'designed' as ExitKind, 40, prev?.e);
-    // v15 (owner): take profits with a trailing take-profit wherever it tests as well as the pick (first 70% only)
-    if (s.id !== 'random' && FX_CONFIG.preferTrailTp) {
+    // owner (v15, v15.1): a trailing stop-loss first, else a trailing take-profit, wherever it tests as well as the
+    // best exit (first 70% only)
+    if (s.id !== 'random' && FX_CONFIG.preferTrailing) {
       exit = preferVariant(
         eStats.filter((x) => x.exit === 'designed' || x.exit === exit || differs.has(x.exit)).map((x) => ({ key: x.exit, inSample: x.inSample })),
         exit,
-        TRAIL_TP_EXITS,
+        OWNER_EXITS,
         'designed' as ExitKind,
       );
     }

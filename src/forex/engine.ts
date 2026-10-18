@@ -108,6 +108,8 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
     tpHit: boolean;
     /** the target at entry (the live one becomes null once a trailing take-profit takes over) */
     target0: number | null;
+    /** v15.1 trailing stop-loss: the stop follows the best close this far behind (price; null = off) */
+    trailPx: number | null;
   };
   let pos: Pos | null = null;
   const finish = (i: number, fill: number, reason: Trade['reason']) => {
@@ -134,7 +136,7 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
       ...(p.scaleAt !== null ? { scaleAt: p.scaleAt, scaleFrac: p.scaleFrac, scaled: p.scaled } : {}),
       ...(p.tpDist !== null ? { tpTrailPx: p.tpDist, tpFrac: p.tpFrac, tpHit: p.tpHit, ...(p.tpHit ? { target0: p.target0 } : {}) } : {}),
       // an open trade carries the exit rules still in force (the bot's plan shows them)
-      ...(reason === 'open' ? { ...(p.trailAtr !== null ? { trailAtr: p.trailAtr } : {}), ...(p.maxBars !== null ? { maxBars: p.maxBars } : {}), ...(p.exitWhen ? { exitWhen: p.exitWhen } : {}) } : {}),
+      ...(reason === 'open' ? { ...(p.trailAtr !== null ? { trailAtr: p.trailAtr } : {}), ...(p.trailPx !== null ? { trailPx: p.trailPx } : {}), ...(p.maxBars !== null ? { maxBars: p.maxBars } : {}), ...(p.exitWhen ? { exitWhen: p.exitWhen } : {}) } : {}),
     });
     pos = null;
   };
@@ -214,12 +216,18 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
             (ew === 'ema20' && (p.side === 1 ? b.c >= c.ema20[i]! : b.c <= c.ema20[i]!));
           if (exitNow) finish(i, exitFill(i, p.side, b.c, false), 'exit');
           else if (p.maxBars !== null && held >= p.maxBars) finish(i, exitFill(i, p.side, b.c, false), 'time');
-          else if (p.trailAtr !== null && Number.isFinite(c.atr14[i]!)) {
+          else if (p.trailAtr !== null || p.trailPx !== null) {
+            // trail behind the best close: ATR-based (strategy / runner / trailing take-profit) and / or the fixed
+            // distance of a trailing stop-loss — the tighter one counts, and the stop only ever moves with the trade
             p.best = p.side === 1 ? Math.max(p.best, b.c) : Math.min(p.best, b.c);
-            const t = p.best - p.side * p.trailAtr * c.atr14[i]!;
-            if (p.side === 1 ? t > p.stop : t < p.stop) {
-              p.stop = t;
-              p.trailed = true;
+            const cands: number[] = [];
+            if (p.trailAtr !== null && Number.isFinite(c.atr14[i]!)) cands.push(p.best - p.side * p.trailAtr * c.atr14[i]!);
+            if (p.trailPx !== null) cands.push(p.best - p.side * p.trailPx);
+            for (const t of cands) {
+              if (p.side === 1 ? t > p.stop : t < p.stop) {
+                p.stop = t;
+                p.trailed = true;
+              }
             }
           }
         }
@@ -260,6 +268,7 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
             tpFrac: Math.min(0.9, Math.max(0, sig.tpFrac ?? 0)),
             tpHit: false,
             target0: sig.target,
+            trailPx: sig.trailR && sig.trailR > 0 ? sig.trailR * risk : null,
           };
         }
       }
@@ -302,6 +311,7 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
           ...(sig.scaleAtR ? { scaleAt: entry + sig.side * sig.scaleAtR * risk, scaleFrac: Math.min(0.9, Math.max(0.1, sig.scaleFrac ?? 0.5)), scaled: false } : {}),
           ...(tp !== null ? { tpTrailPx: tp * (Number.isFinite(a) && a > 0 ? a : risk), tpFrac: Math.min(0.9, Math.max(0, sig.tpFrac ?? 0)), tpHit: false } : {}),
           ...(sig.trailAtr ? { trailAtr: sig.trailAtr } : {}),
+          ...(sig.trailR && sig.trailR > 0 ? { trailPx: sig.trailR * risk } : {}),
           ...(sig.maxBars ? { maxBars: sig.maxBars } : {}),
           ...(sig.exitWhen ? { exitWhen: sig.exitWhen } : {}),
         });

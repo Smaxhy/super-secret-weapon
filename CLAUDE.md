@@ -247,7 +247,16 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     trades with their plan, "What it's watching and waiting for" (tap a market), "What it did" (Checks / Decisions),
     honest test, risk, how it trades, closed trades); `/forex/live` = Markets; Practice renamed "Trade by hand" (More
     menu); `/forex/bot` redirects home. Strategies / Paper merge the fast rows (chips 1m / 15m / 1h / 4h); Setup shows
-    the 15m / 1m candle feed. tests/forex-v15.test.ts (21).
+    the 15m / 1m candle feed. tests/forex-v15.test.ts (22).
+- **v15.1 (Oct 18): trailing stop-loss** (owner: "a trailing TP that moves along with the trade is more a trailing SL
+  for safety"). `Signal.trailR`: from the entry on the stop follows the best close at that many R (starting stop
+  distances) behind it — break-even at +1R, +1R locked at +2R — never back; engine trails ATR (`trailAtr`) and R
+  (`trailPx` = trailR × risk) together, the tighter wins. Exit variant `trail_sl` (trailR 1 + at the target a trailing
+  take-profit 1.5 ATR). `OWNER_EXITS` = ['trail_sl', 'trail_tp', 'half_trail'] in that order; `preferVariant` now takes
+  the ordered list and compares against the BEST variant with enough trades (first 70% only, within 5% / 0.1): the
+  first owner exit that qualifies is used. On synthetic candles the 1R trailing stop-loss cost ≈ −0.25R a trade (cuts
+  winners in noise) and was picked by 3 of 70 strategies — real data decides. Bot positions carry `trailPx`; the plan
+  says "Trailing stop-loss: follows the price N pips behind…". `FX_CONFIG.preferTrailing` (was preferTrailTp).
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

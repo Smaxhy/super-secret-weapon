@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type Redis from 'ioredis';
 import { simulate, WARMUP } from '../src/forex/engine';
-import { applyExit, TRAIL_TP_EXITS } from '../src/forex/exits';
+import { applyExit, OWNER_EXITS } from '../src/forex/exits';
 import { preferVariant } from '../src/forex/filters';
 import { runsOn, strategyById, type Strategy } from '../src/forex/strategies';
 import { buildCtx } from '../src/forex/ta';
@@ -94,6 +94,24 @@ describe('trailing take-profit in the engine (v15)', () => {
     expect(half.r).toBeCloseTo((plain.r + full.r) / 2, 1);
   });
 
+  it('trailing stop-loss: the stop moves up with the trade from the start and saves a winner that turns around', () => {
+    // up 15 pips (1.5R) without reaching the 2R target, then back down through the old stop
+    const bars = market([{ c: 1.1005 }, { c: 1.101 }, { c: 1.1015 }, { o: 1.1015, h: 1.1016, l: 1.098, c: 1.098 }, { c: 1.098 }]);
+    const s = sig({ target: 1.102 });
+    const plain = run(bars, s)[0]!;
+    expect(plain.reason).toBe('stop');
+    expect(plain.r).toBeLessThan(-0.9);
+    const safe = run(bars, { ...s, trailR: 1 })[0]!;
+    expect(safe.reason).toBe('trail');
+    // best close 1.1015, starting distance ≈ 10.04 pips → stop ≈ 1.10046 ≈ +0.4R
+    expect(safe.stop).toBeCloseTo(1.1015 - (1.1 + HALF - 1.099), 6);
+    expect(safe.r).toBeGreaterThan(0.3);
+    // an open trade carries its trailing distance (the bot's plan shows it)
+    const open = run(market([{ c: 1.1005 }, { c: 1.101 }]), { ...s, trailR: 1 })[0]!;
+    expect(open.reason).toBe('open');
+    expect(open.trailPx).toBeCloseTo(1.1 + HALF - 1.099, 8);
+  });
+
   it('a signal on the last closed bar is an open trade filled at that close (the bot can take it right away)', () => {
     const t0 = Date.UTC(2025, 0, 6);
     const bars = Array.from({ length: 300 }, (_, i) => flat(t0 + i * H, 1.1));
@@ -132,7 +150,10 @@ describe('exit variants and the owner preference (v15)', () => {
     const noTgt: Signal = { side: 1, stop: 1.099, target: null, trailAtr: 3 };
     expect(applyExit(noTgt, 'trail_tp', c, 250)).toBe(noTgt);
     expect(applyExit(noTgt, 'half_trail', c, 250)).toBe(noTgt);
-    expect(TRAIL_TP_EXITS.has('trail_tp') && TRAIL_TP_EXITS.has('half_trail')).toBe(true);
+    expect(OWNER_EXITS).toEqual(['trail_sl', 'trail_tp', 'half_trail']);
+    // trailing stop-loss: the stop follows at its starting distance, and at the target it keeps trailing
+    expect(applyExit(base, 'trail_sl', c, 250)).toMatchObject({ trailR: 1, tpTrail: 1.5, tpFrac: 0, target: 1.102 });
+    expect(applyExit(noTgt, 'trail_sl', c, 250)).toMatchObject({ trailR: 1, trailAtr: 3, target: null });
   });
 
   const st = (n: number, avgR: number): RStats => ({ n, winPct: 50, avgR, medianR: 0, pf: 1.2, totalR: n * avgR, maxDdR: 1 });
@@ -142,10 +163,16 @@ describe('exit variants and the owner preference (v15)', () => {
       { key: 'wide', inSample: st(400, 0.2) },
       { key: 'trail_tp', inSample: st(400, tp) },
     ];
-    expect(preferVariant(v(0.195), 'wide', new Set(['trail_tp']), 'designed')).toBe('trail_tp');
-    expect(preferVariant(v(0.12), 'wide', new Set(['trail_tp']), 'designed')).toBe('wide');
+    expect(preferVariant(v(0.195), 'wide', ['trail_tp'], 'designed')).toBe('trail_tp');
+    expect(preferVariant(v(0.12), 'wide', ['trail_tp'], 'designed')).toBe('wide');
     // too few trades to count
-    expect(preferVariant([{ key: 'designed', inSample: st(400, 0.1) }, { key: 'trail_tp', inSample: st(30, 0.5) }], 'designed', new Set(['trail_tp']), 'designed')).toBe('designed');
+    expect(preferVariant([{ key: 'designed', inSample: st(400, 0.1) }, { key: 'trail_tp', inSample: st(30, 0.5) }], 'designed', ['trail_tp'], 'designed')).toBe('designed');
+    // the owner's order: the trailing stop-loss first when it also tests as well, even if a trailing take-profit is a bit better
+    const both = [...v(0.2), { key: 'trail_sl', inSample: st(400, 0.192) }];
+    expect(preferVariant(both, 'wide', ['trail_sl', 'trail_tp'], 'designed')).toBe('trail_sl');
+    expect(preferVariant([...v(0.2), { key: 'trail_sl', inSample: st(400, 0.15) }], 'wide', ['trail_sl', 'trail_tp'], 'designed')).toBe('trail_tp');
+    // the yardstick is the best variant, not a weaker pick
+    expect(preferVariant([...v(0.1), { key: 'runner', inSample: st(400, 0.3) }], 'wide', ['trail_tp'], 'designed')).toBe('wide');
   });
 
   it('which strategies run on which chart', () => {
@@ -381,6 +408,8 @@ describe("the bot's plan (v15)", () => {
     const hit = tradeLines({ ...p, tpHit: true, target: null, stop: 1.1015, trailAtr: 2 }, WED, (q, x) => q.side * q.units * (x - q.entry));
     expect(hit.find((l) => l.k === 'target')!.done).toBe(true);
     expect(hit.map((l) => l.text).join(' ')).toMatch(/Stop locked at 1\.10150/);
+    const sl = tradeLines({ ...p, trailPx: 0.001 }, WED, (q, x) => q.side * q.units * (x - q.entry));
+    expect(sl.map((l) => l.text).join(' ')).toMatch(/Trailing stop-loss: the stop follows the price 10 pips behind/);
   });
 
   it('per market: in a trade, waiting on news, already in a trade, or just watching', () => {

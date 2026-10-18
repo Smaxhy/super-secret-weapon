@@ -112,23 +112,24 @@ export function chooseVariant<K extends string>(v: ReadonlyArray<{ key: K; inSam
 }
 
 /**
- * v15 owner preference: switch from `chosen` to the best of the `preferred` variants when that one scores at least as
- * well on the FIRST 70% (within 5% of the score, or 0.1) and keeps enough trades. Selection still sees the first 70%
- * only, so the unseen 30% stays a fair test. Pure.
+ * Owner preference (v15, v15.1): `preferred` in the owner's order. The first one that scores at least as well as the
+ * best variant on the FIRST 70% (within 5% of its score, or 0.1) and keeps enough trades is used instead. Selection
+ * still sees the first 70% only, so the unseen 30% stays a fair test. Pure.
  */
-export function preferVariant<K extends string>(v: ReadonlyArray<{ key: K; inSample: RStats }>, chosen: K, preferred: ReadonlySet<K>, baseKey: K, minN = 40): K {
-  if (preferred.has(chosen)) return chosen;
-  const cur = v.find((x) => x.key === chosen);
+export function preferVariant<K extends string>(v: ReadonlyArray<{ key: K; inSample: RStats }>, chosen: K, preferred: readonly K[], baseKey: K, minN = 40): K {
   const raw = v.find((x) => x.key === baseKey);
-  if (!cur || !raw) return chosen;
-  let best: { key: K; inSample: RStats } | null = null;
-  for (const x of v) {
-    if (!preferred.has(x.key) || x.inSample.n < Math.max(minN, raw.inSample.n * 0.25)) continue;
-    if (!best || score(x.inSample) > score(best.inSample)) best = x;
-  }
+  if (!raw) return chosen;
+  const enough = (x: { inSample: RStats }) => x.inSample.n >= Math.max(minN, raw.inSample.n * 0.25);
+  // the yardstick: the best-scoring variant with enough trades (or the pick)
+  let best = v.find((x) => x.key === chosen);
+  for (const x of v) if (enough(x) && (!best || score(x.inSample) > score(best.inSample))) best = x;
   if (!best) return chosen;
-  const sc = score(cur.inSample);
-  return score(best.inSample) >= sc - Math.max(0.1, Math.abs(sc) * 0.05) ? best.key : chosen;
+  const sc = score(best.inSample);
+  for (const k of preferred) {
+    const x = v.find((y) => y.key === k);
+    if (x && enough(x) && score(x.inSample) >= sc - Math.max(0.1, Math.abs(sc) * 0.05)) return k;
+  }
+  return chosen;
 }
 
 /** Filter pick (see `chooseVariant`). */
