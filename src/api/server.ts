@@ -15,6 +15,7 @@
  * Disabled (with a warning) unless DASHBOARD_PASSWORD and JWT_SECRET are set.
  */
 import { runBacktest } from '../learner/backtester';
+import { scoreGapReport } from '../tools/score-gap';
 import { replayStatus, startReplay } from '../learner/replay-runner';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
@@ -81,6 +82,12 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       return deps.autopsy?.snapshot() ?? null;
     });
     secured.post('/api/autopsy/run', async () => (await deps.autopsy?.run()) ?? null);
+    // Coins held back only by the score: how far under the bar, and what they did next (read-only, Performance → Mistakes).
+    secured.get('/api/score-gap', async (req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      const h = Number((req.query as { hours?: string }).hours ?? 48);
+      return scoreGapReport(Number.isFinite(h) ? Math.min(168, Math.max(1, h)) : 48);
+    });
     // v11.16 AI meme reader: today's reads, spend, cache hits, last 20 verdicts.
     secured.get('/api/meme', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');

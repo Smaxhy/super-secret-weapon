@@ -14,6 +14,7 @@ import { Icon } from '../components/Icon';
 import { LossAutopsy } from '../components/LossAutopsy';
 import { MoonshotCard } from '../components/MoonshotCard';
 import { Replay } from '../components/Replay';
+import { ScoreGap } from '../components/ScoreGap';
 import { Tournament } from '../components/Tournament';
 import { StrategyLab } from '../components/StrategyLab';
 import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl, Row, Rows, SectionHeader, Tabs, useStored, useTab } from '../components/ui';
@@ -58,6 +59,7 @@ export function Performance() {
         {section === 'results' && <Results d={d} />}
         {section === 'mistakes' && (
           <div className="flex flex-col gap-6">
+            <ScoreGap />
             <LossAutopsy />
             <BotChanges />
           </div>
