@@ -15,11 +15,7 @@
  * Disabled (with a warning) unless DASHBOARD_PASSWORD and JWT_SECRET are set.
  */
 import { runBacktest } from '../learner/backtester';
-import { scoreGapReport } from '../tools/score-gap';
 import { moneyMap } from '../learner/money-map';
-import { copyReplayStatus, startCopyReplay } from '../learner/copy-replay-runner';
-import { deployerStudyRunning, lastDeployerStudy, runDeployerStudy } from '../learner/deployer-study';
-import { DEFAULT_ELITE_TEST, eliteTestRunning, lastEliteTest, runEliteTest } from '../learner/elite-test';
 import { DEFAULT_CONFIG as DEFAULTS } from '../config/default';
 import { getConfig as cfgNow } from '../config/runtime-config';
 import { replayStatus, startReplay } from '../learner/replay-runner';
@@ -96,53 +92,6 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       const source = q.source === 'real' || q.source === 'skipped' || q.source === 'filtered' ? q.source : 'all';
       return moneyMap(redis, { hours: Number.isFinite(h) ? Math.min(168, Math.max(1, h)) : 48, strategy: q.strategy || null, source });
     });
-    // v11.19 deployer study: does a creator's past predict the next launch — on OUR Token table (no peeking).
-    secured.get('/api/deployers/study', async (_req, reply) => {
-      reply.header('Cache-Control', 'no-store');
-      return { running: deployerStudyRunning(), last: await lastDeployerStudy() };
-    });
-    secured.post<{ Body: { days?: number } }>('/api/deployers/study/run', async (req, reply) => {
-      if (deployerStudyRunning()) {
-        reply.code(409);
-        return { ok: false, error: 'a deployer study is already running' };
-      }
-      const days = Math.min(30, Math.max(1, Number(req.body?.days ?? 14) || 14));
-      const el = (cfgNow().deployers ?? DEFAULTS.deployers).elite ?? DEFAULTS.deployers.elite;
-      void runDeployerStudy(days, el).catch(() => undefined);
-      return { ok: true, days };
-    });
-    // v11.20 elite launch test: buy repeat-graduator launches seconds after launch on the tape — does it pay?
-    secured.get('/api/elite-test', async (_req, reply) => {
-      reply.header('Cache-Control', 'no-store');
-      return { running: eliteTestRunning(), last: await lastEliteTest() };
-    });
-    secured.post<{ Body: { days?: number } }>('/api/elite-test/run', async (req, reply) => {
-      if (eliteTestRunning()) {
-        reply.code(409);
-        return { ok: false, error: 'an elite test is already running' };
-      }
-      const days = Math.min(7, Math.max(1, Number(req.body?.days ?? 5) || 5));
-      const el = (cfgNow().deployers ?? DEFAULTS.deployers).elite ?? DEFAULTS.deployers.elite;
-      const now = Date.now();
-      void runEliteTest(now - days * 86_400_000, now, { ...DEFAULT_ELITE_TEST, elite: { minGraduated: el.minGraduated, minBondRatePct: el.minBondRatePct } }).catch(() => undefined);
-      return { ok: true, days };
-    });
-    // v11.18 copy replay: walk the tape, copy wallets once their record qualifies — who is actually making money?
-    secured.get('/api/copy-replay', async (_req, reply) => {
-      reply.header('Cache-Control', 'no-store');
-      return copyReplayStatus();
-    });
-    secured.post<{ Body: { from?: string; to?: string; sizeSol?: number } }>('/api/copy-replay/run', async (req, reply) => {
-      const r = startCopyReplay(req.body ?? {});
-      if (!r.ok) reply.code(409);
-      return r;
-    });
-    // Coins held back only by the score: how far under the bar, and what they did next (read-only, Performance → Mistakes).
-    secured.get('/api/score-gap', async (req, reply) => {
-      reply.header('Cache-Control', 'no-store');
-      const h = Number((req.query as { hours?: string }).hours ?? 48);
-      return scoreGapReport(Number.isFinite(h) ? Math.min(168, Math.max(1, h)) : 48);
-    });
     // v11.16 AI meme reader: today's reads, spend, cache hits, last 20 verdicts.
     secured.get('/api/meme', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
@@ -171,7 +120,6 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     secured.get('/api/brain', async () => (deps.brain ? deps.brain.snapshot(false) : null));
     secured.get('/api/timing', async () => deps.timing?.snapshot() ?? null);
     // Shadow trades: what the coins it didn't buy would have done (since the last paper reset).
-    secured.get('/api/moonshot', async () => (deps.moonshot ? deps.moonshot.report() : null));
     secured.get('/api/shadow', async () => (deps.shadow ? deps.shadow.report((await learningSince(redis))?.getTime() ?? 0) : null));
     // AI coach: insights + rules under test / live, spend; POST = review now.
     secured.get('/api/ai-coach', async (_req, reply) => {

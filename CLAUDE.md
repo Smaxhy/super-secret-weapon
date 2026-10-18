@@ -1112,6 +1112,20 @@ December (small wallet in Nov only if paper edge is positive).
   entry × hold × rule, best rule needs PF ≥1.5 on 30+ trades; `timeToGraduate` of elite graduates (median / quartiles /
   within 1 h / 6 h) from the Token table; deployer study adds the elite × repeat-24 h split. NEXT: owner runs elite test
   v2; if it pays → wire the elite path (dip entry, long hold, sell into graduation); if not → speed route or stop.
+- **v11.21 (Oct 18): declutter** (owner: "remove all features we don't need anymore so things don't get cluttered up";
+  earlier the same evening: "people trade narrative / news — get into launches related to that and exit, they don't hold").
+  REMOVED (their verdicts are recorded above; code gone, nothing else changed): copy replay (v11.18: engine, runner, CLI,
+  `/api/copy-replay`, Money card), deployer study (v11.19: `/api/deployers/study`, card), elite launch test (v11.20:
+  `/api/elite-test`, card), moonshot test mode (v10.17: `moonshot` config + editable group, `/api/moonshot`, Tests card),
+  score-gap card (v11.17: `/api/score-gap`, tool; `scoreOnly` moved into money-map.ts), and the unfinished "cohort test"
+  (BOOST / survivor trades — never wired, deleted). Left as they are: the deployer book + elite class (live rules), the
+  Money tab, replay, tournament, labs, backtester, shadow / outcome trackers (they feed the brain). Old Redis keys of the
+  removed tests (`copyrep:*`, `dstudy:last`, `elite:*`, `moon:res`) are harmless orphans. 879 tests.
+  **Narrative / news trading** (the owner's idea): the bot cannot read news; what it has is the hot-keyword list (market
+  leaders + DexScreener + trending), the narrative score and the AI meme reader's `narrativeFit` on every evaluation, and
+  the Money tab already splits results by meme score (narrative fit is a third of it). The honest test is that split on
+  "Inside your filters": if coins with a high meme score / narrative fit show a POSITIVE MEDIAN there, build a fast-exit
+  narrative entry; the verdict section above says nothing measured so far has. Do not build it before that split says yes.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

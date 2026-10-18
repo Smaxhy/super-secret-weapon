@@ -3,7 +3,6 @@ import { DEFAULT_CONFIG } from '../src/config/default';
 import { crowdQuality } from '../src/evaluator/crowd-quality';
 import { sniperEntryFails } from '../src/evaluator/sniper';
 import { bondRatePct, classifyDeployer, deployerView, type DeployerRec } from '../src/learner/deployer-book';
-import { studyFromLaunches } from '../src/learner/deployer-study';
 import { buildMoneyMap, type MoneyRow } from '../src/learner/money-map';
 import { emptyRec, type WalletRec } from '../src/learner/wallet-book';
 import type { CrowdTrade } from '../src/scanner/crowd-tracker';
@@ -31,32 +30,6 @@ describe('v11.19 — elite (repeat graduator) deployers', () => {
     const base = { flow, score: 90, threshold: 70, momentumGateWhy: null, entryQualityVerdict: 'ok', edgeGatePass: true, pressureSellersInControl: false, crowd: null, explore: false, probe: false, risky: false, dipEntry: false } as never;
     expect(sniperEntryFails({ ...base, deployerClass: 'mixed' }, c).some((f) => f.includes('real buyers'))).toBe(true);
     expect(sniperEntryFails({ ...base, deployerClass: 'elite' }, c).some((f) => f.includes('real buyers') || f.includes('SOL bought'))).toBe(false);
-  });
-});
-
-describe('v11.19 — deployer study (no peeking)', () => {
-  it('bands each launch by what the creator had done before it', () => {
-    const T = 1_700_000_000_000;
-    const D = 86_400_000;
-    const launches = [
-      // creator A: 3 launches, the first two graduate → the third is judged with 2 prior graduations
-      { creator: 'A', createdAtMs: T, graduated: true },
-      { creator: 'A', createdAtMs: T + 10 * D, graduated: true },
-      { creator: 'A', createdAtMs: T + 20 * D, graduated: true },
-      // creator B: launches twice in one day, both die
-      { creator: 'B', createdAtMs: T + 1 * D, graduated: false },
-      { creator: 'B', createdAtMs: T + 1 * D + 3_600_000, graduated: false },
-      // filler
-      ...Array.from({ length: 20 }, (_, i) => ({ creator: `c${i}`, createdAtMs: T + i * 3_600_000, graduated: i === 0 })),
-    ];
-    const s = studyFromLaunches(launches, { minGraduated: 2, minBondRatePct: 20 });
-    expect(s.tokens).toBe(25);
-    expect(s.byPriorGrads.find((b) => b.label.startsWith('2 graduations'))).toMatchObject({ launches: 1, graduated: 1, pct: 100 });
-    expect(s.byPriorGrads.find((b) => b.label.startsWith('1 graduation'))).toMatchObject({ launches: 1, graduated: 1 });
-    expect(s.repeat24h[0]).toMatchObject({ label: 'launched again within 24 h', launches: 1, graduated: 0 });
-    expect(s.quietAfterGrad[0]).toMatchObject({ launches: 2, graduated: 2 }); // A's 2nd and 3rd launch, 10 days apart
-    expect(s.elite[0]!.launches).toBe(1); // only A's third launch had 2 prior graduations
-    expect(s.base.lift).toBe(1);
   });
 });
 

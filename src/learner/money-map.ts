@@ -26,7 +26,6 @@ import { prisma } from '../lib/prisma';
 import { flattenFeatures } from './ai-coach';
 import type { OutcomeResult } from './outcome-tracker';
 import type { ShadowResult } from './shadow-trades';
-import { scoreOnly } from '../tools/score-gap';
 
 export type MoneySource = 'real' | 'shadow' | 'outcome';
 export type MoneyScope = 'all' | 'skipped' | 'real' | 'filtered';
@@ -138,6 +137,14 @@ export interface MoneyMap {
 /** Costs a round trip eats (≈ paper fees + slippage at the usual size). */
 const COST_PCT = 7;
 /** A single coin counts at most this much in the rankings / verdicts (a 4× is real; a +80,000% fake print is not). */
+/** A skip reason that means "every rule passed, only the score held it back" (or the Sniper gate). */
+export function scoreOnly(why: string): 'score' | 'sniper' | null {
+  const w = why.toLowerCase();
+  if (w.startsWith('score ') || w.includes('score under the bar')) return 'score';
+  if (w.startsWith('sniper:')) return 'sniper';
+  return null;
+}
+
 const RANK_CAP_PCT = 300;
 /** Results beyond this are broken prices (a 10× is the most any exit here could bank). */
 const MAX_PNL_PCT = 900;

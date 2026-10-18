@@ -13,9 +13,7 @@ import { PnlChart, SignedBars } from '../components/Charts';
 import { Icon } from '../components/Icon';
 import { LossAutopsy } from '../components/LossAutopsy';
 import { MoneyMap } from '../components/MoneyMap';
-import { MoonshotCard } from '../components/MoonshotCard';
 import { Replay } from '../components/Replay';
-import { ScoreGap } from '../components/ScoreGap';
 import { Tournament } from '../components/Tournament';
 import { StrategyLab } from '../components/StrategyLab';
 import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl, Row, Rows, SectionHeader, Tabs, useStored, useTab } from '../components/ui';
@@ -61,7 +59,6 @@ export function Performance() {
         {section === 'results' && <Results d={d} />}
         {section === 'mistakes' && (
           <div className="flex flex-col gap-6">
-            <ScoreGap />
             <LossAutopsy />
             <BotChanges />
           </div>
@@ -73,10 +70,7 @@ export function Performance() {
             <Replay />
             <Tournament />
             <StrategyLab />
-            <div className="grid gap-6 xl:grid-cols-2">
-              <MoonshotCard />
-              <Backtest />
-            </div>
+            <Backtest />
           </div>
         )}
         {section === 'ai' && <AiCoach />}

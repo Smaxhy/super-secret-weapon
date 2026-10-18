@@ -223,11 +223,6 @@ export const EDITABLE: EditableSetting[] = [
 
   // ---- Size & risk ----
   S('Trade size & risk', 'trading.maxPositionSol', 'Normal trade size', 0.01, 50, 'SOL', 0.05),
-  S('Moonshot (test mode)', 'moonshot.enabled', 'Watch for moonshot setups (pretend trades only): on (1) / off (0)', 0, 1, undefined, 1),
-  S('Moonshot (test mode)', 'moonshot.minBuyers5m', 'Real buyers in 5 min', 5, 1000, undefined, 1),
-  S('Moonshot (test mode)', 'moonshot.minBuySol5m', 'Real buying in 5 min', 1, 10000, 'SOL', 1),
-  S('Moonshot (test mode)', 'moonshot.minKolsHolding', 'KOLs still holding', 0, 20, undefined, 1),
-  S('Moonshot (test mode)', 'moonshot.minMarketCapUsd', 'Min market cap', 0, 100_000_000, '$', 5000),
   S('Trade size & risk', 'trading.highConviction.enabled', 'Big trades only on strong setups: on (1) / off (0)', 0, 1, undefined, 1),
   S('Trade size & risk', 'trading.highConviction.minScore', 'Big trade needs a score of at least', 50, 100, undefined, 1),
   S('Trade size & risk', 'trading.highConviction.minMarketCapUsd', 'Big trade needs a market cap of at least', 0, 100_000_000, '$', 5000),
