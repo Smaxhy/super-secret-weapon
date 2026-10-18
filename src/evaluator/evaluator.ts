@@ -63,6 +63,7 @@ import { analyzeChart } from './chart-reader';
 import { computeEarlyFlow, newPairCheck, type EarlyFlow } from './new-pair';
 import type { DipWatcher } from '../executor/dip-watcher';
 import type { StrategyLab } from '../learner/strategy-lab';
+import type { Tournament } from '../learner/tournament';
 import { taPoints, type TaLab } from '../learner/ta-lab';
 import { runStrategiesTf } from './ta/strategies';
 import { trendScore, type TrendingHub } from '../scanner/trending-hub';
@@ -110,6 +111,8 @@ export class Evaluator {
   dips: DipWatcher | null = null;
   /** Forward-tests exit setups on every BUY signal and near-miss (set in index.ts). */
   lab: StrategyLab | null = null;
+  /** v11.15 policy tournament: Sniper variants trade virtually on every candidate (set in index.ts). */
+  tournament: Tournament | null = null;
   /** Chart strategies with a proven edge (live-tested vs random entries) add points (set in index.ts). */
   ta: TaLab | null = null;
   /** Trending tabs (pump.fun / GeckoTerminal / DexScreener narratives) (set in index.ts). */
@@ -711,6 +714,19 @@ export class Evaluator {
           decision = 'SKIP';
           reasons = [`edge gate: ${eg.reason}`];
         }
+      }
+    }
+    // v11.15 policy tournament: hand this scored coin to the Sniper variants (pure checks, virtual trades only).
+    if (this.tournament) {
+      try {
+        const egT = egCfg.enabled ? edgeGateVerdict(strategyEdgeStatsFor(STRATEGY.name), result.score - threshold, egCfg).pass : null;
+        this.tournament.onCandidate({
+          mint, symbol: token.symbol, strategy: STRATEGY.name, strategyEnabled: cfg.trading.enabledStrategies[STRATEGY.name] === true,
+          priceSol: market.raw.priceSol, onAmm: market.raw.onAmm, hardFail: token.safetyHardFail, ruleFails, shape,
+          sniper: { flow: this.crowd ? organicFlow(this.crowd.trades(mint), Date.now()) : null, score: result.score, threshold, momentumGateWhy: mgWhy, entryQualityVerdict: eq.verdict, edgeGatePass: egT, pressureSellersInControl: prWhy !== null, crowd: cq, risky: risky !== null, deployerClass: deployer?.class ?? null },
+        });
+      } catch (err) {
+        log.warn({ mint, err: (err as Error).message }, 'tournament candidate failed');
       }
     }
     // Sniper mode (v11.7): a buy only when everything lines up — real 5-min volume, score well over the bar, momentum /

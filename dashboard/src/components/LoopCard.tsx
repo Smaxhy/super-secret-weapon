@@ -13,7 +13,7 @@ interface Experiment {
   from: number | boolean | null;
   to: number | boolean;
   why: string;
-  source: 'ai' | 'rules';
+  source: 'ai' | 'rules' | 'tournament';
   proposedAt: number;
   status: 'proving' | 'rejected' | 'watching' | 'kept' | 'reverted';
   statusWhy: string;
@@ -75,7 +75,7 @@ export function LoopCard() {
                 </div>
                 <div className="mt-1 tabular-nums text-ink">
                   {v(cur.from)} → <span className="font-semibold">{v(cur.to)}</span>
-                  <span className="ml-2 text-xs text-muted">{cur.source === 'ai' ? 'AI idea' : 'from Bot health'}</span>
+                  <span className="ml-2 text-xs text-muted">{cur.source === 'ai' ? 'AI idea' : cur.source === 'tournament' ? 'tournament winner' : 'from Bot health'}</span>
                 </div>
                 <p className="mt-1 text-sm text-ink-2">{cur.why}</p>
                 <Rows className="mt-2">

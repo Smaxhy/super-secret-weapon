@@ -68,7 +68,16 @@ export interface Proposal {
   key: string;
   value: number | boolean;
   why: string;
-  source: 'ai' | 'rules';
+  source: 'ai' | 'rules' | 'tournament';
+}
+
+/** v11.15: a candidate change handed over by the policy tournament (still proven on the tape before anything changes). */
+export interface LoopOffer {
+  key: string;
+  value: number | boolean;
+  source: 'tournament';
+  evidence: string;
+  at?: number;
 }
 
 export interface Experiment {
@@ -78,7 +87,7 @@ export interface Experiment {
   from: number | boolean | null;
   to: number | boolean;
   why: string;
-  source: 'ai' | 'rules';
+  source: 'ai' | 'rules' | 'tournament';
   proposedAt: number;
   status: 'proving' | 'rejected' | 'watching' | 'kept' | 'reverted';
   statusWhy: string;
@@ -94,9 +103,16 @@ export interface LoopState {
   lastRunDay: string | null;
   lastFinishedAt: number | null;
   lastResult: { at: number; text: string } | null;
+  /** v11.15: tournament winners waiting for their turn (newest first, ≤5) — they take priority over the AI proposer. */
+  offers?: LoopOffer[];
 }
 
-export const emptyState = (): LoopState => ({ current: null, history: [], lastRunDay: null, lastFinishedAt: null, lastResult: null });
+export const emptyState = (): LoopState => ({ current: null, history: [], lastRunDay: null, lastFinishedAt: null, lastResult: null, offers: [] });
+
+/** Pure: should this offer be refused because the same change was rejected / reverted in the last `days`? */
+export function recentlyTried(history: readonly Pick<Experiment, 'key' | 'to' | 'status' | 'finishedAt'>[], o: Pick<LoopOffer, 'key' | 'value'>, now: number, days = 7): boolean {
+  return history.some((e) => e.key === o.key && e.to === o.value && (e.status === 'rejected' || e.status === 'reverted') && now - (e.finishedAt ?? 0) < days * 86_400_000);
+}
 
 // ───────────────────────────── which keys the loop may touch ─────────────────────────────
 
@@ -335,6 +351,26 @@ export class SelfLoop {
     await this.put(s);
   }
 
+  /**
+   * v11.15: the policy tournament hands over a winning change. It is validated now and queued; it still goes through the
+   * replay proof (and the daily schedule / cooldown) like every other proposal, ahead of the AI proposer.
+   */
+  async offer(o: LoopOffer): Promise<{ queued: boolean; why: string }> {
+    const c = this.d.cfg();
+    if (!c.enabled) return { queued: false, why: 'the loop is switched off' };
+    const v = validateChange(o, this.d.current(o.key), c);
+    if (!v.ok) return { queued: false, why: v.why };
+    const s = await this.state();
+    const now = this.now();
+    if (s.current?.key === o.key) return { queued: false, why: `already testing ${o.key}` };
+    if (recentlyTried(s.history, { key: o.key, value: v.value }, now)) return { queued: false, why: `${o.key} → ${String(v.value)} was tried in the last 7 days and did not hold` };
+    const offers = (s.offers ?? []).filter((x) => x.key !== o.key);
+    offers.unshift({ ...o, value: v.value, at: now });
+    s.offers = offers.slice(0, 5);
+    await this.put(s);
+    return { queued: true, why: `queued for the next loop run (${o.evidence})` };
+  }
+
   /** One experiment: propose → prove → apply. `ownerAsked` = the dashboard's Run button (skips the cooldown). */
   async runOnce(ownerAsked: boolean): Promise<{ ran: boolean; why: string }> {
     const c = this.d.cfg();
@@ -364,7 +400,14 @@ export class SelfLoop {
       const health = this.d.health();
       let proposal: Proposal | null = null;
       const rejected: string[] = [];
-      if (this.d.proposeAi) {
+      // Tournament winners first (they already beat the current settings on live candidates).
+      while (!proposal && s.offers?.length) {
+        const o = s.offers.shift()!;
+        const v = validateChange(o, this.d.current(o.key), c);
+        if (v.ok && !recentlyTried(s.history, { key: o.key, value: v.value }, now)) proposal = { key: o.key, value: v.value, why: o.evidence, source: 'tournament' };
+        else rejected.push(`tournament offer ${o.key}=${String(o.value)} dropped: ${v.ok ? 'tried recently' : v.why}`);
+      }
+      if (!proposal && this.d.proposeAi) {
         const ai = await this.d.proposeAi({ health, history: s.history.slice(0, 10) }).catch(() => null);
         if (ai) {
           const v = validateChange(ai, this.d.current(ai.key), c);
@@ -391,7 +434,7 @@ export class SelfLoop {
       s.current = e;
       s.lastRunDay = new Date(now).toISOString().slice(0, 10);
       await this.put(s);
-      await this.d.note?.(now, `Loop — trying ${e.label}`, [`${String(e.from)} → ${String(e.to)} (${e.source === 'ai' ? 'AI idea' : 'from Bot health'}): ${e.why}`, ...rejected]).catch(() => undefined);
+      await this.d.note?.(now, `Loop — trying ${e.label}`, [`${String(e.from)} → ${String(e.to)} (${e.source === 'ai' ? 'AI idea' : e.source === 'tournament' ? 'tournament winner' : 'from Bot health'}): ${e.why}`, ...rejected]).catch(() => undefined);
 
       // 2. prove
       const base = await this.d.runReplay([], fromMs, toMs);

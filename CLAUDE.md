@@ -990,6 +990,24 @@ December (small wallet in Nov if paper edge is positive).
     `WALLET_SECRET=…` + `LIVE_SENDER_URL` (+ `LIVE_TIP_ACCOUNTS`) or `LIVE_SHIELD_URL`, then `TRADING_MODE=LIVE`;
     (3) dry-run stats ≥ 95% OK for a full day (Controls → System → Live trading); (4) Controls → Go live (type the first
     4 characters). Go/no-go Nov 7 only if paper edge is positive. tests/live-executor.test.ts.
+- **v11.15 (Oct 18): policy tournament** (`src/learner/tournament.ts`, `tournament` config, migration v46). ~20 Sniper
+  variants (`tournament.variants`: dotted-path `entryOverrides` / `exitOverrides` over the live config — buyers 20/25/35,
+  SOL 8/16, score margin 0/4/12, momentum run3m 20/45, TP ladders 1.3/2/4 & 2/3/6, trail 18/32, stop 10/16, no
+  holder-growth, no holder-clock; plus `live` and `random` = 1 in 40 scored coins) trade VIRTUALLY (VirtualBook,
+  decideExit, paper costs, signal price — no dip / confirmation wait) on the same live candidates. Evaluator hook right
+  before the Sniper gate (`evaluator.tournament.onCandidate`): candidate = no hard safety fail, switched-on strategy,
+  every rule fail is a momentum-gate fail; per variant the pure `sniperEntryFails` re-runs with its overrides
+  (momentum gate re-run on the shape when overridden); exits = live rules + the Sniper overlay rebuilt from the variant's
+  `sniper.exits.*` + `exit.*` keys. Once per coin per variant per 30 min; ≤ `maxOpen` 400 open (evicts the oldest of the
+  fullest variant, `VirtualBook.remove`). Results Redis `tour:res:<id>` (2,000 each), `tour:stats`, `tour:offers`.
+  **Winners** (`judge`): one-sided Welch vs the baseline + Benjamini–Hochberg (q 0.1), avg ≥ baseline + `beatLiveByPts`
+  2, positive without its 3 best, n ≥ `minResults` 40. Baseline = `live` with ≥ max(10, minResults/2) results, else
+  `random`, else zero. Winners are never applied by the tournament: every 10 min `offersFor` hands the single editable
+  key (multi-key variants: only a key whose own 1-key variant also won; TP ladders / `.enabled` keys = owner decides) to
+  `selfLoop.offer` → validated + queued in `loop:state.offers`; the next loop run tries tournament offers FIRST (ahead of
+  the AI), still replay-proven + watched + revertible; an offer equal to a change rejected / reverted in the last 7 days
+  is refused. GET `/api/tournament`; Performance → Tests card "Tournament" (sortable, status chips). Editable group
+  "Tournament". tests/tournament.test.ts.
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

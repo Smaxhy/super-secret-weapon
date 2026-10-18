@@ -14,6 +14,7 @@ import { Icon } from '../components/Icon';
 import { LossAutopsy } from '../components/LossAutopsy';
 import { MoonshotCard } from '../components/MoonshotCard';
 import { Replay } from '../components/Replay';
+import { Tournament } from '../components/Tournament';
 import { StrategyLab } from '../components/StrategyLab';
 import { Card, Empty, ErrorBox, Loading, PageHeader, Pnl, Row, Rows, SectionHeader, Tabs, useStored, useTab } from '../components/ui';
 import { useApi } from '../hooks/useApi';
@@ -65,6 +66,7 @@ export function Performance() {
         {section === 'tests' && (
           <div className="flex flex-col gap-6">
             <Replay />
+            <Tournament />
             <StrategyLab />
             <div className="grid gap-6 xl:grid-cols-2">
               <MoonshotCard />

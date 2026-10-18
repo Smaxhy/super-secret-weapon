@@ -620,6 +620,11 @@ export const MIGRATIONS: ConfigMigration[] = [
     note: 'v11.14: live execution built but dormant (PAPER stays the default); the paper dry run simulates every paper fill\'s real transaction',
     set: [['live', ['dryRun', 'enabled'], true]],
   },
+  {
+    version: 46,
+    note: 'v11.15: policy tournament — ~20 Sniper variants trade virtually on the same live candidates; winners are offered to the self-improving loop (which still proves them on the tape)',
+    set: [['tournament', ['enabled'], true]],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

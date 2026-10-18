@@ -992,6 +992,45 @@ export const DEFAULT_CONFIG = {
   momentumGate: { enabled: true as boolean, maxRun1mPct: 18, maxRun3mPct: 30, minOffHighPct: 0, minBuyShare2m: 0.52, maxLastCandlePct: 15, skipForExplore: true as boolean, skipForDipEntry: true as boolean },
 
   /**
+   * v11.15 policy tournament (learner/tournament.ts): ~20 Sniper entry + exit variants trade VIRTUALLY on the same live
+   * candidates; winners (BH q, ≥ baseline + beatLiveByPts, positive without their 3 best) are OFFERED to the
+   * self-improving loop, which still has to prove them on the tape. Overrides are dotted config paths.
+   */
+  tournament: {
+    enabled: true as boolean,
+    maxOpen: 400,
+    minResults: 40,
+    q: 0.1,
+    beatLiveByPts: 2,
+    cooldownMin: 30,
+    randomEvery: 40,
+    keepResults: 2000,
+    onlyEnabledStrategies: true as boolean,
+    variants: [
+      { id: 'live', name: 'Current settings', entryOverrides: {}, exitOverrides: {} },
+      { id: 'random', name: 'Random coin (yardstick)', entryOverrides: {}, exitOverrides: {}, random: true },
+      { id: 'buyers20', name: '20+ real buyers', entryOverrides: { 'sniper.volume.minBuyers': 20 }, exitOverrides: {} },
+      { id: 'buyers25', name: '25+ real buyers', entryOverrides: { 'sniper.volume.minBuyers': 25 }, exitOverrides: {} },
+      { id: 'buyers35', name: '35+ real buyers', entryOverrides: { 'sniper.volume.minBuyers': 35 }, exitOverrides: {} },
+      { id: 'sol8', name: '8+ SOL bought', entryOverrides: { 'sniper.volume.minBuySol': 8 }, exitOverrides: {} },
+      { id: 'sol16', name: '16+ SOL bought', entryOverrides: { 'sniper.volume.minBuySol': 16 }, exitOverrides: {} },
+      { id: 'margin0', name: 'Score just over the bar', entryOverrides: { 'sniper.minScoreMargin': 0 }, exitOverrides: {} },
+      { id: 'margin4', name: 'Score 4 over the bar', entryOverrides: { 'sniper.minScoreMargin': 4 }, exitOverrides: {} },
+      { id: 'margin12', name: 'Score 12 over the bar', entryOverrides: { 'sniper.minScoreMargin': 12 }, exitOverrides: {} },
+      { id: 'run3m20', name: 'Max +20% in 3 min', entryOverrides: { 'momentumGate.maxRun3mPct': 20 }, exitOverrides: {} },
+      { id: 'run3m45', name: 'Max +45% in 3 min', entryOverrides: { 'momentumGate.maxRun3mPct': 45 }, exitOverrides: {} },
+      { id: 'tpFast', name: 'Sell at 1.3× / 2× / 4×', entryOverrides: {}, exitOverrides: { 'sniper.exits.takeProfitTiers': [{ multiple: 1.3, sellPct: 25 }, { multiple: 2, sellPct: 25 }, { multiple: 4, sellPct: 20 }] } },
+      { id: 'tpSlow', name: 'Sell at 2× / 3× / 6×', entryOverrides: {}, exitOverrides: { 'sniper.exits.takeProfitTiers': [{ multiple: 2, sellPct: 25 }, { multiple: 3, sellPct: 25 }, { multiple: 6, sellPct: 20 }] } },
+      { id: 'trail18', name: 'Trail 18%', entryOverrides: {}, exitOverrides: { 'sniper.exits.trailPct': 18 } },
+      { id: 'trail32', name: 'Trail 32%', entryOverrides: {}, exitOverrides: { 'sniper.exits.trailPct': 32 } },
+      { id: 'stop10', name: 'Stop 10%', entryOverrides: {}, exitOverrides: { 'sniper.exits.stopMaxPct': 10 } },
+      { id: 'stop16', name: 'Stop 16%', entryOverrides: {}, exitOverrides: { 'sniper.exits.stopMaxPct': 16 } },
+      { id: 'noGrowth', name: 'No holder-growth exit', entryOverrides: {}, exitOverrides: { 'exit.holderGrowth.enabled': false } },
+      { id: 'noClock', name: 'No holder-clock exit', entryOverrides: {}, exitOverrides: { 'exit.holderClock.enabled': false } },
+    ] as Array<{ id: string; name: string; entryOverrides: Record<string, unknown>; exitOverrides: Record<string, unknown>; random?: boolean }>,
+  },
+
+  /**
    * v11.13 self-improving loop (learner/self-loop.ts): once a day ONE setting change is proposed (AI coach, else a
    * deterministic proposer from Bot health), proven on the recorded tape (replay baseline vs candidate), applied,
    * watched on live trades and reverted when live disagrees. `allowedKeys` empty = every tape-replayable editable key.

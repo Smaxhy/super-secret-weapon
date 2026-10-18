@@ -103,6 +103,11 @@ export class VirtualBook {
     return this.open.size;
   }
 
+  /** Drop an open position without a result (the tournament evicts the oldest when it is full). */
+  remove(key: string): boolean {
+    return this.open.delete(key);
+  }
+
   has(key: string): boolean {
     return this.open.has(key);
   }

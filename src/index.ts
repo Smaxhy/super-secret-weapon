@@ -60,6 +60,7 @@ import { DeployerBook, type BackfillRow } from './learner/deployer-book';
 import { getSolUsd } from './lib/sol-price';
 import { DipWatcher } from './executor/dip-watcher';
 import { StrategyLab } from './learner/strategy-lab';
+import { Tournament } from './learner/tournament';
 import { NewPairWatcher } from './scanner/new-pair-watcher';
 import { TaLab } from './learner/ta-lab';
 import { TrendingFeeds } from './scanner/trending-feeds';
@@ -340,6 +341,11 @@ async function main(): Promise<void> {
   evaluator.lab = lab;
   registry.onTradeApplied.push((mint) => lab.onTrade(mint));
   lab.start();
+  // v11.15 policy tournament: Sniper entry + exit variants trade virtually on the same live candidates.
+  const tournament = new Tournament(redis, crowd);
+  evaluator.tournament = tournament;
+  registry.onTradeApplied.push((mint) => tournament.onTrade(mint));
+  tournament.start();
   // Shadow trades: pretend trades on coins it didn't buy (refused / just under the bar / skipped by a rule).
   const shadow = new ShadowTrades(redis, crowd);
   evaluator.shadow = shadow;
@@ -419,6 +425,8 @@ async function main(): Promise<void> {
     remember: (bullet) => aiCoach.remember(bullet),
   });
   selfLoop.start();
+  // Tournament winners are OFFERED to the loop (never applied by the tournament itself).
+  tournament.loop = selfLoop;
   const brain = new Brain(redis, (since) => shadow.results(since), aiCoach, (since) => coinOutcomes.results(since));
   brain.outcomeSource = () => coinOutcomes.snapshot();
   brain.exitSource = () => exitTuner.snapshot();
@@ -737,7 +745,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, moonshot, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, moonshot, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -819,6 +827,7 @@ async function main(): Promise<void> {
       await deployerBook.stop();
       dips.stop();
       lab.stop();
+      tournament.stop();
       shadow.stop();
       moonshot.stop();
       brain.stop();

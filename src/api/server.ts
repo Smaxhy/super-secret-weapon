@@ -81,6 +81,11 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       return deps.autopsy?.snapshot() ?? null;
     });
     secured.post('/api/autopsy/run', async () => (await deps.autopsy?.run()) ?? null);
+    // v11.15 policy tournament: Sniper variants vs the current settings on the same live candidates.
+    secured.get('/api/tournament', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return deps.tournament ? await deps.tournament.report() : { enabled: false, at: Date.now(), baseline: 'zero', rows: [], open: 0, minResults: 0, offers: [] };
+    });
     // v11.13 self-improving loop: state + last experiments; Run = one experiment now (replays take minutes → answers early).
     secured.get('/api/loop', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');

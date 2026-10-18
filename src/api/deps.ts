@@ -9,6 +9,7 @@ import type { WalletPnl } from '../learner/wallet-pnl';
 import type { DipWatcher } from '../executor/dip-watcher';
 import type { CrowdTracker } from '../scanner/crowd-tracker';
 import type { StrategyLab } from '../learner/strategy-lab';
+import type { Tournament } from '../learner/tournament';
 import type { TaLab } from '../learner/ta-lab';
 import type { TrendingHub } from '../scanner/trending-hub';
 import type { SwingUniverse } from '../scanner/swing-universe';
@@ -53,6 +54,8 @@ export interface ApiDeps {
   deployers?: DeployerBook | null;
   /** v11.13: the self-improving loop (Brain page card). */
   selfLoop?: SelfLoop | null;
+  /** v11.15: the policy tournament (Performance → Tests card). */
+  tournament?: Tournament | null;
 }
 
 /** Classify a token for the live feed colour code. */
