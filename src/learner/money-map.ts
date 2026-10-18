@@ -26,8 +26,10 @@ import { prisma } from '../lib/prisma';
 import { flattenFeatures } from './ai-coach';
 import type { OutcomeResult } from './outcome-tracker';
 import type { ShadowResult } from './shadow-trades';
+import { scoreOnly } from '../tools/score-gap';
 
 export type MoneySource = 'real' | 'shadow' | 'outcome';
+export type MoneyScope = 'all' | 'skipped' | 'real' | 'filtered';
 
 export interface MoneyRow {
   mint: string;
@@ -42,6 +44,8 @@ export interface MoneyRow {
   bar: number | null;
   /** Why it wasn't bought ('bought' for real trades). */
   why: string;
+  /** Every hard rule passed (bought, refused by the trader, or held back only by the score / a Sniper check) — "inside your filters". */
+  rulesOk: boolean;
   flat: Record<string, number>;
   /** Other exit variants on the same coin (id → % after costs), outcome rows since v11.17 only. */
   alt?: Record<string, number>;
@@ -112,7 +116,7 @@ export interface ExitCompare {
 export interface MoneyMap {
   at: number;
   hours: number;
-  filter: { strategy: string | null; source: 'all' | 'skipped' | 'real' };
+  filter: { strategy: string | null; source: MoneyScope };
   rows: number;
   /** Rows with an impossible result (beyond their own peak / past 10×) — broken prices, left out. */
   dropped: number;
@@ -278,10 +282,11 @@ export function verdictFor(strategy: string, rs: readonly MoneyRow[]): StrategyV
 }
 
 /** Pure: the whole map from the rows. */
-export function buildMoneyMap(rows: readonly MoneyRow[], opts: { hours: number; strategy?: string | null; source?: 'all' | 'skipped' | 'real'; exitNames?: Record<string, string>; now?: number } = { hours: 48 }): MoneyMap {
+export function buildMoneyMap(rows: readonly MoneyRow[], opts: { hours: number; strategy?: string | null; source?: MoneyScope; exitNames?: Record<string, string>; now?: number } = { hours: 48 }): MoneyMap {
   const now = opts.now ?? Date.now();
   const source = opts.source ?? 'all';
-  const scoped = rows.filter((r) => (!opts.strategy || r.strategy === opts.strategy) && (source === 'all' || (source === 'real' ? r.source === 'real' : r.source !== 'real')));
+  const inScope = (r: MoneyRow) => (source === 'all' ? true : source === 'real' ? r.source === 'real' : source === 'skipped' ? r.source !== 'real' : r.rulesOk);
+  const scoped = rows.filter((r) => (!opts.strategy || r.strategy === opts.strategy) && inScope(r));
   const all = scoped.filter(saneRow);
   const dropped = scoped.length - all.length;
   const bySource: Record<MoneySource, number> = { real: 0, shadow: 0, outcome: 0 };
@@ -382,7 +387,7 @@ export async function loadMoneyRows(redis: Redis, sinceMs: number): Promise<Mone
   for (const raw of outRaw) {
     const o = parse<OutcomeResult>(raw);
     if (!o || typeof o.pnlPct !== 'number' || o.atMs < sinceMs) continue;
-    rows.push({ mint: o.mint, symbol: o.symbol, strategy: o.strategy, atMs: o.atMs, pnlPct: o.pnlPct, peakX: o.peakX ?? 1, source: 'outcome', score: o.score ?? null, bar: o.bar ?? null, why: o.why ?? 'skipped', flat: { ...(o.flat ?? {}), 'entry.score': o.score }, ...(o.alt ? { alt: o.alt } : {}) });
+    rows.push({ mint: o.mint, symbol: o.symbol, strategy: o.strategy, atMs: o.atMs, pnlPct: o.pnlPct, peakX: o.peakX ?? 1, source: 'outcome', score: o.score ?? null, bar: o.bar ?? null, why: o.why ?? 'skipped', rulesOk: scoreOnly(String(o.why ?? '')) !== null, flat: { ...(o.flat ?? {}), 'entry.score': o.score }, ...(o.alt ? { alt: o.alt } : {}) });
   }
   for (const raw of shRaw) {
     const s = parse<ShadowResult & { flat?: Record<string, number> }>(raw);
@@ -398,7 +403,7 @@ export async function loadMoneyRows(redis: Redis, sinceMs: number): Promise<Mone
     put('entry.hourUtc', new Date(s.openedAtMs).getUTCHours());
     put('entry.dowUtc', new Date(s.openedAtMs).getUTCDay());
     put('entry.score', s.score);
-    rows.push({ mint: s.mint, symbol: s.symbol, strategy: s.strategy, atMs: s.openedAtMs, pnlPct: s.pnlPct, peakX: s.peakX ?? 1, source: 'shadow', score: s.score ?? null, bar: s.bar ?? null, why: s.why ?? 'skipped', flat });
+    rows.push({ mint: s.mint, symbol: s.symbol, strategy: s.strategy, atMs: s.openedAtMs, pnlPct: s.pnlPct, peakX: s.peakX ?? 1, source: 'shadow', score: s.score ?? null, bar: s.bar ?? null, why: s.why ?? 'skipped', rulesOk: s.kind !== 'skipped' || scoreOnly(String(s.why ?? '')) !== null, flat });
   }
   for (const p of ps) {
     if (!(p.sizeSol > 0)) continue;
@@ -414,6 +419,7 @@ export async function loadMoneyRows(redis: Redis, sinceMs: number): Promise<Mone
       score: p.evaluation?.combinedScore ?? null,
       bar: null,
       why: 'bought',
+      rulesOk: true,
       flat: flattenFeatures(p.evaluation?.features, { score: p.evaluation?.combinedScore ?? null, kols: ec.kols ?? null, mcUsd: ec.marketCapUsd ?? null, ageMin: p.token ? (p.openedAt.getTime() - p.token.createdAt.getTime()) / 60_000 : null, hourUtc: p.openedAt.getUTCHours(), dowUtc: p.openedAt.getUTCDay() }),
     });
   }
@@ -429,7 +435,7 @@ export function exitNames(): Record<string, string> {
 const cache = new Map<string, { at: number; map: MoneyMap }>();
 
 /** The map for the API (cached 2 min per filter). */
-export async function moneyMap(redis: Redis, opts: { hours: number; strategy?: string | null; source?: 'all' | 'skipped' | 'real' }, now = Date.now()): Promise<MoneyMap> {
+export async function moneyMap(redis: Redis, opts: { hours: number; strategy?: string | null; source?: MoneyScope }, now = Date.now()): Promise<MoneyMap> {
   const key = `${opts.hours}:${opts.strategy ?? ''}:${opts.source ?? 'all'}`;
   const hit = cache.get(key);
   if (hit && now - hit.at < 120_000) return hit.map;

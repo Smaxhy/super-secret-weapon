@@ -39,3 +39,7 @@ dump.rdb
 
 # Obsidian vault notes written by the bot on the VPS (docker-compose volume)
 obsidian/
+
+# deep-research working files (not part of the bot)
+research_notes/
+reports/

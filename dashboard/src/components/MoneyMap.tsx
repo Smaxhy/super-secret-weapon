@@ -43,6 +43,7 @@ const RANGES = [
 ] as const;
 type RangeKey = (typeof RANGES)[number]['key'];
 const SOURCES = [
+  { key: 'filtered', label: 'Inside your filters' },
   { key: 'all', label: 'Every coin' },
   { key: 'skipped', label: 'Skipped only' },
   { key: 'real', label: 'Bought only' },
@@ -63,7 +64,7 @@ const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink
 
 export function MoneyMap() {
   const [range, setRange] = useStored<RangeKey>('money.range', '48', RANGES.map((r) => r.key));
-  const [source, setSource] = useStored<SourceKey>('money.source', 'all', SOURCES.map((s) => s.key));
+  const [source, setSource] = useStored<SourceKey>('money.source', 'filtered', SOURCES.map((s) => s.key));
   const [strategy, setStrategy] = useState<string>('');
   const [size, setSize] = useState('0.5');
   const sizeSol = Math.max(0.01, Number(size) || 0.5);
@@ -73,7 +74,7 @@ export function MoneyMap() {
     <div className="flex flex-col gap-6">
       <SectionHeader
         title="Where's the money?"
-        description={data ? `${data.note} · ${ago(new Date(data.at).toISOString())}` : 'Every coin the bot looked at, followed with its own exits, split by what it looked like at the time.'}
+        description={data ? `${data.note} · ${ago(new Date(data.at).toISOString())}` : 'Coins the bot looked at, followed with its own exits, split by what they looked like at the time. "Inside your filters" = passed every rule (bought, or held back only by the score).'}
       />
       <div className="flex flex-wrap items-center gap-2">
         <Tabs tabs={RANGES} value={range} onChange={setRange} label="Time range" />

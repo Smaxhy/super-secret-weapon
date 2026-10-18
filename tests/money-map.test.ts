@@ -5,7 +5,7 @@ import type { CrowdTrade } from '../src/scanner/crowd-tracker';
 
 const T0 = 1_700_000_000_000;
 const row = (o: Partial<MoneyRow> & { flat?: Record<string, number> } = {}): MoneyRow => ({
-  mint: 'M', symbol: 'X', strategy: 'MIGRATION_MOMENTUM', atMs: T0, pnlPct: -5, peakX: 1.05, source: 'outcome', score: 60, bar: 70, why: 'score under the bar', flat: {}, ...o,
+  mint: 'M', symbol: 'X', strategy: 'MIGRATION_MOMENTUM', atMs: T0, pnlPct: -5, peakX: 1.05, source: 'outcome', score: 60, bar: 70, why: 'score under the bar', rulesOk: true, flat: {}, ...o,
 });
 
 describe('money map — where is the money', () => {
@@ -92,6 +92,10 @@ describe('money map — where is the money', () => {
     expect(buildMoneyMap(rows, { hours: 1, strategy: 'SOON' }).rows).toBe(3);
     expect(buildMoneyMap(rows, { hours: 1, source: 'real' }).rows).toBe(1);
     expect(buildMoneyMap(rows, { hours: 1, source: 'skipped' }).rows).toBe(3);
+    // "inside your filters": every rule passed (a rule-failed skip is left out)
+    const withFail = [...rows, row({ why: 'bundlers hold 30% > 18%', rulesOk: false })];
+    expect(buildMoneyMap(withFail, { hours: 1, source: 'filtered' }).rows).toBe(4);
+    expect(buildMoneyMap(withFail, { hours: 1, source: 'all' }).rows).toBe(5);
     expect(buildMoneyMap(rows, { hours: 1, strategy: 'SOON' }).dimensions.some((d) => d.key === 'strategy')).toBe(false);
   });
 });

@@ -89,7 +89,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       reply.header('Cache-Control', 'no-store');
       const q = req.query as { hours?: string; strategy?: string; source?: string };
       const h = Number(q.hours ?? 48);
-      const source = q.source === 'real' || q.source === 'skipped' ? q.source : 'all';
+      const source = q.source === 'real' || q.source === 'skipped' || q.source === 'filtered' ? q.source : 'all';
       return moneyMap(redis, { hours: Number.isFinite(h) ? Math.min(168, Math.max(1, h)) : 48, strategy: q.strategy || null, source });
     });
     // v11.18 copy replay: walk the tape, copy wallets once their record qualifies — who is actually making money?
