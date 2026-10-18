@@ -119,6 +119,20 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       void runCohortTest(now - days * 86_400_000, now).catch(() => undefined);
       return { ok: true, days };
     });
+    // v12 forex lab: last report (backtest + paper) and a Run button.
+    secured.get('/api/forex', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return { running: deps.forex?.isRunning() ?? false, last: deps.forex ? await deps.forex.last() : null };
+    });
+    secured.post<{ Body: { refresh?: boolean } }>('/api/forex/run', async (req, reply) => {
+      if (!deps.forex) {
+        reply.code(503);
+        return { ok: false, error: 'forex lab not running' };
+      }
+      if (deps.forex.isRunning()) return { ok: true, already: true };
+      void deps.forex.run(req.body?.refresh !== false).catch(() => undefined);
+      return { ok: true };
+    });
     // v11.16 AI meme reader: today's reads, spend, cache hits, last 20 verdicts.
     secured.get('/api/meme', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');

@@ -22,6 +22,34 @@ spending, keep paper running only as a watch (nothing built until the Money tab 
 on "Inside your filters"), (2) block-level sniping with Jito bundles against the deployers' own bundles — not
 recommended, (3) a different venue (liquid Solana coins / order books) — a different product.
 
+## v12 (Oct 18 2026): TWO SOURCES — crypto keeps running as a data collector, FOREX is the new focus
+Owner: "keep the crypto bot running and gathering data, put it in its own tab, focus on forex with a lot more strategies;
+once we have a live account we'll see." Crypto code is untouched (still paper, still learning). New, all in `src/forex/`:
+- `types.ts` — 12 markets (`INSTRUMENTS`: EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD, USD/CHF, NZD/USD, EUR/JPY,
+  GBP/JPY, EUR/GBP, gold GC=F, silver SI=F) with pip size + typical retail spread; `Bar`, `Signal`, `Trade` (result in R).
+- `data.ts` — Yahoo Finance chart API (no key; the sandbox can't reach it, the VPS can): 60m bars, 730 days on the first
+  pull, last 7 days merged hourly; forming bar dropped; Redis `fx:bars:<id>` as [t,o,h,l,c] rows.
+- `ta.ts` — causal indicators (ATR, Donchian, Supertrend, ADX, confirmed swings with `hiPtr`/`loPtr`, previous-day H/L/C,
+  Asian range, 1h→4h aggregation; reuses EMA/RSI/MACD/Bollinger from the crypto TA lib).
+- `strategies.ts` — 26 strategies, long + short mirrored: trend (EMA cross, EMA pullback, Supertrend, MACD, ADX,
+  trendline break, break of structure), breakout (Donchian 20/55, Bollinger squeeze, Keltner, inside bar, breakout+retest),
+  session (London breakout of the Asian range, NY open, previous-day high/low), reversion (RSI dip, RSI(2) Connors,
+  Bollinger reversion, daily pivot S1/R1, Fibonacci 50–61.8%), patterns (engulfing, pin bar, double bottom/top, momentum
+  candle) + `random` yardstick. Session ones 1h only; the rest run on 1h AND 4h.
+- `engine.ts` — signal at the close → fill at the next open ± half spread; stop beats target in the same bar; gaps fill
+  at the open; stops slip ¼ spread; trail / time / indicator exits. `equityCurve(trades, riskPct, maxLev 50)`: compounded,
+  concurrent trades share equity, leverage capped, weekly results (avg / median / green % / weeks ≥+10% / best / worst),
+  max drop, wiped (<10% of peak), median leverage.
+- `lab.ts` — `ForexLab` (index.ts, 45 s after start then hourly): refresh data, run everything (~1.5 s), report to Redis
+  `fx:report`: per strategy × tf all / first-70% / unseen-30% R stats, risk table 0.5/1/2/5%, per market, verdict
+  (`verdictFor`: edge = unseen ≥30 trades, both halves positive, unseen PF ≥1.2, beats random by 0.05R; maybe; no).
+  PAPER = trades opened after `fx:paper:since` (set on the first run) — a true forward test, same engine. No real orders.
+- API GET `/api/forex`, POST `/api/forex/run`. Dashboard page **Forex** (`pages/Forex.tsx`, tabs Strategies / Paper /
+  Setup; tap a strategy → weekly table per risk level). Nav regrouped: Forex / Crypto / Crypto lab / System; phone bar
+  Forex · Crypto · Positions · Performance · More. tests/forex.test.ts (incl. a no-peeking test). 896 tests.
+- Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
+  Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
+
 ## FREEZE ENDED (Oct 17 2026 — owner: "the trades are too bad, upgrade everything, make it profitable")
 The Oct 15 freeze below is over; v11 (below, "Current state") is the new setup. Judge it on Performance → Mistakes
 after 200–300 trades, same rule as before: switch losers OFF, don't tweak.

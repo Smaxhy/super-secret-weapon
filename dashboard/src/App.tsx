@@ -30,6 +30,7 @@ import { Controls } from './pages/Controls';
 import { Strategies } from './pages/Strategies';
 import { Shadow } from './pages/Shadow';
 import { Brain } from './pages/Brain';
+import { Forex } from './pages/Forex';
 
 interface NavItem {
   to: string;
@@ -41,28 +42,27 @@ interface NavItem {
 /** Pages grouped by what they're for (sidebar sections on desktop, the "More" sheet on phones). */
 const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   {
-    label: 'Trading',
+    label: 'Forex',
+    items: [{ to: '/forex', label: 'Forex', icon: 'globe', desc: 'Currency + gold strategies, tested and paper traded' }],
+  },
+  {
+    label: 'Crypto',
     items: [
-      { to: '/', label: 'Overview', icon: 'home', desc: 'Profit, open trades, latest activity' },
+      { to: '/', label: 'Crypto', icon: 'home', desc: 'Crypto overview: profit, open trades, latest activity' },
       { to: '/positions', label: 'Positions', icon: 'layers', desc: 'What it holds right now' },
       { to: '/history', label: 'History', icon: 'clock', desc: 'Every closed trade' },
-      { to: '/feed', label: 'Live feed', icon: 'bolt', desc: 'New coins as they launch' },
+      { to: '/performance', label: 'Performance', icon: 'chart', desc: 'Charts, mistakes, money map, tests' },
     ],
   },
   {
-    label: 'Results',
+    label: 'Crypto lab',
     items: [
-      { to: '/performance', label: 'Performance', icon: 'chart', desc: 'Charts, mistakes, best times, tests' },
       { to: '/strategies', label: 'Strategies', icon: 'flask', desc: 'Chart strategies tested live' },
       { to: '/shadow', label: 'Shadow trades', icon: 'eye', desc: 'Coins it skipped, traded on paper' },
-    ],
-  },
-  {
-    label: 'Intelligence',
-    items: [
       { to: '/brain', label: 'Brain', icon: 'cpu', desc: 'Models, rules it found, tips' },
       { to: '/learning', label: 'Learning', icon: 'sparkles', desc: 'Score weights, coach, lessons' },
       { to: '/wallets', label: 'Wallets', icon: 'wallet', desc: 'KOLs, smart money, copy wallets' },
+      { to: '/feed', label: 'Live feed', icon: 'bolt', desc: 'New coins as they launch' },
     ],
   },
   {
@@ -75,7 +75,7 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
 ];
 const NAV = GROUPS.flatMap((g) => g.items);
 /** Phone bottom bar: the four pages you check most; the rest live under "More". */
-const PHONE_MAIN = ['/', '/positions', '/history', '/performance'];
+const PHONE_MAIN = ['/forex', '/', '/positions', '/performance'];
 
 type Theme = 'system' | 'light' | 'dark';
 
@@ -370,6 +370,7 @@ function Shell() {
           <div key={pathname} className="page-enter">
             <Routes>
               <Route path="/" element={<Overview />} />
+              <Route path="/forex" element={<Forex />} />
               <Route path="/feed" element={<LiveFeed />} />
               <Route path="/positions" element={<Positions />} />
               <Route path="/history" element={<History />} />
