@@ -8,6 +8,7 @@ import { Link } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import { ago, STRATEGY_LABEL } from '../lib/format';
 import { Icon } from './Icon';
+import { CopyReplay } from './CopyReplay';
 import { Badge, Card, Chip, Empty, ErrorBox, HeatRow, Loading, NumberInput, SectionHeader, StatTile, Tabs, useStored } from './ui';
 
 interface GroupStat { label: string; n: number; winPct: number; avgPct: number; medianPct: number; robustPct: number; sol: number; reach115Pct: number; reach150Pct: number; reach200Pct: number; perfectPct: number }
@@ -86,6 +87,7 @@ export function MoneyMap() {
           </div>
         )}
       </div>
+      <CopyReplay />
       {error && <ErrorBox message={error} />}
       {!data && !error && <Loading kind="tiles" />}
       {data && !data.overall && <Empty icon={<Icon name="radar" size={20} />}>No followed coins in this window yet. The outcome tracker labels a coin 45 minutes after the bot checks it.</Empty>}

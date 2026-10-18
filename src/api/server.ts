@@ -17,6 +17,7 @@
 import { runBacktest } from '../learner/backtester';
 import { scoreGapReport } from '../tools/score-gap';
 import { moneyMap } from '../learner/money-map';
+import { copyReplayStatus, startCopyReplay } from '../learner/copy-replay-runner';
 import { replayStatus, startReplay } from '../learner/replay-runner';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
@@ -90,6 +91,16 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       const h = Number(q.hours ?? 48);
       const source = q.source === 'real' || q.source === 'skipped' ? q.source : 'all';
       return moneyMap(redis, { hours: Number.isFinite(h) ? Math.min(168, Math.max(1, h)) : 48, strategy: q.strategy || null, source });
+    });
+    // v11.18 copy replay: walk the tape, copy wallets once their record qualifies — who is actually making money?
+    secured.get('/api/copy-replay', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return copyReplayStatus();
+    });
+    secured.post<{ Body: { from?: string; to?: string; sizeSol?: number } }>('/api/copy-replay/run', async (req, reply) => {
+      const r = startCopyReplay(req.body ?? {});
+      if (!r.ok) reply.code(409);
+      return r;
     });
     // Coins held back only by the score: how far under the bar, and what they did next (read-only, Performance → Mistakes).
     secured.get('/api/score-gap', async (req, reply) => {

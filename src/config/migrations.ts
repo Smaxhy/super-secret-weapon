@@ -638,6 +638,15 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['trading', ['maxPositionSolCeiling'], 1],
     ],
   },
+  {
+    version: 49,
+    note: 'v11.18 copy replay: live copies behave like the tested ones — bought when the wallet buys (no dip wait, no confirmation), Sniper gate skipped for copies; mirror sells unchanged',
+    set: [
+      ['copy', ['skipDipWait'], true],
+      ['copy', ['skipConfirm'], true],
+      ['sniper', ['exemptCopies'], true],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

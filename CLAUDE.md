@@ -1046,6 +1046,25 @@ December (small wallet in Nov only if paper edge is positive).
   dashboard shifts to the viewer's clock); "the ones that got away" (skipped runners ≥1.5× with why, linked to the coin
   page). Dashboard: Performance → **Money** tab (`components/MoneyMap.tsx`: range / source / strategy chips, SOL-per-
   trade input re-prices every group, "Split it yourself" explorer). tests/money-map.test.ts, tests/score-gap.test.ts.
+- **v11.18 (Oct 18): copy replay — "who's actually making money"** (owner: "do anything to make it profitable"; the Money
+  tab, once broken prices were dropped (`saneRow`: a result can't beat its own peak / pass 10×; rankings use a +300%-capped
+  average), showed NO kind of coin pays: 7,365 coins, 11% ever reached 1.15×, median −5%, perfect exits +3.2%; the 2-day
+  Sniper replay: 188 trades, 16% wins, −5.66 SOL. So test the other axis — WHO buys). `src/learner/copy-replay.ts`
+  (pure `CopyReplay` engine + CLI `npm run copy-replay -- --from --to [--size]`, VPS `node dist/learner/copy-replay.js`):
+  walks the TradeTape forward, keeps every wallet's realised record (cost basis per coin, snipers = first 15 s excluded,
+  LRU 300k wallets, positions forgotten after 24 h); once a record qualifies (`qualify`: ≥6 sells, WR ≥55%, PF ≥1.3,
+  ≥0.5 SOL realised, ≤60% repeat-size buys) its NEXT buys ≥0.1 SOL are copied at the pool price it left (+0.8% slippage,
+  1.25% fee, tx fees; `sizeSol` 0.5; ≤3 open per wallet / 60 total) and mirrored on its sells (same share; hard stop −35%,
+  max hold 6 h, tape end). Owner's TrackedWallet rows are copied from their first buy as kind `tracked`. Per wallet:
+  copies, win %, avg, SOL, first / second half SOL → `consistent` (both > 0, ≥6 copies); `copyable` = n ≥5, avg >0,
+  PF ≥1.3, consistent. Report Redis `copyrep:last` / `copyrep:res:<id>` / `copyrep:ids`. Runner
+  `copy-replay-runner.ts` (child process, `--max-old-space-size=1024`), GET `/api/copy-replay`, POST `/api/copy-replay/run`
+  {from,to,sizeSol}; dashboard Performance → Money → card "Who's actually making money?" (Run, progress, verdict, by kind /
+  exit / day, wallet table with Solscan links, button "Copy these N wallets live" → POST /api/wallets/bulk kind COPY).
+  Migration v49: live copies match the test — `copy.skipDipWait` / `skipConfirm` true, `sniper.exemptCopies` true (the
+  Sniper volume / score gate skips SMART_MONEY_COPY entries with a wallet; owner filters, rug / bundle guards, mirror sells
+  unchanged). tests/copy-replay.test.ts. Next: owner runs it (≈6 min per day of tape); if `copyable` wallets exist,
+  press the button and watch Performance → Mistakes per strategy "Smart money".
 - Copy trades: since v10.25 normal bar / size, max 2, no min hold, mirror sells (see v10.25). Before: bar +5, ×0.5, max 1, 120 s hold.
 - Saved settings: `src/config/migrations.ts` versioned migrations (BotConfig `_version`) push deliberate
   default changes into saved rows (Controls saves whole sections, which otherwise freeze old defaults).

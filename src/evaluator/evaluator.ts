@@ -757,7 +757,10 @@ export class Evaluator {
     // entry quality / edge gate / pressure / crowd green; no learning, probe or half-size entries.
     const snCfg = cfg.sniper ?? DEFAULT_CONFIG.sniper;
     let sniperInfo: { fails: string[] } | null = null;
-    if (snCfg.enabled && decision === 'BUY') {
+    // v11.18: a copy of a tracked COPY wallet's buy is the owner's / the copy replay's call — the Sniper volume / score
+    // gate doesn't apply (owner filters, rug / bundle guards and the mirror sell still do).
+    const copyExempt = (snCfg.exemptCopies ?? true) && STRATEGY.name === 'SMART_MONEY_COPY' && !!job.data.wallet && !kolFollow;
+    if (snCfg.enabled && decision === 'BUY' && !copyExempt) {
       const flow5 = this.crowd ? organicFlow(this.crowd.trades(mint), Date.now()) : null;
       const fails = sniperEntryFails(
         { flow: flow5, score: result.score, threshold, momentumGateWhy: mgWhy, entryQualityVerdict: eq.verdict, edgeGatePass: egInfo ? egInfo.pass : null, pressureSellersInControl: prWhy !== null, crowd: cq, explore, probe: edgeProbe, risky: risky !== null, dipEntry: job.data.dip === true, deployerClass: deployer?.class ?? null },

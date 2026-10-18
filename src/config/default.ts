@@ -924,6 +924,9 @@ export const DEFAULT_CONFIG = {
     requireProvenCrowd: false as boolean,
     /** v11.10: no sniper buy from a serial launcher or a deployer that rugged before. */
     requireDeployerNotSerial: true as boolean,
+    /** v11.18: copy trades (a tracked COPY wallet just bought) skip the Sniper volume / score gate — the copy replay
+     *  tests them as "buy when they buy"; the rest of the pipeline (owner filters, rug / bundle guards) still applies. */
+    exemptCopies: true as boolean,
     exits: {
       takeProfitTiers: [
         { multiple: 1.5, sellPct: 25 },
