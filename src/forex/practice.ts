@@ -12,7 +12,7 @@ import { INSTRUMENTS, instrument, type Bar, type Instrument } from './types';
 import { marketClock } from './calendar';
 import { priceShock } from './headlines';
 import { SIZING, addExposure, clampRisk, ddFactor, exposureBlock, type Exposure } from './portfolio';
-import { CONVICTION, type Tier } from './conviction';
+import type { Tier } from './conviction';
 
 const log = moduleLogger('forex-practice');
 export type AcctId = 'me' | 'bot';
@@ -29,6 +29,34 @@ export const BOT = {
   /** v15: most open bot trades per chart, so the fast charts can't take every slot */
   maxOpenByTf: { '1m': 2, '15m': 3 } as Record<string, number>,
 };
+/**
+ * v15.6 (owner: "I need a lot more, at least 10%+ a month"): how hard the bot account trades. Same strategies and checks in
+ * every mode — only the risk per trade, leverage and how many trades may be open at once grow. Bigger months AND bigger
+ * losing months: the honest test shows each level's real weekly / monthly spread before you pick one.
+ */
+export type RiskMode = 'normal' | 'aggressive' | 'max';
+export interface RiskLimits {
+  label: string;
+  /** base risk per trade, % of equity */
+  riskPct: number;
+  leverage: number;
+  maxOpen: number;
+  /** most risk on one currency in one direction, % of equity */
+  ccyCapPct: number;
+  maxPerStrategy: number;
+  /** most risk one 'sure' / 'very sure' trade may carry, % of equity */
+  convMaxRiskPct: number;
+  /** most open trades per fast chart */
+  maxOpenByTf: Record<string, number>;
+}
+export const RISK_MODES: Record<RiskMode, RiskLimits> = {
+  normal: { label: 'Normal', riskPct: 1, leverage: 30, maxOpen: 8, ccyCapPct: 2.2, maxPerStrategy: 3, convMaxRiskPct: 2, maxOpenByTf: { '1m': 2, '15m': 3 } },
+  aggressive: { label: 'Aggressive', riskPct: 3, leverage: 100, maxOpen: 12, ccyCapPct: 6.6, maxPerStrategy: 4, convMaxRiskPct: 5, maxOpenByTf: { '1m': 3, '15m': 5 } },
+  max: { label: 'Max', riskPct: 5, leverage: 200, maxOpen: 15, ccyCapPct: 11, maxPerStrategy: 5, convMaxRiskPct: 8, maxOpenByTf: { '1m': 4, '15m': 6 } },
+};
+export const isRiskMode = (m: unknown): m is RiskMode => m === 'normal' || m === 'aggressive' || m === 'max';
+export const limitsFor = (m: RiskMode | undefined): RiskLimits => RISK_MODES[m ?? 'normal'] ?? RISK_MODES.normal;
+
 /** The chart of a bot trade from its lab ref (`strategy:tf:pair:entryT`). */
 export const tfOfRef = (ref: string | undefined) => (ref ? ref.split(':')[1] ?? '' : '');
 export const STOP_OUT_PCT = 50;
@@ -129,6 +157,8 @@ export interface PracticeAccount {
   /** v15.3: finished bot trades per strategy and chart (`ema_cross:1h`): [closed at, total USD incl. parts taken] — the
    * newest 40 each, so the bot's own record never depends on how many other trades scrolled the history */
   stats?: Record<string, Array<[number, number]>>;
+  /** v15.6: bot account only — how hard it trades (default normal) */
+  riskMode?: RiskMode;
   open: PracticePosition[];
   closed: ClosedPractice[];
   createdAt: number;
@@ -198,7 +228,7 @@ export interface RiskSummary {
 }
 
 /** The bot account's risk picture (for the dashboard). Pure. */
-export function riskSummary(a: Pick<PracticeAccount, 'open' | 'peakUsd' | 'startUsd'>, mids: Record<string, number>, equityUsd: number): RiskSummary {
+export function riskSummary(a: Pick<PracticeAccount, 'open' | 'peakUsd' | 'startUsd' | 'riskMode'>, mids: Record<string, number>, equityUsd: number): RiskSummary {
   const exp = currencyExposure(a.open, mids, equityUsd);
   const peak = Math.max(a.peakUsd ?? a.startUsd, equityUsd);
   const ddPct = peak > 0 ? Math.max(0, (1 - equityUsd / peak) * 100) : 0;
@@ -208,10 +238,10 @@ export function riskSummary(a: Pick<PracticeAccount, 'open' | 'peakUsd' | 'start
       .filter(([, v]) => Math.abs(v) >= 0.01)
       .map(([ccy, v]) => ({ ccy, pct: Math.round(v * 100) / 100 }))
       .sort((x, y) => Math.abs(y.pct) - Math.abs(x.pct)),
-    capPct: BOT.maxCcyRiskPct,
+    capPct: limitsFor(a.riskMode).ccyCapPct,
     ddPct: Math.round(ddPct * 10) / 10,
     ddFactor: ddFactor(ddPct),
-    baseRiskPct: BOT.riskPct,
+    baseRiskPct: limitsFor(a.riskMode).riskPct,
     openRiskPct: Math.round(openRisk * 100) / 100,
   };
 }
@@ -722,6 +752,7 @@ export class Practice {
     const rep = opts.report;
     return this.serial(async () => {
       const a = await this.load('bot');
+      const L = limitsFor(a.riskMode);
       const events: string[] = [];
       const byRef = new Map(labOpen.map((t) => [t.ref, t]));
       const q = await this.quotes(this.neededIds(a, [...new Set(labOpen.map((t) => t.pair))]), 10_000);
@@ -818,8 +849,8 @@ export class Practice {
           }
           const v = view(a, mids);
           const left = (r.scaled ? 1 - (lab.scaleFrac ?? 0.5) : 1) * (r.tpHit && lab.tpFrac ? 1 - lab.tpFrac : 1);
-          const risk = (r.riskPct ?? BOT.riskPct) * left;
-          const rlev = r.lev ?? BOT.leverage;
+          const risk = (r.riskPct ?? L.riskPct) * left;
+          const rlev = r.lev ?? L.leverage;
           const margin = Math.min((v.equityUsd * risk) / 100 / (dist / entry) / rlev, v.freeMarginUsd * SIZING.marginShare);
           if (margin < 1) continue;
           const res = await this.openIn(a, { pair: r.pair, side: r.side, marginUsd: margin, leverage: rlev, stop: lab.stop, target: lab.target, ...(r.strategy ? { strategy: r.strategy } : {}), ref: r.ref, riskPct: Math.round(risk * 100) / 100, ...planOf(lab), scaled: !!r.scaled || !!lab.scaled, tpHit: !!r.tpHit || !!lab.tpHit, bankedUsd: r.bankedUsd ?? 0 });
@@ -849,12 +880,12 @@ export class Practice {
       for (const t of candidates) {
         const sk = stratKey(t.ref);
         const tf = t.tf ?? tfOfRef(t.ref);
-        if ((perStrategy.get(sk) ?? 0) >= SIZING.maxPerStrategy) {
-          note(`${t.ref}:strat`, `skipped ${t.pair} (${t.strategy}): it already has ${SIZING.maxPerStrategy} trades open`);
-          skip(t, `its strategy already has ${SIZING.maxPerStrategy} trades open`);
+        if ((perStrategy.get(sk) ?? 0) >= L.maxPerStrategy) {
+          note(`${t.ref}:strat`, `skipped ${t.pair} (${t.strategy}): it already has ${L.maxPerStrategy} trades open`);
+          skip(t, `its strategy already has ${L.maxPerStrategy} trades open`);
           continue;
         }
-        const tfCap = BOT.maxOpenByTf[tf];
+        const tfCap = L.maxOpenByTf[tf];
         if (tfCap !== undefined && (perTf.get(tf) ?? 0) >= tfCap) {
           note(`${t.ref}:tf`, `skipped ${t.pair} (${t.strategy}): already ${tfCap} ${tf} trades open`);
           skip(t, `already ${tfCap} ${tf} trades open`);
@@ -880,8 +911,8 @@ export class Practice {
           skip(t, why, true);
           continue;
         }
-        if (a.open.length >= BOT.maxOpen) {
-          skip(t, `all ${BOT.maxOpen} slots are full`, true);
+        if (a.open.length >= L.maxOpen) {
+          skip(t, `all ${L.maxOpen} slots are full`, true);
           continue;
         }
         const qq = q[t.pair];
@@ -898,10 +929,11 @@ export class Practice {
         const v = view(a, mids);
         // v15.2: a proven 'sure' / 'very sure' entry risks 1.5× / 2× (at most 2% of the account) at 50× / 100× leverage
         const conv = t.conviction && t.conviction.mult > 1 ? t.conviction : null;
-        const lev = conv?.lev ?? BOT.leverage;
-        const riskPct = clampRisk(BOT.riskPct, BOT.riskPct * (t.sizeF ?? 1) * ddF * (conv?.mult ?? 1), conv ? CONVICTION.maxRiskPct / BOT.riskPct : undefined);
+        // v15.6: the risk mode scales the base risk, leverage and every cap together
+        const lev = Math.max(conv?.lev ?? 0, L.leverage);
+        const riskPct = clampRisk(L.riskPct, L.riskPct * (t.sizeF ?? 1) * ddF * (conv?.mult ?? 1), conv ? L.convMaxRiskPct / L.riskPct : undefined);
         const exp = currencyExposure(a.open, mids, v.equityUsd);
-        const over = exposureBlock(exp, t.pair, t.side, riskPct, BOT.maxCcyRiskPct);
+        const over = exposureBlock(exp, t.pair, t.side, riskPct, L.ccyCapPct);
         if (over) {
           note(`${t.ref}:ccy`, `skipped ${t.pair} (${t.strategy}): already ${Math.abs(exp[over] ?? 0).toFixed(1)}% of the account riding on ${over}`);
           skip(t, `already ${Math.abs(exp[over] ?? 0).toFixed(1)}% of the account riding on ${over}`);
@@ -1021,6 +1053,30 @@ export class Practice {
   }
 
   async reset(startUsd: number, acct: AcctId = 'me'): Promise<void> {
-    await this.serial(() => this.save(newAccount(Math.min(1_000_000, Math.max(10, startUsd))), acct));
+    await this.serial(async () => {
+      const fresh = newAccount(Math.min(1_000_000, Math.max(10, startUsd)));
+      // the bot keeps its risk mode across a reset
+      if (acct === 'bot') {
+        const mode = (await this.load('bot')).riskMode;
+        if (mode) fresh.riskMode = mode;
+      }
+      await this.save(fresh, acct);
+    });
+  }
+
+  /** v15.6: how hard the bot account trades from now on (open trades keep their size). */
+  async setRiskMode(mode: RiskMode): Promise<RiskMode> {
+    return this.serial(async () => {
+      const a = await this.load('bot');
+      a.riskMode = mode;
+      await this.save(a, 'bot');
+      log.info({ mode }, 'forex bot risk mode');
+      return mode;
+    });
+  }
+
+  /** v15.6: the bot account's risk mode. */
+  async riskMode(): Promise<RiskMode> {
+    return (await this.load('bot')).riskMode ?? 'normal';
   }
 }

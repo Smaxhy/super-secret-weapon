@@ -14,7 +14,7 @@
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
 import { refreshInstrument, refreshSeries, loadBars, type FeedStatus } from './data';
-import { newSyncReport, type LabOpenTrade, type Practice, type SyncReport } from './practice';
+import { RISK_MODES, newSyncReport, type LabOpenTrade, type Practice, type SyncReport } from './practice';
 import type { ForexCalendar } from './calendar';
 import type { ForexHeadlines } from './headlines';
 import { equityCurve, rStats, signalsFor, simulate, type RiskResult, type RStats } from './engine';
@@ -46,7 +46,7 @@ export const FX_CONFIG = {
   refreshMinutes: 60,
   minOosTrades: 30,
   /** whole-bot backtest: base risk levels tried, and what a strategy needs on the first 70% to be picked */
-  portfolioRiskPct: [0.5, 1, 2, 3],
+  portfolioRiskPct: [0.5, 1, 2, 3, 5],
   pick: { minN: 40, minAvgR: 0.05, minPf: 1.15 },
   /** walk-forward: re-pick every month from the trades closed in the previous N months */
   walkForward: { lookbackMonths: 6, minN: 15, minAvgR: 0.05, minPf: 1.15 },
@@ -918,7 +918,12 @@ export class ForexLab {
     let portfolio: PortfolioReport | null = null;
     if (poolNew.length || poolOld.length) {
       const base = { maxOpen: SIZING.maxOpen, leverage: SIZING.leverage, marginShare: SIZING.marginShare, from: oosFrom, to };
-      const levels = FX_CONFIG.portfolioRiskPct.map((rp) => simulatePortfolio(poolNew, { ...base, label: `${rp}% risk`, baseRiskPct: rp, maxPerStrategy: SIZING.maxPerStrategy, prioritise: true, ccyCapPct: SIZING.ccyCapPct * rp, ddSizing: true, flatSizing: false }));
+      // v15.6: a level that matches a bot risk mode is tested with that mode's leverage and caps (what the bot would do)
+      const levels = FX_CONFIG.portfolioRiskPct.map((rp) => {
+        const m = Object.values(RISK_MODES).find((x) => x.riskPct === rp);
+        const lim = m ? { maxOpen: m.maxOpen, leverage: m.leverage, maxPerStrategy: m.maxPerStrategy, ccyCapPct: m.ccyCapPct } : { maxPerStrategy: SIZING.maxPerStrategy, ccyCapPct: SIZING.ccyCapPct * rp };
+        return simulatePortfolio(poolNew, { ...base, label: m && m.riskPct !== 1 ? `${rp}% risk (${m.label})` : `${rp}% risk`, baseRiskPct: rp, prioritise: true, ddSizing: true, flatSizing: false, ...lim });
+      });
       const old = simulatePortfolio(poolOld, { ...base, label: 'before the upgrade', baseRiskPct: 1, maxPerStrategy: null, prioritise: false, ccyCapPct: null, ddSizing: false, flatSizing: true });
       const upgraded = { maxPerStrategy: SIZING.maxPerStrategy, prioritise: true, ccyCapPct: SIZING.ccyCapPct, ddSizing: true, flatSizing: false };
       const judged = judgeModel

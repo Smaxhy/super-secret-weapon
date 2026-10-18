@@ -21,7 +21,9 @@ interface PlanLine { k: string; text: string; done?: boolean }
 interface PlanTrade { id: string; pair: string; side: 1 | -1; strategy: string; name: string; tf: string; entry: number; px: number; pnlUsd: number; riskPct: number | null; lines: PlanLine[] }
 interface RunNote { t: number; tf: string; signals: number; chosen: number; opened: number; skipped: number; waits: number; holding: number; note: string }
 interface BotPlan { at: number; summary: string; next: Array<{ tf: string; at: number }>; markets: PlanMarket[]; trades: PlanTrade[]; timeline: RunNote[]; trading: Record<string, number> }
-interface Data { plan?: BotPlan | null; account: Acct | null; risk?: RiskSummary | null; portfolio?: PortfolioReport | null; judge?: JudgeReport | null; conviction?: Partial<Record<'hourly' | '15m' | '1m', ConvictionReport | null>> | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
+type RiskMode = 'normal' | 'aggressive' | 'max';
+interface RiskLimits { label: string; riskPct: number; leverage: number; maxOpen: number; ccyCapPct: number; maxPerStrategy: number; convMaxRiskPct: number }
+interface Data { riskMode?: RiskMode; riskModes?: Record<RiskMode, RiskLimits>; plan?: BotPlan | null; account: Acct | null; risk?: RiskSummary | null; portfolio?: PortfolioReport | null; judge?: JudgeReport | null; conviction?: Partial<Record<'hourly' | '15m' | '1m', ConvictionReport | null>> | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
 
 const dp = (id: string) => (id.includes('JPY') ? 3 : id === 'XAUUSD' ? 2 : id === 'XAGUSD' ? 3 : 5);
 const usd = (x: number) => `${x < 0 ? '−' : ''}$${Math.abs(x).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -62,6 +64,7 @@ export function FxBot() {
           <StatTile compact label="Open" value={`${a.positions.length}`} sub={`margin ${usd(a.marginUsedUsd)}`} />
         </div>
       )}
+      <RiskModeCard mode={data?.riskMode ?? 'normal'} modes={data?.riskModes} portfolio={data?.portfolio ?? null} onChange={() => void reload()} />
       <TradesCard plan={plan} positions={a?.positions ?? []} onClose={(id) => void close(id)} />
       <MarketsCard plan={plan} />
       <ChecksCard plan={plan} log={data?.log ?? []} />
@@ -79,6 +82,56 @@ export function FxBot() {
         )}
       </Card>
     </Stack>
+  );
+}
+
+const MODE_NOTE: Record<RiskMode, string> = {
+  normal: 'Steady: small losses, slow growth.',
+  aggressive: 'Three times the risk: aims for 10%+ months, and losing months get three times bigger too.',
+  max: 'Five times the risk: big months and big drops. A bad streak can halve the account.',
+};
+
+/** v15.6: how hard the bot trades — same strategies and checks, only the size and how many trades at once change. */
+function RiskModeCard({ mode, modes, portfolio, onChange }: { mode: RiskMode; modes?: Record<RiskMode, RiskLimits>; portfolio: PortfolioReport | null; onChange: () => void }) {
+  const [busy, setBusy] = useState(false);
+  if (!modes) return null;
+  const pick = async (m: RiskMode) => {
+    if (m === mode || busy) return;
+    if (m !== 'normal' && !confirm(`${modes[m].label}: ${modes[m].riskPct}% of the account at risk on every trade, up to ${modes[m].maxOpen} trades at once. Losing streaks hit ${modes[m].riskPct}× harder. Switch?`)) return;
+    setBusy(true);
+    try {
+      await api('/api/forex/bot/mode', { method: 'POST', body: JSON.stringify({ mode: m }) });
+      onChange();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const test = (m: RiskMode) => portfolio?.levels.find((x) => x.baseRiskPct === modes[m].riskPct) ?? null;
+  const pct = (x: number) => `${x > 0 ? '+' : ''}${x.toFixed(1)}%`;
+  return (
+    <Card title="How hard it trades" subtitle="Same strategies and safety checks in every mode. Only the risk per trade, the leverage and how many trades it holds at once change. New trades use the new mode; open ones keep their size.">
+      <div className="grid grid-cols-3 gap-2">
+        {(Object.keys(modes) as RiskMode[]).map((m) => (
+          <Button key={m} size="sm" variant={m === mode ? 'primary' : 'outline'} disabled={busy} onClick={() => void pick(m)}>
+            {modes[m].label}
+          </Button>
+        ))}
+      </div>
+      <p className="mt-3 text-sm text-ink">{MODE_NOTE[mode]}</p>
+      <Rows>
+        {(Object.keys(modes) as RiskMode[]).map((m) => {
+          const t = test(m);
+          return (
+            <Row
+              key={m}
+              label={`${modes[m].label}${m === mode ? ' (on)' : ''}: ${modes[m].riskPct}% a trade, ${modes[m].leverage}×, up to ${modes[m].maxOpen} at once`}
+              sub={t ? `Honest test on unseen weeks: average month ${pct(t.avgMonthPct)}, worst month ${pct(t.worstMonthPct)}, biggest drop −${t.maxDdPct.toFixed(0)}%${t.blown ? ', account wiped out' : ''}` : 'Honest test: waiting for the next hourly run'}
+              value={t ? <span className={tone(t.avgMonthPct)}>{pct(t.avgMonthPct)}/mo</span> : null}
+            />
+          );
+        })}
+      </Rows>
+    </Card>
   );
 }
 

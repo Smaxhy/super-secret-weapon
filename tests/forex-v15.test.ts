@@ -607,4 +607,27 @@ describe('bigger size when more sure (v15.2)', () => {
     const lines = tradeLines({ ...eur, px: 1.1 }, WED, (q, x) => q.side * q.units * (x - q.entry)).map((l) => l.text).join(' ');
     expect(lines).toMatch(/Bigger size: very sure — 5 of 6 checks agreed/);
   });
+
+  it('v15.6: aggressive mode risks 3% a trade at 100×, and a reset keeps the mode', async () => {
+    vi.useFakeTimers({ now: WED });
+    const redis = new MiniRedis();
+    redis.m.set('fx:practice:bot', JSON.stringify(newAccount(1000)));
+    const practice = new Practice(asRedis(redis));
+    expect(await practice.riskMode()).toBe('normal');
+    await practice.setRiskMode('aggressive');
+    (practice as unknown as { quotes: () => Promise<Record<string, Quote>> }).quotes = async () => ({
+      EURUSD: { id: 'EURUSD', mid: 1.1, bid: 1.1 - HALF, ask: 1.1 + HALF, t: WED, bars: [[WED - M, 1.1, 1.1, 1.1]], dayChangePct: 0, source: 'yahoo', priceT: WED },
+    });
+    await practice.syncBot(
+      [{ strategy: 'x', tf: '1h', side: 1, entryT: WED - 60_000, chosen: true, sizeF: 1, prio: 0.2, judge: null, ref: `x:1h:EURUSD:${WED}`, pair: 'EURUSD', stop: 1.098, target: 1.104, conviction: null }],
+      () => null,
+      {},
+      { scope: ['1h', '4h'] },
+    );
+    const a = JSON.parse(redis.m.get('fx:practice:bot')!) as PracticeAccount;
+    expect(a.open[0]!.leverage).toBe(100);
+    expect(a.open[0]!.riskPct).toBeCloseTo(3, 1);
+    await practice.reset(1000, 'bot');
+    expect(await practice.riskMode()).toBe('aggressive');
+  });
 });

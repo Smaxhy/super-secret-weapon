@@ -19,7 +19,7 @@ import { copyReplayStatus, startCopyReplay } from '../learner/copy-replay-runner
 import { cohortTestRunning, lastCohortTest, runCohortTest } from '../learner/cohort-test';
 import { marketClock } from '../forex/calendar';
 import { loadOanda, maskToken, oandaReady, saveOanda, testOanda } from '../forex/oanda';
-import { pnlUsd, riskSummary } from '../forex/practice';
+import { RISK_MODES, isRiskMode, pnlUsd, riskSummary } from '../forex/practice';
 import { buildPlan } from '../forex/plan';
 import { STRATEGIES } from '../forex/strategies';
 import { moneyMap } from '../learner/money-map';
@@ -195,7 +195,23 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         chosen: parse(chosenRaw, [] as string[]),
         dropped: parse(droppedRaw, [] as string[]),
         clock: marketClock(Date.now()),
+        // v15.6: how hard the bot trades (normal / aggressive / max) + what each level means
+        riskMode: snap?.account.riskMode ?? 'normal',
+        riskModes: RISK_MODES,
       };
+    });
+    // v15.6: owner switches how hard the bot account trades
+    secured.post<{ Body: { mode?: string } }>('/api/forex/bot/mode', async (req, reply) => {
+      const mode = req.body?.mode;
+      if (!isRiskMode(mode)) {
+        reply.code(400);
+        return { ok: false, error: 'mode must be normal, aggressive or max' };
+      }
+      if (!deps.practice) {
+        reply.code(503);
+        return { ok: false, error: 'not running' };
+      }
+      return { ok: true, mode: await deps.practice.setRiskMode(mode) };
     });
     secured.post<{ Body: { pair?: string; side?: number; marginUsd?: number; leverage?: number; stop?: number | null; target?: number | null } }>('/api/forex/practice/open', async (req, reply) => {
       const b = req.body ?? {};

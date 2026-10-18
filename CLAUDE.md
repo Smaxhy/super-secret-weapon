@@ -288,6 +288,14 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   with the live edge, 4h trades now open for real (before they were always older than the 2 h freshness); the first
   v15 run could switch exits and close some bot trades as "signal" once. If memory stays tight, move the fast test to
   a child process like the replay runner.
+- **v15.6 (Oct 19): risk modes for the bot account** (owner: "I need a lot more, at least 10%+"). `RISK_MODES`
+  (practice.ts): normal 1% / 30× / 8 open / ccy cap 2.2% / 3 per strategy; aggressive 3% / 100× / 12 / 6.6% / 4;
+  max 5% / 200× / 15 / 11% / 5 (sure-trade cap 2 / 5 / 8%, fast-chart caps 1m 2-3-4, 15m 3-5-6). Stored on the bot
+  account (`riskMode`, kept across a reset); `syncBot` uses `limitsFor(a.riskMode)` for base risk, leverage, every cap.
+  Same strategies + checks in every mode. API POST `/api/forex/bot/mode` {mode}; GET `/api/forex/bot` returns
+  `riskMode` + `riskModes`. Honest test levels now 0.5 / 1 / 2 / 3 / 5% — 3% and 5% use the aggressive / max limits.
+  Dashboard Auto-bot card "How hard it trades" (3 buttons, each mode's honest-test month avg / worst month / biggest drop).
+  Owner told: 10%/month needs ~3% risk a trade, and losing months scale the same way.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
