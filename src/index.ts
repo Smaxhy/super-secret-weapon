@@ -827,6 +827,9 @@ async function main(): Promise<void> {
   let lastTrades = 0;
   let lastAmm = 0;
   let lastCompletes = -1;
+  let lastEvaluated = 0;
+  let stallMin = 0;
+  const CHECKER_STALL_MIN = 20;
   const statsTimer = setInterval(async () => {
     const s = statsOf();
     const [balance, openPositions] = await Promise.all([
@@ -861,6 +864,20 @@ async function main(): Promise<void> {
       void timing
         .recordMinute({ trades: (s?.trades ?? 0) - lastTrades, ammTrades: (s?.ammTrades ?? 0) - lastAmm, launches: (s?.creates ?? 0) - lastCreates, migrations: Math.max(0, (s?.completes ?? 0) - lastCompletes) })
         .catch(() => undefined);
+    }
+    // v18.2 checker watchdog (owner: 52 coins checked in 7 hours while the stream ran at 7,500 trades/min): the trade
+    // stream flows (launches arrive) but the evaluator scores (almost) nothing for CHECKER_STALL_MIN minutes in a row →
+    // WARN event + a clean exit, so Docker brings a fresh process instead of a stuck one sitting there for hours.
+    const launchesNow = (s?.creates ?? 0) - lastCreates;
+    const evalNow = evaluator.stats.evaluated - lastEvaluated;
+    lastEvaluated = evaluator.stats.evaluated;
+    if (launchesNow >= 10 && evalNow === 0) stallMin++;
+    else stallMin = 0;
+    if (stallMin >= CHECKER_STALL_MIN) {
+      log.error({ stallMin, launchesNow }, 'coin checker stalled while the stream flows — restarting the bot');
+      void recordEvent({ level: 'WARN', module: 'evaluator', type: 'checker_stalled', message: `no coin scored for ${stallMin} min while ${launchesNow} launches/min arrived — the bot restarted itself` }).catch(() => undefined);
+      setTimeout(() => void shutdown('checker stalled'), 2_000);
+      stallMin = -1_000_000; // once
     }
     lastCreates = s?.creates ?? 0;
     lastAmm = s?.ammTrades ?? 0;

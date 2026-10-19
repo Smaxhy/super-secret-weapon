@@ -665,6 +665,15 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   (plan signals with tone 'wait' + why), open trades one line each with the next exit rule, next look. The research
   cards (rolling picker, sniper, conviction, honest test, desk, risk, how it trades) are folded under "Under the hood"
   (`AdvancedFold`, remembered in `fx.adv`). Display only.
+- **v18.2 (Oct 19)**: Forex → **Lab** tab (`components/FxLab.tsx`, route `/forex/lab`, on the phone bar in place of Paper
+  results): one list of every self-test (strategy exam, honest stats, checks, exits, profit lock, entry timing,
+  financing, judge, weekly picker, conviction, sniper, desk, correlated-risk cap) with live / testing chips + its
+  number, then all the research cards (moved off the Strategies page, which is the table only). Forex menu's System
+  entry reads "Crypto scanner". **Crypto stall** (owner: 52 coins checked in 7 h at 7,500 trades/min; VPS: bot 1.44 GB
+  of 2 GB, Redis 85% CPU, no errors; the deploy restart cleared it): `index.ts` checker watchdog — ≥ 10 launches/min
+  and 0 evaluations for `CHECKER_STALL_MIN` 20 minutes in a row → WARN event `checker_stalled` + clean `shutdown`
+  (Docker `unless-stopped` restarts it). Owner told to set `FX_LAB_WORKER=on` in the VPS .env (forex lab in its own
+  process) — check `docker stats` after. Root cause not proven: heap pressure (forex lab in-process) is the suspect.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
