@@ -35,6 +35,8 @@ export interface PlanInputs {
   fastFiring: Partial<Record<'15m' | '1m', FastFiring>>;
   /** strategy:chart combinations the bot trades */
   chosen: readonly string[];
+  /** v18.7: does the bot account place trades from the 15m / 1m charts (default no: hourly + 4-hour only) */
+  fastCharts?: boolean;
   names: Record<string, string>;
   positions: ReadonlyArray<PracticePosition & { px: number; pnlUsd: number }>;
   resume: readonly ResumeItem[];
@@ -265,6 +267,7 @@ export function buildPlan(x: PlanInputs): BotPlan {
       const k = `${f.id}:${f.tf}`;
       const note = syncNotes.get(`${f.id}:${f.tf}:${inst.id}`);
       if (!chosen.has(k)) return { tf: f.tf, name: f.name, side: f.side, verdict: 'not one it trades (no edge on unseen data)', tone: 'no' };
+      if ((f.tf === '1m' || f.tf === '15m') && !x.fastCharts) return { tf: f.tf, name: f.name, side: f.side, verdict: 'lab only: the bot trades the hourly and 4-hour charts', tone: 'no' };
       if (!f.allowed) return { tf: f.tf, name: f.name, side: f.side, verdict: `held back: ${f.why}`, tone: 'no' };
       if (heldKey.has(`${f.id}:${f.tf}:${inst.id}`)) return { tf: f.tf, name: f.name, side: f.side, verdict: 'in the trade', tone: 'go' };
       if (note) return { tf: f.tf, name: f.name, side: f.side, verdict: `${note.wait ? 'waiting' : 'skipped'}: ${note.why}`, tone: note.wait ? 'wait' : 'no' };

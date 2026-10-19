@@ -69,6 +69,9 @@ export const FX_CONFIG = {
   pick: { minN: 40, minAvgR: 0.05, minPf: 1.15 },
   /** v18.4: let a strategy trade with a limit / pullback entry once that proved better on its first 70% (entries.ts) */
   liveEntries: true,
+  /** v18.7 (owner: "we can't fast trade these charts, they take time"): the bot account trades the 1h + 4h charts only.
+   * The 15m / 1m charts stay lab-tested (Strategies / Lab) but place no bot trades while this is off. */
+  botFastCharts: false,
   /** walk-forward: re-pick every month from the trades closed in the previous N months */
   walkForward: { lookbackMonths: 6, minN: 15, minAvgR: 0.05, minPf: 1.15 },
   /** owner (v15 "more pips", v15.1 "a trailing SL for safety"): use a trailing stop-loss, else a trailing take-profit,

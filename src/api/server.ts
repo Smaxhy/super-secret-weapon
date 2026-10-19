@@ -23,6 +23,7 @@ import { feedHealth, feeds as fxFeeds } from '../forex/feeds';
 import { pythConf, pythKey, pythLive, savePythConf, testPythKey } from '../forex/pyth';
 import { RISK_MODES, isRiskMode, ledgerSummary, pnlUsd, riskSummary } from '../forex/practice';
 import { buildPlan } from '../forex/plan';
+import { FX_CONFIG } from '../forex/lab';
 import { botStatus, dayTrades, parsePnlQuery, pnlReport } from '../forex/pnl';
 import { STRATEGIES } from '../forex/strategies';
 import { moneyMap } from '../learner/money-map';
@@ -174,6 +175,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
               mood: deps.forex.moodNow,
               fastFiring: deps.fastFx?.firing ?? {},
               chosen: [...deps.forex.chosen, ...(deps.fastFx?.chosen ?? [])],
+              fastCharts: FX_CONFIG.botFastCharts,
               names: Object.fromEntries(STRATEGIES.map((x) => [x.id, x.name])),
               positions: snap.account.positions,
               resume: snap.account.resume ?? [],

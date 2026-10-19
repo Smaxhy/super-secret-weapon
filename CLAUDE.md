@@ -724,6 +724,14 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   store is recorded as an error (retried every 6 h); the fast lab reports `fast-lab` ok / fail. Lab page phone layouts:
   the three summary tables are stacked blocks on a phone (`SummaryList`), financing card without a truncating tile,
   two-line desk holdings; the Lab self-test list is stacked rows.
+- **v18.7 (Oct 19): slow charts only + cooling-off** (owner: 1-minute trades opened and closed within 2 minutes — "it's holding
+  for way too little… no one fast-trades slow charts, they wait it out, then adjust"). `FX_CONFIG.botFastCharts` false: the
+  fast lab (fast.ts `decide`) hands its 15m / 1m trades to `syncBot` with `chosen: false` (manage what the bot still holds,
+  open nothing); the charts stay lab-tested (Strategies / Lab) and the plan marks their signals "lab only: the bot trades
+  the hourly and 4-hour charts" (`PlanInputs.fastCharts`). `BOT.reentryCooldownBars` 3 + `reentryWait(closed, strategy,
+  tf, pair, now)` (practice.ts): after a strategy finishes a trade on a market (partial / weekend rows don't count) the
+  same strategy may not re-enter that market for 3 candles of its chart (3 h on 1h, 12 h on 4h) → syncBot wait "just
+  closed a trade here — cooling off N min". Auto-bot "How it trades" text updated. tests/forex-v18-7.test.ts (4).
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

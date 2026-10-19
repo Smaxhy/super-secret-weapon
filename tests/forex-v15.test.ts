@@ -7,7 +7,7 @@ import { runsOn, strategyById, type Strategy } from '../src/forex/strategies';
 import { buildCtx } from '../src/forex/ta';
 import { trimBars } from '../src/forex/data';
 import { upcomingFor, type CalEvent } from '../src/forex/calendar';
-import { ForexLab, signalIndex, tradeKey, type MarketBook, type MarketNow, type RunNote } from '../src/forex/lab';
+import { FX_CONFIG, ForexLab, signalIndex, tradeKey, type MarketBook, type MarketNow, type RunNote } from '../src/forex/lab';
 import { chosenOf, FastLab, nextOnGrid, type FastSource } from '../src/forex/fast';
 import { newAccount, newSyncReport, Practice, tfOfRef, tick, type LabOpenTrade, type PracticeAccount, type PracticePosition, type Quote } from '../src/forex/practice';
 import { buildPlan, leanOf, nextChecks, tradeLines, type PlanInputs } from '../src/forex/plan';
@@ -421,11 +421,20 @@ describe('15-minute and 1-minute lab (v15)', () => {
     expect(sync).toHaveBeenCalledTimes(1);
     const call = sync.mock.calls[0] as unknown as [LabOpenTrade[], unknown, unknown, { scope: string[] }];
     expect(call[3].scope).toEqual(['15m']);
-    expect(call[0].every((t) => t.tf === '15m' && t.chosen)).toBe(true);
+    // v18.7: fast-chart trades are handed over as lab-only (chosen false) unless the bot is switched on for them
+    expect(call[0].every((t) => t.tf === '15m' && !t.chosen)).toBe(true);
+    FX_CONFIG.botFastCharts = true;
+    try {
+      await fast.decide('15m', WED);
+      const call2 = sync.mock.calls[1] as unknown as [LabOpenTrade[]];
+      expect(call2[0].every((t) => t.tf === '15m' && t.chosen)).toBe(true);
+    } finally {
+      FX_CONFIG.botFastCharts = false;
+    }
     expect(lab.runs[0]!.tf).toBe('15m');
     // weekends: nothing to check
     await fast.decide('1m', Date.UTC(2026, 9, 17, 12));
-    expect(sync).toHaveBeenCalledTimes(1);
+    expect(sync).toHaveBeenCalledTimes(2);
   }, 60_000);
 });
 
@@ -484,6 +493,7 @@ describe("the bot's plan (v15)", () => {
         positions: [position],
         fastFiring: { '15m': { tf: '15m', t: WED - 15 * M, at: WED, byPair: { USDJPY: [{ id: 'ema_cross', name: 'EMA 20/50 cross', side: -1, allowed: true, why: null, chosen: true }], EURUSD: [{ id: 'ema_cross', name: 'EMA 20/50 cross', side: 1, allowed: true, why: null, chosen: true }] } } },
         lastSync: { '15m': sync },
+        fastCharts: true, // v18.7: the bot only takes fast-chart trades when switched on
         labOpen: { 'ema_cross:15m:EURUSD': WED - 6 * H },
         runs: [{ t: WED - M, tf: '15m', signals: 2, chosen: 2, opened: 0, skipped: 0, waits: 1, holding: 1, note: 'x' } as RunNote],
       }),

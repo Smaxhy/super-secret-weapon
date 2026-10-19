@@ -27,7 +27,7 @@ import { stratFactorFromVerdict, volFactor } from './portfolio';
 import { marketClock } from './calendar';
 import { newSyncReport, type LabOpenTrade } from './practice';
 import { withEnd } from './mtf';
-import { applyHmm, bigChart, evaluateTf, makeSeries, paperSince, pickedOnInSample, prevPicks, signalIndex, slimTrade, toLabTrade, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
+import { FX_CONFIG, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, pickedOnInSample, prevPicks, signalIndex, slimTrade, toLabTrade, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
 import type { HmmModel } from './hmm';
 import { agreeCount, boostFor, gradeConviction, maxConfirmations, tierOf, type ConvictionReport, type ConvRow } from './conviction';
 
@@ -495,7 +495,8 @@ export class FastLab {
         for (const row of followRows) {
           const s = strategyById(row.id);
           if (!s) continue;
-          const isChosen = keep.has(`${row.id}:${tf}`);
+          // v18.7: fast charts manage what the bot still holds but open nothing unless switched on
+          const isChosen = FX_CONFIG.botFastCharts && keep.has(`${row.id}:${tf}`);
           const sigs = signalsFor(se.ctx, s).map((sg, i) => applyExit(sg, row.exit ?? 'designed', se.ctx, i));
           for (const t of simulate(inst, tf, se.ctx, s.id, sigs, allowFor(row.filter ?? 'none', se.env, styleOf(s)))) {
             if (t.reason !== 'open') continue;

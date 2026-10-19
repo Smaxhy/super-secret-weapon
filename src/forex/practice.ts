@@ -12,7 +12,7 @@ import { feeds } from './feeds';
 import { dkQuote } from './dukascopy';
 import { HEAT, maxRiskUnder, topCorrelated, type CorrBook } from './risk';
 import { oandaCandles, oandaPrices, oandaReady, loadOanda, type Granularity } from './oanda';
-import { INSTRUMENTS, instrument, type Bar, type Instrument } from './types';
+import { INSTRUMENTS, TF_MIN, instrument, type Bar, type Instrument, type Timeframe } from './types';
 import { marketClock } from './calendar';
 import { priceShock } from './headlines';
 import { spreadMultAt } from './spreads';
@@ -67,7 +67,23 @@ export const BOT = {
   maxEntryDriftR: 0.3,
   /** v17: the price a new bot trade opens on may be at most this old, per chart (a 1-minute trade needs a fresh price) */
   quoteAgeMsByTf: { '1m': 2 * 60_000, '15m': 5 * 60_000, '1h': 10 * 60_000, '4h': 10 * 60_000 } as Record<string, number>,
+  /** v18.7 (owner: "wait it out, then adjust"): after a strategy closes a trade on a market, the same strategy may not
+   * re-enter that market for this many candles of its chart (3 h on the hourly, 12 h on the 4-hour) */
+  reentryCooldownBars: 3,
 };
+
+/** v18.7: minutes until the same strategy may trade the same market again after `closed`, or 0 when it may now */
+export function reentryWait(closed: readonly ClosedPractice[], strategy: string, tf: string, pair: string, now: number, bars = BOT.reentryCooldownBars): number {
+  const ms = bars * (TF_MIN[tf as Timeframe] ?? 60) * 60_000;
+  let wait = 0;
+  for (const c of closed) {
+    if (c.pair !== pair || c.strategy !== strategy || (c.tf ?? c.ref?.split(':')[1]) !== tf) continue;
+    if (c.reason === 'partial' || c.reason === 'weekend') continue; // the trade itself is still running / paused
+    const left = c.closedAt + ms - now;
+    if (left > wait) wait = left;
+  }
+  return Math.ceil(wait / 60_000);
+}
 /**
  * v15.6 (owner: "I need a lot more, at least 10%+ a month"): how hard the bot account trades. Same strategies and checks in
  * every mode — only the risk per trade, leverage and how many trades may be open at once grow. Bigger months AND bigger
@@ -1477,6 +1493,12 @@ export class Practice {
       for (const t of candidates) {
         const sk = stratKey(t.ref);
         const tf = t.tf ?? tfOfRef(t.ref);
+        const cool = reentryWait(a.closed, t.strategy, tf, t.pair, Date.now());
+        if (cool > 0) {
+          note(`${t.ref}:cool`, `waiting on ${t.pair} (${t.strategy}): it just closed a trade here — cooling off ${cool} min`);
+          skip(t, `just closed a trade here — cooling off for ${cool} min (${BOT.reentryCooldownBars} ${tf} candles)`, true);
+          continue;
+        }
         if ((perStrategy.get(sk) ?? 0) >= L.maxPerStrategy) {
           note(`${t.ref}:strat`, `skipped ${t.pair} (${t.strategy}): it already has ${L.maxPerStrategy} trades open`);
           skip(t, `its strategy already has ${L.maxPerStrategy} trades open`);
