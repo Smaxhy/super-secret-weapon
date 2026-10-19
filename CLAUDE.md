@@ -778,6 +778,27 @@ phone: hub first, rooms stacked, no lines. Every read tolerates partial data (`e
 shows placeholders, never a crash. Verified by rendering with Playwright at 390 px + 1440 px, light + dark, against a stubbed API
 (scratchpad `shots/room.mjs`).
 
+## v19.1 the village (Oct 19, owner: "turn this all into a game: an open world where villagers work for us, medieval pixel
+style; click the guy trading forex and see the full trade with all explanations; a cool environment to learn in")
+`dashboard/src/components/Village.tsx`, route `/forex/village` (Forex menu "The village"; link from the control room).
+Same data as the control room: `ControlRoom.tsx` now exports `useControlRoomData()` (one hook: bot / lab / calendar /
+system / overview / live ticks / trade reads + the derived focus market, state word, next look), `roomView(k, data)`
+(a room's "says" line + body) and `HubView` — the grid page and the village both render from them. The village is a
+30 × 18-tile canvas world drawn in code (no image assets; procedural tiles, buildings, people, smoke, fountain, river
+shimmer; `image-rendering: pixelated`): **guild hall** = the bot (banner + flag), **watchtower** Scout, **observatory**
+Analyst, **trading post** Trader, **vault** Risk keeper, **town board** Clerk (decisions), **library** Historian,
+**tavern** Crier (news), **mine** Miner (crypto). One villager per room wanders near its door (BFS paths on the tile
+grid, `findPath`), stays home and bobs when busy (trader in trades, news block, scout with setups close), and carries a
+bubble with its live one-liner when you are within 2.5 tiles or hover it. **Apprentices** = one small sprite per
+strategy × chart the bot has put to work (`chosen`, ≤ 12), around the library; tap one → its row (verdict). The operator
+walks with arrows / WASD, tap-to-walk, or the phone d-pad; E / Enter / tap opens the screen of whoever is within 1.6
+tiles (or the building whose door you stand at): desktop = a drawer inside the world, phone = a full-screen sheet; the
+Trader's and the guild hall's screens include the hub's big chart + live read; Esc closes. Day while forex is open,
+night (blue wash, lamp glows at every door, stars) when closed; new bot-log lines float up over the guild hall for 7 s.
+HUD: Gold = equity + today's P&L, state word, next look, villagers / apprentices / trades. Desktop scale 2 (whole world
+fits), phone scale 2 with the camera following the operator (13 tiles tall). Verified with Playwright at 390 / 1440 px,
+light + dark, incl. opening the Trader's screen (scratchpad `shots/village.mjs`). Display only.
+
 ## v18.10 crypto checker plumbing (Oct 19, owner: "crypto still isn't trading or learning")
 Cause suspected from the code (VPS not reachable from the sandbox): a coin is only SCORED once its safety check (RPC
 `getAccountInfo` + Postgres, safety queue worker, concurrency 4) has landed; every checkpoint before that returns silently.

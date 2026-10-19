@@ -19,6 +19,7 @@ import { Icon } from '../components/Icon';
 import { FxTrade } from '../components/FxTrade';
 import { OandaCard } from '../components/OandaCard';
 import { ControlRoom } from '../components/ControlRoom';
+import { Village } from '../components/Village';
 import { PythCard } from '../components/PythCard';
 import { fitBars, MarketChart, type ChartDrawings } from '../components/MarketChart';
 import { ENTRY_SHORT, EXIT_SHORT, FILTER_SHORT, MoodCard, StrengthCard, TrendArrows, type EntryKind, type EntrySummary, type ExitKind, type ExitSummary, type FilterKind, type FilterSummary, type FinancingSummary, type HonestReport, type JudgeReport, type LockSummary, type MoodNow, type NewsStudy, type PortfolioReport, type RowStat, type StrengthNow } from '../components/FxInsights';
@@ -45,9 +46,10 @@ const signed = (x: number, dp = 1) => `${x >= 0 ? '+' : ''}${x.toFixed(dp)}`;
 const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink-2');
 const day = (t: number | null) => (t ? new Date(t).toISOString().slice(0, 10) : '—');
 const VERDICT: Record<RowT['verdict'], { label: string; tone: 'up' | 'warn' | 'neutral' }> = { edge: { label: 'Edge', tone: 'up' }, maybe: { label: 'Maybe', tone: 'warn' }, no: { label: 'No edge', tone: 'neutral' } };
-type Section = 'room' | 'live' | 'practice' | 'bot' | 'strategies' | 'paper' | 'setup' | 'lab';
+type Section = 'room' | 'village' | 'live' | 'practice' | 'bot' | 'strategies' | 'paper' | 'setup' | 'lab';
 const TITLES: Record<Section, { title: string; sub: string }> = {
   room: { title: 'Control room', sub: 'The bot in the middle. Every desk around it shows what it watches, reads, trades and decides, live.' },
+  village: { title: 'The village', sub: 'The same bot as a pixel world: walk up to whoever works for you and open their screen.' },
   live: { title: 'Markets', sub: "Every market the bot watches: its trendlines, levels, signals and open trades." },
   practice: { title: 'Trade by hand', sub: 'Optional: your own $1,000 practice account. The auto-bot trades without you.' },
   bot: { title: 'Auto-bot', sub: 'Its own $1,000 account, traded by itself on 1-minute, 15-minute, hourly and 4-hour charts.' },
@@ -59,7 +61,7 @@ const TITLES: Record<Section, { title: string; sub: string }> = {
 
 export function Forex() {
   const params = useParams();
-  const section = ((['live', 'practice', 'strategies', 'paper', 'setup', 'lab', 'bot'] as const).find((x) => x === params.section) ?? 'room') as Section;
+  const section = ((['live', 'practice', 'strategies', 'paper', 'setup', 'lab', 'bot', 'village'] as const).find((x) => x === params.section) ?? 'room') as Section;
   const navigate = useNavigate();
   const { data, error, reload } = useApi<Data>('/api/forex', 60_000);
   const [busy, setBusy] = useState(false);
@@ -97,6 +99,7 @@ export function Forex() {
       />
       {error && <ErrorBox message={error} />}
       {(section === 'live' || section === 'practice' || section === 'bot' || section === 'room') && <div className="mb-4"><MarketClockBar /></div>}
+      {section === 'village' && <Village />}
       {section === 'room' && <ControlRoom />}
       {section === 'practice' && <FxTrade />}
       {section === 'bot' && <FxBot />}

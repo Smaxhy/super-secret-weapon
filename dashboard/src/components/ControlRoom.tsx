@@ -70,8 +70,8 @@ function localNext(now: number): { tf: string; at: number } {
   return h4 <= h1 ? { tf: '4h', at: h4 } : { tf: '1h', at: h1 };
 }
 
-type RoomKey = 'scout' | 'analyst' | 'trader' | 'risk' | 'historian' | 'news' | 'decisions' | 'crypto';
-const ROOMS: Record<RoomKey, { name: string; role: string; icon: IconName }> = {
+export type RoomKey = 'scout' | 'analyst' | 'trader' | 'risk' | 'historian' | 'news' | 'decisions' | 'crypto';
+export const ROOMS: Record<RoomKey, { name: string; role: string; icon: IconName }> = {
   scout: { name: 'Scout', role: 'scans every market', icon: 'radar' },
   analyst: { name: 'Analyst', role: 'reads the chart it is on', icon: 'eye' },
   trader: { name: 'Trader', role: 'runs the open trades', icon: 'bolt' },
@@ -82,7 +82,37 @@ const ROOMS: Record<RoomKey, { name: string; role: string; icon: IconName }> = {
   crypto: { name: 'Crypto room', role: 'the pump.fun data collector', icon: 'wallet' },
 };
 
-export function ControlRoom() {
+/** everything the control room (and the village) reads, in one place */
+export interface CRData {
+  bot: ReturnType<typeof useApi<BotData>>;
+  lab: ReturnType<typeof useApi<LabData>>;
+  cal: ReturnType<typeof useApi<CalData>>;
+  sys: ReturnType<typeof useApi<SystemData>>;
+  ov: ReturnType<typeof useApi<Overview>>;
+  fx: FxLive;
+  now: number;
+  d: BotData | null;
+  a: Acct | null;
+  plan: BotPlan | null;
+  positions: Pos[];
+  orders: Order[];
+  markets: MarketNow[];
+  reads: Array<{ id: string; pair: string; read: import('./FxTradeRead').TradeReadT; ai: import('./FxTradeRead').AiReadT | null }>;
+  names: Record<string, string>;
+  focus: string | null;
+  setPicked: (id: string | null) => void;
+  fm: MarketNow | null;
+  fp: PlanMarket | null;
+  fpos: Pos[];
+  open: boolean;
+  next: { tf: string; at: number };
+  livePnlAll: number;
+  state: { word: string; tone: string };
+  lastRun: RunNote | null;
+  closest: Array<{ m: PlanMarket; s: PlanSignal }>;
+}
+
+export function useControlRoomData(): CRData {
   const bot = useApi<BotData>('/api/forex/bot', 5_000);
   const lab = useApi<LabData>('/api/forex', 60_000);
   const cal = useApi<CalData>('/api/forex/calendar', 60_000);
@@ -118,6 +148,40 @@ export function ControlRoom() {
   const livePnlAll = positions.reduce((s, p) => s + livePnl(p, fx, now), 0);
   const state = !open ? { word: 'Market closed', tone: 'text-muted' } : positions.length ? { word: `In ${positions.length} trade${positions.length === 1 ? '' : 's'}`, tone: tone(livePnlAll) } : closest.length ? { word: 'Waiting on setups', tone: 'text-warning' } : { word: 'Scanning', tone: 'text-accent-text' };
   const lastRun = (plan?.timeline ?? []).slice().sort((x, y) => y.t - x.t)[0] ?? null;
+  return { bot, lab, cal, sys, ov, fx, now, d, a, plan, positions, orders, markets, reads: reads.data?.trades ?? [], names, focus, setPicked, fm, fp, fpos, open, next, livePnlAll, state, lastRun, closest };
+}
+
+/** one room's "says" line + body, from the shared data (used by the control room grid and the village panels) */
+export function roomView(k: RoomKey, x: CRData): { says: string; body: ReactNode } {
+  const { d, a, plan, positions, orders, markets, fx, now, reads, names, focus, setPicked, fm, fp, livePnlAll } = x;
+  switch (k) {
+    case 'scout':
+      return { says: scoutSays(plan, markets), body: <Scout markets={markets} plan={plan} fx={fx} now={now} focus={focus} onPick={setPicked} /> };
+    case 'analyst':
+      return { says: analystSays(fm, fp, names), body: <Analyst fm={fm} fp={fp} d={d} /> };
+    case 'trader':
+      return { says: traderSays(positions, orders, livePnlAll), body: <Trader positions={positions} orders={orders} fx={fx} now={now} reads={reads} onPick={setPicked} plan={plan} /> };
+    case 'risk':
+      return { says: riskSays(a, d?.risk ?? null, d?.riskMode ?? 'normal'), body: <RiskDesk a={a} risk={d?.risk ?? null} mode={d?.riskMode ?? 'normal'} modes={d?.riskModes} onMode={() => void x.bot.reload()} /> };
+    case 'decisions':
+      return { says: d?.log?.[0] ? `${agoShort(d.log[0].t, now)} ago: ${d.log[0].e}` : 'nothing logged yet', body: <Decisions log={d?.log ?? []} now={now} /> };
+    case 'historian':
+      return { says: historianSays(d, x.lab.data?.last?.rows ?? []), body: <Historian d={d} rows={x.lab.data?.last?.rows ?? []} names={names} /> };
+    case 'news':
+      return { says: newsSays(x.cal.data, now), body: <NewsDesk c={x.cal.data ?? null} now={now} /> };
+    case 'crypto':
+      return { says: cryptoSays(x.sys.data ?? null, x.ov.data ?? null), body: <CryptoRoom s={x.sys.data ?? null} o={x.ov.data ?? null} /> };
+  }
+}
+
+/** the hub card (the bot + its big screen) from the shared data */
+export function HubView({ x }: { x: CRData }) {
+  return <Hub d={x.d} state={x.state} next={x.next} now={x.now} lastRun={x.lastRun} open={x.open} error={x.bot.error} fm={x.fm} fp={x.fp} fpos={x.fpos} fx={x.fx} reads={x.reads} names={x.names} markets={x.markets} onPick={x.setPicked} picked={x.focus} />;
+}
+
+export function ControlRoom() {
+  const x = useControlRoomData();
+  const { positions, markets, closest } = x;
 
   // the web: lines from the hub to every room (desktop only)
   const [wrapRef, wrapW] = useWidth<HTMLDivElement>();
@@ -160,6 +224,16 @@ export function ControlRoom() {
   const bind = (k: RoomKey) => (el: HTMLDivElement | null) => {
     roomRefs.current[k] = el;
   };
+  const place: Record<RoomKey, string> = {
+    scout: 'lg:col-span-3 lg:col-start-1 lg:row-start-1',
+    analyst: 'lg:col-span-3 lg:col-start-10 lg:row-start-1',
+    trader: 'lg:col-span-3 lg:col-start-1 lg:row-start-2',
+    risk: 'lg:col-span-3 lg:col-start-10 lg:row-start-2',
+    decisions: 'lg:col-span-3 lg:col-start-1 lg:row-start-3',
+    historian: 'lg:col-span-3 lg:col-start-4 lg:row-start-3',
+    news: 'lg:col-span-3 lg:col-start-7 lg:row-start-3',
+    crypto: 'lg:col-span-3 lg:col-start-10 lg:row-start-3',
+  };
 
   return (
     <div ref={wrapRef} className="relative">
@@ -176,33 +250,16 @@ export function ControlRoom() {
       <div className="relative z-10 grid gap-4 lg:grid-cols-12 lg:grid-rows-[auto_auto_auto] lg:gap-5">
         {/* ── the hub: the bot in the middle with its big screen ── */}
         <div ref={hubRef} className="order-first lg:order-none lg:col-span-6 lg:col-start-4 lg:row-span-2 lg:row-start-1">
-          <Hub d={d} state={state} next={next} now={now} lastRun={lastRun} open={open} error={bot.error} fm={fm} fp={fp} fpos={fpos} fx={fx} reads={reads.data?.trades ?? []} names={names} markets={markets} onPick={setPicked} picked={focus} />
+          <HubView x={x} />
         </div>
-
-        <Room k="scout" bind={bind} className="lg:col-span-3 lg:col-start-1 lg:row-start-1" says={scoutSays(plan, markets)}>
-          <Scout markets={markets} plan={plan} fx={fx} now={now} focus={focus} onPick={setPicked} />
-        </Room>
-        <Room k="analyst" bind={bind} className="lg:col-span-3 lg:col-start-10 lg:row-start-1" says={analystSays(fm, fp, names)}>
-          <Analyst fm={fm} fp={fp} d={d} />
-        </Room>
-        <Room k="trader" bind={bind} className="lg:col-span-3 lg:col-start-1 lg:row-start-2" says={traderSays(positions, orders, livePnlAll)}>
-          <Trader positions={positions} orders={orders} fx={fx} now={now} reads={reads.data?.trades ?? []} onPick={setPicked} plan={plan} />
-        </Room>
-        <Room k="risk" bind={bind} className="lg:col-span-3 lg:col-start-10 lg:row-start-2" says={riskSays(a, d?.risk ?? null, d?.riskMode ?? 'normal')}>
-          <RiskDesk a={a} risk={d?.risk ?? null} mode={d?.riskMode ?? 'normal'} modes={d?.riskModes} onMode={() => void bot.reload()} />
-        </Room>
-        <Room k="decisions" bind={bind} className="lg:col-span-3 lg:col-start-1 lg:row-start-3" says={d?.log?.[0] ? `${agoShort(d.log[0].t, now)} ago: ${d.log[0].e}` : 'nothing logged yet'}>
-          <Decisions log={d?.log ?? []} now={now} />
-        </Room>
-        <Room k="historian" bind={bind} className="lg:col-span-3 lg:col-start-4 lg:row-start-3" says={historianSays(d, lab.data?.last?.rows ?? [])}>
-          <Historian d={d} rows={lab.data?.last?.rows ?? []} names={names} />
-        </Room>
-        <Room k="news" bind={bind} className="lg:col-span-3 lg:col-start-7 lg:row-start-3" says={newsSays(cal.data, now)}>
-          <NewsDesk c={cal.data ?? null} now={now} />
-        </Room>
-        <Room k="crypto" bind={bind} className="lg:col-span-3 lg:col-start-10 lg:row-start-3" says={cryptoSays(sys.data ?? null, ov.data ?? null)}>
-          <CryptoRoom s={sys.data ?? null} o={ov.data ?? null} />
-        </Room>
+        {(Object.keys(ROOMS) as RoomKey[]).map((k) => {
+          const v = roomView(k, x);
+          return (
+            <Room key={k} k={k} bind={bind} className={place[k]} says={v.says}>
+              {v.body}
+            </Room>
+          );
+        })}
       </div>
     </div>
   );
@@ -313,6 +370,7 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
         <Link to="/forex/bot" className="text-accent-text hover:underline">Full Auto-bot page</Link>
         <Link to="/forex/live" className="text-accent-text hover:underline">All markets</Link>
         <Link to="/forex/lab" className="text-accent-text hover:underline">Lab</Link>
+        <Link to="/forex/village" className="text-accent-text hover:underline">The village</Link>
         <span>{Object.keys(names).length ? `${d?.chosen.length ?? 0} strategy × chart combinations live` : ''}</span>
       </div>
     </div>

@@ -62,6 +62,7 @@ const WS: Record<Ws, { label: string; icon: IconName; home: string; groups: Grou
         items: [
           { to: '/forex', label: 'Control room', icon: 'grid', desc: 'The bot in the middle: what it watches, reads, trades and decides, live' },
           { to: '/forex/bot', label: 'Auto-bot', icon: 'cpu', desc: 'Its trades, its plan, today\'s brief and every self-test' },
+          { to: '/forex/village', label: 'The village', icon: 'sparkles', desc: 'The bot as a pixel village: walk up to your workers and open their screens' },
           { to: '/forex/live', label: 'Markets', icon: 'chart', desc: 'Every market, the bot\'s lines, signals and trades' },
           { to: '/forex/strategies', label: 'Strategies', icon: 'flask', desc: 'Every strategy tested on 1m, 15m, 1h and 4h charts' },
           { to: '/forex/lab', label: 'Lab', icon: 'sparkles', desc: 'Every test it runs on itself: what is live, what is still proving itself' },
