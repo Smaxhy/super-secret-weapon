@@ -1260,6 +1260,8 @@ export class ForexLab {
   dataAge: Record<string, DataAge> = {};
   /** v17: who decides the list — the rolling picker (once proven) or the unseen-30% verdicts */
   chooser: 'rolling' | 'verdict' = 'verdict';
+  /** v18.9: always-on rows already logged as resting (one line per rest) */
+  private pausedNoted = new Set<string>();
   /** v17: the correlated-risk cap for the live bot (null until the first run) */
   heatNow: HeatLive | null = null;
   /** v18: the quant desk's latest report (what it would hold today) */
@@ -1762,7 +1764,17 @@ export class ForexLab {
     this.dropped = rec.dropped;
     const rollLive = rolling?.active && rollKeys ? new Set(rollKeys) : null;
 
-    const chosenRows = rows.filter((x) => x.id !== 'random' && !rec.dropped.includes(`${x.id}:${x.tf}`) && (rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || FX_CONFIG.botAlways.includes(x.id)));
+    // v18.9: an always-on row rests while its own last 26 weeks lose money (the rolling picker's record, same rule live)
+    const alwaysOff = new Set((rolling?.thisWeek.paused ?? []).map((p) => p.key));
+    const chosenRows = rows.filter((x) => x.id !== 'random' && !rec.dropped.includes(`${x.id}:${x.tf}`) && (rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`))));
+    for (const p of rolling?.thisWeek.paused ?? []) {
+      const k = `${p.key}:paused`;
+      if (!this.pausedNoted.has(k)) {
+        this.pausedNoted.add(k);
+        this.logBot([`${p.key} (always on) rests: its last 26 weeks lost money (${p.n} trades, profit factor ${p.pf ?? '—'})`]);
+      }
+    }
+    for (const k of [...this.pausedNoted]) if (!alwaysOff.has(k.replace(/:paused$/, ''))) this.pausedNoted.delete(k);
     const chosen = new Set(chosenRows.map((x) => `${x.id}:${x.tf}`));
     this.chosen = [...chosen];
     this.chooser = rollLive ? 'rolling' : 'verdict';

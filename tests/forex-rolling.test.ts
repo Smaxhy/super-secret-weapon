@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gradeRolling, nullKey, picksFor, randomPickerNull, ROLL, rollingPool, rollingVerdict, rollRow, rollWeeks, trailing, type RollTrade } from '../src/forex/rolling';
+import { alwaysPaused, gradeRolling, nullKey, picksFor, randomPickerNull, ROLL, rollingPool, rollingVerdict, rollRow, rollWeeks, trailing, type RollTrade } from '../src/forex/rolling';
 import { weekOf, weekStart, type PortfolioResult } from '../src/forex/portfolio';
 
 const DAY = 86_400_000;
@@ -36,11 +36,20 @@ describe('v17 rolling picker', () => {
     const good = rollRow('good:1h', trades('good:1h', T0, T1, 2, () => 0.4), false);
     const faded = rollRow('faded:1h', trades('faded:1h', T0, T1, 2, (t) => (t < turn ? 0.5 : -0.4)), false);
     const thin = rollRow('thin:1h', trades('thin:1h', T0, T1, 40, () => 2), false);
-    const always = rollRow('tsmom:1h', trades('tsmom:1h', T0, T1, 3, () => -0.2), true);
+    // an always-on row with a thin, slightly positive record (profit factor ≥ 1) stays in
+    let i = 0;
+    const always = rollRow('tsmom:1h', trades('tsmom:1h', T0, T1, 3, () => (i++ % 2 ? -0.2 : 0.25)), true);
     const before = picksFor([good, faded, thin, always], weekOf(turn)).map((p) => p.key);
     expect(before).toEqual(['good:1h', 'faded:1h', 'tsmom:1h']);
     const after = picksFor([good, faded, thin, always], weekOf(turn + 20 * WEEK)).map((p) => p.key);
     expect(after).toEqual(['good:1h', 'tsmom:1h']);
+    // v18.9: an always-on row whose last 26 weeks lost money rests until its record is break-even again
+    const losing = rollRow('fix_flow:1h', trades('fix_flow:1h', T0, T1, 3, () => -0.2), true);
+    expect(picksFor([good, losing], weekOf(turn)).map((p) => p.key)).toEqual(['good:1h']);
+    expect(alwaysPaused([good, losing, always], weekOf(turn))).toEqual([{ key: 'fix_flow:1h', n: expect.any(Number), pf: 0 }]);
+    // too few trades to judge: published evidence keeps it in
+    const thinAlways = rollRow('local_hours:1h', trades('local_hours:1h', T0, T1, 40, () => -0.3), true);
+    expect(picksFor([good, thinAlways], weekOf(turn)).map((p) => p.key)).toEqual(['good:1h', 'local_hours:1h']);
   });
 
   it('the weekly pool holds only the picked rows\' trades of that week', () => {

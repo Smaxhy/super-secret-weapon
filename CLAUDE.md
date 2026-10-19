@@ -742,6 +742,14 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   `FX_FAST.tfs` = ['15m'] (fast.ts): no 1-minute candles, test, timers or trades at all (put '1m' back to test it; the
   bot still wouldn't trade it — v18.7 `botFastCharts`); `nextChecks` lists 15m / 1h / 4h; dashboard chips and the
   Setup candle card drop 1m. tests in forex-v18-7 (two tests switch the chart on for themselves and restore it).
+- **v18.9 (Oct 19): always-on strategies rest while they lose** (owner: "you're the manager, change what you need"; the
+  rolling-picker card on real data: +4.1% over 30 unseen weeks, beat 93% of random pickers, PF 1.02 → still off; the
+  always-on four (tsmom, tsmom_long, local_hours, fix_flow) sat at PF 0.81–1.02 over 26 weeks while MACD cross / news
+  fade / stocks→yen / month-end carried the list). `ROLL.alwaysMinPf` 1.0 (rolling.ts): `picksFor` drops an always-on
+  row whose last 26 weeks hold 12+ trades with PF < 1.0 (`alwaysPausedBy`); `alwaysPaused(rows, week)` →
+  `RollReport.thisWeek.paused` [{key, n, pf}]; the random pickers' fixed set follows the picks. Live chooser (lab.ts,
+  verdict mode): botAlways keeps a 'no' row only while not paused; one bot-log line per rest (`pausedNoted`). Dashboard
+  card "What it learned this week" lists the resting always-on rows. Fewer than 12 trades → published evidence keeps it.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

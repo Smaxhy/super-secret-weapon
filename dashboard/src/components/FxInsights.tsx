@@ -736,7 +736,7 @@ export interface RollReport {
   pfR: number | null;
   staticSame: RollResult | null;
   null: { draws: number; p50: number; p80: number; p95: number; beatPct?: number } | null;
-  thisWeek: { week: number; picks: RollPick[]; added: string[]; rested: string[] };
+  thisWeek: { week: number; picks: RollPick[]; added: string[]; rested: string[]; paused?: Array<{ key: string; n: number; pf: number | null }> };
   byWeek: Array<{ week: string; picked: number; trades: number }>;
 }
 export type Ledger = Record<string, { n: number; totalR: number; avgR: number; wins: number }>;
@@ -753,7 +753,7 @@ export function RollingCard({ r, chooser, ledger, names = {} }: { r: RollReport 
   return (
     <Card
       title="What it learned this week"
-      subtitle="Every Sunday the bot re-picks which strategies to trade from their last 26 weeks only (a strategy needs 12+ finished trades that made money, shrunk toward zero when there are few, profit factor 1.1+; the always-on four stay). This rule is graded on the weeks it never saw, against 100 pickers that choose the same number of strategies at random. It takes over the bot's list only when it beats 80% of them and makes money."
+      subtitle="Every Sunday the bot re-picks which strategies to trade from their last 26 weeks only (a strategy needs 12+ finished trades that made money, shrunk toward zero when there are few, profit factor 1.1+; the always-on four stay unless their own last 26 weeks lost money). This rule is graded on the weeks it never saw, against 100 pickers that choose the same number of strategies at random. It takes over the bot's list only when it beats 80% of them and makes money."
     >
       {!r ? (
         <p className="text-sm text-ink-2">Graded with the next hourly update.</p>
@@ -778,6 +778,11 @@ export function RollingCard({ r, chooser, ledger, names = {} }: { r: RollReport 
               <p className="text-xs text-muted">
                 {r.thisWeek.added.length > 0 && `new: ${r.thisWeek.added.map((k) => keyName(k, names)).join(', ')}. `}
                 {r.thisWeek.rested.length > 0 && `resting: ${r.thisWeek.rested.map((k) => keyName(k, names)).join(', ')}.`}
+              </p>
+            )}
+            {(r.thisWeek.paused?.length ?? 0) > 0 && (
+              <p className="text-xs text-muted">
+                Always-on but resting (their last 26 weeks lost money): {r.thisWeek.paused!.map((p) => `${keyName(p.key, names)} (${p.n} trades, profit factor ${p.pf ?? '—'})`).join(', ')}. Back as soon as the record is break-even or better.
               </p>
             )}
             <Rows>

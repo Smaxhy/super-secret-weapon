@@ -16,6 +16,8 @@ export const ROLL = {
   shrinkK: 20,
   minShrunkR: 0.03,
   minPf: 1.1,
+  /** v18.9: an always-on row is PAUSED while its own last 26 weeks (12+ trades) show a profit factor under this */
+  alwaysMinPf: 1.0,
   minGradedWeeks: 26,
   nullDraws: 100,
   nullBeatPct: 80,
@@ -97,6 +99,22 @@ export interface Pick {
   always: boolean;
 }
 
+/** v18.9: an always-on row with 12+ recent trades and a profit factor under `alwaysMinPf` rests. Pure. */
+export const alwaysPausedBy = (w: Window): boolean => w.n >= ROLL.minN && w.pf !== null && w.pf < ROLL.alwaysMinPf;
+
+/** v18.9: the always-on rows resting in week w, with the record that rests them. Pure. */
+export function alwaysPaused(rows: readonly RollRow[], week: number): Array<{ key: string; n: number; pf: number | null }> {
+  const t1 = weekStart(week);
+  const t0 = t1 - ROLL.lookbackWeeks * WEEK;
+  const out: Array<{ key: string; n: number; pf: number | null }> = [];
+  for (const row of rows) {
+    if (!row.always) continue;
+    const w = trailing(row, t0, t1);
+    if (alwaysPausedBy(w)) out.push({ key: row.key, n: w.n, pf: w.pf === null ? null : Math.round(w.pf * 100) / 100 });
+  }
+  return out;
+}
+
 /** The rule: who gets traded in week w (only trades that closed before that week starts count). */
 export function picksFor(rows: readonly RollRow[], week: number): Pick[] {
   const t1 = weekStart(week);
@@ -106,6 +124,8 @@ export function picksFor(rows: readonly RollRow[], week: number): Pick[] {
     const w = trailing(row, t0, t1);
     const good = w.n >= ROLL.minN && w.shrunkR >= ROLL.minShrunkR && (w.pf ?? 99) >= ROLL.minPf;
     if (!row.always && !good) continue;
+    // v18.9: published evidence keeps an always-on row in, but not while its own recent record loses money
+    if (row.always && alwaysPausedBy(w)) continue;
     out.push({ key: row.key, n: w.n, avgR: Math.round(w.avgR * 100) / 100, shrunkR: Math.round(w.shrunkR * 1000) / 1000, pf: w.pf === null ? null : Math.round(w.pf * 100) / 100, sizeF: stratFactorFromStats(w.shrunkR, w.pf), always: row.always });
   }
   return out;
@@ -178,7 +198,7 @@ export async function randomPickerNull(rows: readonly RollRow[], oos: ReadonlyMa
     const picks = picksFor(rows, w);
     const t1 = weekStart(w);
     const t0 = t1 - ROLL.lookbackWeeks * WEEK;
-    const always = rows.filter((r) => r.always).map((r) => r.key);
+    const always = picks.filter((p) => p.always).map((p) => p.key); // v18.9: a paused always-on row is out for the random pickers too
     const size = new Map<string, { sizeF: number; prio: number }>();
     const pool: string[] = [];
     for (const r of rows) {
@@ -220,7 +240,7 @@ export interface RollReport {
   /** the list picked once on the first 70%, over the same weeks */
   staticSame: PortfolioResult | null;
   null: Omit<NullStats, 'totals'> | null;
-  thisWeek: { week: number; picks: Pick[]; added: string[]; rested: string[] };
+  thisWeek: { week: number; picks: Pick[]; added: string[]; rested: string[]; /** v18.9: always-on rows resting on their own record */ paused?: Array<{ key: string; n: number; pf: number | null }> };
   byWeek: Array<{ week: string; picked: number; trades: number }>;
 }
 
@@ -261,7 +281,7 @@ export function gradeRolling(
   const picks = picksFor(rows, thisW);
   const keys = picks.map((p) => p.key);
   const prev = new Set(o.prevKeys ?? []);
-  const thisWeek = { week: thisW, picks, added: o.prevKeys ? keys.filter((k) => !prev.has(k)) : [], rested: o.prevKeys ? [...prev].filter((k) => !keys.includes(k)) : [] };
+  const thisWeek = { week: thisW, picks, added: o.prevKeys ? keys.filter((k) => !prev.has(k)) : [], rested: o.prevKeys ? [...prev].filter((k) => !keys.includes(k)) : [], paused: alwaysPaused(rows, thisW) };
   const weeksGraded = Math.max(0, w1 - w0 + 1);
   if (weeksGraded < 1) return { active: false, why: 'not enough unseen weeks yet', weeksGraded: 0, from: weekStart(w0), to: o.to, result: null, pfR: null, staticSame: null, null: null, thisWeek, byWeek: [] };
   const { pool, weeks } = rollingPool(rows, oos, w0, w1);
