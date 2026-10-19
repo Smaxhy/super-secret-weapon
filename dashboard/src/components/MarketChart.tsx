@@ -7,6 +7,9 @@
  * gutter, nudged apart), `timeAxis` (times under the candles), `interactive` (crosshair + the candle's prices). With
  * `entryMarker` / `tradeLabels` the entry / stop / target lines stay on the plot even for a trade opened after the
  * newest candle (`tradeAnchor`), faint over the candles before the entry.
+ * v17.13 (owner: "graphs are broken, small and messy"): candles sit side by side by INDEX, not by clock time — a
+ * weekend / closed market no longer leaves a big empty gap that squeezes the candles into slivers (a faint dashed line
+ * marks the break instead); time labels say the weekday when the day changes and never repeat.
  */
 import { useState } from 'react';
 
@@ -22,6 +25,54 @@ const ENTRY = '#6366f1';
 const STOP = '#ef4444';
 const TARGET = '#22c55e';
 const LOCK = '#f59e0b';
+
+/** The usual time between candles (median of the newest gaps). Pure. */
+export function barStep(bars: number[][]): number {
+  const d: number[] = [];
+  for (let i = Math.max(1, bars.length - 60); i < bars.length; i++) d.push(bars[i]![0]! - bars[i - 1]![0]!);
+  d.sort((a, b) => a - b);
+  return d.length ? Math.max(1, d[Math.floor(d.length / 2)]!) : 60_000;
+}
+
+/** v17.13: a time → its place on the candle axis. Candles sit side by side, candle i covering [i, i + 1) × `slot` px
+ * from its open time to the next candle; a time inside a closed-market gap sits on the border to the next candle; a
+ * time after the newest candle carries on at the candle width. Pure. */
+export function xOfTime(bars: number[][], t: number, slot: number, step = barStep(bars)): number {
+  const n = bars.length;
+  if (!n) return 0;
+  if (t <= bars[0]![0]!) return 0;
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (bars[mid]![0]! <= t) lo = mid;
+    else hi = mid - 1;
+  }
+  const f = (t - bars[lo]![0]!) / step;
+  return (lo + (lo === n - 1 ? f : Math.min(1, f))) * slot;
+}
+
+/** v17.13: time labels for the axis — the weekday when the day changes (date only on 4h+ candles), equal labels dropped. Pure. */
+export function axisLabels(ts: number[], step: number): string[] {
+  const day = (t: number) => new Date(t).toDateString();
+  const multi = ts.length > 1 && day(ts[0]!) !== day(ts[ts.length - 1]!);
+  const hm = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const out: string[] = [];
+  ts.forEach((t, k) => {
+    let s: string;
+    if (step >= 4 * 3_600_000) s = new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    else if (multi && (k === 0 || day(t) !== day(ts[k - 1]!))) s = `${new Date(t).toLocaleDateString(undefined, { weekday: 'short' })} ${hm(t)}`;
+    else s = hm(t);
+    out.push(out.includes(s) ? '' : s);
+  });
+  return out;
+}
+
+/** v17.13: how many of the newest candles fit `width` px at ≥ `minPx` each (a phone shows fewer, wider candles). Pure. */
+export function fitBars(bars: number[][], width: number, minPx = 6): number[][] {
+  const n = Math.max(24, Math.floor(Math.max(0, width - PAD_R) / minPx));
+  return bars.length > n ? bars.slice(-n) : bars;
+}
 
 const clockOf = (t: number, long: boolean) => (long ? new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 
@@ -79,7 +130,7 @@ export function MarketChart({
   const H = timeAxis ? height - AXIS_H : height;
   const t0 = bars[0]![0]!;
   const t1 = bars[bars.length - 1]![0]!;
-  const step = (t1 - t0) / (bars.length - 1);
+  const step = barStep(bars);
   let lo = Math.min(...bars.map((b) => b[3]!));
   let hi = Math.max(...bars.map((b) => b[4]!), ...bars.map((b) => b[2]!));
   const near = (p: number) => p > lo - (hi - lo) * 0.4 && p < hi + (hi - lo) * 0.4;
@@ -95,9 +146,15 @@ export function MarketChart({
   lo -= pad;
   hi += pad;
   const cw = W - padR;
-  const x = (t: number) => ((t - t0) / (t1 - t0 + step)) * cw + (cw / bars.length) / 2;
+  // v17.13: candles side by side (index), times mapped onto them
+  const slot = cw / bars.length;
+  const xi = (i: number) => (i + 0.5) * slot;
+  const x = (t: number) => xOfTime(bars, t, slot, step);
   const y = (p: number) => H - ((p - lo) / (hi - lo)) * H;
-  const bw = Math.max(1, (cw / bars.length) * 0.65);
+  const bw = Math.max(1, slot * 0.7);
+  // closed-market breaks (weekends, holidays): a gap of more than 3 candles and over 2 hours
+  const breaks: number[] = [];
+  for (let i = 1; i < bars.length; i++) if (bars[i]![0]! - bars[i - 1]![0]! > Math.max(3 * step, 2 * 3_600_000)) breaks.push(i);
   const last = live !== null && Number.isFinite(live) ? live : bars[bars.length - 1]![4]!;
   const ticks = Array.from({ length: 5 }, (_, k) => lo + ((hi - lo) * (k + 0.5)) / 5);
   const clipY = (p: number) => Math.max(-2, Math.min(H + 2, y(p)));
@@ -120,17 +177,15 @@ export function MarketChart({
         H - 9,
       )
     : [];
-  const long = t1 - t0 > 36 * 3_600_000;
-  const nTicks = Math.max(2, Math.min(6, Math.floor(cw / 80) + 1));
-  const axisTicks = timeAxis ? Array.from({ length: nTicks }, (_, k) => bars[Math.round((k * (bars.length - 1)) / (nTicks - 1))]![0]!) : [];
+  const nTicks = Math.max(2, Math.min(6, Math.floor(cw / 90) + 1));
+  const tickIdx = timeAxis ? [...new Set(Array.from({ length: nTicks }, (_, k) => Math.round((k * (bars.length - 1)) / (nTicks - 1))))] : [];
+  const tickText = axisLabels(tickIdx.map((i) => bars[i]![0]!), step);
   const hb = hover !== null ? bars[hover] : null;
   const onMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
     const px = ((e.clientX - r.left) / r.width) * W;
     if (px > cw) return setHover(null);
-    let best = 0;
-    for (let i = 1; i < bars.length; i++) if (Math.abs(x(bars[i]![0]!) - px) < Math.abs(x(bars[best]![0]!) - px)) best = i;
-    setHover(best);
+    setHover(Math.max(0, Math.min(bars.length - 1, Math.floor(px / slot))));
   };
   const svg = (
     <svg
@@ -148,6 +203,9 @@ export function MarketChart({
           <line x1={0} x2={cw} y1={y(p)} y2={y(p)} className="stroke-line" strokeWidth={1} />
           {(!tradeLabels || gutter.every((g) => Math.abs(g.ly - y(p)) > 15)) && <text x={W - 4} y={y(p) + 4} textAnchor="end" className="fill-muted text-[11px]">{p.toFixed(digits)}</text>}
         </g>
+      ))}
+      {breaks.map((i) => (
+        <line key={`br${i}`} x1={i * slot} x2={i * slot} y1={0} y2={H} className="stroke-muted" strokeWidth={1} strokeDasharray="2 4" opacity={0.35} />
       ))}
       {show.ranges && drawings?.prevDay && (
         <g>
@@ -177,9 +235,9 @@ export function MarketChart({
           </g>
         );
       })}
-      {bars.map((b) => {
+      {bars.map((b, i) => {
         const up = b[4]! >= b[1]!;
-        const cx = x(b[0]!);
+        const cx = xi(i);
         return (
           <g key={b[0]}>
             <line x1={cx} x2={cx} y1={y(b[2]!)} y2={y(b[3]!)} stroke={up ? '#16a34a' : '#dc2626'} strokeWidth={1} />
@@ -231,12 +289,14 @@ export function MarketChart({
           <text x={W - 5} y={g.ly + 4} textAnchor="end" className={`text-[11px] font-semibold ${g.solid ? 'fill-white' : 'fill-ink'}`}>{g.text}</text>
         </g>
       ))}
-      {timeAxis && axisTicks.map((t, k, a) => (
-        <text key={t} x={x(t)} y={height - 5} textAnchor={k === 0 ? 'start' : k === a.length - 1 ? 'end' : 'middle'} className="fill-muted text-[11px]">{clockOf(t, long)}</text>
-      ))}
-      {hb && (
+      {timeAxis && tickIdx.map((i, k, a) =>
+        tickText[k] ? (
+          <text key={i} x={k === 0 ? 2 : k === a.length - 1 ? cw : xi(i)} y={height - 5} textAnchor={k === 0 ? 'start' : k === a.length - 1 ? 'end' : 'middle'} className="fill-muted text-[11px]">{tickText[k]}</text>
+        ) : null,
+      )}
+      {hb && hover !== null && (
         <g pointerEvents="none">
-          <line x1={x(hb[0]!)} x2={x(hb[0]!)} y1={0} y2={H} className="stroke-ink-2" strokeWidth={1} opacity={0.5} />
+          <line x1={xi(hover)} x2={xi(hover)} y1={0} y2={H} className="stroke-ink-2" strokeWidth={1} opacity={0.5} />
           <line x1={0} x2={cw} y1={y(hb[4]!)} y2={y(hb[4]!)} className="stroke-ink-2" strokeWidth={1} opacity={0.25} />
         </g>
       )}

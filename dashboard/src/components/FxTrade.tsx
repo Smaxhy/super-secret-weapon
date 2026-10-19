@@ -2,12 +2,13 @@
  * v17.9: pair prices, bid / ask, open P&L and equity move with the bot's live price push (metals keep polling). */
 import { useEffect, useMemo, useState } from 'react';
 import { useApi } from '../hooks/useApi';
+import { useWidth } from '../hooks/useWidth';
 import { FRESH_MS, liveExit, liveOf, livePnl, useFxLive } from '../hooks/useFxLive';
 import { api } from '../lib/api';
 import { ago } from '../lib/format';
 import { LiveBadge, LivePrice } from './LivePrice';
 import { TvChart } from './TvChart';
-import { MarketChart, type ChartDrawings } from './MarketChart';
+import { fitBars, MarketChart, type ChartDrawings } from './MarketChart';
 import { Badge, Button, Card, Chip, NumberInput, Row, Rows, Stack, StatTile, ToggleRow, useStored } from './ui';
 
 interface Quote { id: string; mid: number; bid: number; ask: number; t: number; dayChangePct: number | null; source: 'oanda' | 'yahoo' | 'dukascopy' | 'pyth' | 'yahoo-live'; tradeable?: boolean }
@@ -36,6 +37,8 @@ export function FxTrade() {
   const [busy, setBusy] = useState(false);
   const [view, setView] = useStored<'tv' | 'bot'>('fx.chartView', 'tv', ['tv', 'bot']);
   const lab = useApi<{ last: { markets?: Array<{ id: string; bars: number[][]; drawings: ChartDrawings }> } | null }>(view === 'bot' ? '/api/forex' : null, 60_000);
+  // v17.13: the bot's chart drawn at the real width (readable on a phone)
+  const [botBox, botW] = useWidth<HTMLDivElement>();
   // v17.9: live prices over the 4-second poll
   const fx = useFxLive();
   const now = Date.now();
@@ -141,8 +144,8 @@ export function FxTrade() {
             if (!m) return <p className="p-4 text-sm text-muted">The bot's chart fills in after its hourly update.</p>;
             const mine = (a?.positions ?? []).filter((x) => x.pair === pair).map((x) => ({ side: x.side, entryT: x.openedAt, entry: x.entry, stop: x.stop ?? x.entry, target: x.target, strategy: 'you' }));
             return (
-              <div className="rounded-xl border border-line bg-surface p-2">
-                <MarketChart bars={m.bars} drawings={m.drawings} trades={mine} digits={dp(pair)} />
+              <div ref={botBox} className="rounded-xl border border-line bg-surface p-1.5">
+                {botW > 0 && <MarketChart bars={fitBars(m.bars, botW - 14)} drawings={m.drawings} trades={mine} digits={dp(pair)} width={botW - 14} height={botW < 560 ? 320 : 420} timeAxis interactive />}
                 <p className="px-2 pb-1 text-xs text-muted">Hourly candles with the bot's trendlines and levels, and your open trades (blue entry, red stop, green target).</p>
               </div>
             );

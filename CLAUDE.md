@@ -552,6 +552,17 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     loop never runs on after a restart). At start `loadPythConf()`; a .env key finds its endpoint first. The owner
     pasted a key in chat — it was NOT put anywhere; they paste it into the card themselves. tests:
     forex-alerts-pyth-key.
+  - **v17.13 charts (owner: "graphs are pretty broken, small and messy, hard to follow")**: `MarketChart` places
+    candles side by side by INDEX (`xOfTime`: candle i covers [i, i+1) slots from its open; a time in a closed-market
+    gap sits on the border; after the newest candle it carries on) — before, x was clock time, so a weekend squeezed the
+    candles into slivers at both edges; `barStep` = median gap; closed-market breaks (> 3 candles and > 2 h) = faint
+    dashed line; `axisLabels` (weekday when the day changes, dates on 4h+, repeats dropped) — before, the same date
+    printed on top of itself; `fitBars` (≥ 5–6 px a candle → a phone shows the newest ~48–60). Every bot chart now draws
+    at the real width (`hooks/useWidth.ts`, shared): active trade (phone 320 px tall, 48+ candles), Markets drawer and
+    Trade-by-hand "Bot's view" (both were an 800-px viewBox shrunk to the phone → ~5 px text; now timeAxis +
+    crosshair). `TvChart` `compact` (the active-trade card on a phone): no top / side toolbar, date ranges, legend,
+    volume — the candles get the box (440 px); the card's own 1m / 5m / 15m / 1h buttons set the interval. Legend
+    "profit lock" key. Verified by rendering the chart (esbuild + Playwright) at 376 px. tests/fx-chart-axis.
   - **Price stretch** (`src/forex/stretch.ts`, no outside feed): per currency the 63-day return in normal-move units
     (averaged over its pairs, ≥ 3 pairs), ranked within its own last ~2 years (520 days, ≥ 120 ranked) → −1…+1; a
     pair = base − quote (−2…+2, the CFTC score's scale; metals none; > 4 days old → none). `MarketBook.stretch`

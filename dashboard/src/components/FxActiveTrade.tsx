@@ -7,10 +7,11 @@
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useApi } from '../hooks/useApi';
+import { useWidth } from '../hooks/useWidth';
 import { FRESH_MS, foldTick, liveExit, liveOf, livePnl, overlayLive, useFxLive, type LiveBar } from '../hooks/useFxLive';
 import { duration } from '../lib/format';
 import { LiveBadge, LivePrice } from './LivePrice';
-import { MarketChart } from './MarketChart';
+import { fitBars, MarketChart } from './MarketChart';
 import { TvChart } from './TvChart';
 import { Badge, Button, Card, Tabs, useStored } from './ui';
 
@@ -82,21 +83,6 @@ export function candleLagMin(bars: number[][], barMs: number, now = Date.now()):
   return age > Math.max(3 * barMs, 5 * 60_000) ? Math.round(age / 60_000) : null;
 }
 
-/** Width of an element, kept up to date. */
-function useWidth<T extends HTMLElement>(): [React.RefObject<T>, number] {
-  const ref = useRef<T>(null);
-  const [w, setW] = useState(0);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setW(Math.round(el.clientWidth)));
-    ro.observe(el);
-    setW(Math.round(el.clientWidth));
-    return () => ro.disconnect();
-  }, []);
-  return [ref, w];
-}
-
 /** True while the element is on screen (candles only refresh then). */
 function useOnScreen<T extends HTMLElement>(ref: React.RefObject<T>): boolean {
   const [on, setOn] = useState(true);
@@ -137,7 +123,8 @@ function TradeView({ p, plan, onClose }: { p: ActivePos; plan: ActivePlan | null
   const phone = width > 0 && width < 560;
   // enough candles to show the whole trade (plus a few before it), rounded so the address changes rarely
   const since = Math.ceil((Date.now() - p.openedAt) / GRAN_MS[gran]);
-  const count = Math.min(240, Math.max(phone ? 72 : 120, Math.ceil((since + 12) / 24) * 24));
+  // v17.13: a phone shows fewer, wider candles (about 6 px each); the whole trade still fits
+  const count = Math.min(240, Math.max(phone ? 48 : 120, Math.ceil((since + 12) / 12) * 12));
   const path = view === 'bot' && visible && width > 0 ? `/api/forex/candles?pair=${encodeURIComponent(p.pair)}&tf=${gran}&count=${count}` : null;
   const candles = useApi<{ source?: string; bars?: unknown }>(path, 15_000);
   const bars = useMemo(() => toBars(candles.data?.bars), [candles.data]);
@@ -196,10 +183,10 @@ function TradeView({ p, plan, onClose }: { p: ActivePos; plan: ActivePlan | null
       </div>
       <div ref={box} className="mt-2">
         {view === 'tv' ? (
-          <TvChart pair={p.pair} interval={GRANS.find((g) => g[0] === gran)![2]} height={phone ? 380 : 460} />
+          <TvChart pair={p.pair} interval={GRANS.find((g) => g[0] === gran)![2]} height={phone ? 440 : 500} compact={phone} />
         ) : bars.length >= 2 && width > 0 ? (
           <div className={`rounded-xl border border-line bg-surface p-1.5 transition-opacity ${candles.error ? 'opacity-60' : ''}`}>
-            <MarketChart bars={shownBars} trades={[{ side: p.side, entryT: p.openedAt, entry: p.entry, stop: p.stop, target: p.target, strategy: name, lockAt: p.lock && !p.locked ? p.lock.at : null }]} digits={dg} width={width - 14} height={phone ? 250 : 340} live={px} entryMarker tradeLabels timeAxis interactive />
+            <MarketChart bars={fitBars(shownBars, width - 14, 5)} trades={[{ side: p.side, entryT: p.openedAt, entry: p.entry, stop: p.stop, target: p.target, strategy: name, lockAt: p.lock && !p.locked ? p.lock.at : null }]} digits={dg} width={width - 14} height={phone ? 320 : 380} live={px} entryMarker tradeLabels timeAxis interactive />
           </div>
         ) : (
           <div className="grid h-56 place-items-center rounded-xl border border-dashed border-line-strong px-4 text-center text-sm text-muted">
@@ -213,6 +200,7 @@ function TradeView({ p, plan, onClose }: { p: ActivePos; plan: ActivePlan | null
           {p.stop !== null && <Key color="#ef4444" dashed>stop</Key>}
           {p.target !== null && <Key color="#22c55e" dashed>target</Key>}
           <Key color="#6366f1" dotted>price now</Key>
+          {p.lock && !p.locked && <Key color="#f59e0b" dotted>profit lock</Key>}
           <span className="ml-auto inline-flex items-center gap-1.5">
             <LiveBadge fx={fx} />
             <span>

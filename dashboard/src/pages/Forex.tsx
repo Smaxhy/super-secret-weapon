@@ -9,6 +9,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { FxBot } from '../components/FxBot';
 import { FxNews, MarketClockBar } from '../components/FxNews';
 import { useApi } from '../hooks/useApi';
+import { useWidth } from '../hooks/useWidth';
 import { liveOf, useFxLive } from '../hooks/useFxLive';
 import { LiveBadge, LivePrice } from '../components/LivePrice';
 import { api } from '../lib/api';
@@ -17,7 +18,7 @@ import { Icon } from '../components/Icon';
 import { FxTrade } from '../components/FxTrade';
 import { OandaCard } from '../components/OandaCard';
 import { PythCard } from '../components/PythCard';
-import { MarketChart, type ChartDrawings } from '../components/MarketChart';
+import { fitBars, MarketChart, type ChartDrawings } from '../components/MarketChart';
 import { EXIT_SHORT, ExitsCard, LockCard, FILTER_SHORT, FiltersCard, JudgeCard, MoodCard, NewsStudyCard, StrengthCard, TrendArrows, type ExitKind, type ExitSummary, type FilterKind, type FilterSummary, type JudgeReport, type LockSummary, type MoodNow, type NewsStudy, type PortfolioReport, type StrengthNow } from '../components/FxInsights';
 import { Badge, Button, Card, Chip, Drawer, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Sparkline, Stack, StatTile, useStored } from '../components/ui';
 
@@ -202,6 +203,8 @@ function MarketDetail({ m, r, onTrade }: { m: MarketNow; r: Report; onTrade: () 
   const trades4h = r.paper.open.filter((t) => t.pair === m.id && t.tf === '4h');
   const all = [...trades, ...trades4h];
   const toggle = (k: keyof typeof show) => setShow({ ...show, [k]: !show[k] });
+  // v17.13: drawn at the real width, fewer and wider candles on a phone
+  const [box, w] = useWidth<HTMLDivElement>();
   return (
     <Stack>
       <div className="flex flex-wrap gap-1.5">
@@ -210,8 +213,8 @@ function MarketDetail({ m, r, onTrade }: { m: MarketNow; r: Report; onTrade: () 
         <Chip active={show.ranges} onClick={() => toggle('ranges')}>Yesterday + Asia range</Chip>
         <Chip active={show.trades} onClick={() => toggle('trades')}>Bot trades</Chip>
       </div>
-      <div className="rounded-xl border border-line bg-surface p-2">
-        <MarketChart bars={m.bars} drawings={m.drawings} trades={all.map((t) => ({ side: t.side, entryT: t.entryT, entry: t.entry, stop: t.stop, target: t.target, strategy: t.strategy }))} digits={DIGITS(m.id)} show={show} />
+      <div ref={box} className="rounded-xl border border-line bg-surface p-1.5">
+        {w > 0 && <MarketChart bars={fitBars(m.bars, w - 14)} drawings={m.drawings} trades={all.map((t) => ({ side: t.side, entryT: t.entryT, entry: t.entry, stop: t.stop, target: t.target, strategy: t.strategy }))} digits={DIGITS(m.id)} show={show} width={w - 14} height={w < 560 ? 320 : 420} timeAxis interactive />}
       </div>
       <p className="text-xs text-muted">Green lines = support (rising trendline or a floor price kept bouncing off), red = resistance; dashed = broken. Purple dots = yesterday's high / low, blue band = today's Asian session range. Blue line = a bot entry, dashed red / green = its stop / target.</p>
       {m.heat && <HeatmapBox m={m} />}

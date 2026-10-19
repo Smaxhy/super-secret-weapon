@@ -1,9 +1,13 @@
-/** TradingView's free Advanced Chart widget (live candles, indicators, drawing tools). Display only. */
+/**
+ * TradingView's free Advanced Chart widget (live candles, indicators, drawing tools). Display only. v17.13 `compact`
+ * (a trade's own chart on a phone): no toolbars, date-range bar, legend or volume — the candles get the whole box and
+ * the candle size comes from the page's own buttons.
+ */
 import { useEffect, useRef } from 'react';
 
 export const tvSymbol = (id: string) => (id === 'XAUUSD' ? 'OANDA:XAUUSD' : id === 'XAGUSD' ? 'OANDA:XAGUSD' : `OANDA:${id}`);
 
-export function TvChart({ pair, interval = '5', height = 460 }: { pair: string; interval?: string; height?: number }) {
+export function TvChart({ pair, interval = '5', height = 460, compact = false }: { pair: string; interval?: string; height?: number; compact?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = ref.current;
@@ -27,8 +31,12 @@ export function TvChart({ pair, interval = '5', height = 460 }: { pair: string; 
       style: '1',
       locale: 'en',
       allow_symbol_change: false,
-      hide_side_toolbar: false,
-      withdateranges: true,
+      hide_side_toolbar: compact,
+      hide_top_toolbar: compact,
+      hide_legend: compact,
+      hide_volume: compact,
+      save_image: !compact,
+      withdateranges: !compact,
       details: false,
       calendar: false,
       support_host: 'https://www.tradingview.com',
@@ -37,6 +45,6 @@ export function TvChart({ pair, interval = '5', height = 460 }: { pair: string; 
     return () => {
       el.innerHTML = '';
     };
-  }, [pair, interval]);
+  }, [pair, interval, compact]);
   return <div ref={ref} className="tradingview-widget-container overflow-hidden rounded-xl border border-line" style={{ height }} />;
 }
