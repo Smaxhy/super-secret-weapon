@@ -254,6 +254,8 @@ export interface PracticeAccount {
   ledger?: Record<string, LedgerRow[]>;
   /** v17.11: the owner's profit lock on this account's trades (missing = on) */
   profitLock?: boolean;
+  /** v18.4: bot account — resting limit orders waiting to fill */
+  orders?: RestingOrder[];
   open: PracticePosition[];
   closed: ClosedPractice[];
   createdAt: number;
@@ -462,6 +464,48 @@ function closePart(a: PracticeAccount, p: PracticePosition, frac: number, px: nu
   return pl;
 }
 
+/** v18.4: turn a resting order into a position at `fill` (the position looks exactly like one `openIn` makes). Returns an
+ * error when it can't (a gap through the stop, no margin left). Mutates `a`. */
+export function fillOrder(a: PracticeAccount, o: RestingOrder, fill: number, mids: Record<string, number>, now: number, checkedT: number): string | null {
+  const inst = instrument(o.pair);
+  if (!inst) return 'unknown market';
+  if (o.side === 1 ? o.stop >= fill : o.stop <= fill) return 'the price gapped past its stop';
+  if (o.target !== null && (o.side === 1 ? o.target <= fill : o.target >= fill)) return 'the price gapped past its target';
+  const v = view(a, mids);
+  if (o.marginUsd > v.freeMarginUsd) return `not enough free margin ($${v.freeMarginUsd})`;
+  const units = unitsFor(inst, o.marginUsd * o.leverage, mids);
+  if (!units) return 'no conversion price';
+  const riskUsd0 = Math.round(positionRiskUsd({ pair: inst.id, side: o.side, units, entry: fill, stop: o.stop }, mids) * 100) / 100;
+  a.open.push({
+    id: `${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    pair: inst.id,
+    side: o.side,
+    units,
+    entry: fill,
+    marginUsd: Math.round(o.marginUsd * 100) / 100,
+    leverage: o.leverage,
+    stop: o.stop,
+    target: o.target,
+    openedAt: now,
+    checkedT,
+    strategy: o.strategy,
+    ref: o.ref,
+    riskPct: o.riskPct,
+    ...(o.conviction ? { conviction: o.conviction } : {}),
+    ...(o.sniper ? { sniper: o.sniper } : {}),
+    ...(o.beAt != null ? { beAt: o.beAt } : {}),
+    ...(o.scaleAt != null ? { scaleAt: o.scaleAt, scaleFrac: o.scaleFrac ?? 0.5, scaled: !!o.scaled } : {}),
+    ...(o.tpTrailPx != null ? { tpTrailPx: o.tpTrailPx, tpFrac: o.tpFrac ?? 0, tpHit: !!o.tpHit } : {}),
+    ...(o.tf ? { tf: o.tf } : {}),
+    ...(o.trailPx != null ? { trailPx: o.trailPx } : {}),
+    ...(o.trailAtr != null ? { trailAtr: o.trailAtr } : {}),
+    ...(o.maxBars != null ? { maxBars: o.maxBars } : {}),
+    ...(o.exitWhen ? { exitWhen: o.exitWhen } : {}),
+    ...(riskUsd0 > 0 ? { riskUsd0 } : {}),
+  });
+  return null;
+}
+
 /**
  * Check stops / targets on the new 1-minute bars, then the stop-out. Mutates `a`. Pure apart from that. `mv.moved` is
  * set when a stop moved without an event (the profit lock trailing) — the caller saves the account then too.
@@ -615,6 +659,40 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
       if (t + 60_000 <= now) p.checkedT = t;
     }
   }
+  // v18.4 resting limit orders: filled on the 1-minute candles like the backtester, expired ones dropped
+  if (a.orders?.length) {
+    const keep: RestingOrder[] = [];
+    for (const o of a.orders) {
+      if (now > o.expiresAt) {
+        events.push(`${o.pair} (${o.strategy}): its limit order expired unfilled`);
+        continue;
+      }
+      const q = quotes[o.pair];
+      if (!q || q.stale) {
+        keep.push(o);
+        continue;
+      }
+      const inst = instrument(o.pair)!;
+      const half = halves[o.pair] ?? (inst.spreadPips * inst.pip) / 2;
+      let fill: number | null = null;
+      for (const [t, h, l, , op] of q.bars) {
+        if (t < o.placedAt - 60_000) continue;
+        // a buy limit sits on the ask (mid + half), a sell limit on the bid (mid − half)
+        const touched = o.side === 1 ? l + half <= o.limit : h - half >= o.limit;
+        if (!touched) continue;
+        const openX = op !== undefined && Number.isFinite(op) ? op + o.side * half : null;
+        fill = openX !== null && (o.side === 1 ? openX < o.limit : openX > o.limit) ? openX : o.limit;
+        break;
+      }
+      if (fill === null) {
+        keep.push(o);
+        continue;
+      }
+      const err = fillOrder(a, o, fill, mids, now, q.bars[q.bars.length - 1]?.[0] ?? now);
+      events.push(err ? `${o.pair} (${o.strategy}): limit order not filled — ${err}` : `filled ${o.side === 1 ? 'long' : 'short'} ${o.pair} (${o.strategy}) on its ${o.kind === 'pullback' ? 'pullback' : 'limit'} order at ${fill.toPrecision(6)}`);
+    }
+    a.orders = keep;
+  }
   const v = view(a, mids, halves);
   // v17: never a margin call on made-up prices — every open market needs a quote this tick
   if (v.marginLevelPct !== null && v.marginLevelPct <= STOP_OUT_PCT && a.open.every((p) => mids[p.pair] !== undefined)) {
@@ -706,6 +784,31 @@ export interface LabOpenTrade {
   trailAtr?: number | null;
   maxBars?: number | null;
   exitWhen?: string | null;
+  /** v18.4: the strategy's tested way in is a resting order — the limit (mid price) and when it expires */
+  order?: { kind: 'limit' | 'pullback'; limit: number; until: number } | null;
+}
+
+/** v18.4: a resting limit order on the bot account (entries.ts, picked on the first 70%); filled by `tick` against the
+ * 1-minute candles like the backtester (at the limit, or at the minute's open when it gapped past), cancelled when it
+ * expires, when the lab's trade ends, or at the weekend flatten. */
+export interface RestingOrder extends ExitPlan {
+  id: string;
+  pair: string;
+  side: 1 | -1;
+  /** mid price; a buy fills when the ask reaches it, a sell when the bid does */
+  limit: number;
+  kind: 'limit' | 'pullback';
+  placedAt: number;
+  expiresAt: number;
+  ref: string;
+  strategy: string;
+  stop: number;
+  target: number | null;
+  marginUsd: number;
+  leverage: number;
+  riskPct: number;
+  conviction?: Conviction | null;
+  sniper?: { votes: number; of: number } | null;
 }
 
 /** v16: a trade's sniper votes. */
@@ -1043,10 +1146,15 @@ export class Practice {
 
   private async checkOne(acct: AcctId): Promise<void> {
     const a = await this.load(acct);
-    if (!a.open.length) return;
-    const q = await this.quotes(this.neededIds(a));
+    if (!a.open.length && !a.orders?.length) return;
+    const q = await this.quotes(this.neededIds(a, (a.orders ?? []).map((o) => o.pair)));
     const mv = { moved: false };
     const ev = tick(a, q, Date.now(), mv, this.carryFor);
+    // v18.4: nothing rests over the weekend
+    if (acct === 'bot' && marketClock(Date.now()).flattenNow && a.orders?.length) {
+      ev.push(`cancelled ${a.orders.length} limit order${a.orders.length > 1 ? 's' : ''} for the weekend`);
+      a.orders = [];
+    }
     if (acct === 'bot' && marketClock(Date.now()).flattenNow && a.open.length) {
       const mids: Record<string, number> = {};
       for (const x of Object.values(q)) mids[x.id] = x.mid;
@@ -1197,6 +1305,27 @@ export class Practice {
         // v17: an old cached price is never used to close anything
         return qq && !qq.stale ? (side === 1 ? qq.bid : qq.ask) : null;
       };
+      // v18.4: a resting order whose lab trade ended (or whose limit moved) is cancelled; a filled one is a position now
+      if (a.orders?.length) {
+        const keep: RestingOrder[] = [];
+        for (const o of a.orders) {
+          if (!inScope(o.ref)) {
+            keep.push(o);
+            continue;
+          }
+          const lab = byRef.get(o.ref);
+          if (!lab && opts.pairsSeen && !opts.pairsSeen.has(o.pair)) {
+            keep.push(o);
+            continue;
+          }
+          if (!lab || !lab.order) {
+            events.push(`cancelled the ${o.pair} (${o.strategy}) limit order: its signal is over`);
+            continue;
+          }
+          keep.push(o);
+        }
+        a.orders = keep;
+      }
       let moved = 0;
       for (const p of [...a.open]) {
         if (!p.ref || !inScope(p.ref)) continue;
@@ -1256,7 +1385,7 @@ export class Practice {
       a.peakUsd = Math.max(a.peakUsd ?? a.startUsd, v0.equityUsd);
       const ddPct = a.peakUsd > 0 ? Math.max(0, (1 - v0.equityUsd / a.peakUsd) * 100) : 0;
       const ddF = ddFactor(ddPct);
-      const held = new Set([...a.open.map((p) => p.ref), ...a.closed.slice(0, 200).map((p) => p.ref)]);
+      const held = new Set([...a.open.map((p) => p.ref), ...(a.orders ?? []).map((o) => o.ref), ...a.closed.slice(0, 200).map((p) => p.ref)]);
       const clock = marketClock(Date.now());
       const noted = new Set<string>();
       const note = (key: string, e: string) => {
@@ -1330,7 +1459,7 @@ export class Practice {
       const stratKey = (ref: string) => ref.split(':').slice(0, 2).join(':');
       const perStrategy = new Map<string, number>();
       const perTf = new Map<string, number>();
-      for (const p of a.open) {
+      for (const p of [...a.open, ...(a.orders ?? [])]) {
         if (!p.ref) continue;
         perStrategy.set(stratKey(p.ref), (perStrategy.get(stratKey(p.ref)) ?? 0) + 1);
         perTf.set(tfOfRef(p.ref), (perTf.get(tfOfRef(p.ref)) ?? 0) + 1);
@@ -1399,7 +1528,11 @@ export class Practice {
           skip(t, qq?.stale ? 'only an old price right now (feed hiccup)' : 'no live price', true);
           continue;
         }
-        const entry = t.side === 1 ? qq.ask : qq.bid;
+        const entryNow = t.side === 1 ? qq.ask : qq.bid;
+        // v18.4: a tested limit / pullback entry rests at its limit unless the price is already there (then it is a
+        // market fill at a price as good as the limit, exactly what the backtest assumed)
+        const resting = t.order && Date.now() < t.order.until && (t.side === 1 ? entryNow > t.order.limit : entryNow < t.order.limit) ? t.order : null;
+        const entry = resting ? resting.limit : entryNow;
         const dist = (entry - t.stop) * t.side;
         if (!(dist > 0)) {
           skip(t, 'price already past its stop');
@@ -1462,6 +1595,15 @@ export class Practice {
           continue;
         }
         const actual = Math.round(((margin * lev * (dist / entry)) / v.equityUsd) * 10_000) / 100;
+        if (resting) {
+          const order: RestingOrder = { id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, pair: t.pair, side: t.side, limit: resting.limit, kind: resting.kind, placedAt: Date.now(), expiresAt: resting.until, ref: t.ref, strategy: t.strategy, stop: t.stop, target: t.target, marginUsd: Math.round(margin * 100) / 100, leverage: lev, riskPct: actual, ...planOf(t), tf, ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}) };
+          a.orders = [...(a.orders ?? []), order];
+          perStrategy.set(sk, (perStrategy.get(sk) ?? 0) + 1);
+          perTf.set(tf, (perTf.get(tf) ?? 0) + 1);
+          if (rep) rep.opened++;
+          events.push(`placed a ${resting.kind === 'pullback' ? 'pullback' : 'limit'} order to ${t.side === 1 ? 'buy' : 'sell'} ${t.pair} (${t.strategy}, ${tf}) at ${resting.limit.toPrecision(6)}, good until ${new Date(resting.until).toISOString().slice(11, 16)} UTC, risking ${actual}%${heatNote}`);
+          continue;
+        }
         const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}), maxQuoteAgeMs: BOT.quoteAgeMsByTf[tf] ?? 10 * 60_000, feedDelayOk: tf === '1h' || tf === '4h' });
         const sure = snipe ? ` — SNIPER: ${snipe.votes} of ${snipe.of} checks agree, risking ${actual}% at ${lev}×` : conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
         events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${sure}${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}${heatNote}` : `skipped ${t.pair}: ${r.error}`);

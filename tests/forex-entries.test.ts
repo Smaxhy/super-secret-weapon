@@ -1,7 +1,7 @@
 /** v18 entry-timing lab: limit / pullback / confirmation entries in the engine, and the summary across strategies. */
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SIM, simulate, type SimOpts } from '../src/forex/engine';
-import { ENTRY, entryVariantRow, summarizeEntries, type EntryKind, type EntryVariantRow } from '../src/forex/entries';
+import { chooseEntry, ENTRY, entryVariantRow, summarizeEntries, type EntryKind, type EntryVariantRow } from '../src/forex/entries';
 import { buildCtx } from '../src/forex/ta';
 import { INSTRUMENTS, type Bar, type Signal } from '../src/forex/types';
 
@@ -147,5 +147,26 @@ describe('v18 entry summary across strategies', () => {
     const v: EntryVariantRow = entryVariantRow('confirm', { inSample: st(30, 0.1), outSample: st(12, 0.2, 2.4), all: st(42, 0.13) });
     expect(v.outTotalR).toBeCloseTo(2.4, 9);
     expect(v.outPf).toBe(1.5);
+  });
+});
+
+describe('v18.4 picking a live entry on the first 70% only', () => {
+  const v = (entry: EntryKind, inN: number, inAvg: number): EntryVariantRow => ({ entry, inN, inAvgR: inAvg, outN: 10, outAvgR: 0, outPf: null, allN: inN + 10, outTotalR: 0 });
+  it('keeps the market entry unless a limit variant filled enough and made clearly more in total and per trade', () => {
+    expect(chooseEntry([v('market', 100, 0.1), v('pullback', 80, 0.2), v('limit', 99, 0.11), v('confirm', 90, 0.5)])).toBe('pullback');
+    // more per trade but too few fills (under half the signals)
+    expect(chooseEntry([v('market', 100, 0.1), v('pullback', 40, 0.5)])).toBe('market');
+    // more per trade but not more in total (+0.4R < 0.5R)
+    expect(chooseEntry([v('market', 100, 0.1), v('limit', 52, 0.2)])).toBe('market');
+    // confirm never goes live even when it wins
+    expect(chooseEntry([v('market', 100, 0.1), v('confirm', 100, 1)])).toBe('market');
+    // too thin a record → market
+    expect(chooseEntry([v('market', 20, 0.1), v('pullback', 20, 1)])).toBe('market');
+  });
+  it('keeps last hour\'s pick through a near-tie', () => {
+    const vs = [v('market', 100, 0.1), v('pullback', 90, 0.2), v('limit', 90, 0.205)];
+    expect(chooseEntry(vs)).toBe('limit');
+    expect(chooseEntry(vs, 'pullback')).toBe('pullback');
+    expect(chooseEntry(vs, 'market')).toBe('limit'); // market is far behind: no hysteresis
   });
 });

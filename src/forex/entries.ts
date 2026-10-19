@@ -91,6 +91,26 @@ export function summarizeEntries(rows: ReadonlyArray<{ id: string; entryVariants
   });
 }
 
+/** v18.4: live limit entries. Picked on the FIRST 70% only, like filters and exits: a limit / pullback entry replaces
+ * the market entry for a strategy when it filled at least half of the signals there and made more TOTAL R (per
+ * trade × trades) by max(0.5R, 10%) AND more per trade; last hour's pick stays while within 10% / 0.2R of the best
+ * (no hourly flips). 'confirm' is graded but never picked (the bot has no "wait one bar" order yet). Pure. */
+export const LIVE_ENTRIES: EntryKind[] = ['limit', 'pullback'];
+export function chooseEntry(variants: ReadonlyArray<EntryVariantRow>, prev?: EntryKind, minN = 40): EntryKind {
+  const base = variants.find((v) => v.entry === 'market');
+  if (!base || base.inN < minN) return 'market';
+  const total = (v: EntryVariantRow) => v.inAvgR * v.inN;
+  const score = (v: EntryVariantRow) => total(v);
+  const ok = (v: EntryVariantRow) => LIVE_ENTRIES.includes(v.entry) && v.inN >= Math.max(minN, base.inN * 0.5) && v.inAvgR > base.inAvgR && total(v) - total(base) >= Math.max(0.5, Math.abs(total(base)) * 0.1);
+  let best: EntryVariantRow = base;
+  for (const v of variants) if (ok(v) && score(v) > score(best)) best = v;
+  if (prev && prev !== best.entry) {
+    const pv = variants.find((v) => v.entry === prev);
+    if (pv && (prev === 'market' || ok(pv)) && score(best) - score(pv) <= Math.max(0.2, Math.abs(score(best)) * 0.1)) return prev;
+  }
+  return best.entry;
+}
+
 /** The variant row from the lab's split stats. Pure. */
 export function entryVariantRow(entry: EntryKind, x: { inSample: RStats; outSample: RStats; all: RStats }): EntryVariantRow {
   return { entry, inN: x.inSample.n, inAvgR: x.inSample.avgR, outN: x.outSample.n, outAvgR: x.outSample.avgR, outPf: x.outSample.pf, allN: x.all.n, outTotalR: x.outSample.totalR };

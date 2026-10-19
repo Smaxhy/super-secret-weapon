@@ -42,7 +42,7 @@ import { deskFromBars, FX_DESK, type DeskOut } from './desk';
 import { alignTrend, decisionTimes, toDaily, trendSeries, withEnd, type SpanBar } from './mtf';
 import { buildMood, moodNow, moodSeries, riskOfLong, type MoodBook, type MoodNow } from './mood';
 import { FILTERS, FILTER_LABEL, allowFor, blockReason, chooseFilter, chooseVariant, filterCoverage, missingInput, preferVariant, type FilterEnv, type FilterKind } from './filters';
-import { ENTRIES, entryVariantRow, summarizeEntries, type EntrySummary, type EntryVariantRow } from './entries';
+import { chooseEntry, ENTRIES, ENTRY, entryVariantRow, summarizeEntries, type EntryKind, type EntrySummary, type EntryVariantRow } from './entries';
 import { SIZING, simulatePortfolio, stratFactorFromStats, stratFactorFromVerdict, volFactor, walkForward, weekOf, type PortfolioResult, type PTrade, type WalkForward, type WTrade } from './portfolio';
 import { newsStudy, type NewsStudy } from './news-study';
 import { EXITS, EXIT_LABEL, OWNER_EXITS, applyExit, type ExitKind } from './exits';
@@ -67,6 +67,8 @@ export const FX_CONFIG = {
   /** whole-bot backtest: base risk levels tried, and what a strategy needs on the first 70% to be picked */
   portfolioRiskPct: [0.5, 1, 2, 3, 5],
   pick: { minN: 40, minAvgR: 0.05, minPf: 1.15 },
+  /** v18.4: let a strategy trade with a limit / pullback entry once that proved better on its first 70% (entries.ts) */
+  liveEntries: true,
   /** walk-forward: re-pick every month from the trades closed in the previous N months */
   walkForward: { lookbackMonths: 6, minN: 15, minAvgR: 0.05, minPf: 1.15 },
   /** owner (v15 "more pips", v15.1 "a trailing SL for safety"): use a trailing stop-loss, else a trailing take-profit,
@@ -116,9 +118,10 @@ export interface Row {
   noLock?: { inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number };
   /** v18: the deflated Sharpe of its unseen trades (honest.ts) — P(the edge is real) given every row graded on them */
   stats?: RowStat;
-  /** v18 entry-timing lab: the same filter + exit with a limit / pullback / confirmation entry (graded only; the bot
-   * enters at the next open) */
+  /** v18 entry-timing lab: the same filter + exit with a limit / pullback / confirmation entry; v18.4: `entry` = the way in
+   * it trades with (picked on the first 70% only; 'market' unless a limit / pullback entry proved better there) */
   entryVariants?: EntryVariantRow[];
+  entry?: EntryKind;
   /** v18: R a trade earned (+) / paid (−) as overnight financing, first 70% / unseen 30% (inside the R above);
    * `known` = the rates feed covered its trades */
   fin?: { inAvgR: number; outAvgR: number; known: boolean };
@@ -337,7 +340,7 @@ export const FX_FILTERS_CHOSEN = 'fx:filters:chosen';
 /** v17.8: `fx:filters:chosen` / `fx:fast:chosen` = the picks + the 70/30 line they were made under (one number, or per chart) */
 export interface ChosenStore {
   oosFrom: number | Record<string, number>;
-  picks: Record<string, { f?: FilterKind; e?: ExitKind }>;
+  picks: Record<string, { f?: FilterKind; e?: ExitKind; n?: EntryKind }>;
 }
 /** v17.8: how far the 70/30 line may move back before last run's picks stop counting */
 export const PICK_LINE_SLACK_MS = 86_400_000;
@@ -347,7 +350,7 @@ export const PICK_LINE_SLACK_MS = 86_400_000;
  * pick made while those days were in-sample must not steer the variant graded on them now that they are unseen. A
  * forward move is harmless. The old unstamped format (and garbage) → nothing kept: one re-pick on deploy. Pure.
  */
-export function prevPicks(raw: string | null | undefined, tf: string, oosFrom: number): Record<string, { f?: FilterKind; e?: ExitKind }> {
+export function prevPicks(raw: string | null | undefined, tf: string, oosFrom: number): Record<string, { f?: FilterKind; e?: ExitKind; n?: EntryKind }> {
   let s: Partial<ChosenStore> | null;
   try {
     s = JSON.parse(raw ?? 'null') as Partial<ChosenStore> | null;
@@ -357,10 +360,10 @@ export function prevPicks(raw: string | null | undefined, tf: string, oosFrom: n
   if (!s || typeof s !== 'object' || !s.picks || typeof s.picks !== 'object') return {};
   const line = typeof s.oosFrom === 'number' ? s.oosFrom : s.oosFrom && typeof s.oosFrom === 'object' ? (s.oosFrom as Record<string, unknown>)[tf] : undefined;
   if (typeof line !== 'number' || !Number.isFinite(line) || !Number.isFinite(oosFrom) || line - oosFrom > PICK_LINE_SLACK_MS) return {};
-  const out: Record<string, { f?: FilterKind; e?: ExitKind }> = {};
+  const out: Record<string, { f?: FilterKind; e?: ExitKind; n?: EntryKind }> = {};
   for (const [k, v] of Object.entries(s.picks)) {
     if (!k.endsWith(`:${tf}`) || !v || typeof v !== 'object') continue;
-    out[k] = { ...(typeof v.f === 'string' ? { f: v.f } : {}), ...(typeof v.e === 'string' ? { e: v.e } : {}) };
+    out[k] = { ...(typeof v.f === 'string' ? { f: v.f } : {}), ...(typeof v.e === 'string' ? { e: v.e } : {}), ...(typeof v.n === 'string' ? { n: v.n } : {}) };
   }
   return out;
 }
@@ -592,8 +595,9 @@ export function slimTrade(t: Trade): Trade {
 export const tradeKey = (t: { strategy: string; tf: string; pair: string; entryT: number; keyT?: number }) => `${t.strategy}:${t.tf}:${t.pair}:${t.keyT ?? t.entryT}`;
 
 /** A lab trade as the bot account takes it (v15: with its trailing take-profit and the exit rules still in force). */
-export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction']; sniper?: LabOpenTrade['sniper']; dataWait?: string | null }): LabOpenTrade {
+export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction']; sniper?: LabOpenTrade['sniper']; dataWait?: string | null; order?: LabOpenTrade['order'] }): LabOpenTrade {
   return {
+    ...(o.order ? { order: o.order } : {}),
     ref: tradeKey(t),
     strategy: t.strategy,
     tf: t.tf,
@@ -755,7 +759,7 @@ export interface TfEval {
  * take-profit preferred where it tests as well — then each row's verdict against random entries on the same chart,
  * its paper results since `since` and its open trades. `onStrategy` sees each strategy's final variant.
  */
-export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: { oosFrom: number; since: number; weeks: number; prev: Record<string, { f?: FilterKind; e?: ExitKind }> }, onStrategy?: (x: StrategyResult) => void | Promise<void>): Promise<TfEval> {
+export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: { oosFrom: number; since: number; weeks: number; prev: Record<string, { f?: FilterKind; e?: ExitKind; n?: EntryKind }> }, onStrategy?: (x: StrategyResult) => void | Promise<void>): Promise<TfEval> {
   const rows: Row[] = [];
   const paperRows: PaperRow[] = [];
   const open: Trade[] = [];
@@ -851,25 +855,38 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
     // v18 pass 3: the chosen filter + exit with a different way in (entries.ts) — graded only, never picked: the
     // bot enters at the next open until the practice account can hold a limit order
     let entryVariants: EntryVariantRow[] | undefined;
+    const byEntry = new Map<EntryKind, Bucket>();
     if (s.id !== 'random') {
       entryVariants = [entryVariantRow('market', ch)];
       for (const k of ENTRIES) {
         if (k === 'market') continue;
-        const ts: Trade[] = [];
+        const b: Bucket = { trades: [], perPair: [] };
         for (const se of seriesTf) {
           const sigs = sigsBy.get(se)!;
           const mapped = exit === 'designed' ? sigs : sigs.map((sg, i) => applyExit(sg, exit, se.ctx, i));
-          ts.push(...simulate(se.inst, tf, se.ctx, s.id, mapped, allowFor(filter, se.env, style), { ...DEFAULT_SIM, entry: k }));
+          const ts = simulate(se.inst, tf, se.ctx, s.id, mapped, allowFor(filter, se.env, style), { ...DEFAULT_SIM, entry: k });
+          b.trades.push(...ts);
+          b.perPair.push({ pair: se.inst.id, ...rStats(ts) });
           if (se.ctx.bars.length > 8_000) await yieldNow();
         }
-        entryVariants.push(entryVariantRow(k, statsOf(ts, o.oosFrom)));
+        byEntry.set(k, b);
+        entryVariants.push(entryVariantRow(k, statsOf(b.trades, o.oosFrom)));
         await yieldNow();
       }
     }
     sigsBy.clear();
+    // v18.4: the way in it trades with — a limit / pullback entry only once it proved better on the first 70%. The row's
+    // record (and its paper trades) become that variant's; the signals on the newest bar stay market trades carrying
+    // the resting order the bot should place (a limit sim can't know yet whether that order fills).
+    const entry: EntryKind = s.id !== 'random' && FX_CONFIG.liveEntries && entryVariants ? chooseEntry(entryVariants, prev?.n) : 'market';
+    const eb = entry !== 'market' ? byEntry.get(entry) : undefined;
+    const chR = eb ? statsOf(eb.trades, o.oosFrom) : ch;
+    const vR = eb ? { trades: [...eb.trades, ...v.trades.filter((t) => t.reason === 'open')], perPair: eb.perPair } : v;
+    const doneR = eb ? eb.trades.filter((t) => t.reason !== 'open') : done;
+    byEntry.clear();
     // v18: the financing share of the chosen variant's R (same split as statsOf)
     const finOf = (ts: readonly Trade[]) => (ts.length ? ts.reduce((a, t) => a + (t.fin ?? 0), 0) / ts.length : 0);
-    const fin = s.id === 'random' ? undefined : { inAvgR: finOf(done.filter((t) => t.exitT < o.oosFrom)), outAvgR: finOf(done.filter((t) => t.entryT >= o.oosFrom)), known: done.some((t) => t.fin !== undefined) };
+    const fin = s.id === 'random' ? undefined : { inAvgR: finOf(doneR.filter((t) => t.exitT < o.oosFrom)), outAvgR: finOf(doneR.filter((t) => t.entryT >= o.oosFrom)), known: doneR.some((t) => t.fin !== undefined) };
     rows.push({
       id: s.id,
       name: s.name,
@@ -880,25 +897,26 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
       variants: fStats.map((x) => ({ filter: x.filter, ...vRow(x) })),
       exit,
       exitVariants: eStats.map((x) => ({ exit: x.exit, ...vRow(x) })),
-      all: ch.all,
-      inSample: ch.inSample,
-      outSample: ch.outSample,
-      tradesPerWeek: Math.round((done.length / o.weeks) * 10) / 10,
-      risk: FX_CONFIG.riskLevelsPct.map((r) => equityCurve(done, r, FX_CONFIG.maxLeverage)),
-      pairs: v.perPair.sort((a, b) => b.totalR - a.totalR).map((x) => ({ pair: x.pair, n: x.n, winPct: x.winPct, pf: x.pf, totalR: x.totalR })) as Row['pairs'],
+      ...(entry !== 'market' ? { entry } : {}),
+      all: chR.all,
+      inSample: chR.inSample,
+      outSample: chR.outSample,
+      tradesPerWeek: Math.round((doneR.length / o.weeks) * 10) / 10,
+      risk: FX_CONFIG.riskLevelsPct.map((r) => equityCurve(doneR, r, FX_CONFIG.maxLeverage)),
+      pairs: vR.perPair.sort((a, b) => b.totalR - a.totalR).map((x) => ({ pair: x.pair, n: x.n, winPct: x.winPct, pf: x.pf, totalR: x.totalR })) as Row['pairs'],
       verdict: 'no',
       why: '',
       ...(noLock ? { noLock } : {}),
       ...(entryVariants ? { entryVariants } : {}),
       ...(fin ? { fin } : {}),
     });
-    const paper = v.trades.filter((t) => t.entryT >= o.since);
+    const paper = vR.trades.filter((t) => t.entryT >= o.since);
     const pDone = paper.filter((t) => t.reason !== 'open');
     const pOpen = paper.filter((t) => t.reason === 'open');
     paperRows.push({ id: s.id, name: s.name, tf, stats: rStats(pDone), risk1: equityCurve(pDone, 1, FX_CONFIG.maxLeverage), open: pOpen.length });
     open.push(...pOpen);
     recent.push(...pDone);
-    await onStrategy?.({ s, style, key, tf, filter, exit, fStats, ch, trades: v.trades, done, raw: byFilter.get('none')!.trades });
+    await onStrategy?.({ s, style, key, tf, filter, exit, fStats, ch: chR, trades: vR.trades, done: doneR, raw: byFilter.get('none')!.trades });
   }
   // the verdict: against random entries with the same costs on the same chart
   const rnd = rows.find((r) => r.id === 'random');
@@ -1444,7 +1462,7 @@ export class ForexLab {
     // v17.8: last hour's picks only while the 70/30 line hasn't moved back (`prevPicks`); the old unstamped format is
     // ignored once (one re-pick after the deploy)
     const rawChosen = await this.redis.get(FX_FILTERS_CHOSEN).catch(() => null);
-    const prevChosen: Record<string, { f?: FilterKind; e?: ExitKind }> = Object.assign({}, ...FX_CONFIG.timeframes.map((tf) => prevPicks(rawChosen, tf, oosFrom)));
+    const prevChosen: Record<string, { f?: FilterKind; e?: ExitKind; n?: EntryKind }> = Object.assign({}, ...FX_CONFIG.timeframes.map((tf) => prevPicks(rawChosen, tf, oosFrom)));
     const rows: Row[] = [];
     const paperRows: PaperRow[] = [];
     const open: Trade[] = [];
@@ -1579,7 +1597,7 @@ export class ForexLab {
     const entries = summarizeEntries(rows);
     const financing = summarizeFinancing(rows);
     const lockSummary = summarizeLock(rows, DEFAULT_SIM.profitLock);
-    const chosenStore: ChosenStore = { oosFrom, picks: Object.fromEntries(rows.map((r) => [`${r.id}:${r.tf}`, { f: r.filter, e: r.exit }])) };
+    const chosenStore: ChosenStore = { oosFrom, picks: Object.fromEntries(rows.map((r) => [`${r.id}:${r.tf}`, { f: r.filter, e: r.exit, n: r.entry ?? 'market' }])) };
     await this.redis.set(FX_FILTERS_CHOSEN, JSON.stringify(chosenStore)).catch(() => undefined);
 
     // ── signal judge: learns on the first 70%, graded once on the unseen 30% ──
@@ -1885,7 +1903,19 @@ export class ForexLab {
       const se = seriesOf.get(`${t.pair}:${t.tf}`);
       const si = se ? signalIndex(se.ctx.bars, t.entryT, se.ctx.barMin) : -1;
       const dataWait = se && si >= 0 && row ? missingInput(row.filter, se.env, si, coverageOf(se)) : null;
+      // v18.4: the strategy's tested way in is a resting order → where it sits and how long it lives (bars after the signal)
+      const order = ((): LabOpenTrade['order'] => {
+        if (!row?.entry || row.entry === 'market' || row.entry === 'confirm' || !se || si < 0) return null;
+        const b = se.ctx.bars[si]!;
+        const atr = se.ctx.atr14[si]!;
+        const back = row.entry === 'pullback' ? ENTRY.pullbackAtr * (Number.isFinite(atr) && atr > 0 ? atr : 0) : 0;
+        const limit = b.c - t.side * back;
+        if (t.side === 1 ? limit <= t.stop : limit >= t.stop) return null;
+        const barMs = se.ctx.barMin * 60_000;
+        return { kind: row.entry, limit, until: b.t + barMs * (1 + (row.entry === 'limit' ? ENTRY.limitBars : ENTRY.pullbackBars)) };
+      })();
       return toLabTrade(t, {
+        order,
         chosen: chosen.has(`${t.strategy}:${t.tf}`),
         sizeF,
         prio: row ? row.all.avgR : -1,

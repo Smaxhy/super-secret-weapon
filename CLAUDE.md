@@ -691,6 +691,23 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   ring = the bot trades it now, from `/api/forex/bot` `chosen`). The Today card is the hero (`hero-glow card-accent`)
   and survives a P&L report without `periods`. Verified by building the dashboard and screenshotting it with
   Playwright (phone 390 px + desktop 1440 px, light + dark) against a stubbed API (scratchpad `shots/shoot.mjs`).
+- **v18.4 (Oct 19): resting limit orders — the entry lab goes live** (owner: "build the last feature"). `entries.ts`
+  `chooseEntry` (FIRST 70% only, like filters / exits): a limit / pullback entry replaces the market entry for a
+  strategy when it filled ≥ half the signals there and made more TOTAL R by max(0.5R, 10%) and more per trade;
+  hysteresis on last hour's pick (`fx:filters:chosen` picks now {f, e, n}); 'confirm' is graded but never live.
+  `FX_CONFIG.liveEntries`. Lab: pass 3 keeps each variant's trades; a row with `entry ≠ market` takes that variant's
+  record / paper trades / onStrategy trades (judge, conviction, honest stats see them), while the signals on the newest
+  bar stay market 'open' trades carrying `LabOpenTrade.order` {kind, limit (mid: signal close − ¼ ATR for a pullback),
+  until (signal + 1 / 3 bars)} (built in computeRun next to `toLabTrade`). Bot account (practice.ts): `RestingOrder`
+  (`PracticeAccount.orders`, ExitPlan + margin / leverage / risk / conviction / sniper), `syncBot` places one instead of
+  opening when the price hasn't reached the limit (same caps, sizing at the limit price; counted in `held`, per-strategy
+  and per-chart caps; already at / through the limit → market fill as before); cancelled when the lab's trade is gone
+  (`pairsSeen` guard as for positions), at expiry, and at the weekend flatten (`checkOne` now ticks accounts with only
+  orders); `tick` fills on the 1-minute candles like the backtester (`fillOrder`: a buy at the ask = low + half spread
+  ≤ limit → at the limit, or at the minute's open when it gapped past; a gap through the stop / target → dropped with a
+  reason; no margin → dropped). Fast charts (15m / 1m) stay market entries. Dashboard: Today card "Orders waiting to
+  fill", Strategies row badge with the way in. tests/forex-orders.test.ts (5) + chooseEntry tests. Synthetic e2e:
+  pullback won on 86% of rows there (noise mean-reverts) — real data decides which strategies actually switch.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

@@ -23,7 +23,8 @@ import { ConvictionCard, DeskCard, PortfolioCard, RiskCard, RollingCard, SniperC
 interface Conviction { tier: 'normal' | 'sure' | 'verySure'; conf: number; of: number; mult: number; lev: number | null }
 interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; /** v17.9 */ pnlPerPx?: number; units?: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number; tf?: string; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; closePending?: { reason: string; at: number } | null; /** v17.11 profit lock */ lock?: { at: number; to: number; gap: number } | null; locked?: boolean }
 interface Closed { id: string; pair: string; side: 1 | -1; entry: number; exit: number; pnlUsd: number; reason: string; closedAt: number; strategy?: string; tf?: string }
-interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[] }
+interface Order { id: string; pair: string; side: 1 | -1; limit: number; kind: 'limit' | 'pullback'; placedAt: number; expiresAt: number; strategy: string; tf?: string; stop: number; target: number | null; riskPct: number }
+interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[]; /** v18.4 resting limit orders */ orders?: Order[] }
 interface PlanSignal { tf: string; name: string; side: 1 | -1; verdict: string; tone: 'go' | 'wait' | 'no' }
 interface PlanMarket { id: string; label: string; price: number | null; status: 'trading' | 'waiting' | 'blocked' | 'watching'; headline: string; lean: { side: 1 | -1 | 0; why: string }; signals: PlanSignal[]; blocks: string[]; watchers: Record<string, number> }
 interface PlanLine { k: string; text: string; done?: boolean }
@@ -90,7 +91,7 @@ export function FxBot() {
     <Stack>
       <BotHero plan={plan} a={a ?? null} loaded={!!data} selectedId={selected?.id ?? null} onPick={pick} reads={reads.data} />
       {positions.length > 0 && <FxActiveTrade positions={positions} selectedId={selected?.id ?? null} onSelect={setSel} plan={plan?.trades ?? []} onClose={(id) => void close(id)} reads={reads.data} onReadsChanged={() => void reads.reload()} />}
-      <FxBrief plan={plan} riskMode={data?.riskMode ?? 'normal'} modes={data?.riskModes} equityUsd={a?.equityUsd ?? null} />
+      <FxBrief plan={plan} riskMode={data?.riskMode ?? 'normal'} modes={data?.riskModes} equityUsd={a?.equityUsd ?? null} orders={a?.orders ?? []} names={data?.names} />
       <FxPnl acct="bot" fallback={tiles} />
       <RiskModeCard mode={data?.riskMode ?? 'normal'} modes={data?.riskModes} portfolio={data?.portfolio ?? null} onChange={() => void reload()} />
       <MarketsCard plan={plan} />

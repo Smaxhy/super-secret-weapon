@@ -15,6 +15,7 @@ interface PlanTrade { id: string; pair: string; side: 1 | -1; name: string; tf: 
 interface Plan { at: number; summary: string; next: Array<{ tf: string; at: number }>; markets: PlanMarket[]; trades: PlanTrade[] }
 type RiskMode = 'normal' | 'aggressive' | 'max';
 interface RiskLimits { label: string; riskPct: number; leverage: number; maxOpen: number }
+interface Order { id: string; pair: string; side: 1 | -1; limit: number; kind: 'limit' | 'pullback'; expiresAt: number; strategy: string; tf?: string; riskPct: number }
 interface PnlData { equityUsd: number; startUsd: number; periods: { today: { pnlUsd: number; trades: number; wins: number }; week: { pnlUsd: number; trades: number; wins: number } } }
 
 const usd = (x: number) => `${x < 0 ? '−' : x > 0 ? '+' : ''}$${Math.abs(x).toFixed(2)}`;
@@ -30,7 +31,7 @@ const readGoal = () => {
   }
 };
 
-export function FxBrief({ plan, riskMode, modes, equityUsd }: { plan: Plan | null; riskMode: RiskMode; modes?: Record<RiskMode, RiskLimits>; equityUsd: number | null }) {
+export function FxBrief({ plan, riskMode, modes, equityUsd, orders = [], names = {} }: { plan: Plan | null; riskMode: RiskMode; modes?: Record<RiskMode, RiskLimits>; equityUsd: number | null; orders?: Order[]; names?: Record<string, string> }) {
   const tz = new Date().getTimezoneOffset();
   const { data: pnl } = useApi<PnlData>(`/api/forex/pnl?acct=bot&tz=${tz}`, 60_000);
   const [goal, setGoal] = useState(readGoal);
@@ -121,6 +122,22 @@ export function FxBrief({ plan, riskMode, modes, equityUsd }: { plan: Plan | nul
             </ul>
           )}
         </div>
+
+        {/* v18.4 resting orders: the tested way in for this strategy is a limit — it waits for the price to come back */}
+        {orders.length > 0 && (
+          <div>
+            <div className="mb-1 text-xs font-semibold text-muted">Orders waiting to fill</div>
+            <ul className="space-y-1 text-sm">
+              {orders.map((o) => (
+                <li key={o.id} className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="font-medium text-ink">{o.side === 1 ? 'Buy' : 'Sell'} {o.pair} at {o.limit.toFixed(o.pair.includes('JPY') ? 3 : o.pair === 'XAUUSD' ? 2 : 5)}</span>
+                  <span className="text-ink-2">{names[o.strategy] ?? o.strategy}{o.tf ? ` (${o.tf})` : ''}</span>
+                  <span className="text-xs text-muted">— {o.kind === 'pullback' ? 'waiting for a pullback' : 'limit at the signal price'}, until {clock(o.expiresAt)} · {o.riskPct}% risk</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* open trades in one line each */}
         {plan && plan.trades.length > 0 && (
