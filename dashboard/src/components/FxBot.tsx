@@ -17,6 +17,7 @@ import { ReadChip, useTradeReads, type ReadsData } from './FxTradeRead';
 import { Icon } from './Icon';
 import { LiveBadge, LivePrice } from './LivePrice';
 import { Badge, Button, Card, Empty, Row, Rows, Stack, StatTile, Tabs, Timeline, useTab } from './ui';
+import { AdvancedFold, FxBrief } from './FxBrief';
 import { ConvictionCard, DeskCard, PortfolioCard, RiskCard, RollingCard, SniperCard, type ConvictionReport, type DeskReport, type JudgeReport, type Ledger, type PortfolioReport, type RiskSummary, type RollReport, type SniperReport } from './FxInsights';
 
 interface Conviction { tier: 'normal' | 'sure' | 'verySure'; conf: number; of: number; mult: number; lev: number | null }
@@ -89,17 +90,20 @@ export function FxBot() {
     <Stack>
       <BotHero plan={plan} a={a ?? null} loaded={!!data} selectedId={selected?.id ?? null} onPick={pick} reads={reads.data} />
       {positions.length > 0 && <FxActiveTrade positions={positions} selectedId={selected?.id ?? null} onSelect={setSel} plan={plan?.trades ?? []} onClose={(id) => void close(id)} reads={reads.data} onReadsChanged={() => void reads.reload()} />}
+      <FxBrief plan={plan} riskMode={data?.riskMode ?? 'normal'} modes={data?.riskModes} equityUsd={a?.equityUsd ?? null} />
       <FxPnl acct="bot" fallback={tiles} />
       <RiskModeCard mode={data?.riskMode ?? 'normal'} modes={data?.riskModes} portfolio={data?.portfolio ?? null} onChange={() => void reload()} />
       <MarketsCard plan={plan} />
       <ChecksCard plan={plan} log={data?.log ?? []} />
-      <RollingCard r={data?.rolling} chooser={data?.chooser} ledger={data?.ledger} names={data?.names} />
-      <SniperCard s={data?.sniper} />
-      <ConvictionCard c={data?.conviction} />
-      <PortfolioCard p={data?.portfolio} judgeOn={!!data?.judge?.active} />
-      <DeskCard d={data?.desk} />
-      <RiskCard r={data?.risk} />
-      <HowItWorks judgeOn={!!data?.judge?.active} dropped={data?.dropped ?? []} plan={plan} />
+      <AdvancedFold>
+        <RollingCard r={data?.rolling} chooser={data?.chooser} ledger={data?.ledger} names={data?.names} />
+        <SniperCard s={data?.sniper} />
+        <ConvictionCard c={data?.conviction} />
+        <PortfolioCard p={data?.portfolio} judgeOn={!!data?.judge?.active} />
+        <DeskCard d={data?.desk} />
+        <RiskCard r={data?.risk} />
+        <HowItWorks judgeOn={!!data?.judge?.active} dropped={data?.dropped ?? []} plan={plan} />
+      </AdvancedFold>
       <Card title="Closed trades" action={<Button size="sm" variant="ghost" onClick={() => void reset()}>Reset to $1,000</Button>}>
         {!a?.closed.length ? <p className="text-sm text-ink-2">None yet.</p> : (
           <Rows>

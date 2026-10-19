@@ -656,6 +656,15 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   - Tests: forex-stats (8), forex-hmm (4), forex-honest (5), forex-desk (8), forex-entries (11), forex-financing (9).
     Synthetic e2e (14 markets × 12.4k bars, in-process): hourly run ≈ 46 s. Verified on SYNTHETIC candles only — read
     the real cards on the VPS; the first run after deploy re-picks filters / exits once.
+- **v18.1 (Oct 19): the "Today" brief** (owner: "$50+ a day, 2 good trades at 3%; I need to know what the bot's thinking,
+  what trades it's leading into; the new features are hard to index"). Told plainly: $50/day on $1k = 5%/day — only the
+  aggressive / max risk modes make a $50 day possible and losing days scale the same. `components/FxBrief.tsx`: the
+  Auto-bot page now opens with **Today** — a daily goal (localStorage `fx.goal`, default $50; tap to change) with today's
+  bot P&L / trades / wins from `/api/forex/pnl` and a progress bar, what a winning trade pays in each risk mode (risk% ×
+  equity, the low end of a 1–1.5R winner), which way it leans (plan `markets[].lean` as badges), "closest to a trade"
+  (plan signals with tone 'wait' + why), open trades one line each with the next exit rule, next look. The research
+  cards (rolling picker, sniper, conviction, honest test, desk, risk, how it trades) are folded under "Under the hood"
+  (`AdvancedFold`, remembered in `fx.adv`). Display only.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
