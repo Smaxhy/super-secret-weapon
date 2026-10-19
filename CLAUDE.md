@@ -412,8 +412,17 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
       state changes go to the bot log; `fx:learn`.
     - Synthetic e2e (14 markets × 12.4k bars): weekday hourly run ≈ 37 s (first run of a week builds the random
       pickers), Saturday run with the luck meter ≈ 52 s. tests: forex-rolling, forex-luck, forex-risk, forex-learner,
-      forex-v17b. Still to build: offload the lab into a forked child (flag off first), Dukascopy tail refresh / gap
-      fill for FX, missing-input waits with coverage, judge quant features.
+      forex-v17b.
+    - **Judge quant inputs** (judge.ts, +8: `volF`, `hurst`, `ouZ` (side × OU z120), `carry`, `cot`, `mom3` (1 / 5 / 20-day
+      momentum on its side), `roundAtr`, `costR` (spread at that hour ÷ stop)) with a **presence mask**
+      (`presenceMasks`, per chart × metal group = `judgeGroup`): a feature known in < 90% of the group's training trades
+      is blanked in training AND the exam (so "feed missing" can't stand for an older era); one known in ≥ 90% is
+      REQUIRED live — `judgeView` → missing → the trade WAITS ("the signal judge can't score it: missing …"; before,
+      an unscorable signal passed). `judgeKeeps` for the honest-test "judged" row and conviction cuts.
+    - **Missing filter inputs** (filters.ts `missingInput` + `filterCoverage`): a row tested WITH a filter whose data is
+      missing at the signal bar (but was there for ≥ 80% of the first 70%) → `LabOpenTrade.dataWait` → the trade
+      waits (both labs). Positioning on metals (never there) never blocks. Backtests unchanged.
+    - Still to build: offload the lab into a forked child (flag off first), Dukascopy tail refresh / gap fill for FX.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

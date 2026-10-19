@@ -21,7 +21,7 @@ import { signalsFor, simulate, WARMUP } from './engine';
 import { STRATEGIES, runsOn, strategyById, styleOf } from './strategies';
 import { to4h } from './ta';
 import { INSTRUMENTS, TF_MIN, type Bar, type Instrument, type Trade } from './types';
-import { allowFor, blockReason } from './filters';
+import { allowFor, blockReason, filterCoverage, missingInput } from './filters';
 import { applyExit } from './exits';
 import { stratFactorFromVerdict, volFactor } from './portfolio';
 import { marketClock } from './calendar';
@@ -444,6 +444,7 @@ export class FastLab {
           fired.push({ id: s.id, name: s.name, side: sig.side, allowed: why === null, why, chosen: chosenRows.some((r) => r.id === s.id) });
         }
         if (fired.length) byPair[inst.id] = fired;
+        let cov: ReturnType<typeof filterCoverage> | null = null;
         for (const row of followRows) {
           const s = strategyById(row.id);
           if (!s) continue;
@@ -457,7 +458,10 @@ export class FastLab {
             const si = signalIndex(se.ctx.bars, t.entryT, se.ctx.barMin);
             const conf = si >= 0 ? agreeCount(se.env, si, t.side) : 0;
             const b = boostFor(tierOf(conf, false), this.report?.conviction?.[tf]);
-            labOpen.push(toLabTrade(t, { chosen: isChosen, sizeF, prio: row.all.avgR, judge: null, conviction: { tier: b.tier, conf, of: maxConfirmations(tf, false), mult: b.mult, lev: b.lev } }));
+            // v17: a check it was tested with has no data at the signal bar right now → the trade waits
+            cov = cov ?? (se.env ? filterCoverage(se.env, Math.floor(se.ctx.bars.length * 0.7)) : {});
+            const dataWait = si >= 0 ? missingInput(row.filter ?? 'none', se.env, si, cov) : null;
+            labOpen.push(toLabTrade(t, { chosen: isChosen, sizeF, prio: row.all.avgR, judge: null, conviction: { tier: b.tier, conf, of: maxConfirmations(tf, false), mult: b.mult, lev: b.lev }, dataWait }));
           }
         }
         await yieldNow();

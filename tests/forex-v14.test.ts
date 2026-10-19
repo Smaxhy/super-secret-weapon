@@ -263,6 +263,9 @@ describe('signal judge + rolling test + market links', () => {
     const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
     return Array.from({ length: n }, (_, k) => {
       const x = new Float64Array(JUDGE_FEATURES.length).map(() => rnd() * 2 - 1);
+      // v17: chart and market type are real categories (the presence mask groups by them)
+      x[JUDGE_FEATURES.indexOf('tf')] = k % 3 ? 1 : 4;
+      x[JUDGE_FEATURES.indexOf('metal')] = k % 7 ? 0 : 1;
       const good = informative ? x[1]! > 0.2 : rnd() > 0.5;
       const r = good ? (rnd() < 0.7 ? 1.5 : -1) : rnd() < 0.3 ? 1.5 : -1;
       return { x, r, t: k };

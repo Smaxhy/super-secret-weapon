@@ -112,3 +112,59 @@ describe('v17 restricted learner in the bot record', () => {
     expect(JSON.parse(r.m.get('fx:learn')!).keys['bad:1h'].state).toBe('off');
   });
 });
+
+import { JUDGE_FEATURES, judgeView, presenceMasks, trainJudge, type JudgeRow } from '../src/forex/judge';
+
+describe('v17 judge: quant inputs with a presence mask', () => {
+  const F = JUDGE_FEATURES.length;
+  const idx = (f: (typeof JUDGE_FEATURES)[number]) => JUDGE_FEATURES.indexOf(f);
+  const row = (k: number, cot: boolean): JudgeRow => {
+    const x = new Float64Array(F).fill(0);
+    x[idx('tf')] = 1;
+    x[idx('metal')] = 0;
+    x[idx('side')] = k % 2 ? 1 : -1;
+    x[idx('hurst')] = (k % 7) / 7;
+    x[idx('cot')] = cot ? ((k * 37) % 11) / 5 - 1 : NaN;
+    return { x, r: (k % 7) / 7 > 0.5 ? 1 : -1, t: k * 3_600_000, exitT: k * 3_600_000 + 1 };
+  };
+  it('a reading known in < 90% of training trades is blanked; one known ≥ 90% is required live (missing → wait)', async () => {
+    // cot known in only the newer half of history: it must not be used (it would stand for "the newer period")
+    const rows = Array.from({ length: 1200 }, (_, k) => row(k, k > 500));
+    const m = presenceMasks(rows.slice(0, 840));
+    expect(m.masked['1:0']).toContain(idx('cot'));
+    expect(m.required['1:0']).toContain(idx('hurst'));
+    const { model } = await trainJudge(rows, 840 * 3_600_000);
+    expect(model).not.toBeNull();
+    const live = Float64Array.from(rows[1000]!.x);
+    expect(judgeView(model!, live).p).not.toBeNull();
+    live[idx('hurst')] = NaN; // a required reading is missing now
+    const v = judgeView(model!, live);
+    expect(v.p).toBeNull();
+    expect(v.missing).toMatch(/snap back/);
+    // a blanked one missing doesn't matter
+    const live2 = Float64Array.from(rows[1000]!.x);
+    live2[idx('cot')] = NaN;
+    expect(judgeView(model!, live2).p).not.toBeNull();
+  });
+});
+
+import { filterCoverage, missingInput, type FilterEnv } from '../src/forex/filters';
+
+describe('v17 missing filter inputs (live guard)', () => {
+  const env = (mood: number[], cot: number[]): FilterEnv => ({ tf: '1h', gap: new Float64Array(mood.length).fill(0.5), h4: new Int8Array(mood.length), d1: new Int8Array(mood.length), mood: Float64Array.from(mood), riskLong: 0.5, cot: Float64Array.from(cot) });
+  it('waits when a filter input that was there in the tested history is missing now; never for one that was rarely there', () => {
+    const n = 100;
+    const e = env(
+      Array.from({ length: n }, (_, i) => (i === 99 ? NaN : 0.3)),
+      Array.from({ length: n }, () => NaN),
+    );
+    const cov = filterCoverage(e, 70);
+    expect(cov.mood).toBe(1);
+    expect(cov.cot).toBe(0);
+    expect(missingInput('mood', e, 99, cov)).toMatch(/market mood/);
+    expect(missingInput('all', e, 99, cov)).toMatch(/market mood/);
+    expect(missingInput('mood', e, 98, cov)).toBeNull();
+    expect(missingInput('crowd', e, 99, cov)).toBeNull(); // positioning was never there (e.g. metals): never blocks
+    expect(missingInput('none', e, 99, cov)).toBeNull();
+  });
+});

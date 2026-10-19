@@ -34,11 +34,11 @@ import { INSTRUMENTS, MOOD_SYMBOLS, STRENGTH_PAIRS, TF_MIN, type Bar, type Instr
 import { buildStrength, gapSeries, scoreAt, strengthNow, type StrengthBook, type StrengthNow } from './strength';
 import { alignTrend, decisionTimes, toDaily, trendSeries, withEnd, type SpanBar } from './mtf';
 import { buildMood, moodNow, moodSeries, riskOfLong, type MoodBook, type MoodNow } from './mood';
-import { FILTERS, FILTER_LABEL, allowFor, blockReason, chooseFilter, chooseVariant, preferVariant, type FilterEnv, type FilterKind } from './filters';
+import { FILTERS, FILTER_LABEL, allowFor, blockReason, chooseFilter, chooseVariant, filterCoverage, missingInput, preferVariant, type FilterEnv, type FilterKind } from './filters';
 import { SIZING, simulatePortfolio, stratFactorFromStats, stratFactorFromVerdict, volFactor, walkForward, weekOf, type PortfolioResult, type PTrade, type WalkForward, type WTrade } from './portfolio';
 import { newsStudy, type NewsStudy } from './news-study';
 import { EXITS, EXIT_LABEL, OWNER_EXITS, applyExit, type ExitKind } from './exits';
-import { judgeFeatures, judgeProb, trainJudge, type JudgeModel, type JudgeReport, type JudgeRow } from './judge';
+import { judgeFeatures, judgeKeeps, judgeView, trainJudge, type JudgeModel, type JudgeReport, type JudgeRow } from './judge';
 import { alignAt, mtdSeries, pairRanks, strengthRanks, z24Series, type TimeSeries } from './intermarket';
 import { extraVotes, gradeSniper, SNIPER, type SniperReport } from './sniper';
 import { heatmapFor, type Heatmap } from './heatmap';
@@ -412,7 +412,7 @@ export function slimTrade(t: Trade): Trade {
 export const tradeKey = (t: { strategy: string; tf: string; pair: string; entryT: number; keyT?: number }) => `${t.strategy}:${t.tf}:${t.pair}:${t.keyT ?? t.entryT}`;
 
 /** A lab trade as the bot account takes it (v15: with its trailing take-profit and the exit rules still in force). */
-export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction']; sniper?: LabOpenTrade['sniper'] }): LabOpenTrade {
+export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction']; sniper?: LabOpenTrade['sniper']; dataWait?: string | null }): LabOpenTrade {
   return {
     ref: tradeKey(t),
     strategy: t.strategy,
@@ -421,6 +421,7 @@ export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: 
     side: t.side,
     entryT: t.entryT,
     entry: t.entry,
+    ...(o.dataWait ? { dataWait: o.dataWait } : {}),
     stop: t.stop,
     target: t.target,
     chosen: o.chosen,
@@ -1152,7 +1153,7 @@ export class ForexLab {
     judgeRows.length = 0;
     // ── v15.2 bigger size when more sure: judge cut points from the first 70%, tiers graded on the unseen 30% ──
     const hasJudge = judgeModel !== null;
-    const pOf = (x: Float64Array | undefined) => (judgeModel && x ? judgeProb(judgeModel, x) : null);
+    const pOf = (x: Float64Array | undefined) => (judgeModel && x ? judgeView(judgeModel, x).p : null);
     const cuts = hasJudge ? judgeCuts(convPend.filter((c) => c.exitT < oosFrom).map((c) => pOf(c.x)!)) : { pHi: null, pTop: null };
     const confOf = new Map<string, number>();
     for (const c of convPend) confOf.set(c.key, confirmations(c.agree, pOf(c.x), cuts));
@@ -1188,7 +1189,7 @@ export class ForexLab {
         ? simulatePortfolio(
             poolNew.filter((t) => {
               const x = judgeX.get(tradeKey(t));
-              return !x || judgeProb(judgeModel!, x) >= judgeModel!.threshold;
+              return !x || judgeKeeps(judgeModel!, x);
             }),
             { ...base, ...upgraded, label: 'with the signal judge', baseRiskPct: 1 },
           )
@@ -1391,6 +1392,17 @@ export class ForexLab {
     this.labOpen = Object.fromEntries(open.filter((t) => chosen.has(`${t.strategy}:${t.tf}`)).map((t) => [`${t.strategy}:${t.tf}:${t.pair}`, t.entryT]));
     if (this.practice) {
       const rowOf = new Map(chosenRows.map((x) => [`${x.id}:${x.tf}`, x]));
+      // v17: how often each filter input was known on the first 70% of each series (for `missingInput`)
+      const covCache = new Map<Series, ReturnType<typeof filterCoverage>>();
+      const coverageOf = (se: Series) => {
+        let c = covCache.get(se);
+        if (!c) {
+          const upTo = se.ctx.bars.findIndex((b) => b.t >= oosFrom);
+          c = se.env ? filterCoverage(se.env, upTo < 0 ? se.ctx.bars.length : upTo) : {};
+          covCache.set(se, c);
+        }
+        return c;
+      };
       const sync = newSyncReport();
       const ev = await this.practice
         .syncBot(
@@ -1399,15 +1411,22 @@ export class ForexLab {
             const pk = rollLive ? pickOf.get(`${t.strategy}:${t.tf}`) : undefined;
             const sizeF = (pk ? pk.sizeF : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1);
             const x = judgeX.get(tradeKey(t));
-            const p = judgeModel && x ? judgeProb(judgeModel, x) : null;
-            const judgeOk = !judge?.active || !judgeModel || p === null || p >= judgeModel.threshold;
+            const jv = judgeModel && x ? judgeView(judgeModel, x) : null;
+            const p = jv?.p ?? null;
+            // v17: an active judge that can't score a signal (a reading it relies on is missing now) → the trade waits
+            const judgeOk = !judge?.active || !judgeModel || !jv || (jv.p !== null && jv.p >= judgeModel.threshold);
             const conf = confirmations(openAgree.get(tradeKey(t)) ?? 0, p, cuts);
             const b = boostFor(tierOf(conf, hasJudge), conviction);
+            // v17: the row's filter has no data at the signal bar right now (it had in the tested history) → wait
+            const se = seriesOf.get(`${t.pair}:${t.tf}`);
+            const si = se ? signalIndex(se.ctx.bars, t.entryT, se.ctx.barMin) : -1;
+            const dataWait = se && si >= 0 && row ? missingInput(row.filter, se.env, si, coverageOf(se)) : null;
             return toLabTrade(t, {
               chosen: chosen.has(`${t.strategy}:${t.tf}`),
               sizeF,
               prio: row ? row.all.avgR : -1,
-              judge: p === null ? null : { p: Math.round(p * 100) / 100, ok: judgeOk, need: judgeModel ? Math.round(judgeModel.threshold * 100) / 100 : null },
+              dataWait,
+              judge: !jv ? null : { p: p === null ? 0 : Math.round(p * 100) / 100, ok: judgeOk, need: judgeModel ? Math.round(judgeModel.threshold * 100) / 100 : null, ...(jv.missing ? { missing: jv.missing } : {}) },
               conviction: { tier: b.tier, conf, of: maxConfirmations(t.tf, hasJudge), mult: b.mult, lev: b.lev },
               sniper: (() => {
                 const ex = openExtra.get(tradeKey(t));

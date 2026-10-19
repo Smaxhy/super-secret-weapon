@@ -109,6 +109,46 @@ export function blockReason(kind: FilterKind, e: FilterEnv, i: number, side: 1 |
   return null;
 }
 
+/** v17: which data each filter reads (a filter passes when its data is missing — fine in a backtest, not live). */
+const FILTER_INPUTS: Partial<Record<FilterKind, Array<[keyof FilterEnv, string]>>> = {
+  strength: [['gap', 'currency strength']],
+  mood: [['mood', 'market mood (S&P / VIX feed)']],
+  all: [['gap', 'currency strength'], ['mood', 'market mood (S&P / VIX feed)']],
+  regime: [['er', 'trend / chop reading']],
+  volf: [['volF', 'volatility forecast']],
+  hurst: [['hurst', 'continue / snap-back reading']],
+  crowd: [['cot', 'CFTC positioning']],
+};
+
+/** Share of the first `upTo` bars where each filter input is known (pure). */
+export function filterCoverage(e: FilterEnv, upTo: number): Partial<Record<keyof FilterEnv, number>> {
+  const out: Partial<Record<keyof FilterEnv, number>> = {};
+  for (const k of ['gap', 'mood', 'er', 'volF', 'hurst', 'cot'] as const) {
+    const a = e[k] as Float64Array | undefined;
+    if (!a) continue;
+    const n = Math.min(upTo, a.length);
+    let ok = 0;
+    for (let i = 0; i < n; i++) if (Number.isFinite(a[i]!)) ok++;
+    out[k] = n ? ok / n : 0;
+  }
+  return out;
+}
+
+/**
+ * v17 live guard: the strategy was tested WITH this filter, but the data the filter reads is missing at the signal bar
+ * (a feed is down) although it was there for ≥ 80% of the tested history → trading now would be an untested variant,
+ * so the trade waits. Data that was rarely there in the history (e.g. positioning on metals) never blocks. Pure.
+ */
+export function missingInput(kind: FilterKind, e: FilterEnv | null, i: number, coverage: Partial<Record<keyof FilterEnv, number>>, minCover = 0.8): string | null {
+  if (!e) return null;
+  for (const [k, label] of FILTER_INPUTS[kind] ?? []) {
+    const a = e[k] as Float64Array | undefined;
+    if (!a || (coverage[k] ?? 0) < minCover) continue;
+    if (!Number.isFinite(a[i]!)) return `its ${label} check has no data right now (feed missing): waiting rather than trading it untested`;
+  }
+  return null;
+}
+
 /** Entry veto for the engine (undefined = allow everything). */
 export function allowFor(kind: FilterKind, e: FilterEnv | null, style: Style = 'neutral'): ((i: number, side: 1 | -1) => boolean) | undefined {
   if (kind === 'none' || !e) return undefined;

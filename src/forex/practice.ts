@@ -547,13 +547,15 @@ export interface LabOpenTrade {
   entryT: number;
   /** v17: the lab's fill (the bot doesn't chase a price that ran far from it) */
   entry?: number;
+  /** v17: a check it was tested with has no data right now (feed down) — the trade waits */
+  dataWait?: string | null;
   stop: number;
   target: number | null;
   chosen: boolean;
   sizeF?: number;
   prio?: number;
   /** the signal judge: win probability, whether it passes, the bar it needs (null = no judge view) */
-  judge?: { p: number; ok: boolean; need: number | null } | null;
+  judge?: { p: number; ok: boolean; need: number | null; /** v17: what it relies on that is missing right now (the trade waits) */ missing?: string } | null;
   /** v15.2: how sure the bot is (confirmations out of `of`) and the size multiple + leverage that earns (proven tiers only) */
   conviction?: Conviction | null;
   /** v16: the sniper's vote count, the level it needs, whether this trade gets the sniper size, and the votes in words */
@@ -1076,6 +1078,17 @@ export class Practice {
         if (tfCap !== undefined && (perTf.get(tf) ?? 0) >= tfCap) {
           note(`${t.ref}:tf`, `skipped ${t.pair} (${t.strategy}): already ${tfCap} ${tf} trades open`);
           skip(t, `already ${tfCap} ${tf} trades open`);
+          continue;
+        }
+        if (t.dataWait) {
+          note(`${t.ref}:data`, `waiting on ${t.pair} (${t.strategy}): ${t.dataWait}`);
+          skip(t, t.dataWait, true);
+          continue;
+        }
+        if (t.judge && !t.judge.ok && t.judge.missing) {
+          // v17: the judge can't score it right now (a reading it learned from is missing) — wait, don't trade blind
+          note(`${t.ref}:judge`, `waiting on ${t.pair} (${t.strategy}): the signal judge is missing ${t.judge.missing}`);
+          skip(t, `the signal judge can't score it: missing ${t.judge.missing}`, true);
           continue;
         }
         if (t.judge && !t.judge.ok) {

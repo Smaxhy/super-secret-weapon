@@ -10,7 +10,9 @@ import { boost, cutPoints, DEFAULT_TREE_OPTIONS, sigmoid, treeValue, type Matrix
 import type { FilterEnv } from './filters';
 import type { Ctx } from './ta';
 import { volRatioAt } from './engine';
-import { TF_MIN, type Timeframe } from './types';
+import { instrument, TF_MIN, type Timeframe } from './types';
+import { roundStep } from './strategies';
+import { spreadMultAt } from './spreads';
 
 export const JUDGE_FEATURES = [
   'side',
@@ -37,6 +39,15 @@ export const JUDGE_FEATURES = [
   'tf',
   'stopAtr',
   'targetR',
+  // v17: the quant readings and costs
+  'volF',
+  'hurst',
+  'ouZ',
+  'carry',
+  'cot',
+  'mom3',
+  'roundAtr',
+  'costR',
 ] as const;
 export type JudgeFeature = (typeof JUDGE_FEATURES)[number];
 
@@ -65,6 +76,14 @@ export const JUDGE_LABEL: Record<JudgeFeature, string> = {
   tf: 'hourly or 4-hour',
   stopAtr: 'stop distance',
   targetR: 'target size',
+  volF: 'volatility forecast',
+  hurst: 'moves continue vs snap back',
+  ouZ: 'stretch from its 120-bar mean, on its side',
+  carry: 'interest-rate gap on its side',
+  cot: 'hedge-fund positioning on its side',
+  mom3: 'momentum on 1 / 5 / 20 days, on its side',
+  roundAtr: 'room to the next round number',
+  costR: 'spread cost vs the stop',
 };
 
 export const JUDGE_CONFIG = {
@@ -125,6 +144,21 @@ export function judgeFeatures(c: Ctx, env: FilterEnv | null, i: number, side: 1 
   set('tf', TF_MIN[extra.tf] / 60);
   const risk = Math.abs(px - stop);
   set('targetR', target === null || !(risk > 0) ? 0 : Math.abs(target - px) / risk);
+  // v17: quant readings (NaN = not known at that bar; the presence mask in `trainJudge` decides which ones it may use)
+  set('volF', fin(env?.volF?.[i]));
+  set('hurst', fin(env?.hurst?.[i]));
+  set('ouZ', side * fin(c.quant?.z120[i]));
+  set('carry', side * fin(env?.carry?.[i]));
+  set('cot', side * fin(env?.cot?.[i]));
+  const hs = [24, 120, 480].map((h) => Math.max(2, Math.round((h * 60) / c.barMin)));
+  if (i >= hs[2]!) set('mom3', side * hs.reduce((s, n) => s + Math.sign(c.close[i]! - c.close[i - n]!), 0));
+  const step = roundStep(c.pair);
+  if (step && okA) {
+    const next = side === 1 ? Math.floor(px / step) * step + step : Math.ceil(px / step) * step - step;
+    set('roundAtr', Math.abs(next - px) / a);
+  }
+  const inst = instrument(c.pair);
+  if (inst && risk > 0) set('costR', (inst.spreadPips * inst.pip * spreadMultAt(c.pair, c.bars[i]!.t, i > 0 ? c.bars[i - 1]!.t : null)) / risk);
   return x;
 }
 
@@ -134,7 +168,69 @@ export interface JudgeModel {
   /** take a signal only when its win probability is at least this */
   threshold: number;
   keepShare: number;
+  /**
+   * v17 presence mask per group (chart × metal): features known in < 90% of that group's training trades are blanked
+   * (so "the feed was missing" can't stand for an older period), and the ones known in ≥ 90% are required live
+   * (missing live → the judge can't score it → the trade waits).
+   */
+  masked?: Record<string, number[]>;
+  required?: Record<string, number[]>;
 }
+
+/** v17: share of training rows a feature must be known in, per group, to be used (else blanked) */
+export const JUDGE_PRESENCE = 0.9;
+const TF_IDX = JUDGE_FEATURES.indexOf('tf');
+const METAL_IDX = JUDGE_FEATURES.indexOf('metal');
+/** the presence group of a feature row: chart (hours) × metal */
+export const judgeGroup = (x: ArrayLike<number>) => `${x[TF_IDX]}:${x[METAL_IDX]}`;
+
+/** v17: masks from the training rows (pure). */
+export function presenceMasks(rows: ReadonlyArray<{ x: ArrayLike<number> }>, share = JUDGE_PRESENCE): { masked: Record<string, number[]>; required: Record<string, number[]> } {
+  const n = new Map<string, number>();
+  const known = new Map<string, Float64Array>();
+  for (const r of rows) {
+    const g = judgeGroup(r.x);
+    n.set(g, (n.get(g) ?? 0) + 1);
+    const k = known.get(g) ?? known.set(g, new Float64Array(JUDGE_FEATURES.length)).get(g)!;
+    for (let f = 0; f < JUDGE_FEATURES.length; f++) if (Number.isFinite(r.x[f]!)) k[f]!++;
+  }
+  const masked: Record<string, number[]> = {};
+  const required: Record<string, number[]> = {};
+  for (const [g, k] of known) {
+    const total = n.get(g)!;
+    masked[g] = [];
+    required[g] = [];
+    for (let f = 0; f < JUDGE_FEATURES.length; f++) (k[f]! / total >= share ? required[g]! : masked[g]!).push(f);
+  }
+  return { masked, required };
+}
+
+/** a copy of x with that group's blanked features set to NaN */
+function applyMask(x: ArrayLike<number>, masked: readonly number[] | undefined): Float64Array {
+  const out = Float64Array.from(x as ArrayLike<number>);
+  for (const f of masked ?? []) out[f] = NaN;
+  return out;
+}
+
+/**
+ * v17: the judge's view of one signal: its win probability, or why it can't score it (a reading it relies on is
+ * missing right now, or a chart × metal group it never trained on). Pure.
+ */
+export function judgeView(m: JudgeModel, x: ArrayLike<number>): { p: number | null; missing: string | null } {
+  if (!m.masked || !m.required) return { p: judgeProb(m, x), missing: null };
+  const g = judgeGroup(x);
+  const req = m.required[g];
+  if (!req) return { p: null, missing: 'no training trades like this one (chart / market type)' };
+  const gone = req.filter((f) => !Number.isFinite(x[f]!));
+  if (gone.length) return { p: null, missing: gone.map((f) => JUDGE_LABEL[JUDGE_FEATURES[f]!]).join(', ') };
+  return { p: judgeProb(m, applyMask(x, m.masked[g])), missing: null };
+}
+
+/** v17: does the judge keep this signal (unscorable = not kept)? Pure. */
+export const judgeKeeps = (m: JudgeModel, x: ArrayLike<number>) => {
+  const v = judgeView(m, x);
+  return v.p !== null && v.p >= m.threshold;
+};
 
 export function judgeProb(m: Pick<JudgeModel, 'trees' | 'base'>, x: ArrayLike<number>): number {
   let z = m.base;
@@ -220,6 +316,14 @@ export async function trainJudge(rows: readonly JudgeRow[], oosFrom: number, cfg
   const oos = rows.filter((r) => r.t >= oosFrom);
   const empty = (why: string): { model: null; report: JudgeReport } => ({ model: null, report: { active: false, why, trainedOn: ins.length, tested: oos.length, auc: null, threshold: null, keepPct: 100, allR: r2(avg(oos.map((r) => r.r))), keptR: r2(avg(oos.map((r) => r.r))), skippedR: 0, allWinPct: 0, keptWinPct: 0, importance: [] } });
   if (ins.length < cfg.minTrain) return empty(`needs ${cfg.minTrain} trades from the first 70% to learn from (has ${ins.length})`);
+  // v17: blank the features that were often unknown in training (per chart × metal) — in training AND in the exam
+  const masks = presenceMasks(ins);
+  const masked = (r: JudgeRow): JudgeRow => ({ ...r, x: applyMask(r.x, masks.masked[judgeGroup(r.x)]) });
+  return trainMasked(ins.map(masked), oos, masks, cfg, empty);
+}
+
+async function trainMasked(ins: readonly JudgeRow[], oosRaw: readonly JudgeRow[], masks: { masked: Record<string, number[]>; required: Record<string, number[]> }, cfg: typeof JUDGE_CONFIG, empty: (why: string) => { model: null; report: JudgeReport }): Promise<{ model: JudgeModel | null; report: JudgeReport }> {
+  void empty;
   const cut = Math.floor(ins.length * 0.8);
   // the trees learn only from trades finished before the newest 20% starts (same purge, one level down)
   const vFrom = ins[cut]?.t ?? Infinity;
@@ -243,8 +347,10 @@ export async function trainJudge(rows: readonly JudgeRow[], oosFrom: number, cfg
     const sc = score(k);
     if (sc.s > best.s) best = { keep: k, th: sc.th, s: sc.s };
   }
-  // the exam (once) on the unseen 30%
-  const op = oos.map((r) => judgeProb(model0, r.x));
+  // the exam (once) on the unseen 30% — scored the way the live bot scores (unscorable = not kept)
+  const view = { ...model0, threshold: best.th, keepShare: best.keep, ...masks };
+  const oos = oosRaw;
+  const op = oos.map((r) => judgeView(view, r.x).p ?? -Infinity);
   const a = auc(op, oos.map((r) => (r.r > 0 ? 1 : 0)));
   const kept = oos.filter((_, k) => op[k]! >= best.th);
   const skipped = oos.filter((_, k) => op[k]! < best.th);
@@ -270,7 +376,7 @@ export async function trainJudge(rows: readonly JudgeRow[], oosFrom: number, cfg
             .filter(Boolean)
             .join('; ')}`;
   return {
-    model: { trees: fit.trees, base: fit.base, threshold: best.th, keepShare: best.keep },
+    model: { trees: fit.trees, base: fit.base, threshold: best.th, keepShare: best.keep, masked: masks.masked, required: masks.required },
     report: {
       active: pass,
       why,
