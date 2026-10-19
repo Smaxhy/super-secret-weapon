@@ -144,7 +144,7 @@ export function FxTrade() {
         </div>
       </Card>
       <div className="xl:sticky xl:top-20 xl:self-start">
-      <Card title={`Trade ${pair}`} action={<LiveBadge fx={fx} />} subtitle={q ? `Bid ${q.bid.toFixed(dp(pair))} · Ask ${q.ask.toFixed(dp(pair))} · spread ${((q.ask - q.bid) / p).toFixed(1)} pips · ${qLive ? 'live price, about once a second' : q.source === 'oanda' ? 'live OANDA price' : q.source === 'dukascopy' ? 'Dukascopy backup price (Yahoo failed)' : 'Yahoo price (slower; connect OANDA data in Setup)'}` : 'Loading price…'}>
+      <Card title={`Trade ${pair}`} action={<LiveBadge fx={fx} />} subtitle={q ? `Bid ${q.bid.toFixed(dp(pair))} · Ask ${q.ask.toFixed(dp(pair))} · spread ${((q.ask - q.bid) / p).toFixed(1)} pips · ${qLive ? 'live price, several times a second' : q.source === 'oanda' ? 'live OANDA price' : q.source === 'dukascopy' ? 'Dukascopy backup price (Yahoo failed)' : 'Yahoo price (slower, up to ~20 s behind)'}` : 'Loading price…'}>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
           <NumberInput label="Amount (margin)" value={amount} onChange={setAmount} min={1} step={10} unit="$" />
           <div>

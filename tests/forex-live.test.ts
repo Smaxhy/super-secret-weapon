@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type Redis from 'ioredis';
 import { newAccount, Practice, view, type LiveSource, type PracticePosition } from '../src/forex/practice';
-import { pushPayload, startLivePush } from '../src/forex/live-push';
+import { LIVE_PUSH_MS, pushPayload, startLivePush } from '../src/forex/live-push';
 import { bus, type BusEvent } from '../src/lib/bus';
 import type { LiveTick } from '../src/forex/pyth';
 
@@ -53,7 +53,7 @@ describe('v17.9 practice prices: live Pyth first for currency pairs', () => {
     expect(e.source).toBe('yahoo');
   });
 
-  it('checks stops every 5 s while live prices flow, every 15 s otherwise, never two at once', async () => {
+  it('checks stops every second while live prices flow (v17.10), every 15 s otherwise, never two at once', async () => {
     vi.useFakeTimers();
     const p = new Practice({} as Redis);
     let flowing = true;
@@ -62,7 +62,7 @@ describe('v17.9 practice prices: live Pyth first for currency pairs', () => {
     (p as unknown as { checkOpen: () => Promise<void> }).checkOpen = check;
     p.start();
     await vi.advanceTimersByTimeAsync(20_000);
-    expect(check).toHaveBeenCalledTimes(4);
+    expect(check).toHaveBeenCalledTimes(20);
     flowing = false;
     check.mockClear();
     await vi.advanceTimersByTimeAsync(30_000);
@@ -96,16 +96,18 @@ describe('v17.9 live P&L sensitivity', () => {
 });
 
 describe('v17.9 live push', () => {
-  it('folds the last second of ticks per pair into one bus event with bid / ask; quiet seconds send nothing', async () => {
+  it('folds the ticks since the last push per pair into one bus event with bid / ask; quiet moments send nothing', async () => {
     vi.useFakeTimers();
     let emit: ((t: LiveTick[]) => void) | null = null;
     const seen: BusEvent[] = [];
     const listen = (e: BusEvent) => seen.push(e);
     bus.on('event', listen);
-    const stop = startLivePush({ onTicks: (fn) => ((emit = fn), () => (emit = null)) }, 1_000);
+    const stop = startLivePush({ onTicks: (fn) => ((emit = fn), () => (emit = null)) });
     emit!([{ id: 'EURUSD', mid: 1.1, conf: 0.0001, t: 1 }, { id: 'FOOBAR', mid: 1, conf: 0, t: 1 }]);
     emit!([{ id: 'EURUSD', mid: 1.1002, conf: 0.0001, t: 2 }]);
-    await vi.advanceTimersByTimeAsync(1_000);
+    // v17.10: pushed within 200 ms (was once a second)
+    await vi.advanceTimersByTimeAsync(LIVE_PUSH_MS);
+    expect(seen.filter((e) => e.type === 'fx')).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(3_000);
     stop();
     bus.off('event', listen);

@@ -716,7 +716,8 @@ export class Practice {
   constructor(private readonly redis: Redis) {}
 
   start(): void {
-    // v17.9: stops / targets every 5 s while live prices flow (every 15 s otherwise); never two checks at once
+    // v17.9 / v17.10: stops / targets every second while live prices flow (was 5 s; every 15 s otherwise); never two
+    // checks at once
     let last = 0;
     this.timer = setInterval(() => {
       const now = Date.now();
@@ -726,7 +727,7 @@ export class Practice {
       void this.serial(() => this.checkOpen())
         .catch(() => undefined)
         .finally(() => (this.checking = false));
-    }, 5_000);
+    }, 1_000);
   }
   stop(): void {
     if (this.timer) clearInterval(this.timer);

@@ -499,6 +499,16 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     `startLivePush`: the last second's ticks per pair → bus event `{ type: 'fx', data: { t, px: { PAIR: [mid, bid, ask,
     priceT] } } }` (WebSocket), at most 1/s, only when something moved. Dashboard `hooks/useFxLive.ts` (live P&L =
     pnlUsd + (live exit − px) × pnlPerPx). tests: forex-pyth, forex-live, fx-live.
+  - **v17.10 faster live prices** (owner: "the chart changes but the price doesn't, way faster, less than a second"):
+    bot push every 200 ms (`LIVE_PUSH_MS`, was 1 s), dashboard re-renders up to 10×/s (`RENDER_MS` 100, was 500),
+    practice stop / target check every 1 s while Pyth flows (was 5 s). **Backup in the browser**
+    (`dashboard/src/lib/pythDirect.ts` `PythDirect`): when the bot's 'fx' push is quiet > 4 s (or never came: Pyth down
+    on the VPS, older server, socket down) and the page is visible, the page opens Hermes SSE itself (Hermes CORS is
+    permissive), same feed plan as the bot (ported `planFeeds` / `compose`, plan cached a day in localStorage
+    `fx.pyth.plan`), bid / ask from the bot's last spread per pair else the typical spread; closed once the bot's push is
+    steady 20 s, or the page is hidden (every Hermes message carries a several-KB signed blob — too heavy on a phone).
+    `FxLive.src` 'bot' | 'direct' → LIVE badge tooltip. Display only: the practice account still fills at the BOT's
+    price. tests/fx-live-direct.test.ts.
   - **Price stretch** (`src/forex/stretch.ts`, no outside feed): per currency the 63-day return in normal-move units
     (averaged over its pairs, ≥ 3 pairs), ranked within its own last ~2 years (520 days, ≥ 120 ranked) → −1…+1; a
     pair = base − quote (−2…+2, the CFTC score's scale; metals none; > 4 days old → none). `MarketBook.stretch`

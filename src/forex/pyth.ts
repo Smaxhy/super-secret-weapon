@@ -1,6 +1,6 @@
 /**
  * v17.9 live prices from Pyth (Hermes, free, no account): the aggregated FX prices many on-chain venues settle on,
- * streamed over server-sent events (~1 update a second per pair while forex is open). Currency pairs only — the lab
+ * streamed over server-sent events (an update about every 400 ms while forex is open). Currency pairs only — the lab
  * tests gold / silver on Yahoo's COMEX futures, and Pyth's metals are spot (a $10–30 gap would hit stops that were
  * never hit). Feed ids are looked up by symbol once a day (`/v2/price_feeds`): a pair Pyth doesn't list directly is
  * taken from its inverse or built from the two USD legs (EUR/JPY = EUR/USD × USD/JPY). Keeps the newest price per
@@ -235,7 +235,7 @@ export class PythLive {
     return { ...p, bars: (this.bars.get(id) ?? []).map((b) => [...b] as MinuteBar) };
   }
 
-  /** prices arrived in the last 10 s (the practice account checks stops every 5 s then) */
+  /** prices arrived in the last 10 s (the practice account checks stops every second then) */
   flowing(now = this.clock()): boolean {
     return now - this.lastTickAt < 10_000;
   }

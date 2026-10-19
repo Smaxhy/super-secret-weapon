@@ -19,7 +19,7 @@ import { backoffDelay, connStatus, SILENT_TIMEOUT_MS, type ConnStatus } from '..
 import { refreshAll } from '../lib/refresh';
 
 export interface BotEvent {
-  /** 'fx' (v17.9): live forex prices, { t, px: { EURUSD: [mid, bid, ask, priceT] } } about once a second (useFxLive) */
+  /** 'fx' (v17.9): live forex prices, { t, px: { EURUSD: [mid, bid, ask, priceT] } } every 200 ms while they move (useFxLive) */
   type: 'token' | 'safety' | 'evaluation' | 'trade' | 'stats' | 'positions' | 'hello' | 'hb' | 'fx';
   data: Record<string, unknown>;
 }
