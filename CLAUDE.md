@@ -422,7 +422,21 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     - **Missing filter inputs** (filters.ts `missingInput` + `filterCoverage`): a row tested WITH a filter whose data is
       missing at the signal bar (but was there for ≥ 80% of the first 70%) → `LabOpenTrade.dataWait` → the trade
       waits (both labs). Positioning on metals (never there) never blocks. Backtests unchanged.
-    - Still to build: offload the lab into a forked child (flag off first), Dukascopy tail refresh / gap fill for FX.
+    - **Dukascopy fill** (`src/forex/fill.ts` `fillFromDk`, `dukascopy.ts` `refreshDkTail`): currency pairs (traded +
+      strength crosses) whose Yahoo hourly candles are ≥ 2 behind (market open) or thin (< 400) get Dukascopy's last 3
+      days (each ≤ once / 10 min, 60 s budget, breaker), then hours missing from Yahoo in the last 14 days are filled
+      where the sources agreed before the gap (≥ 6 shared hours in the 3 days before, median |Δclose| ≤ 3 pips /
+      0.04%); with < 400 Yahoo bars the Dukascopy series alone. Metals never (futures vs spot). Fills are rebuilt each
+      run, never written into Yahoo's store; `DataAge.source` / `filled`. tests/forex-fill.test.ts.
+    - **Review fixes (v17.4d)**: the random pickers now draw only rows that could be picked (12+ trades) and size them
+      with the real picker's rule (else the yardstick was easier); their cache key = graded weeks + the rows' trades
+      closed before the last graded week ends (`nullKey`); the week's sizes are frozen with its list
+      (`RollPicksState.sizes`); live heat cap runs AFTER the currency cap at full size (the test's order) and counts
+      each open trade at the risk it opened with; `gradeHeat` hysteresis; learner: an off key stays off until its
+      chance passes 50% (no off ↔ half flapping), `fx:learn` loaded before the first `botRecord`; luck: shift ≥ 16 weeks
+      (`LUCK.minWeeks`; clears the longest look-back + hold) and a stored result older than 14 days / from another
+      70/30 line is not applied.
+    - Still to build: offload the lab into a forked child (flag off first) — the hourly run grows (≈ 37 s synthetic).
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

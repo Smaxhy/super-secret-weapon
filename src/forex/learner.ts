@@ -66,6 +66,8 @@ export function learnFromLedger(rows: readonly BotLedgerRow[], now: number, prev
     else if (n >= LEARN.minTradesDown && pPos < LEARN.downBelow) state = 'down';
     // the way back is slower than the way down: an off / down key stays there until the chance passes 50%
     if (state === 'on' && was !== 'on' && pPos < LEARN.backAbove) state = was === 'off' && n >= LEARN.minTradesOff ? 'off' : 'down';
+    // an 'off' key doesn't step to half size until its chance passes 50% either (no off ↔ half flapping near 20%)
+    if (state === 'down' && was === 'off' && pPos < LEARN.backAbove) state = 'off';
     const pct = Math.round(pPos * 100);
     const r2 = Math.round(meanR * 100) / 100;
     const why =

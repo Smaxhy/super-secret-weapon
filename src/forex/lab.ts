@@ -15,12 +15,13 @@ import type Redis from 'ioredis';
 import { buildCorrBook, gradeHeat, HEAT, roundedMatrix, type HeatGrade } from './risk';
 import { luckDowngrade, luckFor } from './luck';
 import { learnFromLedger, type LearnKey } from './learner';
-import { gradeRolling, randomPickerNull, ROLL, rollRow, rollWeeks, type NullStats, type RollReport, type RollRow, type RollTrade } from './rolling';
+import { gradeRolling, nullKey, randomPickerNull, ROLL, rollRow, rollWeeks, type NullStats, type RollReport, type RollRow, type RollTrade } from './rolling';
+import { FILL, fillFromDk, type FillResult } from './fill';
 import { dataAgeOf, staleReason, type DataAge } from './freshness';
 import { feeds } from './feeds';
 import { moduleLogger } from '../lib/logger';
 import { refreshInstrument, refreshSeries, loadBars, type FeedStatus } from './data';
-import { DK_META, installSpreadProfiles, loadDk, refreshDukascopy, stitchHistory, type DkMeta } from './dukascopy';
+import { DK_META, refreshDkTail, installSpreadProfiles, loadDk, refreshDukascopy, stitchHistory, type DkMeta } from './dukascopy';
 import { hasSpreadProfile } from './spreads';
 import { carrySeries, cotSeries, loadMacro, macroNow, refreshMacro, type MacroData } from './macro';
 import { RISK_MODES, newSyncReport, type HeatLive, type LabOpenTrade, type Practice, type SyncReport } from './practice';
@@ -256,6 +257,8 @@ export const FX_LEARN = 'fx:learn';
 export interface RollPicksState {
   week: number;
   keys: string[];
+  /** the week's size factor per key (frozen with the list) */
+  sizes?: Record<string, number>;
   active: boolean;
   prevKeys: string[] | null;
 }
@@ -733,7 +736,7 @@ export class ForexLab {
 
   start(): void {
     // keep the bot's decision log and check timeline across restarts
-    void this.redis
+    this.learnLoaded = this.redis
       .get(FX_LEARN)
       .then((raw) => {
         if (raw && !Object.keys(this.learned).length) this.learned = (JSON.parse(raw) as { keys: Record<string, LearnKey> }).keys ?? {};
@@ -875,7 +878,8 @@ export class ForexLab {
       await this.redis.set(FX_LUCK, JSON.stringify(out)).catch(() => undefined);
       log.info({ rows: Object.keys(out.rows).length, ms: Date.now() - t0 }, 'forex luck meter done');
     }
-    if (!store) return;
+    // a result from another 70/30 line or older than two weeks no longer describes these rows
+    if (!store || now - store.at > 14 * 86_400_000 || Math.abs(store.oosFrom - oosFrom) > 14 * 86_400_000) return;
     for (const r of rows) {
       const l = store.rows[`${r.id}:${r.tf}`];
       if (!l || l.variant !== `${r.filter}|${r.exit}`) continue;
@@ -912,6 +916,8 @@ export class ForexLab {
     const dropped = Object.entries(res).filter(([, v]) => v.n >= 12 && v.pnlUsd < 0).map(([k]) => k);
     const proven = new Set(Object.entries(res).filter(([, v]) => v.n >= 12 && v.pnlUsd > 0).map(([k]) => k));
     const down: Record<string, number> = {};
+    // the learner's states from before a restart must be in place first (else a switched-off key comes back too early)
+    await this.learnLoaded;
     let learned: Record<string, LearnKey> = this.learned;
     if (this.practice) {
       const practice = this.practice;
@@ -938,6 +944,7 @@ export class ForexLab {
   }
   /** v17: the restricted learner's last view per strategy:chart (loaded from `fx:learn` at start) */
   learned: Record<string, LearnKey> = {};
+  private learnLoaded: Promise<unknown> = Promise.resolve();
   private learnSig = '';
 
   private async doRun(refresh: boolean): Promise<FxReport | null> {
@@ -950,13 +957,29 @@ export class ForexLab {
     const h1ById = new Map<string, Bar[]>();
     // v16: Dukascopy's older bars in front of Yahoo's (FX only, when the seam lines up) → years more history to test on
     const nowT = Date.now();
-    for (const inst of INSTRUMENTS) h1ById.set(inst.id, stitchHistory(inst.id, await loadBars(this.redis, inst.id), await loadDk(this.redis, inst.id), nowT));
+    // v17: currency pairs whose Yahoo candles fell behind (or are thin) get Dukascopy's newest hours, then gaps are filled
+    // where the two sources agree (fill.ts; metals never — futures vs spot)
+    const yahooById = new Map<string, Bar[]>();
+    for (const id of [...INSTRUMENTS.map((i) => i.id), ...STRENGTH_PAIRS.map((p) => p.id)]) yahooById.set(id, await loadBars(this.redis, id));
+    const lagging = [...yahooById].filter(([id, b]) => !id.startsWith('XA') && (b.length < FILL.bootstrapBars || (marketClock(nowT).open && dataAgeOf(id, '1h', b, nowT, HOUR).status === 'stale'))).map(([id]) => id);
+    if (lagging.length) {
+      const tail = await refreshDkTail(this.redis, lagging, nowT).catch(() => ({}));
+      log.info({ lagging, tail }, 'forex: Yahoo behind on some markets, Dukascopy tail fetched');
+    }
+    const fillInfo: Record<string, { source: FillResult['source']; filled: number }> = {};
+    const filledBars = async (id: string) => {
+      const dk = await loadDk(this.redis, id);
+      const f = fillFromDk(id, yahooById.get(id) ?? [], dk, nowT);
+      fillInfo[id] = { source: f.source, filled: f.filled.length };
+      return stitchHistory(id, f.bars, dk, nowT);
+    };
+    for (const inst of INSTRUMENTS) h1ById.set(inst.id, await filledBars(inst.id));
     // v17: how many hourly candles behind each market is (a lagging feed → no new bot trades on that market)
-    this.dataAge = Object.fromEntries(INSTRUMENTS.map((inst) => [inst.id, dataAgeOf(inst.id, '1h', h1ById.get(inst.id) ?? [], nowT, HOUR)]));
+    this.dataAge = Object.fromEntries(INSTRUMENTS.map((inst) => [inst.id, { ...dataAgeOf(inst.id, '1h', h1ById.get(inst.id) ?? [], nowT, HOUR), ...(fillInfo[inst.id] ?? {}) }]));
     const strengthInput: Record<string, Bar[]> = {};
     for (const inst of INSTRUMENTS) if (inst.kind === 'fx') strengthInput[inst.id] = h1ById.get(inst.id)!;
     for (const p of STRENGTH_PAIRS) {
-      const b = stitchHistory(p.id, await loadBars(this.redis, p.id), await loadDk(this.redis, p.id), nowT);
+      const b = await filledBars(p.id);
       strengthInput[p.id] = b;
       if (!refresh) feed.push({ id: p.id, role: 'strength', bars: b.length, firstT: b[0]?.t ?? null, lastT: b[b.length - 1]?.t ?? null, error: null });
     }
@@ -1207,7 +1230,7 @@ export class ForexLab {
       // v17: the same bot with the correlated-risk cap (trades that move together count as one bet)
       const plain1 = levels.find((l) => l.baseRiskPct === 1) ?? null;
       heated = simulatePortfolio(poolNew, { ...base, ...upgraded, label: 'with the correlated-risk cap', baseRiskPct: 1, heat: { capPct: RISK_MODES.normal.heatCapPct, book: corr, minScale: HEAT.minScale } });
-      heatGrade = gradeHeat(heated, plain1);
+      heatGrade = gradeHeat(heated, plain1, this.heatNow?.active ?? (await this.redis.get(FX_HEAT).then((x) => !!(x && (JSON.parse(x) as { active?: boolean }).active)).catch(() => false)));
       // v16: the same bot with the sniper trades (K+ votes) at the sniper size (only when proven)
       const sniped =
         sniper.active && sniper.k !== null
@@ -1248,14 +1271,15 @@ export class ForexLab {
     // ── v17 rolling picker: re-picks the rows every week from their last 26 weeks; graded on the unseen weeks vs random pickers ──
     let rolling: RollReport | null = null;
     let rollKeys: string[] | null = null;
+    let rollSizes: Record<string, number> = {};
     try {
       const sim = { maxOpen: SIZING.maxOpen, leverage: SIZING.leverage, marginShare: SIZING.marginShare, baseRiskPct: 1, maxPerStrategy: SIZING.maxPerStrategy, prioritise: true, ccyCapPct: SIZING.ccyCapPct, ddSizing: true, flatSizing: false };
       const { w0, w1 } = rollWeeks(oosFrom, to);
-      const nullKey = `${w0}:${w1}:${rollRows.length}`;
+      const nk = nullKey(rollRows, w0, w1);
       let nul: NullStats | null = null;
       try {
         const c = JSON.parse((await this.redis.get(FX_ROLL_NULL)) ?? 'null') as { key: string; nul: NullStats } | null;
-        if (c?.key === nullKey) nul = c.nul;
+        if (c?.key === nk) nul = c.nul;
       } catch {
         nul = null;
       }
@@ -1264,15 +1288,18 @@ export class ForexLab {
         const tn = Date.now();
         nul = await randomPickerNull(rollRows, rollOos, w0, w1, sim, ROLL.nullDraws, ROLL.seed, yieldNow);
         log.info({ ms: Date.now() - tn, draws: ROLL.nullDraws }, 'forex random pickers built');
-        await this.redis.set(FX_ROLL_NULL, JSON.stringify({ key: nullKey, nul })).catch(() => undefined);
+        await this.redis.set(FX_ROLL_NULL, JSON.stringify({ key: nk, nul })).catch(() => undefined);
       }
       const prevPicks = JSON.parse((await this.redis.get(FX_ROLL_PICKS).catch(() => null)) ?? 'null') as RollPicksState | null;
       const nowW = weekOf(Date.now());
       rolling = gradeRolling(rollRows, rollOos, { oosFrom, to, now: Date.now(), sim, staticPool: poolNew, nul, wasActive: !!prevPicks?.active, prevKeys: prevPicks ? (prevPicks.week === nowW ? prevPicks.prevKeys : prevPicks.keys) : null });
       // the same week keeps its list (a mid-week filter / exit change doesn't flip it); a new week re-picks
       const have = new Set(rollRows.map((r) => r.key));
-      rollKeys = prevPicks && prevPicks.week === nowW ? prevPicks.keys.filter((k) => have.has(k)) : rolling.thisWeek.picks.map((p) => p.key);
-      const st: RollPicksState = { week: nowW, keys: rollKeys, active: rolling.active, prevKeys: prevPicks && prevPicks.week === nowW ? prevPicks.prevKeys : prevPicks?.keys ?? null };
+      const same = prevPicks && prevPicks.week === nowW;
+      rollKeys = same ? prevPicks.keys.filter((k) => have.has(k)) : rolling.thisWeek.picks.map((p) => p.key);
+      // the week's sizes are frozen with its list (a mid-week change can't fall back to another rule's size)
+      rollSizes = same && prevPicks.sizes ? prevPicks.sizes : Object.fromEntries(rolling.thisWeek.picks.map((p) => [p.key, p.sizeF]));
+      const st: RollPicksState = { week: nowW, keys: rollKeys, sizes: rollSizes, active: rolling.active, prevKeys: same ? prevPicks.prevKeys : prevPicks?.keys ?? null };
       await this.redis.set(FX_ROLL_PICKS, JSON.stringify(st)).catch(() => undefined);
       await this.redis.set(FX_ROLL, JSON.stringify(rolling)).catch(() => undefined);
     } catch (err) {
@@ -1287,7 +1314,7 @@ export class ForexLab {
     const rec = await this.botRecord();
     this.dropped = rec.dropped;
     const rollLive = rolling?.active && rollKeys ? new Set(rollKeys) : null;
-    const pickOf = new Map((rolling?.thisWeek.picks ?? []).map((p) => [p.key, p]));
+
     const chosenRows = rows.filter((x) => x.id !== 'random' && !rec.dropped.includes(`${x.id}:${x.tf}`) && (rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || FX_CONFIG.botAlways.includes(x.id)));
     const chosen = new Set(chosenRows.map((x) => `${x.id}:${x.tf}`));
     this.chosen = [...chosen];
@@ -1408,8 +1435,7 @@ export class ForexLab {
         .syncBot(
           open.map((t) => {
             const row = rowOf.get(`${t.strategy}:${t.tf}`);
-            const pk = rollLive ? pickOf.get(`${t.strategy}:${t.tf}`) : undefined;
-            const sizeF = (pk ? pk.sizeF : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1);
+            const sizeF = (rollLive ? rollSizes[`${t.strategy}:${t.tf}`] ?? 0.6 : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1);
             const x = judgeX.get(tradeKey(t));
             const jv = judgeModel && x ? judgeView(judgeModel, x) : null;
             const p = jv?.p ?? null;

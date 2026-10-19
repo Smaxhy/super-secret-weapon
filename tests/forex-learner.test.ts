@@ -47,4 +47,12 @@ describe('v17 restricted learner', () => {
     expect(learnFromLedger(rows, NOW, { 'z:1h': { state: 'off' } })['z:1h']!.state).toBe('off');
     expect(learnFromLedger(rows, NOW, { 'z:1h': { state: 'down' } })['z:1h']!.state).toBe('down');
   });
+
+  it('an off key does not step to half size until its chance passes 50%', () => {
+    const rows = Array.from({ length: 12 }, (_, k) => row('w:1h', k % 2 === 0 ? 1 : -1.6, k)); // chance ≈ 25%
+    const fresh = learnFromLedger(rows, NOW)['w:1h']!;
+    expect(fresh.pPos).toBeGreaterThan(LEARN.offBelow);
+    expect(fresh.state).toBe('down');
+    expect(learnFromLedger(rows, NOW, { 'w:1h': { state: 'off' } })['w:1h']!.state).toBe('off');
+  });
 });

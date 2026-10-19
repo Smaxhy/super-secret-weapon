@@ -157,6 +157,39 @@ export function stitchHistory(id: string, yahoo: readonly Bar[], dk: readonly Dk
   return [...older.map(({ t, o, h, l, c }) => ({ t, o, h, l, c })), ...yahoo];
 }
 
+/** v17: the newest hours of a few markets, fetched only for markets whose Yahoo candles fell behind (`fill.ts`). */
+export const DK_TAIL = { days: 3, minGapMs: 10 * 60_000, budgetMs: 60_000 };
+const tailAt = new Map<string, number>();
+
+/**
+ * Pull the last few days of hourly candles for `ids` from Dukascopy (each at most once per 10 minutes, the whole call at
+ * most `budgetMs`, nothing while Dukascopy's breaker is open) and merge them into the stored history. Never throws.
+ */
+export async function refreshDkTail(redis: Redis, ids: readonly string[], now = Date.now(), fetcher: Fetch = fetchDk): Promise<Record<string, { lastT: number | null; added: number; error: string | null }>> {
+  const out: Record<string, { lastT: number | null; added: number; error: string | null }> = {};
+  const t0 = Date.now();
+  for (const id of ids) {
+    if (Date.now() - t0 > DK_TAIL.budgetMs || !feeds.allow('dukascopy')) break;
+    if (now - (tailAt.get(id) ?? 0) < DK_TAIL.minGapMs) continue;
+    tailAt.set(id, now);
+    const have = await loadDk(redis, id);
+    const from = Math.max((have[have.length - 1]?.t ?? 0) - 2 * HOUR, now - DK_TAIL.days * DAY);
+    try {
+      const [bid, ask] = [await fetcher(id, 'bid', new Date(from), new Date(now)), await fetcher(id, 'ask', new Date(from), new Date(now))];
+      const fresh = midBars(id, bid, ask, now);
+      const prevLast = have[have.length - 1]?.t ?? 0;
+      const merged = mergeDk(have, fresh);
+      if (fresh.length) await saveDk(redis, id, merged);
+      out[id] = { lastT: merged[merged.length - 1]?.t ?? null, added: merged.filter((b) => b.t > prevLast).length, error: null };
+      feeds.ok('dk-history', { items: fresh.length, asOf: out[id]!.lastT });
+    } catch (err) {
+      out[id] = { lastT: have[have.length - 1]?.t ?? null, added: 0, error: (err as Error).message };
+      feeds.fail('dk-history', err);
+    }
+  }
+  return out;
+}
+
 /** Install the hourly spread profile of every market from its stored Dukascopy bars. */
 export async function installSpreadProfiles(redis: Redis, now = Date.now()): Promise<number> {
   let n = 0;

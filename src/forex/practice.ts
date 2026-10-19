@@ -1148,11 +1148,20 @@ export class Practice {
         // v15.6: the risk mode scales the base risk, leverage and every cap together
         const lev = snipe ? Math.max(SNIPER.leverage, L.leverage) : Math.max(conv?.lev ?? 0, L.leverage);
         let riskPct = snipe ? Math.max(SNIPER.riskPct, L.riskPct) * ddF : clampRisk(L.riskPct, L.riskPct * (t.sizeF ?? 1) * ddF * (conv?.mult ?? 1), conv ? L.convMaxRiskPct / L.riskPct : undefined);
-        // v17: trades that move together count as one bet — smaller, or skipped, when the combined risk is full (only
-        // once the honest test showed the cap cuts the drawdown; sniper trades stay outside it, as with the currency cap)
+        const exp = currencyExposure(a.open, mids, v.equityUsd);
+        const over = snipe ? null : exposureBlock(exp, t.pair, t.side, riskPct, L.ccyCapPct);
+        if (over) {
+          note(`${t.ref}:ccy`, `skipped ${t.pair} (${t.strategy}): already ${Math.abs(exp[over] ?? 0).toFixed(1)}% of the account riding on ${over}`);
+          skip(t, `already ${Math.abs(exp[over] ?? 0).toFixed(1)}% of the account riding on ${over}`);
+          continue;
+        }
+        // v17: trades that move together count as one bet — smaller, or skipped, when the combined risk is full. Checked
+        // after the currency cap at full size (the honest test's order), only once that test showed the cap cuts the
+        // drawdown; sniper trades stay outside it, as with the currency cap
         let heatNote = '';
         if (opts.heat?.active && !snipe && v.equityUsd > 0) {
-          const pos = a.open.filter((p) => !p.sniper).map((p) => ({ pair: p.pair, side: p.side, riskPct: (positionRiskUsd(p, mids) / v.equityUsd) * 100 }));
+          // each open trade counts with the risk it opened with (as in the honest test), not its trailed stop
+          const pos = a.open.filter((p) => !p.sniper).map((p) => ({ pair: p.pair, side: p.side, riskPct: p.riskPct ?? (positionRiskUsd(p, mids) / v.equityUsd) * 100 }));
           const room = maxRiskUnder(pos, { pair: t.pair, side: t.side }, L.heatCapPct, opts.heat.book, opts.heat.m);
           if (room < riskPct) {
             const tc = topCorrelated(pos, { pair: t.pair, side: t.side }, opts.heat.book, opts.heat.m);
@@ -1165,13 +1174,6 @@ export class Practice {
             heatNote = ` (smaller: ${withWhat})`;
             riskPct = room;
           }
-        }
-        const exp = currencyExposure(a.open, mids, v.equityUsd);
-        const over = snipe ? null : exposureBlock(exp, t.pair, t.side, riskPct, L.ccyCapPct);
-        if (over) {
-          note(`${t.ref}:ccy`, `skipped ${t.pair} (${t.strategy}): already ${Math.abs(exp[over] ?? 0).toFixed(1)}% of the account riding on ${over}`);
-          skip(t, `already ${Math.abs(exp[over] ?? 0).toFixed(1)}% of the account riding on ${over}`);
-          continue;
         }
         const notional = (v.equityUsd * riskPct) / 100 / (dist / entry);
         let margin = notional / lev;

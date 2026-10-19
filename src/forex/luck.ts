@@ -18,7 +18,9 @@ import type { Signal, Trade } from './types';
 import type { Series } from './lab';
 
 /** Fixed before any real result was seen. Never tune these on dashboard numbers. */
-export const LUCK = { twins: 20, pctl: 90, minWeeks: 2, seed: 7 };
+/** v17 review: the shift must clear the longest rule's look-back + hold (tsmom_long on 4h ≈ 80 days + 14-day holds), else
+ * a twin still "knows" the trend its signal came from */
+export const LUCK = { twins: 20, pctl: 90, minWeeks: 16, seed: 7 };
 
 const WEEK = 7 * 86_400_000;
 const yieldNow = () => new Promise<void>((r) => setImmediate(r));
@@ -156,6 +158,8 @@ export interface LuckInput {
   twins?: number;
   /** default `LUCK.seed` */
   seed?: number;
+  /** shortest shift in weeks (default `LUCK.minWeeks`) */
+  minWeeks?: number;
 }
 
 export interface LuckResult {
@@ -191,7 +195,7 @@ export async function luckFor(s: Strategy, series: readonly Series[], o: LuckInp
     const raw = signalsFor(se.ctx, s);
     const sigs = raw.map((sg, i) => applyExit(sg, o.exit, se.ctx, i));
     const { span } = twinWindow(se.ctx.bars.length);
-    prep.push({ se, sigs, allow: allowFor(o.filter, se.env, style), span, minShift: weeksOfBars(se.ctx, LUCK.minWeeks) });
+    prep.push({ se, sigs, allow: allowFor(o.filter, se.env, style), span, minShift: weeksOfBars(se.ctx, o.minWeeks ?? LUCK.minWeeks) });
     if (se.ctx.bars.length > 8_000) await yieldNow();
   }
   const key = `${s.id}:${series[0]?.tf ?? ''}`;

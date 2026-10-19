@@ -204,7 +204,7 @@ describe('luck meter: real edge vs luck', () => {
     const real = statsOf(rowTrades(ps, edgeSeries, 'none', 'designed'), oos);
     const v = verdictFor(real, null);
     expect(v.verdict).toBe('edge');
-    const luck = (await luckFor(ps, edgeSeries, { filter: 'none', exit: 'designed', oosFrom: oos, realOutAvgR: real.outSample.avgR, randomAvgR: null, verdict: verdictFor }))!;
+    const luck = (await luckFor(ps, edgeSeries, { filter: 'none', exit: 'designed', oosFrom: oos, realOutAvgR: real.outSample.avgR, randomAvgR: null, verdict: verdictFor, minWeeks: 2 }))!;
     expect(luck.twins).toHaveLength(LUCK.twins);
     expect(luck.pctl).toBe(100);
     expect(real.outSample.avgR).toBeGreaterThan(luck.twinsP90 + 0.5);
@@ -219,7 +219,7 @@ describe('luck meter: real edge vs luck', () => {
       const rw = MARKETS.map((inst, k) => seriesOf(inst, walk(3_000, 1_000 + w * 31 + k * 7)));
       const o2 = oosOf(rw);
       const r2 = statsOf(rowTrades(rs, rw, 'none', 'designed'), o2);
-      const l2 = (await luckFor(rs, rw, { filter: 'none', exit: 'designed', oosFrom: o2, realOutAvgR: r2.outSample.avgR, randomAvgR: null, verdict: verdictFor }))!;
+      const l2 = (await luckFor(rs, rw, { filter: 'none', exit: 'designed', oosFrom: o2, realOutAvgR: r2.outSample.avgR, randomAvgR: null, verdict: verdictFor, minWeeks: 2 }))!;
       pctls.push(l2.pctl);
       // even had the lab rated it edge, the luck meter takes it back
       if (luckDowngrade('edge', r2.outSample.avgR, l2).verdict === 'no') downgraded++;
@@ -231,7 +231,7 @@ describe('luck meter: real edge vs luck', () => {
   it('same seed → same twins; another seed → other twins; filter + exit variants run', async () => {
     const s = strategyById('donchian20')!;
     const se = MARKETS.map((inst, k) => seriesOf(inst, walk(2_000, 77 + k)));
-    const o = { filter: 'regime' as FilterKind, exit: 'trail_sl' as ExitKind, oosFrom: oosOf(se), realOutAvgR: 0.1, randomAvgR: 0, verdict: verdictFor };
+    const o = { filter: 'regime' as FilterKind, exit: 'trail_sl' as ExitKind, oosFrom: oosOf(se), realOutAvgR: 0.1, randomAvgR: 0, verdict: verdictFor, minWeeks: 2 };
     const a = await luckFor(s, se, o);
     const b = await luckFor(s, se, o);
     const c = await luckFor(s, se, { ...o, seed: 8 });
@@ -249,7 +249,7 @@ describe('luck meter: real edge vs luck', () => {
     const s = strategyById('donchian20')!;
     const se = MARKETS.map((inst, k) => seriesOf(inst, walk(3_000, 500 + k)));
     const t0 = performance.now();
-    const l = await luckFor(s, se, { filter: 'regime', exit: 'trail_sl', oosFrom: oosOf(se), realOutAvgR: 0, randomAvgR: null, verdict: verdictFor });
+    const l = await luckFor(s, se, { filter: 'regime', exit: 'trail_sl', oosFrom: oosOf(se), realOutAvgR: 0, randomAvgR: null, verdict: verdictFor, minWeeks: 2 });
     const ms = performance.now() - t0;
     console.log(`luck meter: 1 strategy × 3 markets × 3,000 bars × ${LUCK.twins} twins = ${Math.round(ms)} ms`);
     expect(l!.twins).toHaveLength(LUCK.twins);

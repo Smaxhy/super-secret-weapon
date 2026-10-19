@@ -75,24 +75,30 @@ describe('v17 correlated-risk cap', () => {
     expect(gradeHeat({ totalPct: 5, maxDdPct: 2 }, { totalPct: 6, maxDdPct: 3 }).why).toMatch(/already small/);
   });
 
-  it('live: the bot sizes down (or skips) a trade that moves with an open one, only while the cap is on', async () => {
+  it('live: after the currency cap, a trade that moves with an open one is sized down (pairs with no shared currency)', async () => {
     vi.useFakeTimers({ now: WED });
     const r = new R();
-    const open: PracticePosition = { id: 'p1', pair: 'EURUSD', side: 1, units: 50_000, entry: 1.1, marginUsd: 200, leverage: 30, stop: 1.0978, target: 1.11, openedAt: WED - 10 * M, checkedT: WED - M, ref: `a:1h:EURUSD:${WED - H}`, strategy: 'a', tf: '1h' };
+    // an open EUR/GBP long that risked 2.5% when it opened; AUD/NZD moves with it here (ρ 0.95) but shares no currency
+    const open: PracticePosition = { id: 'p1', pair: 'EURGBP', side: 1, units: 8_000, entry: 0.866, marginUsd: 200, leverage: 30, stop: 0.8638, target: 0.87, openedAt: WED - 10 * M, checkedT: WED - M, ref: `a:1h:EURGBP:${WED - H}`, strategy: 'a', tf: '1h', riskPct: 2.5 };
     r.m.set('fx:practice:bot', JSON.stringify({ ...newAccount(1000), open: [open] }));
     const p = new Practice(asRedis(r));
     const q = (id: string, mid: number): Quote => ({ id, mid, bid: mid - 0.00005, ask: mid + 0.00005, t: WED, bars: [[WED - M, mid, mid, mid]], dayChangePct: 0, source: 'yahoo', priceT: WED });
-    (p as unknown as { quotes: () => Promise<Record<string, Quote>> }).quotes = async () => ({ EURUSD: q('EURUSD', 1.1), GBPUSD: q('GBPUSD', 1.27) });
-    const lab = { ref: `b:1h:GBPUSD:${WED}`, strategy: 'b', tf: '1h', pair: 'GBPUSD', side: 1 as const, entryT: WED - 30_000, stop: 1.268, target: 1.274, chosen: true, sizeF: 1, prio: 0.2, judge: null };
-    const held = { ...lab, ref: open.ref!, strategy: 'a', pair: 'EURUSD', entryT: WED - H, stop: 1.0978, target: 1.11 };
-    const ev = await p.syncBot([held, lab], () => null, {}, { scope: ['1h', '4h'], heat: { active: true, book, m: book.now } });
+    (p as unknown as { quotes: () => Promise<Record<string, Quote>> }).quotes = async () => ({ EURGBP: q('EURGBP', 0.866), AUDNZD: q('AUDNZD', 1.1), GBPUSD: q('GBPUSD', 1.27), NZDUSD: q('NZDUSD', 0.6), AUDUSD: q('AUDUSD', 0.66), EURUSD: q('EURUSD', 1.1) });
+    const m = new Float32Array([1, 0.95, 0.95, 1]);
+    const heat = { active: true, book: { idx: { EURGBP: 0, AUDNZD: 1 } }, m };
+    const held = { ref: open.ref!, strategy: 'a', tf: '1h', pair: 'EURGBP', side: 1 as const, entryT: WED - H, stop: 0.8638, target: 0.87, chosen: true, sizeF: 1, prio: 0.2, judge: null };
+    const lab = { ref: `b:1h:AUDNZD:${WED}`, strategy: 'b', tf: '1h', pair: 'AUDNZD', side: 1 as const, entryT: WED - 30_000, stop: 1.098, target: 1.104, chosen: true, sizeF: 1, prio: 0.2, judge: null };
+    const ev = await p.syncBot([held, lab], () => null, {}, { scope: ['1h', '4h'], heat });
     const a = JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount;
-    const gbp = a.open.find((x) => x.pair === 'GBPUSD');
-    // EURUSD already risks ~1.1% (50k units × 22 pips); cap 3% with ρ≈1 → GBPUSD gets what's left, not its full 1%
-    if (gbp) {
-      expect(gbp.riskPct!).toBeLessThanOrEqual(1);
-      expect(ev.join(' ')).toMatch(/smaller: it moves with your open EURUSD/);
-    } else expect(ev.join(' ')).toMatch(/correlated risk is full/);
+    const nz = a.open.find((x) => x.pair === 'AUDNZD')!;
+    // room = −0.95·2.5 + √(0.95²·2.5² + 3² − 2.5²) ≈ 0.52% instead of the normal 1%
+    expect(nz.riskPct!).toBeGreaterThan(0.4);
+    expect(nz.riskPct!).toBeLessThan(0.65);
+    expect(ev.join(' ')).toMatch(/smaller: it moves with your open EURGBP trade \(ρ 0.95\)/);
+    // with the cap off: the normal size
+    r.m.set('fx:practice:bot', JSON.stringify({ ...newAccount(1000), open: [open] }));
+    await p.syncBot([held, lab], () => null, {}, { scope: ['1h', '4h'], heat: { ...heat, active: false } });
+    expect((JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount).open.find((x) => x.pair === 'AUDNZD')!.riskPct!).toBeCloseTo(1, 1);
   });
 });
 

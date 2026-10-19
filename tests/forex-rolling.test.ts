@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gradeRolling, picksFor, randomPickerNull, ROLL, rollingPool, rollingVerdict, rollRow, rollWeeks, trailing, type RollTrade } from '../src/forex/rolling';
+import { gradeRolling, nullKey, picksFor, randomPickerNull, ROLL, rollingPool, rollingVerdict, rollRow, rollWeeks, trailing, type RollTrade } from '../src/forex/rolling';
 import { weekOf, weekStart, type PortfolioResult } from '../src/forex/portfolio';
 
 const DAY = 86_400_000;
@@ -86,5 +86,25 @@ describe('v17 rolling picker', () => {
     expect(rollingVerdict({ ...base, result: res(-1), beatPct: 99 }, true).active).toBe(false);
     expect(rollingVerdict({ ...base, result: res(5, 30), beatPct: 99 }, false).active).toBe(false); // drop too big
     expect(rollingVerdict({ ...base, pfR: 1.0, result: res(5), beatPct: 99 }, false).why).toMatch(/profit factor/);
+  });
+
+  it('random pickers: only rows that could be picked, sized like the real picker; the cache key ignores this week', async () => {
+    const oosFrom = Date.UTC(2025, 9, 1);
+    // a losing always-on row: the real picker sizes it 0.6×, so must the random ones (else the yardstick is easier)
+    const always = trades('tsmom:1h', T0, T1, 3, () => -0.5);
+    const thin = trades('thin:1h', T0, T1, 40, () => -3, 'GBPUSD');
+    const rows = [rollRow('tsmom:1h', always, true), rollRow('thin:1h', thin, false)];
+    const oos = new Map([['tsmom:1h', always.filter((t) => t.entryT >= oosFrom + 7 * DAY)], ['thin:1h', thin.filter((t) => t.entryT >= oosFrom + 7 * DAY)]]);
+    const { w0, w1 } = rollWeeks(oosFrom, T1);
+    const nul = await randomPickerNull(rows, oos, w0, w1, sim, 10, 1);
+    const real = gradeRolling(rows, oos, { oosFrom, to: T1, now: T1, sim, staticPool: [], nul, wasActive: false, prevKeys: null });
+    // the thin row (never 12 trades in 26 weeks) is never drawn, and the always-on row is sized the same: identical results
+    expect(new Set(nul.totals).size).toBe(1);
+    expect(nul.totals[0]).toBeCloseTo(real.result!.totalPct, 6);
+    const k1 = nullKey(rows, w0, w1);
+    const extra = [...always, { ...always[0]!, entryT: T1 + DAY, exitT: T1 + 2 * DAY }];
+    expect(nullKey([rollRow('tsmom:1h', extra, true), rows[1]!], w0, w1)).toBe(k1); // a trade after the graded weeks
+    const changed = always.map((t, k) => (k === 10 ? { ...t, r: 2 } : t));
+    expect(nullKey([rollRow('tsmom:1h', changed, true), rows[1]!], w0, w1)).not.toBe(k1); // a revised trade inside them
   });
 });

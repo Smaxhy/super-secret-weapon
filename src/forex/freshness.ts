@@ -42,6 +42,9 @@ export interface DataAge {
   lastT: number | null;
   lagBars: number;
   status: 'fresh' | 'stale' | 'closed' | 'none';
+  /** v17: where the candles came from (Yahoo, Yahoo + Dukascopy fill, Dukascopy only) and how many hours were filled */
+  source?: 'yahoo' | 'mixed' | 'dukascopy';
+  filled?: number;
 }
 
 /** The data age of one series. Pure. */

@@ -283,12 +283,14 @@ export interface HeatGrade {
  * v17: does the cap earn its place? Only if the plain bot's biggest drop on the unseen weeks was 5%+ and the cap cut it
  * by 15%+ without costing more than 5% of the return per unit of drop (total % ÷ max drop). Pure.
  */
-export function gradeHeat(heated: { totalPct: number; maxDdPct: number } | null, plain: { totalPct: number; maxDdPct: number } | null): HeatGrade {
+export function gradeHeat(heated: { totalPct: number; maxDdPct: number } | null, plain: { totalPct: number; maxDdPct: number } | null, wasActive = false): HeatGrade {
   if (!heated || !plain) return { active: false, why: 'not graded yet' };
   const calmar = (x: { totalPct: number; maxDdPct: number }) => x.totalPct / Math.max(1, x.maxDdPct);
   const cb = calmar(plain);
   const ch = calmar(heated);
   const words = `with the cap ${heated.totalPct > 0 ? '+' : ''}${heated.totalPct}% / biggest drop ${heated.maxDdPct}%, without ${plain.totalPct > 0 ? '+' : ''}${plain.totalPct}% / ${plain.maxDdPct}% on the unseen weeks`;
+  // once on, it stays while it still cuts the drop (by 5%+) at no more than 10% of the return per unit of drop
+  if (wasActive && plain.maxDdPct >= 5 && heated.maxDdPct <= 0.95 * plain.maxDdPct && ch >= cb - 0.1 * Math.abs(cb)) return { active: true, why: `on (stays on while it still cuts the drop): ${words}` };
   if (plain.maxDdPct < 5) return { active: false, why: `off: the bot's drops are already small (${plain.maxDdPct}%) — ${words}` };
   if (heated.maxDdPct > 0.85 * plain.maxDdPct) return { active: false, why: `off: it didn't cut the biggest drop by 15%+ — ${words}` };
   if (ch < cb - 0.05 * Math.abs(cb)) return { active: false, why: `off: it cost too much return for the smaller drop — ${words}` };

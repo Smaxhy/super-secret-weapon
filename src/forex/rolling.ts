@@ -165,21 +165,28 @@ export interface NullStats {
 
 /**
  * The yardstick: pickers that choose the same number of rows each week at random (the always-on rows always in), from
- * the rows that traded in that week's window. Same trades, same caps, same sizing by wildness only.
+ * the rows that COULD have been picked that week (12+ trades in the window). Same trades, same caps and — v17 review —
+ * the same sizing rule as the real picker (each row sized from its own 26-week record), so only the choosing differs.
  */
 export async function randomPickerNull(rows: readonly RollRow[], oos: ReadonlyMap<string, readonly RollTrade[]>, w0: number, w1: number, sim: Omit<PortfolioOpts, 'label' | 'from' | 'to'>, draws = ROLL.nullDraws, seed = ROLL.seed, yieldNow: () => Promise<unknown> = () => Promise.resolve()): Promise<NullStats> {
   const rnd = lcg(seed);
   const weeksOf = new Map<string, Map<number, RollTrade[]>>();
   for (const [k, ts] of oos) weeksOf.set(k, byWeek(ts));
   // per week: how many it picked, and which rows were eligible to be drawn
-  const plan: Array<{ week: number; k: number; always: string[]; pool: string[] }> = [];
+  const plan: Array<{ week: number; k: number; always: string[]; pool: string[]; size: Map<string, { sizeF: number; prio: number }> }> = [];
   for (let w = w0; w <= w1; w++) {
     const picks = picksFor(rows, w);
     const t1 = weekStart(w);
     const t0 = t1 - ROLL.lookbackWeeks * WEEK;
     const always = rows.filter((r) => r.always).map((r) => r.key);
-    const pool = rows.filter((r) => !r.always && trailing(r, t0, t1).n > 0).map((r) => r.key);
-    plan.push({ week: w, k: Math.max(0, picks.length - always.length), always, pool });
+    const size = new Map<string, { sizeF: number; prio: number }>();
+    const pool: string[] = [];
+    for (const r of rows) {
+      const win = trailing(r, t0, t1);
+      size.set(r.key, { sizeF: stratFactorFromStats(win.shrunkR, win.pf), prio: win.shrunkR });
+      if (!r.always && win.n >= ROLL.minN) pool.push(r.key);
+    }
+    plan.push({ week: w, k: Math.max(0, picks.length - always.length), always, pool, size });
   }
   const totals: number[] = [];
   for (let d = 0; d < draws; d++) {
@@ -188,7 +195,10 @@ export async function randomPickerNull(rows: readonly RollRow[], oos: ReadonlyMa
       const pool = [...p.pool];
       const chosen = [...p.always];
       for (let j = 0; j < p.k && pool.length; j++) chosen.push(pool.splice(Math.floor(rnd() * pool.length), 1)[0]!);
-      for (const key of chosen) for (const t of weeksOf.get(key)?.get(p.week) ?? []) trades.push({ ...t, sizeF: t.vf, prio: 0 });
+      for (const key of chosen) {
+        const sz = p.size.get(key) ?? { sizeF: 1, prio: 0 };
+        for (const t of weeksOf.get(key)?.get(p.week) ?? []) trades.push({ ...t, sizeF: sz.sizeF * t.vf, prio: sz.prio });
+      }
     }
     totals.push(simulatePortfolio(trades, { ...sim, label: 'random picker', from: weekStart(w0), to: weekStart(w1 + 1) - 1, mc: false }).totalPct);
     await yieldNow();
@@ -280,6 +290,22 @@ export function gradeRolling(
     thisWeek,
     byWeek: weeks.slice(-60).map((x) => ({ week: isoWeek(x.week), picked: x.picked, trades: x.trades })),
   };
+}
+
+/**
+ * Cache key of the random pickers: the graded weeks + what the rows' trades closed before the last graded week ends
+ * (count and total R) — a filter / exit switch or a data revision changes it, a new trade this week doesn't. Pure.
+ */
+export function nullKey(rows: readonly RollRow[], w0: number, w1: number): string {
+  const end = weekStart(w1 + 1);
+  let n = 0;
+  let sum = 0;
+  for (const r of rows) {
+    const b = lowerBound(r.exitT, end);
+    n += b;
+    sum += r.cumR[b]!;
+  }
+  return `${w0}:${w1}:${rows.length}:${n}:${Math.round(sum * 100)}`;
 }
 
 /** The graded weeks for a 70/30 line at `oosFrom` and history up to `to` (the random pickers' cache key). */
