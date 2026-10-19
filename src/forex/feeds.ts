@@ -7,8 +7,8 @@
  */
 import type Redis from 'ioredis';
 
-export type Provider = 'yahoo' | 'dukascopy' | 'oanda' | 'cftc' | 'bis' | 'forexfactory' | 'rss' | 'internal';
-export type FeedId = 'yahoo-1h' | 'yahoo-fast' | 'yahoo-quotes' | 'dk-history' | 'dk-quotes' | 'oanda' | 'cftc' | 'bis' | 'calendar' | 'headlines' | 'lab' | 'fast-lab';
+export type Provider = 'yahoo' | 'dukascopy' | 'pyth' | 'oanda' | 'cftc' | 'bis' | 'forexfactory' | 'rss' | 'internal';
+export type FeedId = 'yahoo-1h' | 'yahoo-fast' | 'yahoo-quotes' | 'dk-history' | 'dk-quotes' | 'pyth-live' | 'oanda' | 'cftc' | 'bis' | 'calendar' | 'headlines' | 'lab' | 'fast-lab';
 
 export interface FeedState {
   okAt: number | null;
@@ -39,6 +39,7 @@ export const FEED_INFO: Record<FeedId, FeedInfo> = {
   'yahoo-quotes': { label: 'Live prices (Yahoo, 1-minute)', provider: 'yahoo', staleMin: 10, downMin: 30, marketHours: true, affects: 'opening / closing bot trades, stops and targets', fallback: 'the last price seen (no new trades on an old price; closes wait for a real price)' },
   'dk-history': { label: 'Older history + real spreads (Dukascopy)', provider: 'dukascopy', staleMin: 36 * 60, downMin: 7 * 24 * 60, marketHours: false, affects: 'years of extra test history, spread per hour of day', fallback: 'the stored history and spread profile' },
   'dk-quotes': { label: 'Backup live prices (Dukascopy, 1-minute)', provider: 'dukascopy', staleMin: 30, downMin: 180, marketHours: true, affects: 'currency-pair prices when Yahoo fails', fallback: 'the last price seen' },
+  'pyth-live': { label: 'Live ticking prices (Pyth, currency pairs)', provider: 'pyth', staleMin: 5, downMin: 30, marketHours: true, affects: 'live prices on the dashboard, stops / targets checked every few seconds, bot entries at the live price', fallback: 'Yahoo 1-minute prices (checked every 15 s), then Dukascopy' },
   oanda: { label: 'Live prices (OANDA, optional)', provider: 'oanda', staleMin: 5, downMin: 30, marketHours: true, affects: 'prices + candles when a token is saved', fallback: 'Yahoo' },
   cftc: { label: 'Hedge-fund positioning (CFTC, weekly)', provider: 'cftc', staleMin: 9 * 24 * 60, downMin: 17 * 24 * 60, marketHours: false, affects: 'crowd filter, cot_squeeze, a sniper vote', fallback: 'the last report for up to 17 days, then nothing (those rules go quiet)' },
   bis: { label: 'Central-bank rates (BIS, monthly)', provider: 'bis', staleMin: 45 * 24 * 60, downMin: 100 * 24 * 60, marketHours: false, affects: 'carry: carry_trend, a sniper vote', fallback: 'the last rates for up to 100 days, then nothing (carry rules go quiet)' },
