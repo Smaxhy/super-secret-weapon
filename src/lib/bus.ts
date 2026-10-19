@@ -11,6 +11,7 @@ export type BusEvent =
   | { type: 'evaluation'; data: { mint: string; symbol: string; score: number; decision: string; reasons: string[] } }
   | { type: 'trade'; data: { mint: string; symbol?: string; side: string; mode: string; amountSol: number; reason: string; pnlSol?: number; peakMultiple?: number; closed?: boolean; totalPnlSol?: number; explanation?: string | null } }
   | { type: 'stats'; data: Record<string, unknown> }
+  | { type: 'fx'; data: { t: number; px: Record<string, [number, number, number, number]> } }
   | { type: 'positions'; data: { updates: Array<{ id: string; priceSol: number; highSol?: number; multiple: number; peakMultiple: number; unrealizedPnlSol: number; risk: number; holders: number; ownSupplyPct: number; exitImpactPct: number }> } };
 
 class Bus extends EventEmitter {

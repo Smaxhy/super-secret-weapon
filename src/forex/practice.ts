@@ -19,6 +19,7 @@ import { SIZING, addExposure, clampRisk, ddFactor, exposureBlock, type Exposure 
 import type { Tier } from './conviction';
 import { SNIPER } from './sniper';
 import { parsePnlRow, pnlRowOf, type PnlRow } from './pnl';
+import { pythLive } from './pyth';
 
 const log = moduleLogger('forex-practice');
 export type AcctId = 'me' | 'bot';
@@ -96,8 +97,10 @@ export interface Quote {
   bars: Array<[number, number, number, number, number?]>;
   dayChangePct: number | null;
   /** where the price came from (v17: Dukascopy = the backup when Yahoo fails, currency pairs only) */
-  source: 'oanda' | 'yahoo' | 'dukascopy';
+  source: 'oanda' | 'yahoo' | 'dukascopy' | 'pyth';
   barsAt?: number;
+  /** v17.9: yesterday's close (Yahoo) — the day change of a live Pyth price */
+  prevClose?: number;
   /** broker time of the price (v17: Yahoo too — its market time) */
   priceT?: number;
   tradeable?: boolean;
@@ -312,7 +315,7 @@ export interface AccountView extends PracticeAccount {
   freeMarginUsd: number;
   /** equity / margin in use, % (null when flat) */
   marginLevelPct: number | null;
-  positions: Array<PracticePosition & { px: number; pnlUsd: number; pnlPct: number }>;
+  positions: Array<PracticePosition & { px: number; pnlUsd: number; pnlPct: number; /** v17.9: USD per 1.0 move of the exit price */ pnlPerPx?: number }>;
 }
 
 export function view(a: PracticeAccount, mids: Record<string, number>, halves: Record<string, number> = {}): AccountView {
@@ -320,7 +323,10 @@ export function view(a: PracticeAccount, mids: Record<string, number>, halves: R
     const mid = mids[p.pair] ?? p.entry;
     const px = exitPx(p, mid, halves[p.pair]);
     const pl = pnlUsd(p, px, mids);
-    return { ...p, px, pnlUsd: Math.round(pl * 100) / 100, pnlPct: Math.round((pl / p.marginUsd) * 1000) / 10 };
+    // v17.9: USD per 1.0 move of the exit price (the dashboard moves P&L with live ticks between refreshes)
+    const h = instrument(p.pair)?.pip ?? 0.0001;
+    const pnlPerPx = (pnlUsd(p, px + h, mids) - pnlUsd(p, px - h, mids)) / (2 * h);
+    return { ...p, px, pnlUsd: Math.round(pl * 100) / 100, pnlPct: Math.round((pl / p.marginUsd) * 1000) / 10, pnlPerPx: Number(pnlPerPx.toPrecision(8)) };
   });
   const upnl = positions.reduce((s, p) => s + p.pnlUsd, 0);
   const used = a.open.reduce((s, p) => s + p.marginUsd, 0);
@@ -518,6 +524,9 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
 
 // ── live side ──
 
+/** Half the typical retail spread of a market at time t (v16: the measured hour-of-day profile, wider at rollover). Pure. */
+export const syntheticHalf = (inst: Pick<Instrument, 'id' | 'spreadPips' | 'pip'>, t: number) => (inst.spreadPips * inst.pip * spreadMultAt(inst.id, t, null)) / 2;
+
 async function fetchQuote(inst: Instrument): Promise<Quote | null> {
   for (const host of ['query1.finance.yahoo.com', 'query2.finance.yahoo.com']) {
     try {
@@ -538,12 +547,12 @@ async function fetchQuote(inst: Instrument): Promise<Quote | null> {
       const mid = r?.meta?.regularMarketPrice ?? bars[bars.length - 1]?.[3];
       if (!mid || !(mid > 0)) continue;
       // v16: the synthetic spread follows the measured hour-of-day profile (wider at rollover)
-      const half = (inst.spreadPips * inst.pip * spreadMultAt(inst.id, Date.now(), null)) / 2;
+      const half = syntheticHalf(inst, Date.now());
       const prev = r?.meta?.chartPreviousClose;
       const mt = r?.meta?.regularMarketTime;
       const priceT = mt && mt > 0 ? mt * 1000 : bars[bars.length - 1]?.[0];
       const delay = r?.meta?.exchangeDataDelayedBy;
-      return { id: inst.id, mid, bid: mid - half, ask: mid + half, t: Date.now(), bars: bars.slice(-180), dayChangePct: prev ? Math.round(((mid / prev - 1) * 100) * 100) / 100 : null, source: 'yahoo', ...(priceT ? { priceT } : {}), ...(delay && delay > 0 ? { delayMs: delay * 60_000 } : {}) };
+      return { id: inst.id, mid, bid: mid - half, ask: mid + half, t: Date.now(), bars: bars.slice(-180), dayChangePct: prev ? Math.round(((mid / prev - 1) * 100) * 100) / 100 : null, source: 'yahoo', ...(prev ? { prevClose: prev } : {}), ...(priceT ? { priceT } : {}), ...(delay && delay > 0 ? { delayMs: delay * 60_000 } : {}) };
     } catch {
       // next host
     }
@@ -682,9 +691,20 @@ export interface SyncReport {
 }
 export const newSyncReport = (): SyncReport => ({ at: Date.now(), candidates: 0, opened: 0, heldOpen: 0, skipped: [], waits: [] });
 
+/** v17.9: where live prices come from (the Pyth stream; tests swap it) */
+export interface LiveSource {
+  get(id: string): { px: number; t: number; bars: Array<[number, number, number, number, number]> } | null;
+  flowing(now?: number): boolean;
+}
+
 export class Practice {
   private cache = new Map<string, Quote>();
   private timer: NodeJS.Timeout | null = null;
+  /** v17.9: live currency-pair prices (seconds old) */
+  live: LiveSource = pythLive;
+  /** v17.9: yesterday's close per market (Yahoo, refreshed in the background ≤ every 30 min) for live prices' day change */
+  private prev = new Map<string, { close: number; at: number }>();
+  private checking = false;
   private lock: Promise<unknown> = Promise.resolve();
   /** v17: bot-log lines already written once (kept positions, resume retries) */
   private noted = new Set<string>();
@@ -696,7 +716,17 @@ export class Practice {
   constructor(private readonly redis: Redis) {}
 
   start(): void {
-    this.timer = setInterval(() => void this.serial(() => this.checkOpen()).catch(() => undefined), 15_000);
+    // v17.9: stops / targets every 5 s while live prices flow (every 15 s otherwise); never two checks at once
+    let last = 0;
+    this.timer = setInterval(() => {
+      const now = Date.now();
+      if (this.checking || (now - last < 15_000 && !this.live.flowing(now))) return;
+      last = now;
+      this.checking = true;
+      void this.serial(() => this.checkOpen())
+        .catch(() => undefined)
+        .finally(() => (this.checking = false));
+    }, 5_000);
   }
   stop(): void {
     if (this.timer) clearInterval(this.timer);
@@ -711,9 +741,23 @@ export class Practice {
 
   async quote(id: string, maxAgeMs = 15_000): Promise<Quote | null> {
     const c = this.cache.get(id);
-    if (c && Date.now() - c.t < maxAgeMs) return c;
     const inst = instrument(id);
     if (!inst) return null;
+    // v17.9: a live Pyth price first for currency pairs (seconds old; synthetic spread like Yahoo's). Metals never:
+    // the lab tests them on COMEX futures, Pyth's are spot.
+    if (inst.kind === 'fx') {
+      const lp = this.live.get(id);
+      if (lp) {
+        const now = Date.now();
+        const half = syntheticHalf(inst, now);
+        const pc = this.prev.get(id) ?? (c?.prevClose ? { close: c.prevClose, at: c.t } : undefined);
+        if (!pc || now - pc.at > 30 * 60_000) this.refreshPrev(inst, now);
+        const q: Quote = { id, mid: lp.px, bid: lp.px - half, ask: lp.px + half, t: now, bars: lp.bars, dayChangePct: pc ? Math.round((lp.px / pc.close - 1) * 10_000) / 100 : null, source: 'pyth', priceT: lp.t, ...(pc ? { prevClose: pc.close } : {}) };
+        this.cache.set(id, q);
+        return q;
+      }
+    }
+    if (c && Date.now() - c.t < maxAgeMs && c.source !== 'pyth') return c;
     let q = feeds.allow('yahoo') ? await fetchQuote(inst) : null;
     if (q) {
       this.cache.set(id, q);
@@ -729,6 +773,19 @@ export class Practice {
       }
     }
     return q ?? (c ? { ...c, stale: true } : null);
+  }
+
+  /** v17.9: yesterday's close for a live price's day change — a background Yahoo read, at most once per 30 min a market */
+  private refreshPrev(inst: Instrument, now: number): void {
+    const had = this.prev.get(inst.id);
+    this.prev.set(inst.id, { close: had?.close ?? NaN, at: now });
+    if (!feeds.allow('yahoo')) return;
+    void fetchQuote(inst)
+      .then((q) => {
+        if (q?.prevClose) this.prev.set(inst.id, { close: q.prevClose, at: Date.now() });
+        else if (!had) this.prev.delete(inst.id);
+      })
+      .catch(() => undefined);
   }
 
   async quotes(ids: readonly string[] = INSTRUMENTS.map((i) => i.id), maxAgeMs = 15_000): Promise<Record<string, Quote>> {

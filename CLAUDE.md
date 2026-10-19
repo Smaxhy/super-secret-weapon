@@ -487,9 +487,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     our own budget; stored filter / exit picks carry their `oosFrom` and are ignored after the 70/30 line moved back
     > 1 day (`prevPicks`; old format → one re-pick after deploy), same for the fast charts; a worker run tightened to the
     parent's learner re-notes the chosen history. tests: forex-pnl, fx-dashboard-trade, forex-lab-hysteresis.
-  - **v17.9 Pyth live prices** (`src/forex/pyth.ts`, `pythLive`): Hermes SSE stream, feed ids resolved by symbol
-    (direct / inverse / via the USD legs), 1-minute candles from ticks, back-off + watchdog, feed 'pyth-live'. Currency
-    pairs only (metals are tested on COMEX futures; Pyth's are spot). tests/forex-pyth.test.ts.
+  - **v17.9 Pyth live prices** (owner: "see the price actively change … trade really fast when live";
+    `src/forex/pyth.ts`, `pythLive`, started in index.ts): Hermes SSE stream (`hermes.pyth.network`, free, no account),
+    feed ids resolved by symbol once a day (direct / inverse / via the USD legs), newest price per feed, 1-minute candles
+    from ticks, back-off + 60 s watchdog, feed 'pyth-live'. Currency pairs only (metals are tested on COMEX futures;
+    Pyth's are spot). Practice `quote()`: live Pyth first for currency pairs (synthetic spread `syntheticHalf`, its own
+    1-minute candles for stop / target checks, day change from Yahoo's previous close read in the background ≤ every
+    30 min; `Practice.live` is swappable for tests), else Yahoo → Dukascopy → stale cache as before; the stop / target
+    check runs every 5 s while prices flow (`flowing`), else every 15 s, never two at once. Account view positions carry
+    `pnlPerPx` (USD per 1.0 move of the exit price, also on `/api/forex/bot/status`). `src/forex/live-push.ts`
+    `startLivePush`: the last second's ticks per pair → bus event `{ type: 'fx', data: { t, px: { PAIR: [mid, bid, ask,
+    priceT] } } }` (WebSocket), at most 1/s, only when something moved. Dashboard `hooks/useFxLive.ts` (live P&L =
+    pnlUsd + (live exit − px) × pnlPerPx). tests: forex-pyth, forex-live, fx-live.
   - **Price stretch** (`src/forex/stretch.ts`, no outside feed): per currency the 63-day return in normal-move units
     (averaged over its pairs, ≥ 3 pairs), ranked within its own last ~2 years (520 days, ≥ 120 ranked) → −1…+1; a
     pair = base − quote (−2…+2, the CFTC score's scale; metals none; > 4 days old → none). `MarketBook.stretch`

@@ -65,6 +65,8 @@ import { ForexLab } from './forex/lab';
 import { feeds as fxFeeds } from './forex/feeds';
 import { FastLab } from './forex/fast';
 import { Practice } from './forex/practice';
+import { pythLive } from './forex/pyth';
+import { startLivePush } from './forex/live-push';
 import { ForexCalendar } from './forex/calendar';
 import { ForexHeadlines } from './forex/headlines';
 import { MemeReader } from './evaluator/meme-reader';
@@ -382,6 +384,9 @@ async function main(): Promise<void> {
   forex.start();
   const practice = new Practice(redis);
   practice.start();
+  // v17.9: live currency-pair prices (Pyth, free, no account) → the practice account's checks + the dashboard
+  pythLive.start();
+  const stopLivePush = startLivePush();
   forex.practice = practice;
   const fxCalendar = new ForexCalendar(redis);
   void fxCalendar.start();
@@ -867,6 +872,8 @@ async function main(): Promise<void> {
       forex.stop();
       fastFx.stop();
       practice.stop();
+      pythLive.stop();
+      stopLivePush();
       await fxFeeds.persist(redis, true).catch(() => undefined);
       fxCalendar.stop();
       fxNews.stop();

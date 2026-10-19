@@ -190,6 +190,8 @@ export class PythLive {
   private watchdog: NodeJS.Timeout | null = null;
   /** updates applied since start (for the feed card) */
   updates = 0;
+  /** when the last price arrived (ms, this process's clock) */
+  lastTickAt = 0;
 
   constructor(private readonly fetcher: Fetch = fetch as unknown as Fetch, private readonly clock: () => number = Date.now) {}
 
@@ -231,6 +233,11 @@ export class PythLive {
     const p = compose(legs, this.latest);
     if (!p || now - p.t > PYTH.staleMs) return null;
     return { ...p, bars: (this.bars.get(id) ?? []).map((b) => [...b] as MinuteBar) };
+  }
+
+  /** prices arrived in the last 10 s (the practice account checks stops every 5 s then) */
+  flowing(now = this.clock()): boolean {
+    return now - this.lastTickAt < 10_000;
   }
 
   /** feed ids by symbol (also used by tests) */
@@ -275,6 +282,7 @@ export class PythLive {
     }
     if (!ticks.length) return;
     this.updates++;
+    this.lastTickAt = this.clock();
     for (const fn of this.listeners) {
       try {
         fn(ticks);
