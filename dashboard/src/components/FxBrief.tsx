@@ -31,7 +31,7 @@ const readGoal = () => {
   }
 };
 
-export function FxBrief({ plan, riskMode, modes, equityUsd, orders = [], names = {} }: { plan: Plan | null; riskMode: RiskMode; modes?: Record<RiskMode, RiskLimits>; equityUsd: number | null; orders?: Order[]; names?: Record<string, string> }) {
+export function FxBrief({ plan, riskMode, modes, equityUsd, orders = [], names = {}, labError = null }: { plan: Plan | null; riskMode: RiskMode; modes?: Record<RiskMode, RiskLimits>; equityUsd: number | null; orders?: Order[]; names?: Record<string, string>; labError?: { t: number; msg: string } | null }) {
   const tz = new Date().getTimezoneOffset();
   const { data: pnl } = useApi<PnlData>(`/api/forex/pnl?acct=bot&tz=${tz}`, 60_000);
   const [goal, setGoal] = useState(readGoal);
@@ -61,6 +61,11 @@ export function FxBrief({ plan, riskMode, modes, equityUsd, orders = [], names =
   return (
     <Card title="Today" subtitle={plan?.summary ?? 'Its plan appears after the first look at the markets.'} className="hero-glow card-accent">
       <div className="space-y-4">
+        {labError && (
+          <div role="alert" className="rounded-lg border border-critical/40 bg-critical/10 px-3 py-2 text-sm text-ink">
+            <b>The hourly test failed</b> at {clock(labError.t)}: {labError.msg}. Open trades are still guarded by their stops; no new hourly-chart trades until a run succeeds. Forex → Setup → Data feeds has the details.
+          </div>
+        )}
         {/* the goal */}
         <div>
           <div className="flex items-baseline justify-between gap-2">

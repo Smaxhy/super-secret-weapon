@@ -708,6 +708,13 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   reason; no margin → dropped). Fast charts (15m / 1m) stay market entries. Dashboard: Today card "Orders waiting to
   fill", Strategies row badge with the way in. tests/forex-orders.test.ts (5) + chooseEntry tests. Synthetic e2e:
   pullback won on 86% of rows there (noise mean-reverts) — real data decides which strategies actually switch.
+- **v18.5 (Oct 19): a lab that can't go quiet** (owner: "it hasn't made any decisions for 6 hours"; suspect: `FX_LAB_WORKER=on`
+  with the v18 lab bigger than the child's 900 MB heap → every hour skipped). lab-runner.ts: a HEAVY child failure (timed
+  out / out of memory / killed) now counts (`WorkerStreak.heavy`): the next child gets `LAB_WORKER.heapMbRetry` 1300 MB
+  (`heapFor`), a second heavy failure in a row trips the same inline fallback as light ones (`heavyBeforeInline` 2 →
+  `inlineRuns` 6 in the main process); every heavy failure is written to the bot log ("hourly test skipped: …"). The
+  Today card shows a red line with `labError` (from `/api/forex/bot`) whenever the last run failed. If the VPS log shows
+  the child OOM at 1300 MB too, switch the worker off (`FX_LAB_WORKER=off`) and let it run inline. tests updated.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

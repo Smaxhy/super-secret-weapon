@@ -5,7 +5,7 @@ import path from 'node:path';
 import { serialize, deserialize } from 'node:v8';
 import { FeedBook, feeds } from '../src/forex/feeds';
 import { ForexLab, FX_LEARN, type RunOutput, type WorkerInput, type WorkerResult } from '../src/forex/lab';
-import { afterLabRun, forkLabRun, learnerSource, learnerTighten, LAB_WORKER, memoryError, NO_STREAK, planLabRun, tightenOut, type ForkOutcome } from '../src/forex/lab-runner';
+import { afterLabRun, heapFor, forkLabRun, learnerSource, learnerTighten, LAB_WORKER, memoryError, NO_STREAK, planLabRun, tightenOut, type ForkOutcome } from '../src/forex/lab-runner';
 import type { LearnKey } from '../src/forex/learner';
 import type { LabOpenTrade } from '../src/forex/practice';
 
@@ -188,15 +188,21 @@ describe('v17 FINDING 9: a child that keeps failing sends the next runs inline',
     expect(afterLabRun(a.st, 'ok').st).toEqual(NO_STREAK);
   });
 
-  it('pure: a heavy failure (timed out / out of memory) never owes an inline run and clears a light streak', () => {
+  it('pure (v18.5): a heavy failure clears a light streak, earns the next child a bigger heap, and a second in a row goes inline', () => {
     let st = afterLabRun({ ...NO_STREAK }, 'failed').st;
     expect(st.fails).toBe(1);
     const h = afterLabRun(st, 'heavy');
     expect(h.tripped).toBe(false);
     st = h.st;
-    expect(st).toEqual(NO_STREAK);
-    for (let i = 0; i < 5; i++) st = afterLabRun(st, 'heavy').st;
+    expect(st.fails).toBe(0);
+    expect(st.heavy).toBe(1);
     expect(planLabRun(st)).toBe('worker');
+    expect(heapFor(st)).toBe(LAB_WORKER.heapMbRetry);
+    expect(heapFor(NO_STREAK)).toBe(LAB_WORKER.heapMb);
+    const h2 = afterLabRun(st, 'heavy');
+    expect(h2.tripped).toBe(true);
+    expect(planLabRun(h2.st)).toBe('inline');
+    expect(afterLabRun(h2.st, 'ok').st).toEqual(NO_STREAK);
   });
 
   it('memoryError spots a heap error the child caught itself', () => {
@@ -240,15 +246,20 @@ describe('v17 FINDING 9: a child that keeps failing sends the next runs inline',
       expect(lab.workerStreak.fails).toBe(2);
     });
 
-    it('heavy failures (out of memory / timed out) are only skipped — never re-run in the main process', async () => {
+    it('heavy failures (out of memory / timed out): skipped once with more memory next, then the runs go inline (v18.5)', async () => {
       fk.mockResolvedValue({ kind: 'failed', error: 'killed (out of memory?)', heavy: true, breakers: { yahoo: { fails: 4, until: Date.now() + 8 * M, at: Date.now() + 1 } } } satisfies ForkOutcome);
       const lab = new ForexLab(asRedis(new R()));
       const inline = vi.fn(async () => null);
       lab.computeRun = inline;
-      for (let i = 0; i < 4; i++) await expect(lab.run()).rejects.toThrow(/lab worker: killed/);
-      expect(fk).toHaveBeenCalledTimes(4);
-      expect(inline).not.toHaveBeenCalled();
-      expect(lab.workerStreak).toEqual(NO_STREAK);
+      await expect(lab.run()).rejects.toThrow(/lab worker: killed/);
+      expect(lab.workerStreak.heavy).toBe(1);
+      expect(fk).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ heapMb: LAB_WORKER.heapMb }));
+      await expect(lab.run()).rejects.toThrow(/lab worker: killed/);
+      expect(fk).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ heapMb: LAB_WORKER.heapMbRetry }));
+      expect(fk).toHaveBeenCalledTimes(2);
+      expect(planLabRun(lab.workerStreak)).toBe('inline');
+      await lab.run();
+      expect(inline).toHaveBeenCalledTimes(1);
       // the failed child's open Yahoo breaker still pauses the parent's calls
       expect(feeds.allow('yahoo')).toBe(false);
     });

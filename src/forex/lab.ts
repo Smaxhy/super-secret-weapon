@@ -19,7 +19,7 @@ import { gradeRolling, nullKey, randomPickerNull, ROLL, rollRow, rollWeeks, type
 import { FILL, fillFromDk, type FillResult } from './fill';
 import { dataAgeOf, staleReason, type DataAge } from './freshness';
 import { feeds, type BreakerState, type FeedId, type FeedState, type Provider } from './feeds';
-import { afterLabRun, forkLabRun, labWorkerOn, learnerSource, learnerTighten, LAB_WORKER, NO_STREAK, planLabRun, tightenOut, tightenState, type LearnerTighten, type WorkerStreak } from './lab-runner';
+import { afterLabRun, forkLabRun, heapFor, labWorkerOn, learnerSource, learnerTighten, LAB_WORKER, NO_STREAK, planLabRun, tightenOut, tightenState, type LearnerTighten, type WorkerStreak } from './lab-runner';
 import { moduleLogger } from '../lib/logger';
 import { refreshInstrument, refreshSeries, loadBars, type FeedStatus } from './data';
 import { DK_META, refreshDkTail, installSpreadProfiles, loadDk, refreshDukascopy, stitchHistory, type DkMeta } from './dukascopy';
@@ -1114,7 +1114,7 @@ export class ForexLab {
     const input: WorkerInput = { learned: this.learned, learnSig: this.learnSig, chosenSig: this.chosenSig, heatActive: this.heatNow?.active ?? null, breakers: feeds.breakerSnapshot() };
     this.forkLearnSig = input.learnSig;
     try {
-      const r = await forkLabRun(refresh, input);
+      const r = await forkLabRun(refresh, input, { ...LAB_WORKER, heapMb: heapFor(this.workerStreak) });
       if (r.kind === 'spawn') {
         log.warn({ err: r.error }, 'forex lab worker could not start — running this hour inline');
         this.forkLearnSig = null;
@@ -1126,7 +1126,10 @@ export class ForexLab {
         if (r.breakers) feeds.mergeBreakers(r.breakers);
         const a = afterLabRun(this.workerStreak, r.heavy ? 'heavy' : 'failed');
         this.workerStreak = a.st;
-        if (r.heavy) log.warn({ err: r.error }, 'forex lab worker ran out of time / memory — this hour is skipped (never re-run in the main process)');
+        if (r.heavy) {
+          log.warn({ err: r.error, heavy: a.st.heavy }, 'forex lab worker ran out of time / memory — this hour is skipped');
+          this.logBot([`hourly test skipped: its separate process ${r.error} (${a.st.heavy} in a row) — no new hourly-chart trades this hour${a.tripped ? '' : '; it gets more memory next hour'}`]);
+        }
         if (a.tripped) {
           log.warn({ err: r.error, fails: a.st.fails, inlineRuns: a.st.inlineLeft }, 'forex lab worker keeps failing — the next runs go inline');
           this.logBot([`hourly test: its separate process failed ${a.st.fails} times in a row (${r.error}) — the next ${a.st.inlineLeft} runs go in the main process, then it tries the separate process again`]);

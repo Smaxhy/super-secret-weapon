@@ -6,7 +6,7 @@
  * this is meant to avoid). v17: but a child that fails `inlineAfterFails` hours in a row with a LIGHT failure (it threw,
  * or its result couldn't come back) is not left to skip every hour — the next `inlineRuns` runs go inline (the flag-off
  * path), then the child is tried again (`planLabRun` / `afterLabRun`); a good child run clears the streak. A HEAVY
- * failure (timed out, out of memory, killed) never sends a run inline: that would repeat it in the main process.
+ * failure (timed out, out of memory, killed) gets one retry with a bigger heap; a second in a row goes inline too (v18.5).
  */
 import { fork } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -14,14 +14,30 @@ import path from 'node:path';
 import type { RunOutput, WorkerInput, WorkerResult, WorkerState } from './lab';
 import type { LearnKey } from './learner';
 
-export const LAB_WORKER = { heapMb: 900, timeoutMs: 15 * 60_000, inlineAfterFails: 2, inlineRuns: 6 };
+export const LAB_WORKER = {
+  heapMb: 900,
+  /** v18.5: after a heavy failure the next child gets this heap (the v18 lab is bigger); a second heavy failure in a row
+   * sends the next `inlineRuns` runs inline — a bot that skips every hour is worse than a main process under load */
+  heapMbRetry: 1300,
+  heavyBeforeInline: 2,
+  timeoutMs: 15 * 60_000,
+  inlineAfterFails: 2,
+  inlineRuns: 6,
+};
 
 /** v17: the child's failure streak (started, then failed / timed out / ran out of memory) and inline runs still owed. */
 export interface WorkerStreak {
   fails: number;
   inlineLeft: number;
+  /** v18.5: heavy failures (timed out / out of memory / killed) in a row */
+  heavy?: number;
 }
-export const NO_STREAK: WorkerStreak = { fails: 0, inlineLeft: 0 };
+export const NO_STREAK: WorkerStreak = { fails: 0, inlineLeft: 0, heavy: 0 };
+
+/** v18.5: the child's heap for the next run — bigger after a heavy failure. Pure. */
+export function heapFor(st: WorkerStreak, cfg: Pick<typeof LAB_WORKER, 'heapMb' | 'heapMbRetry'> = LAB_WORKER): number {
+  return (st.heavy ?? 0) >= 1 ? cfg.heapMbRetry : cfg.heapMb;
+}
 
 /** v17: where the next run goes while the worker flag is on: inline while a failure streak is sat out, else the child. Pure. */
 export function planLabRun(st: WorkerStreak): 'worker' | 'inline' {
@@ -34,13 +50,20 @@ export function planLabRun(st: WorkerStreak): 'worker' | 'inline' {
  * out of memory / killed) clears it and owes no inline run; `inline` uses up one owed inline run; `spawn` (could not
  * start — that hour already ran inline) changes nothing. Pure.
  */
-export function afterLabRun(st: WorkerStreak, what: 'ok' | 'failed' | 'heavy' | 'inline' | 'spawn', cfg: Pick<typeof LAB_WORKER, 'inlineAfterFails' | 'inlineRuns'> = LAB_WORKER): { st: WorkerStreak; tripped: boolean } {
-  if (what === 'ok' || what === 'heavy') return { st: { ...NO_STREAK }, tripped: false };
-  if (what === 'inline') return { st: { fails: st.fails, inlineLeft: Math.max(0, st.inlineLeft - 1) }, tripped: false };
+export function afterLabRun(st: WorkerStreak, what: 'ok' | 'failed' | 'heavy' | 'inline' | 'spawn', cfg: Pick<typeof LAB_WORKER, 'inlineAfterFails' | 'inlineRuns' | 'heavyBeforeInline'> = LAB_WORKER): { st: WorkerStreak; tripped: boolean } {
+  if (what === 'ok') return { st: { ...NO_STREAK }, tripped: false };
+  if (what === 'heavy') {
+    // v18.5: one heavy failure → the next child gets a bigger heap (`heapFor`); the second in a row → inline runs,
+    // the way light failures do (before, a heavy failure was skipped forever — the bot then never opened a trade)
+    const heavy = (st.heavy ?? 0) + 1;
+    const tripped = heavy >= cfg.heavyBeforeInline;
+    return { st: { fails: 0, inlineLeft: tripped ? cfg.inlineRuns : st.inlineLeft, heavy }, tripped };
+  }
+  if (what === 'inline') return { st: { ...st, inlineLeft: Math.max(0, st.inlineLeft - 1) }, tripped: false };
   if (what === 'spawn') return { st: { ...st }, tripped: false };
   const fails = st.fails + 1;
   const tripped = fails >= cfg.inlineAfterFails;
-  return { st: { fails, inlineLeft: tripped ? cfg.inlineRuns : st.inlineLeft }, tripped };
+  return { st: { ...st, fails, inlineLeft: tripped ? cfg.inlineRuns : st.inlineLeft }, tripped };
 }
 
 /** v17: a failed run says whether it was heavy (timed out / out of memory / killed) and may carry the child's feed reports */
