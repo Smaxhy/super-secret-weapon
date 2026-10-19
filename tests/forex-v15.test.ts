@@ -8,7 +8,7 @@ import { buildCtx } from '../src/forex/ta';
 import { trimBars } from '../src/forex/data';
 import { upcomingFor, type CalEvent } from '../src/forex/calendar';
 import { FX_CONFIG, ForexLab, signalIndex, tradeKey, type MarketBook, type MarketNow, type RunNote } from '../src/forex/lab';
-import { chosenOf, FastLab, nextOnGrid, type FastSource } from '../src/forex/fast';
+import { FX_FAST, chosenOf, FastLab, nextOnGrid, type FastSource } from '../src/forex/fast';
 import { newAccount, newSyncReport, Practice, tfOfRef, tick, type LabOpenTrade, type PracticeAccount, type PracticePosition, type Quote } from '../src/forex/practice';
 import { buildPlan, leanOf, nextChecks, tradeLines, type PlanInputs } from '../src/forex/plan';
 import { marketClock } from '../src/forex/calendar';
@@ -43,6 +43,7 @@ class MiniRedis {
 const asRedis = (r: MiniRedis) => r as unknown as Redis;
 
 afterEach(() => {
+  FX_FAST.tfs = ['15m'];
   vi.useRealTimers();
 });
 
@@ -384,6 +385,7 @@ describe('15-minute and 1-minute lab (v15)', () => {
   }
 
   it('collects candles, tests every short-chart strategy on its own history and checks the newest close live', async () => {
+    FX_FAST.tfs = ['15m', '1m']; // v18.8: the 1-minute chart is off by default — this test exercises it on purpose
     const redis = new MiniRedis();
     const lab = labWithBook(redis);
     const sync = vi.fn(async () => [] as string[]);
@@ -523,11 +525,10 @@ describe("the bot's plan (v15)", () => {
 
   it('next checks follow each chart', () => {
     const n = Object.fromEntries(nextChecks(Date.UTC(2026, 0, 1, 10, 7, 0), true).map((x) => [x.tf, x.at]));
-    expect(n['1m']).toBe(Date.UTC(2026, 0, 1, 10, 7, 20));
+    expect(n['1m']).toBeUndefined(); // v18.8: the 1-minute chart is off
     expect(n['15m']).toBe(Date.UTC(2026, 0, 1, 10, 15, 40));
     expect(n['1h']).toBe(Date.UTC(2026, 0, 1, 11, 1, 30));
     expect(n['4h']).toBe(Date.UTC(2026, 0, 1, 12, 1, 30));
-    expect(Object.fromEntries(nextChecks(Date.UTC(2026, 0, 1, 10, 7, 0), false).map((x) => [x.tf, x.at]))['1m']).toBe(Date.UTC(2026, 0, 1, 10, 8, 20));
   });
 });
 

@@ -84,3 +84,38 @@ describe('v18.7 cooling off after a close', () => {
     expect((JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount).open).toHaveLength(1);
   });
 });
+
+describe('v18.8 strike one chart from an account', () => {
+  it('removes the chart\'s closed trades and gives their money back, leaves the others alone', async () => {
+    const { undoChart } = await import('../src/forex/practice');
+    const a: PracticeAccount = {
+      ...newAccount(1000),
+      balanceUsd: 1033 - 9.48 - 5.04,
+      peakUsd: 1033,
+      closed: [closed({ id: 'm1', tf: '1m', ref: `adx:1m:EURCHF:${WED - H}`, strategy: 'adx', pair: 'EURCHF', pnlUsd: -9.48 }), closed({ id: 'm2', tf: undefined, ref: `adx:1m:EURCHF:${WED - 2 * H}`, strategy: 'adx', pair: 'EURCHF', pnlUsd: -5.04 }), closed({ id: 'h1', pnlUsd: 33 })],
+      open: [{ id: 'o1', pair: 'GBPUSD', side: 1, units: 1000, entry: 1.27, marginUsd: 50, leverage: 30, stop: null, target: null, openedAt: WED, checkedT: WED, tf: '1m', ref: `x:1m:GBPUSD:${WED}` }, { id: 'o2', pair: 'GBPUSD', side: 1, units: 1000, entry: 1.27, marginUsd: 50, leverage: 30, stop: null, target: null, openedAt: WED, checkedT: WED, tf: '1h', ref: `x:1h:GBPUSD:${WED}` }],
+      stats: { 'adx:1m': [[WED, -9.48]], 'x:1h': [[WED, 33]] },
+      ledger: { 'adx:1m': [[WED, -9.48, -1, `adx:1m:EURCHF:${WED - H}`, 2]] },
+    };
+    const r = undoChart(a, '1m');
+    expect(r).toEqual({ closed: 2, usd: -14.52, open: 1, orders: 0 });
+    expect(a.balanceUsd).toBeCloseTo(1033, 2);
+    expect(a.closed.map((c) => c.id)).toEqual(['h1']);
+    expect(a.open.map((p) => p.id)).toEqual(['o2']);
+    expect(Object.keys(a.stats!)).toEqual(['x:1h']);
+    expect(a.ledger).toEqual({});
+    expect(a.peakUsd).toBe(1033);
+  });
+
+  it('Practice.undoChart rewrites the P&L log and saves the account', async () => {
+    vi.useFakeTimers({ now: WED });
+    const r = new NxRedis();
+    r.m.set('fx:practice:bot', JSON.stringify({ ...newAccount(1000), balanceUsd: 990, closed: [closed({ id: 'm1', tf: '1m', pnlUsd: -10 }), closed({ id: 'h1', pnlUsd: 0 })] }));
+    const p = new Practice(asRedis(r));
+    const line = await p.undoChart('bot', '1m');
+    expect(line).toMatch(/1 closed trade .*\+\$10\.00/);
+    const a = JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount;
+    expect(a.balanceUsd).toBe(1000);
+    expect(a.closed.map((c) => c.id)).toEqual(['h1']);
+  });
+});

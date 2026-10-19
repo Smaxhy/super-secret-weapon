@@ -422,6 +422,12 @@ async function main(): Promise<void> {
   // v15: the same strategies on 15-minute and 1-minute candles (tested hourly, checked live at every close)
   const fastFx = new FastLab(redis, forex);
   fastFx.start();
+  // v18.8 (owner): the two 1-minute trades never happened — strike every 1-minute trade from the bot account once
+  await oneTimeUpgrade('v18.8-undo-1m', async () => {
+    const line = await practice.undoChart('bot', '1m');
+    forex.logBot([line]);
+    log.info({ line }, 'forex bot: 1-minute trades struck');
+  });
   // v17.14: a live read of every open trade + an AI read of its price action every 15 min (display only)
   const tradeWatch = new TradeWatch(practice, new TradeAi(redis), { markets: () => forex.marketsNow, news: (pair, now) => fxCalendar.upcoming(pair, now) });
   tradeWatch.start();

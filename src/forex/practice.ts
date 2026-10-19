@@ -442,6 +442,28 @@ export function ledgerSummary(a: PracticeAccount): Record<string, { n: number; t
   return out;
 }
 
+/**
+ * v18.8 (owner: "revert those trades as if it never happened"): strike every trade of one chart from an account —
+ * closed rows (their USD taken back out of the balance), parts, open positions (nothing was booked for them), resting
+ * orders, weekend pauses, and the chart's record / R ledger keys. Returns what was removed. Mutates `a`. Pure.
+ */
+export function undoChart(a: PracticeAccount, tf: string): { closed: number; usd: number; open: number; orders: number } {
+  const chartOf = (x: { tf?: string | null; ref?: string | null }) => x.tf ?? (x.ref ? tfOfRef(x.ref) : '');
+  const gone = a.closed.filter((c) => chartOf(c) === tf);
+  const usd = Math.round(gone.reduce((n, c) => n + c.pnlUsd, 0) * 100) / 100;
+  a.closed = a.closed.filter((c) => chartOf(c) !== tf);
+  a.balanceUsd = Math.round((a.balanceUsd - usd) * 100) / 100;
+  const open = a.open.filter((p) => chartOf(p) === tf).length;
+  a.open = a.open.filter((p) => chartOf(p) !== tf);
+  const orders = (a.orders ?? []).filter((o) => chartOf(o) === tf).length;
+  if (a.orders) a.orders = a.orders.filter((o) => chartOf(o) !== tf);
+  if (a.resume) a.resume = a.resume.filter((r) => tfOfRef(r.ref) !== tf);
+  for (const key of Object.keys(a.stats ?? {})) if (key.endsWith(`:${tf}`)) delete a.stats![key];
+  for (const key of Object.keys(a.ledger ?? {})) if (key.endsWith(`:${tf}`)) delete a.ledger![key];
+  if (a.peakUsd !== undefined && usd > 0) a.peakUsd = Math.max(a.balanceUsd, a.peakUsd - usd);
+  return { closed: gone.length, usd, open, orders };
+}
+
 /** Close a position; a bot trade's total (parts + this close) goes into its record unless it only paused for the
  * weekend. Returns this close's P&L. Mutates `a`. */
 function closePos(a: PracticeAccount, p: PracticePosition, px: number, mids: Record<string, number>, reason: ClosedPractice['reason'], at: number): number {
@@ -1756,6 +1778,29 @@ export class Practice {
       if (old?.profitLock === false) fresh.profitLock = false;
       // v17.8: the P&L log starts again with the account
       await this.save(fresh, acct, { clearLog: true });
+    });
+  }
+
+  /** v18.8: strike one chart's trades from an account (balance restored, P&L log rewritten). Returns a log line. */
+  async undoChart(acct: AcctId, tf: string): Promise<string> {
+    return this.serial(async () => {
+      const a = await this.load(acct);
+      const r = undoChart(a, tf);
+      if (this.pnlLogs()) {
+        const key = pnlKey(acct);
+        const raw = await this.redis.lrange(key, 0, -1);
+        const keep = raw.filter((x) => {
+          const row = parsePnlRow(x);
+          return row !== null && row.tf !== tf;
+        });
+        const m = this.redis.multi().del(key);
+        if (keep.length) m.rpush(key, ...keep);
+        await m.exec();
+        this.pnlReady.add(acct);
+        this.pnlDirty(acct);
+      }
+      await this.save(a, acct);
+      return `${tf} chart struck from the ${acct} account: ${r.closed} closed trade${r.closed === 1 ? '' : 's'} (${r.usd >= 0 ? '−' : '+'}$${Math.abs(r.usd).toFixed(2)} taken back out), ${r.open} open, ${r.orders} resting order${r.orders === 1 ? '' : 's'} removed — balance now $${a.balanceUsd.toFixed(2)}`;
     });
   }
 

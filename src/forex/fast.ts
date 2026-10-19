@@ -38,7 +38,9 @@ const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
 export const FX_FAST = {
-  tfs: ['15m', '1m'] as FastTf[],
+  /** v18.8 (owner: "I do NOT want to see it trade forex 1 minute"): the 1-minute chart is off altogether — no candles,
+   * no test, no trades. Put '1m' back here to test it again (the bot still won't trade it: FX_CONFIG.botFastCharts). */
+  tfs: ['15m'] as FastTf[],
   /** history kept per market (≈ 14k 15-minute bars, ≈ 21k 1-minute bars: what one test uses at most) */
   keepDays: { '15m': 210, '1m': 21 } as Record<FastTf, number>,
   /** most bars stored per market */
@@ -234,8 +236,8 @@ export class FastLab {
       .catch(() => undefined);
     this.after('eval0', 5 * MIN, () => this.evaluate());
     this.every('eval', (now) => nextOnGrid(now, HOUR, 31 * MIN), () => this.evaluate());
-    this.every('15m', (now) => nextOnGrid(now, 15 * MIN, 40_000), () => this.decide('15m'));
-    this.every('1m', (now) => nextOnGrid(now, (this.oandaOn ? FX_FAST.oneMinuteEverySec.oanda : FX_FAST.oneMinuteEverySec.yahoo) * 1000, 20_000), () => this.decide('1m'));
+    if (FX_FAST.tfs.includes('15m')) this.every('15m', (now) => nextOnGrid(now, 15 * MIN, 40_000), () => this.decide('15m'));
+    if (FX_FAST.tfs.includes('1m')) this.every('1m', (now) => nextOnGrid(now, (this.oandaOn ? FX_FAST.oneMinuteEverySec.oanda : FX_FAST.oneMinuteEverySec.yahoo) * 1000, 20_000), () => this.decide('1m'));
     this.every('persist', (now) => now + 10 * MIN, () => this.persist());
   }
   stop(): void {
@@ -426,7 +428,7 @@ export class FastLab {
       coverage,
       hmm,
       note: rows.length
-        ? `${rows.length} strategy × chart combinations on the 15-minute (${days('15m')} days of history) and 1-minute (${days('1m')} days) charts, same spreads as everywhere. ${pass} pass on their unseen last 30%. Short histories: the paper results decide.`
+        ? `${rows.length} strategy × chart combinations on the ${FX_FAST.tfs.map((tf) => (tf === '15m' ? `15-minute (${days('15m')} days of history)` : `1-minute (${days('1m')} days)`)).join(' and ')} chart${FX_FAST.tfs.length > 1 ? 's' : ''}, same spreads as everywhere. ${pass} pass on their unseen last 30%. Short histories: the paper results decide.`
         : 'Not enough 15-minute / 1-minute candles yet (the server keeps collecting them).',
     };
     this.chosen = chosenOf(rows, this.lab.dropped);

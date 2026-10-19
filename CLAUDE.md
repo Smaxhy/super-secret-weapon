@@ -732,6 +732,16 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   tf, pair, now)` (practice.ts): after a strategy finishes a trade on a market (partial / weekend rows don't count) the
   same strategy may not re-enter that market for 3 candles of its chart (3 h on 1h, 12 h on 4h) → syncBot wait "just
   closed a trade here — cooling off N min". Auto-bot "How it trades" text updated. tests/forex-v18-7.test.ts (4).
+- **v18.8 (Oct 19): the 1-minute trades never happened, 1-minute chart off** (owner: "revert those 2 trades as if it never
+  happened… revert the profit back to when it was up 33; I do NOT want to see it trade forex 1 minute; look all day for
+  entries on the 4-hour or hourly, stick to the trade"). `undoChart(a, tf)` (practice.ts, pure): strikes every trade of
+  one chart from an account — closed rows (their USD taken back out of the balance; peakUsd lowered by removed gains),
+  open positions, resting orders, weekend pauses, the chart's `stats` / `ledger` keys; `Practice.undoChart(acct, tf)`
+  also rewrites the durable P&L log (`fx:pnl:<acct>`, rows with that tf dropped) and saves. Run ONCE at start:
+  `oneTimeUpgrade('v18.8-undo-1m')` → bot account, '1m' → bot log line "1m chart struck from the bot account: …".
+  `FX_FAST.tfs` = ['15m'] (fast.ts): no 1-minute candles, test, timers or trades at all (put '1m' back to test it; the
+  bot still wouldn't trade it — v18.7 `botFastCharts`); `nextChecks` lists 15m / 1h / 4h; dashboard chips and the
+  Setup candle card drop 1m. tests in forex-v18-7 (two tests switch the chart on for themselves and restore it).
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

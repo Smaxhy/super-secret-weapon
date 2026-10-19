@@ -270,7 +270,7 @@ function Summary({ r }: { r: Report }) {
 }
 
 function Strategies({ r }: { r: Report }) {
-  const [tf, setTf] = useStored<'all' | '1m' | '15m' | '1h' | '4h'>('fx.tf', 'all', ['all', '1m', '15m', '1h', '4h']);
+  const [tf, setTf] = useStored<'all' | '1m' | '15m' | '1h' | '4h'>('fx.tf', 'all', ['all', '15m', '1h', '4h']);
   const [risk, setRisk] = useStored<'0.5' | '1' | '2' | '5'>('fx.risk', '1', ['0.5', '1', '2', '5']);
   const [open, setOpen] = useState<RowT | null>(null);
   const rows = useMemo(() => r.rows.filter((x) => tf === 'all' || x.tf === tf), [r, tf]);
@@ -282,7 +282,7 @@ function Strategies({ r }: { r: Report }) {
       padded={false}
     >
       <div className="flex flex-wrap gap-1.5 px-4 pb-3 sm:px-5">
-        {(['all', '1m', '15m', '1h', '4h'] as const).map((k) => (
+        {(['all', '15m', '1h', '4h'] as const).map((k) => (
           <Chip key={k} active={tf === k} onClick={() => setTf(k)}>{k === 'all' ? 'All' : k}</Chip>
         ))}
         <span className="mx-1 self-center text-xs text-muted">risk / trade</span>
@@ -579,9 +579,9 @@ function Setup({ r, fast }: { r: Report; fast: FastReport | null }) {
         </Card>
       )}
       {fast && (
-        <Card title="15-minute and 1-minute candles" subtitle={`From OANDA when connected (deeper history, 1-minute checks every minute), else Yahoo (60 days of 15-minute, up to 3 weeks of 1-minute, checked every 2 minutes). The server keeps collecting them. Last test ${ago(new Date(fast.at).toISOString())}.`}>
+        <Card title="15-minute candles" subtitle={`Lab only — the bot trades the hourly and 4-hour charts. From OANDA when connected (deeper history), else Yahoo (60 days). The 1-minute chart is switched off. Last test ${ago(new Date(fast.at).toISOString())}.`}>
           <Rows>
-            {(['15m', '1m'] as const).map((tf) => {
+            {(['15m'] as const).map((tf) => {
               const fs = fast.feed.filter((x) => x.tf === tf);
               const err = fs.filter((x) => x.error).length;
               const sp = fast.spans[tf];

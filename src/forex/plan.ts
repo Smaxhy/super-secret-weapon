@@ -130,10 +130,10 @@ const inMin = (now: number, t: number) => {
 };
 
 /** When each chart is checked next (UTC grid + the delay for the candle to arrive). Pure. */
-export function nextChecks(now: number, oanda: boolean): Array<{ tf: string; at: number }> {
+export function nextChecks(now: number, _oanda = false): Array<{ tf: string; at: number }> {
   const grid = (period: number, offset: number) => Math.floor((now - offset) / period) * period + period + offset;
+  // v18.8: the 1-minute chart is off altogether (FX_FAST.tfs); the OANDA flag only mattered for its cadence
   return [
-    { tf: '1m', at: grid((oanda ? 60 : 120) * 1000, 20_000) },
     { tf: '15m', at: grid(15 * MIN, 40_000) },
     { tf: '1h', at: grid(HOUR, 90_000) },
     { tf: '4h', at: grid(4 * HOUR, 90_000) },

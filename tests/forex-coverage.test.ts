@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type Redis from 'ioredis';
 import { blockReason, filterCoverage, missingInput, moodCanBlock, RISK_TRADE, type FilterEnv } from '../src/forex/filters';
 import { riskOfLong, buildMood } from '../src/forex/mood';
 import { buildStrength } from '../src/forex/strength';
-import { FastLab, liveCoverage, testedCoverage, type FastReport, type FastSource } from '../src/forex/fast';
+import { FX_FAST, FastLab, liveCoverage, testedCoverage, type FastReport, type FastSource } from '../src/forex/fast';
 import { ForexLab, type MarketBook } from '../src/forex/lab';
 import type { LabOpenTrade, Practice } from '../src/forex/practice';
 import { INSTRUMENTS, STRENGTH_PAIRS, type Bar } from '../src/forex/types';
@@ -20,6 +20,10 @@ function env(pair: string, n: number, o: { gap?: number; mood?: number } = {}): 
 }
 const FULL = { gap: 1, mood: 1 };
 const minuteBars = (n: number, end: number): Bar[] => Array.from({ length: n }, (_, i) => ({ t: end - (n - i) * M, o: 1, h: 1, l: 1, c: 1 }));
+
+afterEach(() => {
+  FX_FAST.tfs = ['15m'];
+});
 
 describe('missing mood data on pairs the mood check cannot block (v17 review)', () => {
   it('EURGBP / AUDNZD never wait on missing mood (mood or all); risk pairs still do', () => {
@@ -132,6 +136,7 @@ describe('fast charts: missing-data guard uses the tested history (v17 review)',
   }
 
   it('end to end: the hourly fast test stores it, the live check reads it (and falls back without it)', async () => {
+    FX_FAST.tfs = ['15m', '1m']; // v18.8: the 1-minute chart is off by default — this test exercises it on purpose
     const redis = new MiniRedis();
     const lab = new ForexLab(redis as unknown as Redis);
     const pairs = INSTRUMENTS.slice(0, 2); // EURUSD, GBPUSD: both clear risk trades, so mood matters
