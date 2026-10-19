@@ -758,6 +758,26 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v19 control room (Oct 19, owner: "I want him in the middle, a big monitor screen, everything around it like a web, other rooms /
+people that work and diagnose for me, animated, also crypto")
+`dashboard/src/components/ControlRoom.tsx` = the new Forex home (`/forex`, section 'room'; Auto-bot moved to `/forex/bot`; nav
+"Control room" first, phone bar Control room · Auto-bot · Markets · Lab · More). Pure display over existing endpoints (`/api/forex/bot`
+5 s, `/api/forex` 60 s, `/api/forex/calendar` 60 s, `/api/system` 15 s, `/api/overview` 30 s, live ticks via `useFxLive`, trade
+reads via `useTradeReads`). **Hub** in the middle: pulse rings + breathing cpu icon (CSS `cr-*` keyframes in index.css, all off under
+prefers-reduced-motion), state word (Market closed / In N trades / Waiting on setups / Scanning), Next look countdown (plan `next`,
+else the local UTC grid), equity + day P&L, last check, labError, and the **big screen**: market chips → `MarketChart` of the focused
+market (open trade's pair, else the closest 'wait' signal, else the first) with its trendlines / levels / the bot's trade, the live
+read track + AI headline for the trade on screen, lean / signal / block badges. **Eight rooms** around it, each with an avatar and a
+"says" line: Scout (every market, live price flash, lean, status), Analyst (1h / 4h / Day arrows, lean, structure, signals, judge, held
+back), Trader (open trades with live P&L, progress to target, next exit line, resting orders), Risk desk (equity / free margin /
+drawdown, exposure bars vs the per-currency cap, risk-mode buttons → POST `/api/forex/bot/mode`), Decisions (bot log), Historian
+(chosen combos with verdict tone, picker / resting / dropped / sniper), News desk (next high-impact event, headlines, no-new-trades
+badge), Crypto room (checked / h, open, today SOL, checker verdict, links). Desktop: 12-column grid, hub spans the middle, rooms
+left / right / bottom, SVG **web lines** hub → room (measured with getBoundingClientRect, re-measured every 2 s, animated dash flow);
+phone: hub first, rooms stacked, no lines. Every read tolerates partial data (`expList`, `?.`), so a fresh VPS with no lab run yet
+shows placeholders, never a crash. Verified by rendering with Playwright at 390 px + 1440 px, light + dark, against a stubbed API
+(scratchpad `shots/room.mjs`).
+
 ## v18.10 crypto checker plumbing (Oct 19, owner: "crypto still isn't trading or learning")
 Cause suspected from the code (VPS not reachable from the sandbox): a coin is only SCORED once its safety check (RPC
 `getAccountInfo` + Postgres, safety queue worker, concurrency 4) has landed; every checkpoint before that returns silently.

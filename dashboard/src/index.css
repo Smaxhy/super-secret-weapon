@@ -410,3 +410,37 @@ textarea::placeholder {
 .tick-down {
   animation: tick-down 600ms ease-out;
 }
+
+/* v19 control room: the hub's pulse rings, breathing desk avatars, the web of lines from the hub to every room,
+   a radar-style scan line on the big screen and a blinking live dot. All off under prefers-reduced-motion (above). */
+@keyframes cr-pulse {
+  0% { transform: scale(0.85); opacity: 0.7; }
+  70% { transform: scale(1.35); opacity: 0; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+.cr-ring { animation: cr-pulse 2.8s ease-out infinite; }
+@keyframes cr-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+.cr-breathe { animation: cr-breathe 3.2s ease-in-out infinite; }
+@keyframes cr-blink {
+  50% { opacity: 0.25; }
+}
+.cr-blink { animation: cr-blink 1.4s ease-in-out infinite; }
+@keyframes cr-flow {
+  to { stroke-dashoffset: -32; }
+}
+.cr-web { stroke: var(--accent); stroke-opacity: 0.18; stroke-width: 1.5; }
+.cr-flow { stroke: var(--accent); stroke-opacity: 0.75; stroke-width: 1.5; stroke-dasharray: 5 11; stroke-linecap: round; animation: cr-flow 1.6s linear infinite; }
+@keyframes cr-scan {
+  0% { top: 0; opacity: 0; }
+  8% { opacity: 1; }
+  92% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+.cr-scanline { animation: cr-scan 6s linear infinite; z-index: 1; }
+.cr-room { transition: box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease); }
+@media (hover: hover) {
+  .cr-room:hover { box-shadow: var(--card-shadow-hover); transform: translateY(-1px); }
+}
