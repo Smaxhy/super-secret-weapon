@@ -97,6 +97,8 @@ export interface PortfolioOpts {
   from?: number;
   to?: number;
   seed?: number;
+  /** v17: false skips the Monte Carlo (cheap null runs) */
+  mc?: boolean;
 }
 
 export interface PortfolioResult {
@@ -133,7 +135,9 @@ export interface PortfolioResult {
 const DAY = 86_400_000;
 const WEEK = 7 * DAY;
 const r1 = (x: number) => Math.round(x * 10) / 10;
-const weekOf = (t: number) => Math.floor((t + 4 * DAY) / WEEK); // weeks start Monday 00:00 UTC
+export const weekOf = (t: number) => Math.floor((t + 4 * DAY) / WEEK); // weeks start Monday 00:00 UTC
+/** v17: Monday 00:00 UTC of week number w (inverse of `weekOf`). */
+export const weekStart = (w: number) => w * WEEK - 4 * DAY;
 const monthOf = (t: number) => {
   const d = new Date(t);
   return d.getUTCFullYear() * 12 + d.getUTCMonth();
@@ -318,7 +322,7 @@ export function simulatePortfolio(trades: readonly PTrade[], o: PortfolioOpts): 
     worstMonthPct: r1(ms.worst),
     maxDdPct: Math.round(dd * 100),
     blown,
-    mc: monteCarlo(weekly, 2_000, o.seed ?? 42),
+    mc: o.mc === false ? null : monteCarlo(weekly, 2_000, o.seed ?? 42),
     equity: equity.filter((_, k) => k % step === 0 || k === equity.length - 1),
   };
 }
