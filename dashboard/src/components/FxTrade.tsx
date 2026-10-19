@@ -13,7 +13,7 @@ import { fitBars, MarketChart, type ChartDrawings } from './MarketChart';
 import { Badge, Button, Card, Chip, NumberInput, Row, Rows, Stack, StatTile, ToggleRow, useStored } from './ui';
 
 interface Quote { id: string; mid: number; bid: number; ask: number; t: number; dayChangePct: number | null; source: 'oanda' | 'yahoo' | 'dukascopy' | 'pyth' | 'yahoo-live'; tradeable?: boolean }
-interface Pos { id: string; pair: string; side: 1 | -1; units: number; entry: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; px: number; pnlUsd: number; pnlPct: number; /** v17.9 */ pnlPerPx?: number; closePending?: { reason: string; at: number } | null; /** v17.11 profit lock */ lock?: { at: number; to: number; gap: number } | null; locked?: boolean }
+interface Pos { id: string; pair: string; side: 1 | -1; units: number; entry: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; px: number; pnlUsd: number; pnlPct: number; /** v17.9 */ pnlPerPx?: number; closePending?: { reason: string; at: number } | null; /** v17.11 profit lock */ lock?: { at: number; to: number; gap: number } | null; locked?: boolean; /** v18 overnight financing booked so far */ swapUsd?: number }
 interface Closed { id: string; pair: string; side: 1 | -1; entry: number; exit: number; leverage: number; marginUsd: number; pnlUsd: number; reason: string; closedAt: number }
 interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[]; /** v17.11 (missing = on) */ profitLock?: boolean }
 interface Data { account: Acct | null; quotes: Record<string, Quote> }
@@ -215,7 +215,7 @@ export function FxTrade() {
                   <div className="flex items-center gap-2">
                     <Badge tone={x.side === 1 ? 'up' : 'down'}>{x.side === 1 ? 'Buy' : 'Sell'}</Badge>
                     <span className="font-medium text-ink">{x.pair}</span>
-                    <span className="text-xs text-muted">{x.leverage}× · {usd(x.marginUsd)}</span>
+                    <span className="text-xs text-muted">{x.leverage}× · {usd(x.marginUsd)}{x.swapUsd ? ` · financing ${usd(x.swapUsd)}` : ''}</span>
                     {x.closePending && <Badge tone="warn">closing at the next price</Badge>}
                     {x.locked && <Badge tone="up" title="The stop is past the entry and trails the best price">profit locked</Badge>}
                   </div>

@@ -19,21 +19,22 @@ import { FxTrade } from '../components/FxTrade';
 import { OandaCard } from '../components/OandaCard';
 import { PythCard } from '../components/PythCard';
 import { fitBars, MarketChart, type ChartDrawings } from '../components/MarketChart';
-import { EXIT_SHORT, ExitsCard, HonestCard, LockCard, FILTER_SHORT, FiltersCard, JudgeCard, MoodCard, NewsStudyCard, StrengthCard, TrendArrows, type ExitKind, type ExitSummary, type FilterKind, type FilterSummary, type HonestReport, type JudgeReport, type LockSummary, type MoodNow, type NewsStudy, type PortfolioReport, type RowStat, type StrengthNow } from '../components/FxInsights';
+import { ENTRY_SHORT, EntriesCard, EXIT_SHORT, ExitsCard, FinancingCard, HonestCard, LockCard, FILTER_SHORT, FiltersCard, JudgeCard, MoodCard, NewsStudyCard, StrengthCard, TrendArrows, type EntryKind, type EntrySummary, type ExitKind, type ExitSummary, type FilterKind, type FilterSummary, type FinancingSummary, type HonestReport, type JudgeReport, type LockSummary, type MoodNow, type NewsStudy, type PortfolioReport, type RowStat, type StrengthNow } from '../components/FxInsights';
 import { Badge, Button, Card, Chip, Drawer, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Sparkline, Stack, StatTile, useStored } from '../components/ui';
 
 interface RStats { n: number; winPct: number; avgR: number; medianR: number; pf: number | null; totalR: number; maxDdR: number }
 interface Risk { riskPct: number; finalX: number; avgWeekPct: number; medianWeekPct: number; greenWeeksPct: number; bigWeeksPct: number; bestWeekPct: number; worstWeekPct: number; maxDdPct: number; blown: boolean; medianLeverage: number; weeks: number }
 interface VariantRow { filter: FilterKind; inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number }
 interface ExitVariantRow extends Omit<VariantRow, 'filter'> { exit: ExitKind }
-interface RowT { id: string; name: string; family: string; desc: string; tf: string; filter?: FilterKind; variants?: VariantRow[]; exit?: ExitKind; exitVariants?: ExitVariantRow[]; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string; luck?: { pctl: number; twinsP90: number; twinPassPct: number }; stats?: RowStat }
+interface EntryVariantRow { entry: EntryKind; inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number; outTotalR: number }
+interface RowT { id: string; name: string; family: string; desc: string; tf: string; filter?: FilterKind; variants?: VariantRow[]; exit?: ExitKind; exitVariants?: ExitVariantRow[]; entryVariants?: EntryVariantRow[]; fin?: { inAvgR: number; outAvgR: number; known: boolean }; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string; luck?: { pctl: number; twinsP90: number; twinPassPct: number }; stats?: RowStat }
 interface Trade { strategy: string; tf: string; pair: string; side: 1 | -1; entryT: number; exitT: number; entry: number; exit: number; r: number; reason: string; stop: number; stop0: number; target: number | null }
 interface MarketNow { id: string; label: string; price: number; t: number; change24hPct: number; closes: number[]; trend: 'up' | 'down' | 'flat'; rsi: number; atrPips: number; firing: Array<{ id: string; name: string; tf: string; side: 1 | -1; allowed?: boolean; why?: string | null }>; openPaper: number; bars: number[][]; drawings: ChartDrawings; mtf?: { h1: number; h4: number; d1: number }; strength?: { base: string; quote: string; baseScore: number | null; quoteScore: number | null; gap: number | null }; risk?: number; heat?: Heatmap }
 interface HeatLevel { price: number; kind: 'round' | 'half' | 'swing' | 'yesterday' | 'expiry'; label: string; weight: number; distAtr: number }
 interface Heatmap { levels: HeatLevel[]; read: { positioning: number | null; stretch?: number | null; carry: number | null; volF: number | null; hurst: number | null; long: number; short: number; of: number; why: string[] } }
 interface ExtFeeds { dukascopy: { at: number; ids: Record<string, { bars: number; firstT: number | null; lastT: number | null; error: string | null }> } | null; spreadProfiles: string[]; macro: { cot: Array<{ ccy: string; score: number; net: number; asOf: number }>; rates: Array<{ ccy: string; rate: number }>; errors: string[]; at: number | null }; historyFrom: number }
 interface PaperRow { id: string; name: string; tf: string; stats: RStats; risk1: Risk; open: number }
-interface Report { at: number; durationMs: number; feed: Array<{ id: string; role?: 'traded' | 'strength' | 'mood'; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; markets?: MarketNow[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string; strength?: StrengthNow; mood?: MoodNow; filters?: FilterSummary[]; exits?: ExitSummary[]; lock?: LockSummary; judge?: JudgeReport | null; portfolio?: PortfolioReport | null; news?: NewsStudy | null; extFeeds?: ExtFeeds; honest?: HonestReport }
+interface Report { at: number; durationMs: number; feed: Array<{ id: string; role?: 'traded' | 'strength' | 'mood'; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; markets?: MarketNow[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string; strength?: StrengthNow; mood?: MoodNow; filters?: FilterSummary[]; exits?: ExitSummary[]; entries?: EntrySummary[]; financing?: FinancingSummary; lock?: LockSummary; judge?: JudgeReport | null; portfolio?: PortfolioReport | null; news?: NewsStudy | null; extFeeds?: ExtFeeds; honest?: HonestReport }
 interface FastFeed { id: string; tf: '15m' | '1m'; bars: number; firstT: number | null; lastT: number | null; source: 'oanda' | 'yahoo' | null; error: string | null }
 interface FastReport { at: number; durationMs: number; feed: FastFeed[]; spans: Record<'15m' | '1m', { from: number | null; to: number | null; oosFrom: number | null; markets: number }>; rows: RowT[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string }
 interface Data { running: boolean; last: Report | null; fast?: FastReport | null }
@@ -113,6 +114,8 @@ export function Forex() {
           {section === 'strategies' && <FiltersCard f={r.filters} />}
           {section === 'strategies' && <LockCard l={r.lock} />}
           {section === 'strategies' && <ExitsCard e={r.exits} />}
+          {section === 'strategies' && <EntriesCard e={r.entries} />}
+          {section === 'strategies' && <FinancingCard f={r.financing} />}
           {section === 'strategies' && <Strategies r={r} />}
           {section === 'strategies' && <NewsStudyCard n={r.news} />}
           {section === 'paper' && <Paper r={r} />}
@@ -422,6 +425,36 @@ function Detail({ x }: { x: RowT }) {
                     <td className={`py-1.5 text-right ${tone(v.inAvgR)}`}>{signed(v.inAvgR, 2)}R <span className="text-xs font-normal text-muted">({v.inN})</span></td>
                     <td className={`py-1.5 text-right ${tone(v.outAvgR)}`}>{signed(v.outAvgR, 2)}R <span className="text-xs font-normal text-muted">({v.outN})</span></td>
                     <td className="py-1.5 text-right text-ink-2">{v.allN}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {x.fin?.known && (
+        <p className="text-xs text-muted">Overnight financing inside these results: {signed(x.fin.inAvgR, 3)}R a trade on the first 70%, {signed(x.fin.outAvgR, 3)}R unseen (the carry its way minus the broker markup).</p>
+      )}
+      {x.entryVariants && x.entryVariants.length > 1 && (
+        <div>
+          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Ways in tried (same check and exit; graded only — the bot enters at the next open)</div>
+          <div className="overflow-x-auto">
+            <table className="tabular w-full min-w-[30rem] text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted">
+                  <th className="py-1 font-medium">Way in</th>
+                  <th className="py-1 text-right font-medium">First 70%</th>
+                  <th className="py-1 text-right font-medium">Unseen 30%</th>
+                  <th className="py-1 text-right font-medium">Unseen total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {x.entryVariants.map((v) => (
+                  <tr key={v.entry} className={`border-t border-line ${v.entry === 'market' ? 'font-semibold' : ''}`}>
+                    <td className="py-1.5 text-ink">{ENTRY_SHORT[v.entry]}</td>
+                    <td className={`py-1.5 text-right ${tone(v.inAvgR)}`}>{signed(v.inAvgR, 2)}R <span className="text-xs font-normal text-muted">({v.inN})</span></td>
+                    <td className={`py-1.5 text-right ${tone(v.outAvgR)}`}>{signed(v.outAvgR, 2)}R <span className="text-xs font-normal text-muted">({v.outN})</span></td>
+                    <td className={`py-1.5 text-right ${tone(v.outTotalR)}`}>{signed(v.outTotalR, 1)}R</td>
                   </tr>
                 ))}
               </tbody>

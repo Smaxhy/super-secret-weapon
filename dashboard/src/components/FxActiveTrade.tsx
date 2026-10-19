@@ -35,6 +35,8 @@ export interface ActivePos {
   locked?: boolean;
   pnlPct?: number;
   marginUsd?: number;
+  /** v18 overnight financing booked so far (USD, inside the trade's total) */
+  swapUsd?: number;
   leverage?: number;
   strategy?: string;
   tf?: string;
@@ -176,6 +178,7 @@ function TradeView({ p, plan, onClose, read }: { p: ActivePos; plan: ActivePlan 
         <span className="tabular">In the trade {sinceOpen(p.openedAt)}</span>
         {p.riskPct !== undefined && <Badge tone="neutral">risked {p.riskPct}% of the account</Badge>}
         {p.leverage !== undefined && <Badge tone="neutral">{p.leverage}×</Badge>}
+        {p.swapUsd ? <Badge tone={p.swapUsd > 0 ? 'up' : 'down'} title="overnight financing booked so far: the carry its way minus the broker markup, at each 17:00 New York roll">financing {p.swapUsd > 0 ? '+' : '−'}${Math.abs(p.swapUsd).toFixed(2)}</Badge> : null}
         {cv && <Badge tone="accent" title={`${cv.conf} of ${cv.of} checks agreed`}>{cv.tier === 'verySure' ? 'very sure' : 'sure'} · {cv.mult}× size</Badge>}
         {p.sniper && <Badge tone="accent">sniper · {p.sniper.votes}/{p.sniper.of} checks</Badge>}
       </div>

@@ -191,6 +191,11 @@ export function carrySeries(m: MacroData | null, pair: string, bars: readonly Ba
   return out;
 }
 
+/** v18: the pair's carry (base rate − quote rate, %) known at time t; NaN = unknown. Pure. */
+export function carryAt(m: MacroData | null, pair: string, t: number): number {
+  return carrySeries(m, pair, [{ t: t - 60_000, o: 0, h: 0, l: 0, c: 0 }], 1)[0] ?? NaN;
+}
+
 /** Positioning of a pair at each bar's close: base score − quote score (USD = 0; metals NaN). −2 … +2. Pure. */
 export function cotSeries(m: MacroData | null, pair: string, bars: readonly Bar[], barMin: number): Float64Array {
   const out = new Float64Array(bars.length).fill(NaN);

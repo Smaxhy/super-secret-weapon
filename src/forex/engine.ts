@@ -5,6 +5,8 @@
  * can be applied afterwards (`equityCurve`).
  */
 import { spreadMultAt } from './spreads';
+import { ENTRY, type EntryKind } from './entries';
+import { FINANCING, finPerBar } from './financing';
 import { lockedStop, lockPlan, PROFIT_LOCK, type LockPlan } from './profit-lock';
 import type { Ctx } from './ta';
 import type { Strategy } from './strategies';
@@ -68,8 +70,14 @@ export interface SimOpts {
   liveEdge?: boolean;
   /** v17.11: the owner's profit lock (profit-lock.ts) on every trade — the bot does it live */
   profitLock?: boolean;
+  /** v18 entry-timing lab (entries.ts): how a signal gets in. 'market' = the next open (the bot); the others are
+   * limit / confirmation variants graded by the lab (a signal on the last bar never becomes an open trade with them) */
+  entry?: EntryKind;
+  /** v18: accrue overnight financing (the carry its way minus the broker markup) on every bar held (financing.ts) —
+   * the practice account books the same at each daily roll. Needs `ctx.ext.carry` (policy rates); unknown = 0. */
+  financing?: boolean;
 }
-export const DEFAULT_SIM: Required<SimOpts> = { weekendPause: true, sessionSpreads: true, liveEdge: true, profitLock: PROFIT_LOCK.on };
+export const DEFAULT_SIM: Required<SimOpts> = { weekendPause: true, sessionSpreads: true, liveEdge: true, profitLock: PROFIT_LOCK.on, entry: 'market', financing: FINANCING.on };
 
 export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: string, sigs: ReadonlyArray<Signal | null>, allow?: Allow, opts: SimOpts = DEFAULT_SIM): Trade[] {
   const o = { ...DEFAULT_SIM, ...opts };
@@ -121,8 +129,55 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
     lock: LockPlan | null;
     locked: boolean;
     lockBest: number;
+    /** v18: R earned / paid as financing so far (inside `realized`) */
+    fin: number;
   };
   let pos: Pos | null = null;
+  const carry = o.financing ? c.ext?.carry : undefined;
+  /** v18: an order waiting to fill (limit / pullback / confirmation variants) */
+  type Pend = { sig: Signal; sigIdx: number; kind: EntryKind; limit: number | null; until: number };
+  let pend: Pend | null = null;
+  /** open a position from signal `sig` (fired at bar sigIdx) filled at bar entryIdx at price `entry` (spread included) */
+  const openAt = (sig: Signal, sigIdx: number, entryIdx: number, entry: number): Pos | null => {
+    const ok = sig.side === 1 ? sig.stop < entry && (sig.target === null || sig.target > entry) : sig.stop > entry && (sig.target === null || sig.target < entry);
+    // the stop must be worth more than the spread, else the trade is all cost
+    if (!ok || Math.abs(entry - sig.stop) <= 2 * spr(entryIdx)) return null;
+    const risk = Math.abs(entry - sig.stop);
+    return {
+      side: sig.side,
+      entryIdx,
+      keyT: bars[sigIdx]!.t + c.barMin * 60_000,
+      entry,
+      stop: sig.stop,
+      stop0: sig.stop,
+      target: sig.target,
+      trailAtr: sig.trailAtr ?? null,
+      maxBars: sig.maxBars ?? null,
+      exitWhen: sig.exitWhen ?? null,
+      best: entry,
+      volRatio: volRatioAt(c, sigIdx),
+      risk,
+      legEntry: entry,
+      frac: 1,
+      realized: 0,
+      beAt: sig.beAtR ? entry + sig.side * sig.beAtR * risk : null,
+      scaleAt: sig.scaleAtR ? entry + sig.side * sig.scaleAtR * risk : null,
+      scaleFrac: Math.min(0.9, Math.max(0.1, sig.scaleFrac ?? 0.5)),
+      scaled: false,
+      be: false,
+      trailed: false,
+      tpTrail: sig.tpTrail && sig.target !== null ? sig.tpTrail : null,
+      tpDist: sig.tpTrail && sig.target !== null ? sig.tpTrail * (Number.isFinite(c.atr14[sigIdx]!) && c.atr14[sigIdx]! > 0 ? c.atr14[sigIdx]! : risk) : null,
+      tpFrac: Math.min(0.9, Math.max(0, sig.tpFrac ?? 0)),
+      tpHit: false,
+      target0: sig.target,
+      trailPx: sig.trailR && sig.trailR > 0 ? sig.trailR * risk : null,
+      lock: o.profitLock ? lockPlan(sig.side, entry, sig.stop, sig.target, spr(entryIdx)) : null,
+      locked: false,
+      lockBest: entry,
+      fin: 0,
+    };
+  };
   const finish = (i: number, fill: number, reason: Trade['reason']) => {
     const p = pos!;
     const r = p.realized + (p.frac * p.side * (fill - p.legEntry)) / p.risk;
@@ -143,6 +198,7 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
       stop: p.stop,
       stop0: p.stop0,
       target: p.target,
+      ...(p.fin !== 0 ? { fin: p.fin } : {}),
       ...(p.volRatio !== undefined ? { volRatio: p.volRatio } : {}),
       ...(p.beAt !== null ? { beAt: p.beAt } : {}),
       ...(p.scaleAt !== null ? { scaleAt: p.scaleAt, scaleFrac: p.scaleFrac, scaled: p.scaled } : {}),
@@ -157,6 +213,26 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
   const stopReason = (p: Pos): Trade['reason'] => (p.trailed ? 'trail' : p.be ? 'breakeven' : 'stop');
   for (let i = WARMUP; i < n; i++) {
     const b = bars[i]!;
+    // v18: an order from an earlier signal waiting to fill — checked before this bar's exits, so a fill inside the
+    // bar gets the bar's stop / target check like any entry bar
+    if (pend && !pos && i > pend.sigIdx) {
+      const pd: Pend = pend;
+      const s: 1 | -1 = pd.sig.side;
+      if (b.t - bars[i - 1]!.t > 30 * HOUR || i > pd.until) pend = null; // an order never survives the weekend / its life
+      else if (pd.kind === 'confirm') {
+        // the bar after the signal must close the signal's way; then a market entry at the next open
+        pend = (s === 1 ? b.c > b.o : b.c < b.o) && i < n - 1 ? { sig: pd.sig, sigIdx: pd.sigIdx, kind: 'market', limit: null, until: i + 1 } : null;
+      } else if (pd.kind === 'market') {
+        pos = openAt(pd.sig, pd.sigIdx, i, b.o + (s * spr(i)) / 2);
+        pend = null;
+      } else {
+        const L = pd.limit!;
+        if (s === 1 ? b.l <= L : b.h >= L) {
+          pos = openAt(pd.sig, pd.sigIdx, i, (s === 1 ? Math.min(b.o, L) : Math.max(b.o, L)) + (s * spr(i)) / 2);
+          pend = null;
+        }
+      }
+    }
     // weekend: bank the leg at Friday's close; skip the gap; carry on from the first bar after it
     if (pos && o.weekendPause && pos.entryIdx < i && b.t - bars[i - 1]!.t > 30 * HOUR) {
       const p: Pos = pos;
@@ -171,6 +247,12 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
     }
     if (pos && pos.entryIdx <= i) {
       const p: Pos = pos;
+      // v18: financing for this bar held (the carry its way minus the markup), on the share still open
+      if (carry && p.frac > 0) {
+        const f = (p.frac * finPerBar(p.side, carry[i]!, b.c, c.barMin)) / p.risk;
+        p.fin += f;
+        p.realized += f;
+      }
       const hitStop = p.side === 1 ? b.l <= p.stop : b.h >= p.stop;
       const hitTgt = p.target !== null && (p.side === 1 ? b.h >= p.target : b.l <= p.target);
       if (hitStop) finish(i, exitFill(i, p.side, p.side === 1 ? Math.min(b.o, p.stop) : Math.max(b.o, p.stop), true), stopReason(p));
@@ -273,50 +355,19 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
     if (!pos && i < n - 1) {
       const sig = sigs[i];
       if (sig && (!allow || allow(i, sig.side))) {
-        const entry = bars[i + 1]!.o + (sig.side * spr(i + 1)) / 2;
-        const ok = sig.side === 1 ? sig.stop < entry && (sig.target === null || sig.target > entry) : sig.stop > entry && (sig.target === null || sig.target < entry);
-        // the stop must be worth more than the spread, else the trade is all cost
-        if (ok && Math.abs(entry - sig.stop) > 2 * spr(i + 1)) {
-          const risk = Math.abs(entry - sig.stop);
-          pos = {
-            side: sig.side,
-            entryIdx: i + 1,
-            keyT: bars[i]!.t + c.barMin * 60_000,
-            entry,
-            stop: sig.stop,
-            stop0: sig.stop,
-            target: sig.target,
-            trailAtr: sig.trailAtr ?? null,
-            maxBars: sig.maxBars ?? null,
-            exitWhen: sig.exitWhen ?? null,
-            best: entry,
-            volRatio: volRatioAt(c, i),
-            risk,
-            legEntry: entry,
-            frac: 1,
-            realized: 0,
-            beAt: sig.beAtR ? entry + sig.side * sig.beAtR * risk : null,
-            scaleAt: sig.scaleAtR ? entry + sig.side * sig.scaleAtR * risk : null,
-            scaleFrac: Math.min(0.9, Math.max(0.1, sig.scaleFrac ?? 0.5)),
-            scaled: false,
-            be: false,
-            trailed: false,
-            tpTrail: sig.tpTrail && sig.target !== null ? sig.tpTrail : null,
-            tpDist: sig.tpTrail && sig.target !== null ? sig.tpTrail * (Number.isFinite(c.atr14[i]!) && c.atr14[i]! > 0 ? c.atr14[i]! : risk) : null,
-            tpFrac: Math.min(0.9, Math.max(0, sig.tpFrac ?? 0)),
-            tpHit: false,
-            target0: sig.target,
-            trailPx: sig.trailR && sig.trailR > 0 ? sig.trailR * risk : null,
-            lock: o.profitLock ? lockPlan(sig.side, entry, sig.stop, sig.target, spr(i + 1)) : null,
-            locked: false,
-            lockBest: entry,
-          };
+        if (o.entry === 'market') pos = openAt(sig, i, i + 1, bars[i + 1]!.o + (sig.side * spr(i + 1)) / 2);
+        else if (o.entry === 'confirm') pend = { sig, sigIdx: i, kind: 'confirm', limit: null, until: i + 1 };
+        else {
+          // a limit at the close (one bar) or a quarter ATR back from it (three bars); it must sit on the right side of the stop
+          const a = c.atr14[i]!;
+          const L = o.entry === 'limit' ? b.c : b.c - sig.side * ENTRY.pullbackAtr * (Number.isFinite(a) && a > 0 ? a : 0);
+          pend = (sig.side === 1 ? L > sig.stop : L < sig.stop) ? { sig, sigIdx: i, kind: o.entry, limit: L, until: i + (o.entry === 'limit' ? ENTRY.limitBars : ENTRY.pullbackBars) } : null;
         }
       }
     }
   }
   if (pos) finish(n - 1, bars[n - 1]!.c, 'open');
-  else if (o.liveEdge && n > WARMUP) {
+  else if (o.liveEdge && o.entry === 'market' && n > WARMUP) {
     // the bar that just closed fired: an open trade from the next bar's open (≈ this close), so the bot can take it now
     const i = n - 1;
     const sig = sigs[i];

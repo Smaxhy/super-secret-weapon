@@ -598,6 +598,64 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     `cot_squeeze` on it, ±1.5, slow), a sniper vote ONLY when the CFTC reading is missing (never both), heatmap read
     `stretch`. It follows price, so it can't see positions that differ from price (what CFTC adds). Causal (a bar only
     sees days that ended by its close). tests/forex-stretch.test.ts.
+- **v18 (Oct 19): quant core** (owner: "a lot more precision, more strategies, a serious quant accuracy level, look online
+  for projects, build what you need"). Research = a 7-agent workflow (Carver / pysystemtrade, López de Prado AFML, regime
+  literature, FX factor evidence: Lustig–Roussanov–Verdelhan carry, Moskowitz–Ooi–Pedersen TSMOM, the fx-factor-strategies
+  and g10-systematic-fx replications, execution engines LEAN / backtrader / freqtrade / Jesse / vectorbt / nautilus); the
+  sandbox could only reach github.com (every paper host DNS-blocked), the synthesis + verification agents hit the session
+  limit, so the five research reports were used directly (transcripts under the session's workflows dir). Everything is
+  picked on the FIRST 70% and graded on the unseen 30%; nothing new trades live. Expect ONE re-pick event after deploy
+  (financing changes every tested trade a little).
+  - **Honest statistics** (`src/forex/stats.ts` pure: normCdf / normInv, Sharpe + its SE, PSR, Deflated Sharpe
+    (Bailey & López de Prado 2014: E[max SR of N no-edge trials] = √V·((1−γ)Φ⁻¹(1−1/N)+γΦ⁻¹(1−1/(Ne)))), MinTRL, CSCV
+    PBO (16 blocks, 12,870 splits), White's Reality Check + Hansen SPA with a stationary bootstrap (block ≈ T^⅓,
+    400 draws); `src/forex/honest.ts` `honestStats` → report `honest` {trials, varSr, expectedMaxSr, pbo, spa, note},
+    `Row.stats` {sr, dsr, psr, n, …}; **`dsrDowngrade`**: an Edge row whose deflated Sharpe < 50% (given every row
+    graded on the same unseen weeks) becomes 'no' with the reason in `why` (synthetic run: 7 of 10 Edge rows).
+    Strategies page: "Is the lab fooling itself?" card (`HonestCard`) + badge "real N%" per row.
+  - **Regime model** (`src/forex/hmm.ts`: 2-state Gaussian HMM on hourly returns, Baum–Welch with scaling, states
+    ordered by σ, fitted on the bars BEFORE each series' 70/30 line, causal forward filter after; `Series.hmm`,
+    `attachHmm` / `applyHmm`; the fast lab stores the models per chart in `FastReport.hmm` for the live pass) → filter
+    'hmm' (filters.ts: wild state ≥ 0.6 → no trades; fades need quiet ≥ 0.35; trend needs quiet < 0.8; 11 filter
+    variants now, input `hmmHi`). Synthetic: picked by 0 rows (no regimes in synthetic data) — real data decides.
+  - **The desk** (`src/forex/forecast.ts` + `desk.ts`, Carver / pysystemtrade): continuous forecasts per market —
+    EWMAC ladder 2/8 … 64/256 (÷ price-change vol), breakouts 10 … 320, carry (policy-rate gap ÷ σ%, EMA 90),
+    acceleration — scaled to |avg| 10 and capped ±20 (scalars = the expanding cross-market median on the fit window,
+    frozen at its end; fixed fallbacks when the history is short), an SR-cost speed limit (0.13/yr: a rule whose
+    costs eat that much Sharpe is dropped on that market), FDM / IDM = min(1/√(w′Cw), 2.5) with negative ρ floored,
+    vol targeting 20%/yr, ±10% trade-to-edge buffer, gross leverage ≤ 20, daily decisions at 22:00 UTC filled 2 h later,
+    USD conversion through the traded pairs. `deskFromBars(h1ById, macro, oosFrom, equity)` → Redis `fx:desk`,
+    report `desk`, `/api/forex/bot` `desk`; both halves graded (days, finalX, SR, max drop, cost %/yr, turnover,
+    weekly stats) + a 13-week block-bootstrap Monte Carlo of the unseen weeks; `now[]` = today's forecast / notional
+    per market. **Graded only** — no desk trade is placed; the gate for wiring it into `syncBot` later: unseen
+    positive, SR ≥ 0.5, drop ≤ 25%, ≥ 26 unseen weeks. Auto-bot card "The desk" (`DeskCard`).
+  - **Entry-timing lab** (`src/forex/entries.ts`, engine `SimOpts.entry`): the same signal, filter and exit with a
+    different way in — market (next open + half spread, = the bot), limit at the signal close (one bar), pullback
+    (¼ ATR back, three bars), confirm (next bar closes its way → the following open). Fill rules as LEAN / backtrader /
+    freqtrade: a limit fills at its price when the bar reaches it, at the open when the open is past it, never on the
+    signal bar, cancelled at expiry or a weekend gap; the risk (1R) is measured from the actual fill; a signal on the
+    last bar is an 'open' trade only at market. Lab pass 3 → `Row.entryVariants` (incl. unseen TOTAL R — a limit that
+    fills fewer trades can win per trade and still earn less), `summarizeEntries` → report `entries`; Strategies page
+    "Does entry timing help?" (`EntriesCard`) + "Ways in tried" in the drawer. **Graded only**: the practice account
+    has no resting orders yet, so the bot keeps entering at market until that exists.
+  - **Overnight financing** (`src/forex/financing.ts`; the carry literature's whole return IS the interest
+    differential, and the engine had none): per bar held the engine accrues (side × carry − markup)% × bar / year of
+    the price on the open share (`Trade.fin`, inside `r`; `SimOpts.financing` default on; carry = `ctx.ext.carry`
+    from the BIS policy rates, metals pay −USD, unknown = 0); `Row.fin` {inAvgR, outAvgR, known}, `summarizeFinancing`
+    → report `financing` → Strategies card "Overnight financing" + a line per row. Practice accounts (both): `tick`
+    books each daily roll (17:00 New York via `rollsBetween`, Wednesday ×3) since `swapT` at the current mid into the
+    balance and the position's `bankedUsd` (so the trade total, ledger and alerts include it) + `swapUsd` for display
+    (Trade-by-hand row, active-trade badge); an unknown rate leaves the rolls owed until known; `Practice.carryFor` is
+    set by the lab (`syncFrom`, `carryAt` on its macro book). Markup `FX_SWAP_MARKUP_PCT` (VPS .env, default 0.75%/yr
+    either way — brokers don't publish theirs).
+  - NOT built (the research's next items, each needs its own grading): carry sleeves (TS / cross-sectional carry with
+    the Menkhoff global-FX-vol gate; dollar carry = the 7 USD legs as ONE basket bet past the per-currency cap), TSMOM
+    the documented way (always-in, vol-scaled — the desk's EWMAC ladder is that in continuous form), resting limit
+    orders on the practice account, hysteresis + dwell on the hmm gate, BOCPD / CUSUM change-point filters, a
+    random-veto twin test for filters (the luck meter for filters), a measured per-pair × hour stop-slip profile.
+  - Tests: forex-stats (8), forex-hmm (4), forex-honest (5), forex-desk (8), forex-entries (11), forex-financing (9).
+    Synthetic e2e (14 markets × 12.4k bars, in-process): hourly run ≈ 46 s. Verified on SYNTHETIC candles only — read
+    the real cards on the VPS; the first run after deploy re-picks filters / exits once.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

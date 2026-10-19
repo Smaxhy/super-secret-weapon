@@ -110,6 +110,8 @@ export interface Trade {
   r: number;
   /** stop distance as % of price — sets the leverage needed */
   stopPct: number;
+  /** v18: R earned (+) or paid (−) as overnight financing while held — part of `r` (financing.ts) */
+  fin?: number;
   reason: 'stop' | 'target' | 'trail' | 'time' | 'exit' | 'open' | 'breakeven' | 'weekend';
   bars: number;
   /** stop at the end (trailed) / at entry, and the target */

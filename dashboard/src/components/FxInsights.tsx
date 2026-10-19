@@ -151,6 +151,67 @@ export function ExitsCard({ e }: { e: ExitSummary[] | undefined }) {
   );
 }
 
+/** v18 entry-timing lab (from the hourly report): the same signals, checks and exits with a different way in */
+export type EntryKind = 'market' | 'limit' | 'pullback' | 'confirm';
+export const ENTRY_SHORT: Record<EntryKind, string> = { market: 'at the next open (as now)', limit: 'limit at the signal close, one bar', pullback: 'limit ¼ ATR back, three bars', confirm: 'after a confirming bar' };
+export interface EntrySummary { entry: EntryKind; label: string; compared: number; inDeltaR: number; outDeltaR: number; outBetterPct: number; filledPct: number; outTotalDeltaR: number }
+
+/** v18: does a limit / pullback / confirmation entry beat entering at the next open? Graded only — the bot enters at market. */
+export function EntriesCard({ e }: { e: EntrySummary[] | undefined }) {
+  if (!e?.length) return null;
+  return (
+    <Card title="Does entry timing help?" subtitle="Same signals, same checks, same exits — only the way in changes. A limit order at the signal's close (good for one bar) or a quarter ATR back (three bars) gets a better price when the market comes back, but misses the trades that never do; waiting for a confirming bar skips the false starts but enters later. Each is graded against entering at the next open, which is what the bot does. Nothing here changes a trade: the practice account can't hold a limit order yet.">
+      <div className="overflow-x-auto">
+        <table className="tabular w-full min-w-[36rem] text-sm">
+          <thead>
+            <tr className="text-left text-xs text-muted">
+              <th className="py-1 font-medium">Way in</th>
+              <th className="py-1 text-right font-medium">R/trade first 70%</th>
+              <th className="py-1 text-right font-medium">R/trade unseen</th>
+              <th className="py-1 text-right font-medium">Better unseen</th>
+              <th className="py-1 text-right font-medium">Trades still taken</th>
+              <th className="py-1 text-right font-medium">Total unseen R</th>
+            </tr>
+          </thead>
+          <tbody>
+            {e.map((x) => (
+              <tr key={x.entry} className="border-t border-line">
+                <td className="py-1.5 text-ink">{x.label}</td>
+                <td className={`py-1.5 text-right ${tone(x.inDeltaR)}`}>{signed(x.inDeltaR, 2)}</td>
+                <td className={`py-1.5 text-right font-semibold ${tone(x.outDeltaR)}`}>{signed(x.outDeltaR, 2)}</td>
+                <td className="py-1.5 text-right text-ink-2">{x.outBetterPct}% of {x.compared}</td>
+                <td className="py-1.5 text-right text-ink-2">{x.filledPct}%</td>
+                <td className={`py-1.5 text-right ${tone(x.outTotalDeltaR)}`}>{signed(x.outTotalDeltaR, 1)} a strategy</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-xs text-muted">Changes are against the market entry. A better R a trade with fewer trades taken can still earn less in total — the last column is the honest one.</p>
+    </Card>
+  );
+}
+
+/** v18 overnight financing (from the hourly report) */
+export interface FinancingSummary { on: boolean; markupPct: number; rows: number; known: number; inAvgR: number; outAvgR: number; hurt: Array<{ id: string; tf: string; outAvgR: number }>; helped: Array<{ id: string; tf: string; outAvgR: number }> }
+
+/** v18: what overnight financing (the carry its way minus the broker markup) does to the tested results. */
+export function FinancingCard({ f }: { f: FinancingSummary | undefined }) {
+  if (!f) return null;
+  const fmt = (x: { id: string; tf: string; outAvgR: number }) => `${x.id} ${x.tf} ${signed(x.outAvgR, 2)}R`;
+  return (
+    <Card title="Overnight financing" subtitle={`Every trade held past 17:00 New York earns the interest of the currency it bought and pays the one it sold (the central-bank rates the bot pulls), minus a broker markup of ${f.markupPct}% a year either way. ${f.on ? 'It is inside every tested trade and booked on the practice accounts at each roll (Wednesday counts three nights).' : 'It is switched off.'}`}>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <StatTile label="Rows with rates" value={`${f.known} of ${f.rows}`} sub="the rates feed covered their trades" />
+        <StatTile label="R a trade, first 70%" value={signed(f.inAvgR, 3)} tone={f.inAvgR > 0 ? 'up' : f.inAvgR < 0 ? 'down' : undefined} sub="financing share of the result" />
+        <StatTile label="R a trade, unseen" value={signed(f.outAvgR, 3)} tone={f.outAvgR > 0 ? 'up' : f.outAvgR < 0 ? 'down' : undefined} sub="financing share of the result" />
+        <StatTile label="Hurt most" value={f.hurt[0] ? fmt(f.hurt[0]) : '—'} sub={f.hurt.slice(1).map(fmt).join(' · ') || 'no row loses to it'} />
+      </div>
+      {f.helped.length > 0 && <p className="mt-2 text-xs text-muted">Helped most: {f.helped.map(fmt).join(' · ')}. Short hourly trades barely notice it; the slow ones (weeks held) live or die by it.</p>}
+    </Card>
+  );
+}
+
 /** v17.11 the owner's profit lock (from the hourly report) */
 export interface LockSummary { on: boolean; compared: number; inDeltaR: number; outDeltaR: number; outBetterPct: number; traded: { n: number; withR: number; withoutR: number } }
 
@@ -206,6 +267,81 @@ export function HonestCard({ h, names = {} }: { h: HonestReport | null | undefin
         <Row label={`Best row vs ${h.benchmark === 'random' ? 'random entries' : 'zero'}, every row counted`} value={h.spa ? `SPA p ${h.spa.pSpa}` : 'not enough data'} sub={h.spa ? `${bestName} · Reality Check p ${h.spa.pRc} · ${h.spa.draws} bootstrap draws · under 0.05 = its lead is not explained by trying ${h.spa.trials} rows` : undefined} tone={spaTone} />
       </Rows>
       <p className="mt-2 text-xs text-muted">Deflated Sharpe: Bailey &amp; López de Prado (2014). PBO: CSCV (Bailey, Borwein, López de Prado &amp; Zhu 2017). SPA: Hansen (2005), Reality Check: White (2000). Each row's "real N%" badge is its deflated Sharpe.</p>
+    </Card>
+  );
+}
+
+export interface DeskSummary { days: number; totalPct: number; sr: number; skew: number; maxDdPct: number; avgLeverage: number; costPctYr: number; turnover: number; weeks: number; avgWeekPct: number; worstWeekPct: number; greenWeeksPct: number; months: number; avgMonthPct: number; worstMonthPct: number; finalX: number }
+export interface DeskRule { id: string; label: string; family: string; scalar: number; estimated: boolean; allowed: number; of: number; costSr: number; turnover: number; inSr: number | null; outSr: number | null }
+export interface DeskMarketNow { id: string; label: string; forecast: number; rules: Record<string, number>; targetUnits: number; notionalUsd: number; bufferUnits: number; volPips: number; volScalar: number; fdm: number; weight: number }
+export interface DeskReport { at: number; from: number; to: number; oosFrom: number; volTarget: number; markets: number; rules: DeskRule[]; fdm: number; idm: number; inSample: DeskSummary; unseen: DeskSummary; unseenWeekly: number[]; equity: number[]; now: DeskMarketNow[]; note: string; mc: { paths: number; quarterP10: number; quarterMedian: number; quarterP90: number; pLoss: number; pDd20: number; pDd40: number } | null }
+
+/** v18: the quant desk — a Carver-style vol-targeted forecast system next to the bot's rule-by-rule trades. */
+export function DeskCard({ d }: { d: DeskReport | null | undefined }) {
+  if (!d) return null;
+  const u = d.unseen;
+  const i = d.inSample;
+  const book = [...d.now].sort((a, b) => Math.abs(b.notionalUsd) - Math.abs(a.notionalUsd));
+  const held = book.filter((m) => m.targetUnits !== 0);
+  return (
+    <Card
+      title="Quant desk: one combined forecast per market"
+      subtitle="Instead of waiting for a rule to fire, the desk holds a position in every market every day, sized by how strongly its rules agree and by the market's volatility (a 20%-a-year vol target). Trend ladders, breakout ladders, carry and acceleration, each scaled, cost-gated and combined the way systematic futures funds do it. Scalars, correlations and the cost gate come from the first 70%; the last 30% is the exam."
+      action={<Badge tone={u.totalPct > 0 && u.sr > 0.5 ? 'up' : u.totalPct > 0 ? 'warn' : 'neutral'}>{u.totalPct > 0 && u.sr > 0.5 ? 'promising' : u.totalPct > 0 ? 'thin' : 'not yet'}</Badge>}
+    >
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile compact label="Unseen 30%" value={`${signed(u.totalPct)}%`} sub={`${u.weeks} weeks · Sharpe ${u.sr}`} tone={u.totalPct > 0 ? 'up' : u.totalPct < 0 ? 'down' : undefined} />
+        <StatTile compact label="Biggest drop (unseen)" value={`−${u.maxDdPct}%`} sub={`worst month ${signed(u.worstMonthPct)}%`} tone={u.maxDdPct > 25 ? 'down' : undefined} />
+        <StatTile compact label="Average month (unseen)" value={`${signed(u.avgMonthPct)}%`} sub={`${u.greenWeeksPct}% of weeks green`} tone={u.avgMonthPct > 0 ? 'up' : u.avgMonthPct < 0 ? 'down' : undefined} />
+        <StatTile compact label="First 70% (fitted there)" value={`${signed(i.totalPct)}%`} sub={`Sharpe ${i.sr} · drop −${i.maxDdPct}%`} />
+      </div>
+      {d.mc && (
+        <p className="mt-2 text-xs text-muted">
+          Next 13 weeks if the unseen weeks repeat in random order: {signed(d.mc.quarterP10)}% (bad case) · {signed(d.mc.quarterMedian)}% (middle) · {signed(d.mc.quarterP90)}% (good case) · {d.mc.pLoss}% chance of a losing quarter · {d.mc.pDd20}% chance of a 20% drop.
+        </p>
+      )}
+      <Rows>
+        <Row label="Costs and churn (unseen)" value={`${u.costPctYr}% a year`} sub={`turnover ${u.turnover}× a year · average gross leverage ${u.avgLeverage}× · daily-return skew ${u.skew}`} />
+        <Row label="Diversification" value={`rules ×${d.fdm} · markets ×${d.idm}`} sub={`${d.rules.reduce((a, g) => a + g.allowed, 0)} of ${d.rules.reduce((a, g) => a + g.of, 0)} rule-market pairs pass the cost speed limit`} />
+      </Rows>
+      <div className="mt-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">What it would hold today</div>
+      {held.length ? (
+        <ul className="mt-1 divide-y divide-line">
+          {held.map((m) => (
+            <li key={m.id} className="flex items-center gap-2 py-1.5 text-sm">
+              <Badge tone={m.forecast > 0 ? 'up' : 'down'}>{m.forecast > 0 ? 'long' : 'short'}</Badge>
+              <span className="font-medium text-ink">{m.label}</span>
+              <span className="text-xs text-muted">forecast {signed(m.forecast)} of ±20 · {Object.keys(m.rules).length} rules</span>
+              <span className="tabular ml-auto text-ink-2">${Math.abs(m.notionalUsd).toLocaleString()}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-1 text-sm text-ink-2">Flat everywhere right now (every forecast inside its buffer).</p>
+      )}
+      <details className="mt-3">
+        <summary className="cursor-pointer text-sm font-medium text-accent-text">Every rule, cost-gated and graded</summary>
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-muted">
+              <tr><th className="py-1 text-left font-medium">Rule</th><th className="py-1 text-right font-medium">Scalar</th><th className="py-1 text-right font-medium">Passes cost</th><th className="py-1 text-right font-medium">Cost SR/yr</th><th className="py-1 text-right font-medium">Turnover</th><th className="py-1 text-right font-medium">Sharpe 70% / unseen</th></tr>
+            </thead>
+            <tbody>
+              {d.rules.map((g) => (
+                <tr key={g.id} className="border-t border-line">
+                  <td className="py-1 text-ink">{g.label}</td>
+                  <td className="tabular py-1 text-right">{g.scalar}{g.estimated ? '' : ' (book)'}</td>
+                  <td className="tabular py-1 text-right">{g.allowed}/{g.of}</td>
+                  <td className="tabular py-1 text-right">{g.costSr}</td>
+                  <td className="tabular py-1 text-right">{g.turnover}</td>
+                  <td className={`tabular py-1 text-right ${g.outSr === null ? 'text-muted' : tone(g.outSr)}`}>{g.inSr === null ? '—' : signed(g.inSr, 2)} / {g.outSr === null ? '—' : signed(g.outSr, 2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+      <p className="mt-2 text-xs text-muted">{d.note} The desk does not trade the account yet: it earns that once the unseen result holds up and the paper weeks agree.</p>
     </Card>
   );
 }

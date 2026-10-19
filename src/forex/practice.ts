@@ -22,6 +22,7 @@ import { SNIPER } from './sniper';
 import { parsePnlRow, pnlRowOf, type PnlRow } from './pnl';
 import { liveFeed } from './live-feed';
 import { lockedStop, lockPlan, PROFIT_LOCK, type LockPlan } from './profit-lock';
+import { FINANCING, rollsBetween, swapGain } from './financing';
 
 const log = moduleLogger('forex-practice');
 export type AcctId = 'me' | 'bot';
@@ -169,6 +170,10 @@ export interface PracticePosition {
   riskUsd0?: number;
   /** v17: closing was asked for while there was no price — it closes at the first price that arrives */
   closePending?: { reason: 'signal' | 'manual' | 'weekend'; at: number } | null;
+  /** v18 overnight financing (financing.ts): the last daily roll booked (missing = none since it opened) and the USD
+   * earned (+) / paid (−) so far — inside `bankedUsd`, so it counts in the trade's total */
+  swapT?: number;
+  swapUsd?: number;
   /** bot trades (v15): the strategy's chart and the exit rules still in force (shown as the trade's plan); v15.1:
    * `trailPx` = the trailing stop-loss distance (price) */
   tf?: string;
@@ -461,7 +466,7 @@ function closePart(a: PracticeAccount, p: PracticePosition, frac: number, px: nu
  * Check stops / targets on the new 1-minute bars, then the stop-out. Mutates `a`. Pure apart from that. `mv.moved` is
  * set when a stop moved without an event (the profit lock trailing) — the caller saves the account then too.
  */
-export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: number, mv?: { moved: boolean }): string[] {
+export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: number, mv?: { moved: boolean }, carryFor?: (pair: string, t: number) => number): string[] {
   const mids: Record<string, number> = {};
   const halves: Record<string, number> = {};
   for (const q of Object.values(quotes)) {
@@ -489,6 +494,30 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
     if (p.lock === undefined) {
       p.lock = a.profitLock !== false && PROFIT_LOCK.on ? lockPlan(p.side, p.entry, p.stop, p.target, half) : null;
       if (mv) mv.moved = true;
+    }
+    // v18: overnight financing at every daily roll (17:00 New York, Wednesday ×3) since the last one booked — the
+    // carry its way minus the broker markup, at the current price; booked into the balance and the trade's total.
+    // An unknown rate (feed down) leaves the rolls owed until it is known again.
+    if (carryFor && FINANCING.on) {
+      const rolls = rollsBetween(p.swapT ?? p.openedAt, now);
+      if (rolls.length) {
+        const carry = carryFor(p.pair, now);
+        if (Number.isFinite(carry)) {
+          let usd = 0;
+          for (const r of rolls) {
+            const gain = swapGain(p.side, carry, q.mid, r.days);
+            usd += pnlUsd({ pair: p.pair, side: p.side, units: p.units, entry: q.mid }, q.mid + p.side * gain, mids);
+          }
+          p.swapT = rolls[rolls.length - 1]!.t;
+          const sw = Math.round(usd * 100) / 100;
+          if (sw !== 0) {
+            p.swapUsd = Math.round(((p.swapUsd ?? 0) + sw) * 100) / 100;
+            p.bankedUsd = Math.round(((p.bankedUsd ?? 0) + sw) * 100) / 100;
+            a.balanceUsd = Math.round((a.balanceUsd + sw) * 100) / 100;
+            events.push(`${p.pair} financing ${sw > 0 ? '+' : '−'}$${Math.abs(sw).toFixed(2)} (${rolls.reduce((n, r) => n + r.days, 0)} ${rolls.length === 1 && rolls[0]!.days === 1 ? 'night' : 'nights'})`);
+          } else if (mv) mv.moved = true;
+        }
+      }
     }
     for (const [t, h, l, cl, o] of q.bars) {
       if (t <= p.checkedT || t < p.openedAt - 60_000) continue;
@@ -776,6 +805,8 @@ export class Practice {
   private timer: NodeJS.Timeout | null = null;
   /** v17.9: live currency-pair prices (seconds old) */
   live: LiveSource = liveFeed;
+  /** v18: the pair's carry (base rate − quote rate, %) now — set by the lab from the policy rates it tests with */
+  carryFor: (pair: string, t: number) => number = () => NaN;
   /** v17.9: yesterday's close per market (Yahoo, refreshed in the background ≤ every 30 min) for live prices' day change */
   private prev = new Map<string, { close: number; at: number }>();
   private checking = false;
@@ -1015,7 +1046,7 @@ export class Practice {
     if (!a.open.length) return;
     const q = await this.quotes(this.neededIds(a));
     const mv = { moved: false };
-    const ev = tick(a, q, Date.now(), mv);
+    const ev = tick(a, q, Date.now(), mv, this.carryFor);
     if (acct === 'bot' && marketClock(Date.now()).flattenNow && a.open.length) {
       const mids: Record<string, number> = {};
       for (const x of Object.values(q)) mids[x.id] = x.mid;
@@ -1062,7 +1093,7 @@ export class Practice {
       const a = await this.load(acct);
       const q = await this.quotes(INSTRUMENTS.map((i) => i.id), 20_000);
       const mv = { moved: false };
-      if (tick(a, q, Date.now(), mv).length || mv.moved) await this.save(a, acct);
+      if (tick(a, q, Date.now(), mv, this.carryFor).length || mv.moved) await this.save(a, acct);
       const mids: Record<string, number> = {};
       const halves: Record<string, number> = {};
       for (const x of Object.values(q)) {

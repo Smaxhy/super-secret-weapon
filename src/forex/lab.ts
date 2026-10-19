@@ -24,7 +24,8 @@ import { moduleLogger } from '../lib/logger';
 import { refreshInstrument, refreshSeries, loadBars, type FeedStatus } from './data';
 import { DK_META, refreshDkTail, installSpreadProfiles, loadDk, refreshDukascopy, stitchHistory, type DkMeta } from './dukascopy';
 import { hasSpreadProfile } from './spreads';
-import { carrySeries, cotSeries, loadMacro, macroNow, refreshMacro, type MacroData } from './macro';
+import { carryAt, carrySeries, cotSeries, loadMacro, macroNow, refreshMacro, type MacroData } from './macro';
+import { FINANCING } from './financing';
 import { RISK_MODES, newSyncReport, type HeatLive, type LabOpenTrade, type Practice, type SyncReport } from './practice';
 import { marketClock, type ForexCalendar } from './calendar';
 import type { ForexHeadlines } from './headlines';
@@ -37,9 +38,11 @@ import { buildStrength, gapSeries, scoreAt, strengthNow, type StrengthBook, type
 import { buildStretch, crowdPxSeries, type StretchBook } from './stretch';
 import { filterHmm, hmmRegime, hmmReturns, type HmmModel } from './hmm';
 import { dsrDowngrade, honestStats, type HonestReport, type RowStat, type StatInput } from './honest';
+import { deskFromBars, FX_DESK, type DeskOut } from './desk';
 import { alignTrend, decisionTimes, toDaily, trendSeries, withEnd, type SpanBar } from './mtf';
 import { buildMood, moodNow, moodSeries, riskOfLong, type MoodBook, type MoodNow } from './mood';
 import { FILTERS, FILTER_LABEL, allowFor, blockReason, chooseFilter, chooseVariant, filterCoverage, missingInput, preferVariant, type FilterEnv, type FilterKind } from './filters';
+import { ENTRIES, entryVariantRow, summarizeEntries, type EntrySummary, type EntryVariantRow } from './entries';
 import { SIZING, simulatePortfolio, stratFactorFromStats, stratFactorFromVerdict, volFactor, walkForward, weekOf, type PortfolioResult, type PTrade, type WalkForward, type WTrade } from './portfolio';
 import { newsStudy, type NewsStudy } from './news-study';
 import { EXITS, EXIT_LABEL, OWNER_EXITS, applyExit, type ExitKind } from './exits';
@@ -113,6 +116,45 @@ export interface Row {
   noLock?: { inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number };
   /** v18: the deflated Sharpe of its unseen trades (honest.ts) — P(the edge is real) given every row graded on them */
   stats?: RowStat;
+  /** v18 entry-timing lab: the same filter + exit with a limit / pullback / confirmation entry (graded only; the bot
+   * enters at the next open) */
+  entryVariants?: EntryVariantRow[];
+  /** v18: R a trade earned (+) / paid (−) as overnight financing, first 70% / unseen 30% (inside the R above);
+   * `known` = the rates feed covered its trades */
+  fin?: { inAvgR: number; outAvgR: number; known: boolean };
+}
+
+/** v18: what overnight financing (carry minus the broker markup) does to the tested results */
+export interface FinancingSummary {
+  on: boolean;
+  markupPct: number;
+  /** strategy rows (not random) and how many had a rates feed behind their trades */
+  rows: number;
+  known: number;
+  /** average financing R a trade across the known rows, first 70% / unseen */
+  inAvgR: number;
+  outAvgR: number;
+  /** the rows it hurts / helps most on the unseen 30% */
+  hurt: Array<{ id: string; tf: Timeframe; outAvgR: number }>;
+  helped: Array<{ id: string; tf: Timeframe; outAvgR: number }>;
+}
+
+/** Pure: the financing summary across the rows. */
+export function summarizeFinancing(rows: ReadonlyArray<Pick<Row, 'id' | 'tf' | 'fin'>>): FinancingSummary {
+  const r3 = (x: number) => Math.round(x * 1000) / 1000;
+  const known = rows.filter((r) => r.id !== 'random' && r.fin?.known);
+  const n = known.length;
+  const sorted = [...known].sort((a, b) => a.fin!.outAvgR - b.fin!.outAvgR);
+  return {
+    on: FINANCING.on,
+    markupPct: FINANCING.markupPct,
+    rows: rows.filter((r) => r.id !== 'random').length,
+    known: n,
+    inAvgR: n ? r3(known.reduce((s, r) => s + r.fin!.inAvgR, 0) / n) : 0,
+    outAvgR: n ? r3(known.reduce((s, r) => s + r.fin!.outAvgR, 0) / n) : 0,
+    hurt: sorted.slice(0, 3).filter((r) => r.fin!.outAvgR < 0).map((r) => ({ id: r.id, tf: r.tf, outAvgR: r3(r.fin!.outAvgR) })),
+    helped: sorted.slice(-3).reverse().filter((r) => r.fin!.outAvgR > 0).map((r) => ({ id: r.id, tf: r.tf, outAvgR: r3(r.fin!.outAvgR) })),
+  };
 }
 
 /** v17.11: what the owner's profit lock changed across the strategies (each on its own filter + exit) */
@@ -279,6 +321,12 @@ export interface FxReport {
   dataAge?: DataAge[];
   /** v18: how much of the lab's selection is luck (deflated Sharpe trials, PBO, Reality Check / SPA) */
   honest?: HonestReport;
+  /** v18: the quant desk — the Carver-style vol-targeted forecast system, graded on the unseen 30% */
+  desk?: DeskOut | null;
+  /** v18: does a limit / pullback / confirmation entry beat entering at the next open? (graded only) */
+  entries?: EntrySummary[];
+  /** v18: overnight financing (carry minus the broker markup) inside every tested trade */
+  financing?: FinancingSummary;
 }
 
 export const FX_REPORT = 'fx:report';
@@ -800,7 +848,28 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
       }
       noLock = vRow(statsOf(off, o.oosFrom));
     }
+    // v18 pass 3: the chosen filter + exit with a different way in (entries.ts) — graded only, never picked: the
+    // bot enters at the next open until the practice account can hold a limit order
+    let entryVariants: EntryVariantRow[] | undefined;
+    if (s.id !== 'random') {
+      entryVariants = [entryVariantRow('market', ch)];
+      for (const k of ENTRIES) {
+        if (k === 'market') continue;
+        const ts: Trade[] = [];
+        for (const se of seriesTf) {
+          const sigs = sigsBy.get(se)!;
+          const mapped = exit === 'designed' ? sigs : sigs.map((sg, i) => applyExit(sg, exit, se.ctx, i));
+          ts.push(...simulate(se.inst, tf, se.ctx, s.id, mapped, allowFor(filter, se.env, style), { ...DEFAULT_SIM, entry: k }));
+          if (se.ctx.bars.length > 8_000) await yieldNow();
+        }
+        entryVariants.push(entryVariantRow(k, statsOf(ts, o.oosFrom)));
+        await yieldNow();
+      }
+    }
     sigsBy.clear();
+    // v18: the financing share of the chosen variant's R (same split as statsOf)
+    const finOf = (ts: readonly Trade[]) => (ts.length ? ts.reduce((a, t) => a + (t.fin ?? 0), 0) / ts.length : 0);
+    const fin = s.id === 'random' ? undefined : { inAvgR: finOf(done.filter((t) => t.exitT < o.oosFrom)), outAvgR: finOf(done.filter((t) => t.entryT >= o.oosFrom)), known: done.some((t) => t.fin !== undefined) };
     rows.push({
       id: s.id,
       name: s.name,
@@ -820,6 +889,8 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
       verdict: 'no',
       why: '',
       ...(noLock ? { noLock } : {}),
+      ...(entryVariants ? { entryVariants } : {}),
+      ...(fin ? { fin } : {}),
     });
     const paper = v.trades.filter((t) => t.entryT >= o.since);
     const pDone = paper.filter((t) => t.reason !== 'open');
@@ -1167,6 +1238,8 @@ export class ForexLab {
   chooser: 'rolling' | 'verdict' = 'verdict';
   /** v17: the correlated-risk cap for the live bot (null until the first run) */
   heatNow: HeatLive | null = null;
+  /** v18: the quant desk's latest report (what it would hold today) */
+  deskNow: DeskOut | null = null;
 
   /** v17 luck meter: recompute on weekends when stale, then downgrade Edge / Maybe rows that random timing matches. */
   private async applyLuck(rows: Row[], series: readonly Series[], oosFrom: number, now = Date.now()): Promise<void> {
@@ -1503,6 +1576,8 @@ export class ForexLab {
     await yieldNow();
     const filters = summarizeFilters(rows);
     const exits = summarizeExits(rows);
+    const entries = summarizeEntries(rows);
+    const financing = summarizeFinancing(rows);
     const lockSummary = summarizeLock(rows, DEFAULT_SIM.profitLock);
     const chosenStore: ChosenStore = { oosFrom, picks: Object.fromEntries(rows.map((r) => [`${r.id}:${r.tf}`, { f: r.filter, e: r.exit }])) };
     await this.redis.set(FX_FILTERS_CHOSEN, JSON.stringify(chosenStore)).catch(() => undefined);
@@ -1720,6 +1795,17 @@ export class ForexLab {
     }
     this.atr1h = Object.fromEntries(markets.map((m) => [m.id, m.atrPips * (INSTRUMENTS.find((i) => i.id === m.id)?.pip ?? 0)]));
 
+    // ── v18 the quant desk: continuous forecasts on daily closes, vol-targeted, graded on the unseen 30% ──
+    let desk: DeskOut | null = null;
+    try {
+      desk = deskFromBars(h1ById, book.macro ?? null, oosFrom, 1000);
+      if (desk) await this.redis.set(FX_DESK, JSON.stringify(desk)).catch(() => undefined);
+      this.deskNow = desk;
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'quant desk failed');
+    }
+    await yieldNow();
+
     // ── after big moves ──
     let news: NewsStudy | null = null;
     try {
@@ -1745,6 +1831,8 @@ export class ForexLab {
       mood: moodNow(mood),
       filters,
       exits,
+      entries,
+      financing,
       lock: lockSummary,
       judge,
       portfolio,
@@ -1752,6 +1840,7 @@ export class ForexLab {
       conviction,
       sniper,
       ...(honest ? { honest } : {}),
+      desk,
       dataAge: Object.values(this.dataAge),
       extFeeds: await (async () => {
         let dk: DkMeta | null = null;
@@ -1826,6 +1915,8 @@ export class ForexLab {
 
   /** The bot account follows the run: opens / manages / closes its trades (always in this process). */
   async syncFrom(out: RunOutput): Promise<void> {
+    // v18: the practice accounts book overnight financing from the same policy rates the lab tests with
+    if (this.practice) this.practice.carryFor = (pair, t) => carryAt(this.book?.macro ?? null, pair, t);
     if (!this.practice) return;
     const sync = newSyncReport();
     const ev = await this.practice

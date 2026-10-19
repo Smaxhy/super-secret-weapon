@@ -153,7 +153,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     });
     secured.get('/api/forex/bot', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
-      const [snap, logRaw, chosenRaw, droppedRaw, portfolioRaw, judgeRaw, convRaw, sniperRaw, rollRaw] = await Promise.all([deps.practice ? deps.practice.snapshot('bot') : null, redis.get('fx:bot:log').catch(() => null), redis.get('fx:bot:chosen').catch(() => null), redis.get('fx:bot:dropped').catch(() => null), redis.get('fx:portfolio').catch(() => null), redis.get('fx:judge:report').catch(() => null), redis.get('fx:conviction').catch(() => null), redis.get('fx:sniper').catch(() => null), redis.get('fx:roll').catch(() => null)]);
+      const [snap, logRaw, chosenRaw, droppedRaw, portfolioRaw, judgeRaw, convRaw, sniperRaw, rollRaw, deskRaw] = await Promise.all([deps.practice ? deps.practice.snapshot('bot') : null, redis.get('fx:bot:log').catch(() => null), redis.get('fx:bot:chosen').catch(() => null), redis.get('fx:bot:dropped').catch(() => null), redis.get('fx:portfolio').catch(() => null), redis.get('fx:judge:report').catch(() => null), redis.get('fx:conviction').catch(() => null), redis.get('fx:sniper').catch(() => null), redis.get('fx:roll').catch(() => null), redis.get('fx:desk').catch(() => null)]);
       const parse = <T,>(x: string | null, d: T): T => {
         try {
           return x ? (JSON.parse(x) as T) : d;
@@ -202,6 +202,8 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         sniper: parse(sniperRaw, null as unknown),
         // v17: the rolling picker (re-picks every week; live only once it beats random pickers on unseen weeks)
         rolling: parse(rollRaw, null as unknown),
+        // v18: the quant desk (vol-targeted forecast system) and what it would hold today
+        desk: parse(deskRaw, null as unknown),
         chooser: deps.forex?.chooser ?? 'verdict',
         names: Object.fromEntries(STRATEGIES.map((x) => [x.id, x.name])),
         log: parse(logRaw, [] as Array<{ t: number; e: string }>),
