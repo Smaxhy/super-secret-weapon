@@ -1,14 +1,17 @@
-/** Forex practice account: fake money, live prices, leverage, stop-loss / take-profit, margin call. */
+/** Forex practice account: fake money, live prices, leverage, stop-loss / take-profit, margin call.
+ * v17.9: pair prices, bid / ask, open P&L and equity move with the bot's live price push (metals keep polling). */
 import { useEffect, useMemo, useState } from 'react';
 import { useApi } from '../hooks/useApi';
+import { FRESH_MS, liveExit, liveOf, livePnl, useFxLive } from '../hooks/useFxLive';
 import { api } from '../lib/api';
 import { ago } from '../lib/format';
+import { LiveBadge, LivePrice } from './LivePrice';
 import { TvChart } from './TvChart';
 import { MarketChart, type ChartDrawings } from './MarketChart';
 import { Badge, Button, Card, Chip, NumberInput, Row, Rows, Stack, StatTile, useStored } from './ui';
 
 interface Quote { id: string; mid: number; bid: number; ask: number; t: number; dayChangePct: number | null; source: 'oanda' | 'yahoo' | 'dukascopy'; tradeable?: boolean }
-interface Pos { id: string; pair: string; side: 1 | -1; units: number; entry: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; px: number; pnlUsd: number; pnlPct: number; closePending?: { reason: string; at: number } | null }
+interface Pos { id: string; pair: string; side: 1 | -1; units: number; entry: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; px: number; pnlUsd: number; pnlPct: number; /** v17.9 */ pnlPerPx?: number; closePending?: { reason: string; at: number } | null }
 interface Closed { id: string; pair: string; side: 1 | -1; entry: number; exit: number; leverage: number; marginUsd: number; pnlUsd: number; reason: string; closedAt: number }
 interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[] }
 interface Data { account: Acct | null; quotes: Record<string, Quote> }
@@ -33,8 +36,19 @@ export function FxTrade() {
   const [busy, setBusy] = useState(false);
   const [view, setView] = useStored<'tv' | 'bot'>('fx.chartView', 'tv', ['tv', 'bot']);
   const lab = useApi<{ last: { markets?: Array<{ id: string; bars: number[][]; drawings: ChartDrawings }> } | null }>(view === 'bot' ? '/api/forex' : null, 60_000);
-  const a = data?.account ?? null;
-  const q = data?.quotes?.[pair];
+  // v17.9: live prices over the 4-second poll
+  const fx = useFxLive();
+  const now = Date.now();
+  const liveQ = (id: string): Quote | undefined => {
+    const x = data?.quotes?.[id];
+    const t = liveOf(fx, id, FRESH_MS, now);
+    return x && t ? { ...x, mid: t.mid, bid: t.bid, ask: t.ask } : x;
+  };
+  const acct = data?.account ?? null;
+  const dEq = acct ? acct.positions.reduce((s, x) => s + (Number.isFinite(x.pnlUsd) ? livePnl(x, fx, now) - x.pnlUsd : 0), 0) : 0;
+  const a = acct && dEq ? { ...acct, equityUsd: acct.equityUsd + dEq, freeMarginUsd: acct.freeMarginUsd + dEq, marginLevelPct: acct.marginUsedUsd > 0 ? Math.round(((acct.equityUsd + dEq) / acct.marginUsedUsd) * 1000) / 10 : acct.marginLevelPct } : acct;
+  const q = liveQ(pair);
+  const qLive = !!liveOf(fx, pair, FRESH_MS, now);
   const p = pipOf(pair);
   const notional = (Number(amount) || 0) * Number(lev);
   // what 1 pip is worth for this size (approx., USD-quoted pairs exact)
@@ -96,11 +110,11 @@ export function FxTrade() {
       <Card padded={false}>
         <div className="flex gap-1.5 overflow-x-auto px-4 pt-4 pb-2 sm:px-5">
           {PAIRS.map((id) => {
-            const x = data?.quotes?.[id];
+            const x = liveQ(id);
             return (
               <button key={id} type="button" onClick={() => setPair(id)} className={`shrink-0 rounded-xl border px-3 py-1.5 text-left text-xs ${pair === id ? 'border-accent bg-accent/10' : 'border-line'}`}>
                 <div className="font-semibold text-ink">{id}</div>
-                <div className="tabular text-muted">{x ? x.mid.toFixed(dp(id)) : '…'} {x?.dayChangePct != null && <span className={tone(x.dayChangePct)}>{x.dayChangePct > 0 ? '+' : ''}{x.dayChangePct}%</span>}</div>
+                <div className="tabular text-muted">{x ? <LivePrice value={x.mid} digits={dp(id)} /> : '…'} {x?.dayChangePct != null && <span className={tone(x.dayChangePct)}>{x.dayChangePct > 0 ? '+' : ''}{x.dayChangePct}%</span>}</div>
               </button>
             );
           })}
@@ -130,7 +144,7 @@ export function FxTrade() {
         </div>
       </Card>
       <div className="xl:sticky xl:top-20 xl:self-start">
-      <Card title={`Trade ${pair}`} subtitle={q ? `Bid ${q.bid.toFixed(dp(pair))} · Ask ${q.ask.toFixed(dp(pair))} · spread ${((q.ask - q.bid) / p).toFixed(1)} pips · ${q.source === 'oanda' ? 'live OANDA price' : q.source === 'dukascopy' ? 'Dukascopy backup price (Yahoo failed)' : 'Yahoo price (slower; connect OANDA data in Setup)'}` : 'Loading price…'}>
+      <Card title={`Trade ${pair}`} action={<LiveBadge fx={fx} />} subtitle={q ? `Bid ${q.bid.toFixed(dp(pair))} · Ask ${q.ask.toFixed(dp(pair))} · spread ${((q.ask - q.bid) / p).toFixed(1)} pips · ${qLive ? 'live price, about once a second' : q.source === 'oanda' ? 'live OANDA price' : q.source === 'dukascopy' ? 'Dukascopy backup price (Yahoo failed)' : 'Yahoo price (slower; connect OANDA data in Setup)'}` : 'Loading price…'}>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
           <NumberInput label="Amount (margin)" value={amount} onChange={setAmount} min={1} step={10} unit="$" />
           <div>
@@ -163,7 +177,10 @@ export function FxTrade() {
           <p className="text-sm text-ink-2">No open positions.</p>
         ) : (
           <ul className="divide-y divide-line">
-            {a.positions.map((x) => (
+            {a.positions.map((x) => {
+              const pnl = livePnl(x, fx, now);
+              const pct = x.marginUsd > 0 && pnl !== x.pnlUsd ? Math.round((pnl / x.marginUsd) * 1000) / 10 : x.pnlPct;
+              return (
               <li key={x.id} className="flex items-center gap-3 py-2.5">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -173,18 +190,19 @@ export function FxTrade() {
                     {x.closePending && <Badge tone="warn">closing at the next price</Badge>}
                   </div>
                   <div className="mt-0.5 text-xs text-muted">
-                    {x.entry.toFixed(dp(x.pair))} → {x.px.toFixed(dp(x.pair))}
+                    {x.entry.toFixed(dp(x.pair))} → <LivePrice value={liveExit(x, fx, now) ?? x.px} digits={dp(x.pair)} />
                     {x.stop !== null && ` · SL ${x.stop.toFixed(dp(x.pair))}`}
                     {x.target !== null && ` · TP ${x.target.toFixed(dp(x.pair))}`} · {ago(new Date(x.openedAt).toISOString())}
                   </div>
                 </div>
                 <div className="shrink-0 text-right">
-                  <div className={`tabular font-semibold ${tone(x.pnlUsd)}`}>{usd(x.pnlUsd)}</div>
-                  <div className={`text-xs ${tone(x.pnlPct)}`}>{x.pnlPct > 0 ? '+' : ''}{x.pnlPct}%</div>
+                  <div className={`tabular font-semibold ${tone(pnl)}`}>{usd(pnl)}</div>
+                  <div className={`text-xs ${tone(pct)}`}>{pct > 0 ? '+' : ''}{pct}%</div>
                 </div>
                 <Button size="sm" variant="outline" onClick={() => void close(x.id)}>Close</Button>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </Card>

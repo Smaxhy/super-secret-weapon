@@ -9,6 +9,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { FxBot } from '../components/FxBot';
 import { FxNews, MarketClockBar } from '../components/FxNews';
 import { useApi } from '../hooks/useApi';
+import { liveOf, useFxLive } from '../hooks/useFxLive';
+import { LiveBadge, LivePrice } from '../components/LivePrice';
 import { api } from '../lib/api';
 import { ago } from '../lib/format';
 import { Icon } from '../components/Icon';
@@ -132,18 +134,19 @@ const STRAT_NAME = (r: Report, id: string) => r.rows.find((x) => x.id === id)?.n
 
 function Markets({ r, onTrade }: { r: Report; onTrade: (id: string) => void }) {
   const [open, setOpen] = useState<MarketNow | null>(null);
+  const fx = useFxLive(); // v17.9: card prices tick live (metals keep the hourly price)
   const ms = r.markets ?? [];
   if (!ms.length) return <Empty icon={<Icon name="globe" size={20} />}>No market data yet. It fills in after the first hourly update.</Empty>;
   return (
     <Stack>
-      <p className="text-sm text-ink-2">What the bot is watching right now, on the hourly chart. Updated {ago(new Date(r.at).toISOString())}. Tap a market to see its lines and trades.</p>
+      <p className="text-sm text-ink-2">What the bot is watching right now, on the hourly chart. Updated {ago(new Date(r.at).toISOString())}. Tap a market to see its lines and trades. <LiveBadge fx={fx} className="ml-1 align-[1px]" /></p>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {ms.map((m) => (
           <button key={m.id} type="button" onClick={() => setOpen(m)} className="card card-lift p-4 text-left">
             <div className="flex items-start justify-between gap-2">
               <div>
                 <div className="font-semibold text-ink">{m.label}</div>
-                <div className="tabular text-lg font-semibold text-ink">{m.price.toFixed(DIGITS(m.id))}</div>
+                <LivePrice value={liveOf(fx, m.id)?.mid ?? m.price} digits={DIGITS(m.id)} className="block w-fit text-lg font-semibold text-ink" />
               </div>
               <div className="text-right">
                 <div className={`tabular text-sm font-semibold ${m.change24hPct >= 0 ? 'text-up' : 'text-down'}`}>{m.change24hPct >= 0 ? '+' : ''}{m.change24hPct}%</div>

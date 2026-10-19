@@ -10,6 +10,7 @@ import { Icon, type IconName } from './components/Icon';
 import { InstallButton } from './components/InstallButton';
 import { Toasts } from './components/Toasts';
 import { useApi } from './hooks/useApi';
+import { livePnl, useFxLive } from './hooks/useFxLive';
 import { disconnectSocket, useBotUptime, useSocketStatus } from './hooks/useWebSocket';
 import { useStreamRates } from './hooks/useStreamRates';
 import { refreshAll } from './lib/refresh';
@@ -133,13 +134,16 @@ function WorkspaceSwitch({ ws, compact = false }: { ws: Ws; compact?: boolean })
 }
 
 /** v17.8: GET /api/forex/bot/status (older servers 404 → no pill). */
-interface FxBotStatus { open: number; openPnlUsd: number; trades?: Array<{ id: string; pair: string; side: 1 | -1; pnlUsd: number }> }
+interface FxBotStatus { open: number; openPnlUsd: number; trades?: Array<{ id: string; pair: string; side: 1 | -1; pnlUsd: number; /** v17.9: exit price behind pnlUsd + USD per 1.0 move of it */ px?: number; pnlPerPx?: number }> }
 const fxMoney = (x: number) => `${x < 0 ? '−' : x > 0 ? '+' : ''}$${Math.abs(x) >= 10_000 ? `${(Math.abs(x) / 1000).toFixed(1)}k` : Math.abs(x).toFixed(Math.abs(x) >= 100 ? 0 : 2)}`;
 
 /** v17.8: "● In 2 trades +$8.20" (sidebar) / "● 2 open +$8.20" (phone header) in the Forex workspace, links to the Auto-bot. Nothing when it holds no trade. */
 function FxTradesPill({ st, variant }: { st: FxBotStatus | null; variant: 'sidebar' | 'phone' }) {
+  const fx = useFxLive();
   if (!st || !(st.open > 0)) return null;
-  const pnl = Number.isFinite(st.openPnlUsd) ? st.openPnlUsd : 0;
+  // v17.9: the server's total moved by each trade's live P&L change (trades without pnlPerPx keep their number)
+  const now = Date.now();
+  const pnl = (Number.isFinite(st.openPnlUsd) ? st.openPnlUsd : 0) + (st.trades ?? []).reduce((s, t) => s + (Number.isFinite(t.pnlUsd) ? livePnl(t, fx, now) - t.pnlUsd : 0), 0);
   const tone = pnl > 0 ? 'text-up' : pnl < 0 ? 'text-down' : 'text-ink-2';
   const label = `The forex bot is in ${st.open} trade${st.open === 1 ? '' : 's'}, open profit ${fxMoney(pnl)}`;
   const dot = (

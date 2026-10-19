@@ -344,3 +344,37 @@ textarea::placeholder {
   top: var(--hdr);
   z-index: 5;
 }
+
+/* v17.9 live prices: a short green / red wash on an up / down tick (off with prefers-reduced-motion, see above). */
+@keyframes tick-up {
+  from {
+    background-color: rgba(var(--pnl-up-bg), 0.22);
+    box-shadow: 0 0 0 3px rgba(var(--pnl-up-bg), 0.22);
+    color: var(--up-text);
+  }
+  to {
+    background-color: rgba(var(--pnl-up-bg), 0);
+    box-shadow: 0 0 0 3px rgba(var(--pnl-up-bg), 0);
+  }
+}
+@keyframes tick-down {
+  from {
+    background-color: rgba(var(--pnl-down-bg), 0.22);
+    box-shadow: 0 0 0 3px rgba(var(--pnl-down-bg), 0.22);
+    color: var(--down-text);
+  }
+  to {
+    background-color: rgba(var(--pnl-down-bg), 0);
+    box-shadow: 0 0 0 3px rgba(var(--pnl-down-bg), 0);
+  }
+}
+.tick-up,
+.tick-down {
+  border-radius: 4px;
+}
+.tick-up {
+  animation: tick-up 600ms ease-out;
+}
+.tick-down {
+  animation: tick-down 600ms ease-out;
+}

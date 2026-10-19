@@ -19,7 +19,8 @@ import { backoffDelay, connStatus, SILENT_TIMEOUT_MS, type ConnStatus } from '..
 import { refreshAll } from '../lib/refresh';
 
 export interface BotEvent {
-  type: 'token' | 'safety' | 'evaluation' | 'trade' | 'stats' | 'positions' | 'hello' | 'hb';
+  /** 'fx' (v17.9): live forex prices, { t, px: { EURUSD: [mid, bid, ask, priceT] } } about once a second (useFxLive) */
+  type: 'token' | 'safety' | 'evaluation' | 'trade' | 'stats' | 'positions' | 'hello' | 'hb' | 'fx';
   data: Record<string, unknown>;
 }
 

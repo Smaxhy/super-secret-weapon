@@ -2,10 +2,14 @@
  * v17.8 Auto-bot: the bot's open trade, live (owner: "see the active trade and the graph it's in"). Candles of its
  * pair with the entry (and when it entered), the stop, the target and the live price; P&L in $ and pips, room to the
  * stop and the target, time in the trade; every rule that can close it; "Close now". Several trades → a switch.
+ * v17.9: the price ticks live (the bot's 'fx' push): price now, P&L in $ and pips, room to the stop / target, and the
+ * newest candle (a new one opens when its time comes) between the 15-second candle refreshes.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useApi } from '../hooks/useApi';
+import { FRESH_MS, foldTick, liveExit, liveOf, livePnl, overlayLive, useFxLive, type LiveBar } from '../hooks/useFxLive';
 import { duration } from '../lib/format';
+import { LiveBadge, LivePrice } from './LivePrice';
 import { MarketChart } from './MarketChart';
 import { TvChart } from './TvChart';
 import { Badge, Button, Card, Tabs, useStored } from './ui';
@@ -21,6 +25,8 @@ export interface ActivePos {
   target: number | null;
   openedAt: number;
   pnlUsd: number;
+  /** v17.9: USD change of pnlUsd per 1.0 move of the exit price px (live P&L between refreshes) */
+  pnlPerPx?: number;
   pnlPct?: number;
   marginUsd?: number;
   leverage?: number;
@@ -131,11 +137,22 @@ function TradeView({ p, plan, onClose }: { p: ActivePos; plan: ActivePlan | null
   const count = Math.min(240, Math.max(phone ? 72 : 120, Math.ceil((since + 12) / 24) * 24));
   const path = view === 'bot' && visible && width > 0 ? `/api/forex/candles?pair=${encodeURIComponent(p.pair)}&tf=${gran}&count=${count}` : null;
   const candles = useApi<{ source?: string; bars?: unknown }>(path, 15_000);
-  const bars = toBars(candles.data?.bars);
+  const bars = useMemo(() => toBars(candles.data?.bars), [candles.data]);
   const lagMin = candleLagMin(bars, GRAN_MS[gran]);
-  const pnlPips = ((p.px - p.entry) * p.side) / pip;
-  const toStop = p.stop !== null ? ((p.px - p.stop) * p.side) / pip : null;
-  const toTarget = p.target !== null ? ((p.target - p.px) * p.side) / pip : null;
+  // v17.9: live price (bid for a long, ask for a short = what a close gets); the candles stay the source of truth
+  const fx = useFxLive();
+  const now = Date.now();
+  const tick = liveOf(fx, p.pair, FRESH_MS, now);
+  const px = liveExit(p, fx, now) ?? p.px;
+  const pnlUsd = livePnl(p, fx, now);
+  const forming = useRef<{ key: string; at: number; bars: LiveBar[] }>({ key: '', at: 0, bars: [] });
+  const fkey = `${p.pair}:${gran}`;
+  if (forming.current.key !== fkey) forming.current = { key: fkey, at: 0, bars: [] };
+  if (tick && tick.at !== forming.current.at) forming.current = { key: fkey, at: tick.at, bars: foldTick(forming.current.bars, tick.mid, tick.priceT, GRAN_MS[gran]) };
+  const shownBars = tick ? overlayLive(bars, forming.current.bars, GRAN_MS[gran]) : bars;
+  const pnlPips = ((px - p.entry) * p.side) / pip;
+  const toStop = p.stop !== null ? ((px - p.stop) * p.side) / pip : null;
+  const toTarget = p.target !== null ? ((p.target - px) * p.side) / pip : null;
   const name = plan?.name ?? p.strategy ?? 'bot';
   const cv = p.conviction && p.conviction.mult > 1 ? p.conviction : null;
   return (
@@ -151,13 +168,15 @@ function TradeView({ p, plan, onClose }: { p: ActivePos; plan: ActivePlan | null
           <div className="mt-1 truncate text-sm text-ink-2" title={name}>{name}</div>
         </div>
         <div className="shrink-0 text-right">
-          <div className={`text-2xl font-semibold leading-tight tracking-tight ${fxTone(p.pnlUsd)}`}>{fxUsd(p.pnlUsd, true)}</div>
+          <div className={`text-2xl font-semibold leading-tight tracking-tight ${fxTone(pnlUsd)}`}>
+            <LivePrice value={pnlUsd} text={fxUsd(pnlUsd, true)} />
+          </div>
           <div className={`tabular text-sm font-medium ${fxTone(pnlPips)}`}>{pnlPips > 0 ? '+' : pnlPips < 0 ? '−' : ''}{pipsTxt(pnlPips)} pips</div>
         </div>
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2">
         <Fact label="To stop" mark="bg-[#ef4444]" value={toStop === null ? 'none' : toStop <= 0 ? 'at the stop' : `${pipsTxt(toStop)} pips`} sub={p.stop !== null ? p.stop.toFixed(dg) : 'no stop'} />
-        <Fact label="Price now" mark="bg-[#6366f1]" value={p.px.toFixed(dg)} sub={`in at ${p.entry.toFixed(dg)}`} />
+        <Fact label="Price now" mark="bg-[#6366f1]" value={<LivePrice value={px} digits={dg} />} sub={`in at ${p.entry.toFixed(dg)}`} live={!!tick} />
         <Fact label="To target" mark="bg-[#22c55e]" value={toTarget === null ? 'trailing' : toTarget <= 0 ? 'reached' : `${pipsTxt(toTarget)} pips`} sub={p.target !== null ? p.target.toFixed(dg) : 'no fixed target'} />
       </div>
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">
@@ -177,7 +196,7 @@ function TradeView({ p, plan, onClose }: { p: ActivePos; plan: ActivePlan | null
           <TvChart pair={p.pair} interval={GRANS.find((g) => g[0] === gran)![2]} height={phone ? 380 : 460} />
         ) : bars.length >= 2 && width > 0 ? (
           <div className={`rounded-xl border border-line bg-surface p-1.5 transition-opacity ${candles.error ? 'opacity-60' : ''}`}>
-            <MarketChart bars={bars} trades={[{ side: p.side, entryT: p.openedAt, entry: p.entry, stop: p.stop, target: p.target, strategy: name }]} digits={dg} width={width - 14} height={phone ? 250 : 340} live={p.px} entryMarker tradeLabels timeAxis interactive />
+            <MarketChart bars={shownBars} trades={[{ side: p.side, entryT: p.openedAt, entry: p.entry, stop: p.stop, target: p.target, strategy: name }]} digits={dg} width={width - 14} height={phone ? 250 : 340} live={px} entryMarker tradeLabels timeAxis interactive />
           </div>
         ) : (
           <div className="grid h-56 place-items-center rounded-xl border border-dashed border-line-strong px-4 text-center text-sm text-muted">
@@ -191,9 +210,12 @@ function TradeView({ p, plan, onClose }: { p: ActivePos; plan: ActivePlan | null
           {p.stop !== null && <Key color="#ef4444" dashed>stop</Key>}
           {p.target !== null && <Key color="#22c55e" dashed>target</Key>}
           <Key color="#6366f1" dotted>price now</Key>
-          <span className="ml-auto">
-            {candles.data?.source === 'oanda' ? 'OANDA candles' : candles.data?.source ? 'Yahoo candles' : ''}
-            {lagMin !== null ? <span className="text-warning">{`${candles.data?.source ? ' · ' : ''}newest candle ${lagMin >= 90 ? `${Math.round(lagMin / 60)} h` : `${lagMin} min`} old`}</span> : candles.data?.source ? ' · updates every 15 s' : ''}
+          <span className="ml-auto inline-flex items-center gap-1.5">
+            <LiveBadge fx={fx} />
+            <span>
+              {candles.data?.source === 'oanda' ? 'OANDA candles' : candles.data?.source ? 'Yahoo candles' : ''}
+              {lagMin !== null ? <span className="text-warning">{`${candles.data?.source ? ' · ' : ''}newest candle ${lagMin >= 90 ? `${Math.round(lagMin / 60)} h` : `${lagMin} min`} old`}</span> : candles.data?.source ? (tick ? ' · price live' : ' · updates every 15 s') : ''}
+            </span>
           </span>
         </div>
       )}
@@ -219,12 +241,13 @@ function TradeView({ p, plan, onClose }: { p: ActivePos; plan: ActivePlan | null
   );
 }
 
-function Fact({ label, value, sub, mark }: { label: string; value: string; sub: string; mark: string }) {
+function Fact({ label, value, sub, mark, live = false }: { label: string; value: ReactNode; sub: string; mark: string; live?: boolean }) {
   return (
     <div className="min-w-0 rounded-xl bg-surface-2/60 px-2.5 py-2">
       <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted">
-        <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${mark}`} />
+        <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${mark} ${live ? 'animate-pulse' : ''}`} />
         <span className="truncate">{label}</span>
+        {live && <span className="sr-only">(live)</span>}
       </div>
       <div className="tabular mt-0.5 truncate text-sm font-semibold text-ink">{value}</div>
       <div className="tabular truncate text-[11px] text-muted">{sub}</div>

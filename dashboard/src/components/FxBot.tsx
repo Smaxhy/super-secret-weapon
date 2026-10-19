@@ -4,19 +4,22 @@
  * check it made (also the quiet ones).
  * v17.8 (owner: "see much easier if the bot is in a trade … the active trade and graph it's in … a PnL and calendar
  * view"): a big "In a trade" / "Not in a trade" header, the selected trade's live chart + plan, then profit and loss.
+ * v17.9 (owner: "see the price actively change"): open P&L and prices move with the bot's live price push.
  */
 import { useState } from 'react';
 import { useApi } from '../hooks/useApi';
+import { liveOf, livePnl, useFxLive } from '../hooks/useFxLive';
 import { api } from '../lib/api';
 import { ago } from '../lib/format';
 import { FxActiveTrade, fxUsd, sinceOpen } from './FxActiveTrade';
 import { FxPnl } from './FxPnl';
 import { Icon } from './Icon';
+import { LiveBadge, LivePrice } from './LivePrice';
 import { Badge, Button, Card, Empty, Row, Rows, Stack, StatTile, Tabs, Timeline, useTab } from './ui';
 import { ConvictionCard, PortfolioCard, RiskCard, RollingCard, SniperCard, type ConvictionReport, type JudgeReport, type Ledger, type PortfolioReport, type RiskSummary, type RollReport, type SniperReport } from './FxInsights';
 
 interface Conviction { tier: 'normal' | 'sure' | 'verySure'; conf: number; of: number; mult: number; lev: number | null }
-interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number; tf?: string; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; closePending?: { reason: string; at: number } | null }
+interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; /** v17.9 */ pnlPerPx?: number; units?: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number; tf?: string; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; closePending?: { reason: string; at: number } | null }
 interface Closed { id: string; pair: string; side: 1 | -1; entry: number; exit: number; pnlUsd: number; reason: string; closedAt: number; strategy?: string; tf?: string }
 interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[] }
 interface PlanSignal { tf: string; name: string; side: 1 | -1; verdict: string; tone: 'go' | 'wait' | 'no' }
@@ -160,7 +163,11 @@ function RiskModeCard({ mode, modes, portfolio, onChange }: { mode: RiskMode; mo
 function BotHero({ plan, a, loaded, selectedId, onPick }: { plan: BotPlan | null; a: Acct | null; loaded: boolean; selectedId: string | null; onPick: (id: string) => void }) {
   const pos = a?.positions ?? [];
   const n = pos.length;
-  const open = pos.reduce((s, p) => s + (Number.isFinite(p.pnlUsd) ? p.pnlUsd : 0), 0);
+  // v17.9: live P&L between the 5-second refreshes (falls back to the polled numbers)
+  const fx = useFxLive();
+  const now = Date.now();
+  const pnlOf = (p: Pos) => livePnl(p, fx, now);
+  const open = pos.reduce((s, p) => s + (Number.isFinite(pnlOf(p)) ? pnlOf(p) : 0), 0);
   const name = (p: Pos) => plan?.trades.find((t) => t.id === p.id)?.name ?? p.strategy ?? 'bot';
   if (n > 0)
     return (
@@ -172,8 +179,14 @@ function BotHero({ plan, a, loaded, selectedId, onPick }: { plan: BotPlan | null
             <h2 className="text-[26px] font-bold leading-none tracking-tight text-ink">{n === 1 ? 'In a trade' : `In ${n} trades`}</h2>
           </div>
           <div className="shrink-0 text-right">
-            <div className={`text-[26px] font-bold leading-none tracking-tight ${tone(open)}`}>{fxUsd(open, true)}</div>
-            <div className="mt-1 text-xs text-muted">open P&L</div>
+            <div className={`text-[26px] font-bold leading-none tracking-tight ${tone(open)}`}>
+              <LivePrice value={open} text={fxUsd(open, true)} />
+            </div>
+            {/* v17.9: the badge sits by the total (next to the heading it wraps "In 3 trades" on 360 px phones) */}
+            <div className="mt-1 flex items-center justify-end gap-1.5 text-xs text-muted">
+              <LiveBadge fx={fx} />
+              open P&L
+            </div>
           </div>
         </div>
         <p className="mt-1 text-sm text-ink-2">The bot trades by itself{a ? ` · ${usd(a.marginUsedUsd)} margin in use` : ''}. Tap a trade for its chart.</p>
@@ -194,7 +207,7 @@ function BotHero({ plan, a, loaded, selectedId, onPick }: { plan: BotPlan | null
                       <span className="tabular">{sinceOpen(p.openedAt)}</span> · {name(p)}
                     </div>
                   </div>
-                  <span className={`tabular shrink-0 text-[15px] font-semibold ${tone(p.pnlUsd)}`}>{fxUsd(p.pnlUsd, true)}</span>
+                  <span className={`tabular shrink-0 text-[15px] font-semibold ${tone(pnlOf(p))}`}>{fxUsd(pnlOf(p), true)}</span>
                   <Icon name="chevron" size={16} className={`shrink-0 ${on ? 'text-accent-text' : 'text-muted'}`} />
                 </button>
               </li>
@@ -249,6 +262,7 @@ function NextChecks({ plan }: { plan: BotPlan | null }) {
 
 function MarketsCard({ plan }: { plan: BotPlan | null }) {
   const [open, setOpen] = useState<string | null>(null);
+  const fx = useFxLive();
   if (!plan) return null;
   return (
     <Card title="What it's watching and waiting for" subtitle="Every market, what the bot is doing there, which way its checks lean and what fired on the latest candle closes. Tap a market for details." padded={false}>
@@ -260,7 +274,7 @@ function MarketsCard({ plan }: { plan: BotPlan | null }) {
               <button type="button" onClick={() => setOpen(on ? null : m.id)} className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-surface-2/60 sm:px-5" aria-expanded={on}>
                 <div className="w-20 shrink-0">
                   <div className="font-medium text-ink">{m.label}</div>
-                  {m.price !== null && <div className="tabular text-xs text-muted">{m.price.toFixed(dp(m.id))}</div>}
+                  {m.price !== null && <LivePrice value={liveOf(fx, m.id)?.mid ?? m.price} digits={dp(m.id)} className="block w-fit text-xs text-muted" />}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
