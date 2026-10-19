@@ -169,7 +169,7 @@ export function JudgeCard({ j }: { j: JudgeReport | null | undefined }) {
       <p className="mt-3 text-sm text-ink-2">{j.why}.</p>
       {j.fallback && (
         <p className="mt-1 text-sm text-ink-2">
-          Backup judge (used when positioning / interest-rate / mood data is missing): <span className={j.fallback.active ? 'text-up' : 'text-muted'}>{j.fallback.active ? 'on' : 'off'}</span> — {j.fallback.why}.
+          Backup judge (used when positioning / interest-rate / mood data is missing): <span className={j.fallback.active && j.active ? 'text-up' : 'text-muted'}>{!j.fallback.active ? 'off' : j.active ? 'on' : 'passed its own test, used only once the main judge is on'}</span> — {j.fallback.why}.
         </p>
       )}
       {j.importance.length > 0 && (

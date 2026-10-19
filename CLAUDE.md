@@ -471,6 +471,25 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     ran and tightens the child's dropped / chosen / open trades to it (`learnerSource`, `learnerTighten`,
     `tightenState`, `tightenOut`). Training time ≈ 1.5–1.8× (two judge models). tests: forex-dk-backfill,
     forex-judge-fallback, forex-coverage, forex-worker-fixes.
+  - **v17.8 (owner: "see much easier if the bot is in a trade, the active trade and its graph, a PnL and calendar view")**:
+    durable close log per account (Redis list `fx:pnl:<acct>`, newest 20k: every close incl. parts / weekend legs /
+    stop-outs, written in the same MULTI as the account save → never doubled or lost; backfilled once from the 200-row
+    closed list, so "All time" only reaches back that far for old accounts; reset clears it). `src/forex/pnl.ts` (pure:
+    `dailyPnl`, `periods`, `equityCurve` ≤ 600 points, `dayTrades`, `pnlReport`, `botStatus`); routes GET
+    `/api/forex/pnl?acct&tz`, `/api/forex/pnl/day?acct&day&tz`, `/api/forex/bot/status`. Dashboard: Auto-bot opens with
+    `BotHero` ("In N trades" + open P&L + one row per trade), `FxActiveTrade.tsx` (live candles 1m/5m/15m/1h with entry /
+    stop / target / price-now lines (MarketChart `tradeLabels` / `entryMarker` / `tradeAnchor`), pips to stop / target,
+    the plan lines, Close now, Bot ⇄ TradingView), `FxPnl.tsx` (Today / week / month / all-time tiles, balance curve,
+    Monday-first month calendar, tap a day → its trades); header pill "● N open +$X" (`FxTradesPill`, App.tsx). Fixes
+    from the integration review: the main judge's `active` is decided on a MAIN-ONLY exam (the backup can't flip it;
+    `report.withBackup` display-only; the honest-test "judged" row ignores the backup); Dukascopy saves merge with what
+    is stored at save time (`saveMerged`) and the tail fetch never throws away a fetched bid / never fails the feed for
+    our own budget; stored filter / exit picks carry their `oosFrom` and are ignored after the 70/30 line moved back
+    > 1 day (`prevPicks`; old format → one re-pick after deploy), same for the fast charts; a worker run tightened to the
+    parent's learner re-notes the chosen history. tests: forex-pnl, fx-dashboard-trade, forex-lab-hysteresis.
+  - **v17.9 Pyth live prices** (`src/forex/pyth.ts`, `pythLive`): Hermes SSE stream, feed ids resolved by symbol
+    (direct / inverse / via the USD legs), 1-minute candles from ticks, back-off + watchdog, feed 'pyth-live'. Currency
+    pairs only (metals are tested on COMEX futures; Pyth's are spot). tests/forex-pyth.test.ts.
   - **Price stretch** (`src/forex/stretch.ts`, no outside feed): per currency the 63-day return in normal-move units
     (averaged over its pairs, ≥ 3 pairs), ranked within its own last ~2 years (520 days, ≥ 120 ranked) → −1…+1; a
     pair = base − quote (−2…+2, the CFTC score's scale; metals none; > 4 days old → none). `MarketBook.stretch`

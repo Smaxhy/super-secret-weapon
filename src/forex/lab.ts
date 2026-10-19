@@ -231,6 +231,36 @@ export const FX_PAPER_SINCE = 'fx:paper:since';
 export const FX_PORTFOLIO = 'fx:portfolio';
 /** last hour's filter + exit per strategy × timeframe (keeps near-ties from flipping) */
 export const FX_FILTERS_CHOSEN = 'fx:filters:chosen';
+/** v17.8: `fx:filters:chosen` / `fx:fast:chosen` = the picks + the 70/30 line they were made under (one number, or per chart) */
+export interface ChosenStore {
+  oosFrom: number | Record<string, number>;
+  picks: Record<string, { f?: FilterKind; e?: ExitKind }>;
+}
+/** v17.8: how far the 70/30 line may move back before last run's picks stop counting */
+export const PICK_LINE_SLACK_MS = 86_400_000;
+/**
+ * v17.8: last run's filter / exit picks on chart `tf`, kept through near-ties only while the 70/30 line has not moved
+ * back more than a day. History growing backward (the Dukascopy back-fill) moves the line back ~111 days in one run: a
+ * pick made while those days were in-sample must not steer the variant graded on them now that they are unseen. A
+ * forward move is harmless. The old unstamped format (and garbage) → nothing kept: one re-pick on deploy. Pure.
+ */
+export function prevPicks(raw: string | null | undefined, tf: string, oosFrom: number): Record<string, { f?: FilterKind; e?: ExitKind }> {
+  let s: Partial<ChosenStore> | null;
+  try {
+    s = JSON.parse(raw ?? 'null') as Partial<ChosenStore> | null;
+  } catch {
+    return {};
+  }
+  if (!s || typeof s !== 'object' || !s.picks || typeof s.picks !== 'object') return {};
+  const line = typeof s.oosFrom === 'number' ? s.oosFrom : s.oosFrom && typeof s.oosFrom === 'object' ? (s.oosFrom as Record<string, unknown>)[tf] : undefined;
+  if (typeof line !== 'number' || !Number.isFinite(line) || !Number.isFinite(oosFrom) || line - oosFrom > PICK_LINE_SLACK_MS) return {};
+  const out: Record<string, { f?: FilterKind; e?: ExitKind }> = {};
+  for (const [k, v] of Object.entries(s.picks)) {
+    if (!k.endsWith(`:${tf}`) || !v || typeof v !== 'object') continue;
+    out[k] = { ...(typeof v.f === 'string' ? { f: v.f } : {}), ...(typeof v.e === 'string' ? { e: v.e } : {}) };
+  }
+  return out;
+}
 /** the signal judge (trees + threshold), for the live bot */
 export const FX_JUDGE = 'fx:judge';
 /** v15: the bot's check timeline */
@@ -909,7 +939,12 @@ export class ForexLab {
       feeds.mergeBreakers(r.res.breakers);
       const t = this.importState(r.res.state);
       log.info({ ms: Date.now() - t0, heapMb: Math.round(process.memoryUsage().heapUsed / 1e6), learner: t ? 'parent' : 'child' }, 'forex lab run done in the worker');
-      return r.res.out && t ? tightenOut(r.res.out, t) : r.res.out;
+      const out = r.res.out && t ? tightenOut(r.res.out, t) : r.res.out;
+      // v17.8: an off key's signals are no longer "chosen" in the stored report either (as the inline run marks them)
+      if (out && r.res.out && out.report !== r.res.out.report) await this.redis.set(FX_REPORT, JSON.stringify(out.report)).catch(() => undefined);
+      // v17.8: the point-in-time chosen history gets the list the bot actually uses (the child no longer writes it)
+      if (out && !out.noSync) await this.noteChosen(new Set(this.chosen));
+      return out;
     } finally {
       this.forkLearnSig = null;
     }
@@ -968,7 +1003,7 @@ export class ForexLab {
     } else if (s.learnSig !== forkSig) {
       void this.redis.set(FX_LEARN, JSON.stringify({ at: Date.now(), keys: this.learned })).catch(() => undefined);
     }
-    this.chosenSig = s.chosenSig;
+    // v17.8: `chosenSig` stays the parent's: the child no longer notes the chosen list (the parent does, after this)
     if (s.heat) this.heatNow = { active: s.heat.active, book: { idx: s.heat.idx }, m: s.heat.m ? Float32Array.from(s.heat.m) : null };
     if (s.book) this.book = s.book;
     this.logBot(keepParent ? s.logs.filter((e) => !e.startsWith('learner: ')) : s.logs);
@@ -1065,6 +1100,9 @@ export class ForexLab {
 
   /** v17: append the chosen list to `fx:chosen:hist` when it changed (500 changes kept) — what the bot could trade, when. */
   private async noteChosen(chosen: ReadonlySet<string>): Promise<void> {
+    // v17.8: a run in the child leaves it to the parent, which notes the list after its own learner had its say
+    // (`runInWorker`): the child's list may still hold a key the parent switched off meanwhile
+    if (this.collectLog) return;
     const keys = [...chosen].sort();
     const sig = keys.join(',');
     if (sig === this.chosenSig) return;
@@ -1219,13 +1257,10 @@ export class ForexLab {
       return { report: empty, botTrades: [], pairsSeen: [], chosen: [], dropped: [], firing: { signals: 0, chosen: 0 }, noSync: true };
     }
     const oosFrom = from + (1 - FX_CONFIG.oosFraction) * (to - from);
-    const prevChosen: Record<string, { f?: FilterKind; e?: ExitKind }> = {};
-    try {
-      const raw = JSON.parse((await this.redis.get(FX_FILTERS_CHOSEN).catch(() => null)) ?? '{}') as Record<string, FilterKind | { f?: FilterKind; e?: ExitKind }>;
-      for (const [k, v] of Object.entries(raw)) prevChosen[k] = typeof v === 'string' ? { f: v } : v;
-    } catch {
-      // first run: nothing to keep
-    }
+    // v17.8: last hour's picks only while the 70/30 line hasn't moved back (`prevPicks`); the old unstamped format is
+    // ignored once (one re-pick after the deploy)
+    const rawChosen = await this.redis.get(FX_FILTERS_CHOSEN).catch(() => null);
+    const prevChosen: Record<string, { f?: FilterKind; e?: ExitKind }> = Object.assign({}, ...FX_CONFIG.timeframes.map((tf) => prevPicks(rawChosen, tf, oosFrom)));
     const rows: Row[] = [];
     const paperRows: PaperRow[] = [];
     const open: Trade[] = [];
@@ -1333,7 +1368,8 @@ export class ForexLab {
     await this.applyLuck(rows, series, oosFrom);
     const filters = summarizeFilters(rows);
     const exits = summarizeExits(rows);
-    await this.redis.set(FX_FILTERS_CHOSEN, JSON.stringify(Object.fromEntries(rows.map((r) => [`${r.id}:${r.tf}`, { f: r.filter, e: r.exit }])))).catch(() => undefined);
+    const chosenStore: ChosenStore = { oosFrom, picks: Object.fromEntries(rows.map((r) => [`${r.id}:${r.tf}`, { f: r.filter, e: r.exit }])) };
+    await this.redis.set(FX_FILTERS_CHOSEN, JSON.stringify(chosenStore)).catch(() => undefined);
 
     // ── signal judge: learns on the first 70%, graded once on the unseen 30% ──
     let judgeModel: JudgeModel | null = null;
@@ -1387,7 +1423,8 @@ export class ForexLab {
         ? simulatePortfolio(
             poolNew.filter((t) => {
               const x = judgeX.get(tradeKey(t));
-              return !x || judgeKeeps(judgeModel!, x);
+              // v17.8: the main judge alone — the backup was picked on these same unseen trades
+              return !x || judgeKeeps(judgeModel!, x, { backup: false });
             }),
             { ...base, ...upgraded, label: 'with the signal judge', baseRiskPct: 1 },
           )
@@ -1465,16 +1502,16 @@ export class ForexLab {
         log.info({ ms: Date.now() - tn, draws: ROLL.nullDraws }, 'forex random pickers built');
         await this.redis.set(FX_ROLL_NULL, JSON.stringify({ key: nk, nul })).catch(() => undefined);
       }
-      const prevPicks = JSON.parse((await this.redis.get(FX_ROLL_PICKS).catch(() => null)) ?? 'null') as RollPicksState | null;
+      const prevRoll = JSON.parse((await this.redis.get(FX_ROLL_PICKS).catch(() => null)) ?? 'null') as RollPicksState | null;
       const nowW = weekOf(Date.now());
-      rolling = gradeRolling(rollRows, rollOos, { oosFrom, to, now: Date.now(), sim, staticPool: poolNew, nul, wasActive: !!prevPicks?.active, prevKeys: prevPicks ? (prevPicks.week === nowW ? prevPicks.prevKeys : prevPicks.keys) : null });
+      rolling = gradeRolling(rollRows, rollOos, { oosFrom, to, now: Date.now(), sim, staticPool: poolNew, nul, wasActive: !!prevRoll?.active, prevKeys: prevRoll ? (prevRoll.week === nowW ? prevRoll.prevKeys : prevRoll.keys) : null });
       // the same week keeps its list (a mid-week filter / exit change doesn't flip it); a new week re-picks
       const have = new Set(rollRows.map((r) => r.key));
-      const same = prevPicks && prevPicks.week === nowW;
-      rollKeys = same ? prevPicks.keys.filter((k) => have.has(k)) : rolling.thisWeek.picks.map((p) => p.key);
+      const same = prevRoll && prevRoll.week === nowW;
+      rollKeys = same ? prevRoll.keys.filter((k) => have.has(k)) : rolling.thisWeek.picks.map((p) => p.key);
       // the week's sizes are frozen with its list (a mid-week change can't fall back to another rule's size)
-      rollSizes = same && prevPicks.sizes ? prevPicks.sizes : Object.fromEntries(rolling.thisWeek.picks.map((p) => [p.key, p.sizeF]));
-      const st: RollPicksState = { week: nowW, keys: rollKeys, sizes: rollSizes, active: rolling.active, prevKeys: same ? prevPicks.prevKeys : prevPicks?.keys ?? null };
+      rollSizes = same && prevRoll.sizes ? prevRoll.sizes : Object.fromEntries(rolling.thisWeek.picks.map((p) => [p.key, p.sizeF]));
+      const st: RollPicksState = { week: nowW, keys: rollKeys, sizes: rollSizes, active: rolling.active, prevKeys: same ? prevRoll.prevKeys : prevRoll?.keys ?? null };
       await this.redis.set(FX_ROLL_PICKS, JSON.stringify(st)).catch(() => undefined);
       await this.redis.set(FX_ROLL, JSON.stringify(rolling)).catch(() => undefined);
     } catch (err) {

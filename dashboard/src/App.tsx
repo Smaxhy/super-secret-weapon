@@ -132,6 +132,42 @@ function WorkspaceSwitch({ ws, compact = false }: { ws: Ws; compact?: boolean })
   );
 }
 
+/** v17.8: GET /api/forex/bot/status (older servers 404 → no pill). */
+interface FxBotStatus { open: number; openPnlUsd: number; trades?: Array<{ id: string; pair: string; side: 1 | -1; pnlUsd: number }> }
+const fxMoney = (x: number) => `${x < 0 ? '−' : x > 0 ? '+' : ''}$${Math.abs(x) >= 10_000 ? `${(Math.abs(x) / 1000).toFixed(1)}k` : Math.abs(x).toFixed(Math.abs(x) >= 100 ? 0 : 2)}`;
+
+/** v17.8: "● In 2 trades +$8.20" (sidebar) / "● 2 open +$8.20" (phone header) in the Forex workspace, links to the Auto-bot. Nothing when it holds no trade. */
+function FxTradesPill({ st, variant }: { st: FxBotStatus | null; variant: 'sidebar' | 'phone' }) {
+  if (!st || !(st.open > 0)) return null;
+  const pnl = Number.isFinite(st.openPnlUsd) ? st.openPnlUsd : 0;
+  const tone = pnl > 0 ? 'text-up' : pnl < 0 ? 'text-down' : 'text-ink-2';
+  const label = `The forex bot is in ${st.open} trade${st.open === 1 ? '' : 's'}, open profit ${fxMoney(pnl)}`;
+  const dot = (
+    <span className="relative flex h-2 w-2 shrink-0" aria-hidden="true">
+      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-good opacity-60" />
+      <span className="relative inline-flex h-2 w-2 rounded-full bg-good" />
+    </span>
+  );
+  if (variant === 'phone')
+    return (
+      // compact (the phone header is full): pulsing dot, how many trades, open P&L
+      <NavLink to="/forex" end aria-label={label} title={label} className="ml-0.5 inline-flex min-h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-good/40 bg-good/10 px-2 py-1 text-xs font-semibold text-ink">
+        {dot}
+        {/* the word "open" goes on narrow phones so the Forex / Crypto switch keeps its room */}
+        <span className="tabular">{st.open}<span className="max-[389px]:hidden"> open</span></span>
+        <span className={`tabular ${tone}`}>{fxMoney(pnl)}</span>
+      </NavLink>
+    );
+  return (
+    <NavLink to="/forex" end aria-label={label} title={label} className="flex min-h-9 items-center justify-center gap-2 rounded-xl border border-good/40 bg-good/10 px-2 py-1.5 text-xs font-semibold text-ink hover:bg-good/15 lg:justify-start lg:px-3">
+      {dot}
+      <span className="lg:hidden tabular">{st.open}</span>
+      <span className="hidden min-w-0 flex-1 truncate lg:inline">In {st.open === 1 ? 'a trade' : `${st.open} trades`}</span>
+      <span className={`tabular hidden lg:inline ${tone}`}>{fxMoney(pnl)}</span>
+    </NavLink>
+  );
+}
+
 /** "/" opens the workspace used last (Forex by default). */
 function Landing() {
   let ws: Ws = 'forex';
@@ -331,6 +367,9 @@ function Shell() {
   const mode = ov.data?.mode;
   const paused = ov.data?.paused || ov.data?.killSwitch;
   const ws = wsOf(pathname);
+  // v17.8: is the forex bot in a trade (Forex workspace only; an error / older server → no pill)
+  const fxSt = useApi<FxBotStatus>(ws === 'forex' ? '/api/forex/bot/status' : null, 15_000);
+  const fxStatus = ws === 'forex' && !fxSt.error ? fxSt.data : null;
   const GROUPS = groupsOf(ws);
   const PHONE_MAIN = WS[ws].phone;
   const wsNav = GROUPS.flatMap((g) => g.items);
@@ -361,6 +400,11 @@ function Shell() {
         </div>
         <div className="mb-5 px-0.5">
           <WorkspaceSwitch ws={ws} />
+          {fxStatus && fxStatus.open > 0 && (
+            <div className="mt-2">
+              <FxTradesPill st={fxStatus} variant="sidebar" />
+            </div>
+          )}
         </div>
         <nav className="flex flex-col gap-5" aria-label="Main">
           {GROUPS.map((g) => (
@@ -408,10 +452,15 @@ function Shell() {
               <Icon name="refresh" size={19} className={spin ? 'animate-spin' : ''} />
             </button>
             <ThemeCycle theme={theme} setTheme={setTheme} />
-            <span className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink" role="status">
-              <span className={`h-2 w-2 rounded-full ${online ? (paused ? 'bg-warning' : 'bg-good') : status === 'reconnecting' ? 'animate-pulse bg-warning' : 'bg-critical'}`} aria-hidden="true" />
-              {online ? (paused ? 'Paused' : 'Online') : status === 'reconnecting' ? 'Wait' : 'Offline'}
-            </span>
+            {/* v17.8: in the Forex workspace the "in a trade" pill takes the status pill's place while the bot is online */}
+            {online && fxStatus && fxStatus.open > 0 ? (
+              <FxTradesPill st={fxStatus} variant="phone" />
+            ) : (
+              <span className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink" role="status">
+                <span className={`h-2 w-2 rounded-full ${online ? (paused ? 'bg-warning' : 'bg-good') : status === 'reconnecting' ? 'animate-pulse bg-warning' : 'bg-critical'}`} aria-hidden="true" />
+                {online ? (paused ? 'Paused' : 'Online') : status === 'reconnecting' ? 'Wait' : 'Offline'}
+              </span>
+            )}
           </div>
         </div>
       </header>

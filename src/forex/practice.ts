@@ -18,10 +18,22 @@ import { spreadMultAt } from './spreads';
 import { SIZING, addExposure, clampRisk, ddFactor, exposureBlock, type Exposure } from './portfolio';
 import type { Tier } from './conviction';
 import { SNIPER } from './sniper';
+import { parsePnlRow, pnlRowOf, type PnlRow } from './pnl';
 
 const log = moduleLogger('forex-practice');
 export type AcctId = 'me' | 'bot';
 const keyFor = (a: AcctId) => (a === 'me' ? 'fx:practice' : 'fx:practice:bot');
+/** v17.8: durable P&L log per account (one JSON row per booked close, newest 20,000) — the calendar / P&L views read it */
+export const pnlKey = (a: AcctId) => `fx:pnl:${a}`;
+export const PNL_KEEP = 20_000;
+/** v17.8: closes booked on an account object since its last save — that save writes them to the log in the same Redis
+ * transaction as the account (so a close is in the log exactly when it is in the stored account), then forgets them */
+const pnlQueue = new WeakMap<PracticeAccount, PnlRow[]>();
+function logClose(a: PracticeAccount, c: ClosedPractice): void {
+  const q = pnlQueue.get(a);
+  if (q) q.push(pnlRowOf(c));
+  else pnlQueue.set(a, [pnlRowOf(c)]);
+}
 /** Bot account: base risk per trade (% of equity), leverage used, most positions at once, most risk on one currency. */
 export const BOT = {
   riskPct: SIZING.baseRiskPct,
@@ -383,6 +395,7 @@ function closePos(a: PracticeAccount, p: PracticePosition, px: number, mids: Rec
   a.open = a.open.filter((x) => x.id !== p.id);
   a.closed.unshift({ ...p, exit: px, closedAt: at, pnlUsd: pl, reason });
   a.closed = a.closed.slice(0, 200);
+  logClose(a, a.closed[0]!); // v17.8
   if (reason !== 'weekend' && reason !== 'partial') recordTrade(a, statKey(p), at, pl + (p.bankedUsd ?? 0), { ...(p.ref ? { ref: p.ref } : {}), ...(p.riskUsd0 ? { riskUsd0: p.riskUsd0 } : {}), why: reason });
   return pl;
 }
@@ -405,6 +418,7 @@ function closePart(a: PracticeAccount, p: PracticePosition, frac: number, px: nu
   const n = a.closed.filter((c) => c.id.startsWith(`${p.id}-part`)).length;
   a.closed.unshift({ ...part, id: `${p.id}-part${n ? n + 1 : ''}`, exit: px, closedAt: at, pnlUsd: pl, reason: 'partial' });
   a.closed = a.closed.slice(0, 200);
+  logClose(a, a.closed[0]!); // v17.8
   return pl;
 }
 
@@ -674,6 +688,11 @@ export class Practice {
   private lock: Promise<unknown> = Promise.resolve();
   /** v17: bot-log lines already written once (kept positions, resume retries) */
   private noted = new Set<string>();
+  /** v17.8: accounts whose P&L log this process has checked (an empty log is filled once from the closed list) */
+  private pnlReady = new Set<AcctId>();
+  /** v17.8: parsed P&L log per account, dropped on every write to it (`pnlVer` guards a read racing a write) */
+  private pnlCache = new Map<AcctId, PnlRow[]>();
+  private pnlVer: Record<AcctId, number> = { me: 0, bot: 0 };
   constructor(private readonly redis: Redis) {}
 
   start(): void {
@@ -768,8 +787,68 @@ export class Practice {
       throw new Error('practice account unreadable');
     }
   }
-  private async save(a: PracticeAccount, acct: AcctId = 'me'): Promise<void> {
-    await this.redis.set(keyFor(acct), JSON.stringify(a));
+  /**
+   * v17.8: the account and the closes it booked since it was loaded go to Redis in ONE transaction (account + P&L log
+   * rows) — a close is in the log exactly when it is in the stored account: a retry, a restart or the same account saved
+   * twice never logs it again, a failed save logs nothing. The first write of this process fills an empty log once from
+   * the account's closed list (oldest first). `clearLog` (reset) empties the log with the account.
+   */
+  private async save(a: PracticeAccount, acct: AcctId = 'me', opts: { clearLog?: boolean } = {}): Promise<void> {
+    if (!this.pnlLogs()) {
+      await this.redis.set(keyFor(acct), JSON.stringify(a));
+      pnlQueue.delete(a);
+      return;
+    }
+    const key = pnlKey(acct);
+    let rows = opts.clearLog ? [] : pnlQueue.get(a) ?? [];
+    if (!opts.clearLog && !this.pnlReady.has(acct) && (await this.redis.llen(key)) === 0) rows = [...a.closed].reverse().map(pnlRowOf);
+    const m = this.redis.multi().set(keyFor(acct), JSON.stringify(a));
+    if (opts.clearLog) m.del(key);
+    if (rows.length) m.rpush(key, ...rows.map((r) => JSON.stringify(r))).ltrim(key, -PNL_KEEP, -1);
+    const res = await m.exec();
+    if (!res) throw new Error('practice save aborted');
+    if (res[0]?.[0]) throw res[0][0];
+    const err = res.slice(1).find(([e]) => e)?.[0];
+    if (err) log.error({ acct, err: err.message }, 'P&L log write failed (the account was saved)');
+    pnlQueue.delete(a);
+    this.pnlReady.add(acct);
+    if (rows.length || opts.clearLog) this.pnlDirty(acct);
+  }
+  /** v17.8: the P&L log needs list + transaction support (a bare get / set client just saves the account) */
+  private pnlLogs(): boolean {
+    const r = this.redis as unknown as Record<string, unknown>;
+    return typeof r.multi === 'function' && typeof r.llen === 'function' && typeof r.lrange === 'function';
+  }
+  private pnlDirty(acct: AcctId): void {
+    this.pnlVer[acct]++;
+    this.pnlCache.delete(acct);
+  }
+  /** v17.8: an empty log is filled once from the account's closed list (newest 200) — before the first read too. */
+  private async seedPnl(acct: AcctId): Promise<void> {
+    if (this.pnlReady.has(acct)) return;
+    const key = pnlKey(acct);
+    const a = await this.load(acct);
+    if (a.closed.length && (await this.redis.llen(key)) === 0) {
+      const res = await this.redis.multi().rpush(key, ...[...a.closed].reverse().map((c) => JSON.stringify(pnlRowOf(c)))).ltrim(key, -PNL_KEEP, -1).exec();
+      const err = res ? res.find(([e]) => e)?.[0] : new Error('aborted');
+      if (err) throw err;
+      this.pnlDirty(acct);
+    }
+    this.pnlReady.add(acct);
+  }
+
+  /** v17.8: every booked close of the account (full closes, parts taken, weekend legs), oldest first. */
+  async pnlRows(acct: AcctId = 'bot'): Promise<PnlRow[]> {
+    if (!this.pnlLogs()) return [];
+    const hit = this.pnlCache.get(acct);
+    if (hit) return hit;
+    // a fill that fails (account unreadable) never hides what the log already holds; it is tried again next time
+    if (!this.pnlReady.has(acct)) await this.serial(() => this.seedPnl(acct)).catch((err: Error) => log.warn({ acct, err: err.message }, 'P&L log fill failed'));
+    const ver = this.pnlVer[acct];
+    const raw = await this.redis.lrange(pnlKey(acct), 0, -1);
+    const rows = raw.map(parsePnlRow).filter((r): r is PnlRow => r !== null).sort((x, y) => x.t - y.t);
+    if (ver === this.pnlVer[acct]) this.pnlCache.set(acct, rows);
+    return rows;
   }
 
   /** Quotes needed to value the account: its pairs + the USD legs for conversion. */
@@ -1324,7 +1403,8 @@ export class Practice {
         const mode = (await this.load('bot').catch(() => null))?.riskMode;
         if (mode) fresh.riskMode = mode;
       }
-      await this.save(fresh, acct);
+      // v17.8: the P&L log starts again with the account
+      await this.save(fresh, acct, { clearLog: true });
     });
   }
 

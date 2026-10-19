@@ -27,9 +27,7 @@ import { stratFactorFromVerdict, volFactor } from './portfolio';
 import { marketClock } from './calendar';
 import { newSyncReport, type LabOpenTrade } from './practice';
 import { withEnd } from './mtf';
-import { bigChart, evaluateTf, makeSeries, paperSince, pickedOnInSample, signalIndex, slimTrade, toLabTrade, type BigChart, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
-import type { ExitKind } from './exits';
-import type { FilterKind } from './filters';
+import { bigChart, evaluateTf, makeSeries, paperSince, pickedOnInSample, prevPicks, signalIndex, slimTrade, toLabTrade, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
 import { agreeCount, boostFor, gradeConviction, maxConfirmations, tierOf, type ConvictionReport, type ConvRow } from './conviction';
 
 const log = moduleLogger('forex-fast');
@@ -348,12 +346,9 @@ export class FastLab {
     await this.ensureLoaded();
     const t0 = Date.now();
     const since = await paperSince(this.redis, FX_FAST_SINCE, now);
-    let prev: Record<string, { f?: FilterKind; e?: ExitKind }> = {};
-    try {
-      prev = JSON.parse((await this.redis.get(FX_FAST_CHOSEN).catch(() => null)) ?? '{}') as typeof prev;
-    } catch {
-      prev = {};
-    }
+    // v17.8: last test's picks per chart, only while that chart's 70/30 line hasn't moved back (`prevPicks`); the old
+    // unstamped format is ignored once (one re-pick after the deploy)
+    const prevRaw = await this.redis.get(FX_FAST_CHOSEN).catch(() => null);
     const rows: Row[] = [];
     const paperRows: PaperRow[] = [];
     const open: Trade[] = [];
@@ -382,7 +377,7 @@ export class FastLab {
       // v15.2: closed trades of the strategies picked on the first 70%, with how many market checks backed them
       const byPair = new Map(series.map((se) => [se.inst.id, se]));
       const conv: ConvRow[] = [];
-      const ev = await evaluateTf(series, tf, { oosFrom, since, weeks: Math.max(0.2, (to - from) / (7 * DAY)), prev }, (x) => {
+      const ev = await evaluateTf(series, tf, { oosFrom, since, weeks: Math.max(0.2, (to - from) / (7 * DAY)), prev: prevPicks(prevRaw, tf, oosFrom) }, (x) => {
         if (x.s.id === 'random' || !pickedOnInSample(x.ch.inSample)) return;
         for (const t of x.done) {
           const se = byPair.get(t.pair);
@@ -419,7 +414,11 @@ export class FastLab {
     };
     this.chosen = chosenOf(rows, this.lab.dropped);
     await this.redis.set(FX_FAST_REPORT, JSON.stringify(this.report)).catch(() => undefined);
-    await this.redis.set(FX_FAST_CHOSEN, JSON.stringify(Object.fromEntries(rows.map((r) => [`${r.id}:${r.tf}`, { f: r.filter, e: r.exit }])))).catch(() => undefined);
+    const chosenStore: ChosenStore = {
+      oosFrom: Object.fromEntries(FX_FAST.tfs.flatMap((tf) => (spans[tf].oosFrom !== null ? [[tf, spans[tf].oosFrom]] : []))),
+      picks: Object.fromEntries(rows.map((r) => [`${r.id}:${r.tf}`, { f: r.filter, e: r.exit }])),
+    };
+    await this.redis.set(FX_FAST_CHOSEN, JSON.stringify(chosenStore)).catch(() => undefined);
     log.info({ rows: rows.length, pass, ms: this.report.durationMs }, 'forex fast test done');
     return this.report;
   }

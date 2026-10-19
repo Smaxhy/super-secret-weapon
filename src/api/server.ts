@@ -22,6 +22,7 @@ import { loadOanda, maskToken, oandaReady, saveOanda, testOanda } from '../forex
 import { feedHealth, feeds as fxFeeds } from '../forex/feeds';
 import { RISK_MODES, isRiskMode, ledgerSummary, pnlUsd, riskSummary } from '../forex/practice';
 import { buildPlan } from '../forex/plan';
+import { botStatus, dayTrades, parsePnlQuery, pnlReport } from '../forex/pnl';
 import { STRATEGIES } from '../forex/strategies';
 import { moneyMap } from '../learner/money-map';
 import { DEFAULT_CONFIG as DEFAULTS } from '../config/default';
@@ -210,6 +211,35 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         riskMode: snap?.account.riskMode ?? 'normal',
         riskModes: RISK_MODES,
       };
+    });
+    // v17.8 (owner: "see much easier if the bot is in a trade … a PnL and calendar view"): is the bot in a trade (no plan
+    // building), and the P&L + calendar of either practice account from its durable close log; days in the viewer's clock
+    const fxNames = () => Object.fromEntries(STRATEGIES.map((x) => [x.id, x.name]));
+    secured.get('/api/forex/bot/status', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return botStatus(deps.practice ? (await deps.practice.snapshot('bot')).account : null, fxNames());
+    });
+    secured.get('/api/forex/pnl', async (req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      const q = parsePnlQuery(req.query as Record<string, unknown>);
+      if (!q.ok) {
+        reply.code(400);
+        return { ok: false, error: q.error };
+      }
+      if (!deps.practice) return pnlReport(q.acct, [], null, Date.now(), q.tz);
+      // the account first (its tick may book a close), then the log that close went into
+      const snap = await deps.practice.snapshot(q.acct);
+      return pnlReport(q.acct, await deps.practice.pnlRows(q.acct), snap.account, Date.now(), q.tz, fxNames());
+    });
+    secured.get('/api/forex/pnl/day', async (req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      const q = parsePnlQuery(req.query as Record<string, unknown>, true);
+      if (!q.ok) {
+        reply.code(400);
+        return { ok: false, error: q.error };
+      }
+      const day = q.day!;
+      return { day, trades: deps.practice ? dayTrades(await deps.practice.pnlRows(q.acct), day, q.tz, fxNames()) : [] };
     });
     // v15.6: owner switches how hard the bot account trades
     secured.post<{ Body: { mode?: string } }>('/api/forex/bot/mode', async (req, reply) => {

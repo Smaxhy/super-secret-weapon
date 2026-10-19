@@ -181,9 +181,12 @@ export function cleanDk(bars: readonly DkBar[]): DkBar[] {
   return bars.filter((b) => !(b.o === b.h && b.h === b.l && b.l === b.c) && liveHour(b.t, null));
 }
 
-/** Stored bars; v17: rows saved before the flat-candle fix are cleaned on load and re-saved once. */
-export async function loadDk(redis: Redis, id: string): Promise<DkBar[]> {
-  const raw = await redis.get(dkKey(id)).catch(() => null);
+/**
+ * Stored bars; v17: rows saved before the flat-candle fix are cleaned on load and re-saved once. v17.8: `strict` → a
+ * Redis error throws instead of reading as an empty store (a write merged over "empty" would wipe the history).
+ */
+export async function loadDk(redis: Redis, id: string, strict = false): Promise<DkBar[]> {
+  const raw = strict ? await redis.get(dkKey(id)) : await redis.get(dkKey(id)).catch(() => null);
   if (!raw) return [];
   let bars: DkBar[];
   try {
@@ -211,6 +214,20 @@ export function mergeDk(have: readonly DkBar[], fresh: readonly DkBar[]): DkBar[
 }
 
 /**
+ * v17.8: write `bars` merged over what is stored NOW (re-read right before the write), trimmed to `historyDays` + 5.
+ * The 6-hourly refresh holds its copy of a store for minutes while it back-fills, and the hourly run's tail fetch (maybe
+ * in the child process) writes the same key: without the re-read the later save dropped the other's bars (a 3-day tail
+ * wiping the 3-year history). Returns what was saved (nothing is written when it is empty) and what was stored before.
+ * A failed re-read throws (nothing written), like a failed write.
+ */
+async function saveMerged(redis: Redis, id: string, bars: readonly DkBar[], now: number): Promise<{ saved: DkBar[]; stored: DkBar[] }> {
+  const stored = await loadDk(redis, id, true);
+  const saved = mergeDk(stored, bars).filter((b) => b.t >= now - (DK.historyDays + 5) * DAY);
+  if (saved.length) await saveDk(redis, id, saved);
+  return { saved, stored };
+}
+
+/**
  * Older Dukascopy history in front of the Yahoo bars (FX only). Stitched only when the seam lines up (the last
  * Dukascopy close before Yahoo's first bar is within `DK.maxSeamGap` of Yahoo's first open). Pure.
  */
@@ -230,22 +247,30 @@ export const DK_TAIL = { days: 3, minGapMs: 10 * 60_000, budgetMs: 60_000, minCa
 const tailAt = new Map<string, number>();
 
 /**
- * Pull the last few days of hourly candles for `ids` from Dukascopy (each at most once per 10 minutes, the whole call at
- * most `budgetMs`, nothing while Dukascopy's breaker is open) and merge them into the stored history. Never throws.
- * v17: each request gets only what is left of the budget (at least `minCallMs`, never more than the whole budget) and
- * the budget is checked again before the ask side — a market cut off by it is an error (nothing saved) and ends the run.
- * A request timed out by the budget always ends the run (it used up what was left), whatever the clocks say.
+ * Pull the last few days of hourly candles for `ids` from Dukascopy (each at most once per 10 minutes, no new market
+ * started after `budgetMs`, nothing while Dukascopy's breaker is open) and merge them into the stored history. Never
+ * throws. v17: a market's bid gets only what is left of the budget (at least `minCallMs`, never more than the whole
+ * budget or `DK.timeoutMs`); a bid cut off by the budget is an error (nothing saved) and ends the run, whatever the
+ * clocks say. v17.8: the budget is checked only before STARTING a market — once its bid is in, the ask runs under the
+ * normal per-request cap (`DK.timeoutMs`), so fetched data is never thrown away by our own budget (a market may run up
+ * to one cap past it). A cut made by our budget is only that market's error — never a Dukascopy failure (it would open
+ * the shared breaker and pause the backup live prices too); real errors and the per-request cap's timeouts still are.
+ * The save merges over what is stored at that moment (`saveMerged`).
  */
 export async function refreshDkTail(redis: Redis, ids: readonly string[], now = Date.now(), fetcher: Fetch = fetchDk): Promise<Record<string, { lastT: number | null; added: number; error: string | null }>> {
   const out: Record<string, { lastT: number | null; added: number; error: string | null }> = {};
   const t0 = Date.now();
   const spent = () => Date.now() - t0 >= DK_TAIL.budgetMs;
   let cut = false;
-  const timed = <T>(p: Promise<T>, what: string): Promise<T> =>
-    withTimeout(p, Math.max(Math.min(DK_TAIL.minCallMs, DK_TAIL.budgetMs), DK_TAIL.budgetMs - (Date.now() - t0)), what).catch((err: unknown) => {
-      if (err instanceof DkTimeoutError && err.what === what) cut = true;
+  /** the bid: what is left of the budget; a timeout is ours only when the budget, not the per-request cap, set it */
+  const timedBid = <T>(p: Promise<T>, what: string): Promise<T> => {
+    const ms = Math.min(DK.timeoutMs, Math.max(Math.min(DK_TAIL.minCallMs, DK_TAIL.budgetMs), DK_TAIL.budgetMs - (Date.now() - t0)));
+    const ours = ms < DK.timeoutMs;
+    return withTimeout(p, ms, what).catch((err: unknown) => {
+      if (ours && err instanceof DkTimeoutError && err.what === what) cut = true;
       throw err;
     });
+  };
   for (const id of ids) {
     if (cut || spent() || !feeds.allow('dukascopy')) break;
     if (now - (tailAt.get(id) ?? 0) < DK_TAIL.minGapMs) continue;
@@ -253,18 +278,24 @@ export async function refreshDkTail(redis: Redis, ids: readonly string[], now = 
     const have = await loadDk(redis, id);
     const from = Math.max((have[have.length - 1]?.t ?? 0) - 2 * HOUR, now - DK_TAIL.days * DAY);
     try {
-      const bid = await timed(fetcher(id, 'bid', new Date(from), new Date(now)), `dukascopy tail ${id} bid`);
-      if (spent()) throw new Error(`dukascopy tail ${id}: time budget used up before the ask side`);
-      const ask = await timed(fetcher(id, 'ask', new Date(from), new Date(now)), `dukascopy tail ${id} ask`);
+      const bid = await timedBid(fetcher(id, 'bid', new Date(from), new Date(now)), `dukascopy tail ${id} bid`);
+      // v17.8: the bid is in — the ask gets the normal per-request cap, never what is left of the budget
+      const ask = await withTimeout(fetcher(id, 'ask', new Date(from), new Date(now)), DK.timeoutMs, `dukascopy tail ${id} ask`);
       const fresh = midBars(id, bid, ask, now);
-      const prevLast = have[have.length - 1]?.t ?? 0;
-      const merged = mergeDk(have, fresh);
-      if (fresh.length) await saveDk(redis, id, merged);
-      out[id] = { lastT: merged[merged.length - 1]?.t ?? null, added: merged.filter((b) => b.t > prevLast).length, error: null };
-      feeds.ok('dk-history', { items: fresh.length, asOf: out[id]!.lastT });
+      let last = have[have.length - 1]?.t ?? null;
+      let added = 0;
+      if (fresh.length) {
+        const { saved, stored } = await saveMerged(redis, id, fresh, now);
+        const prevLast = stored[stored.length - 1]?.t ?? 0;
+        last = saved[saved.length - 1]?.t ?? null;
+        added = saved.filter((b) => b.t > prevLast).length;
+      }
+      out[id] = { lastT: last, added, error: null };
+      feeds.ok('dk-history', { items: fresh.length, asOf: last });
     } catch (err) {
-      out[id] = { lastT: have[have.length - 1]?.t ?? null, added: 0, error: (err as Error).message };
-      feeds.fail('dk-history', err);
+      // v17.8: a bid cut by our own budget is this market's error only, not a Dukascopy failure
+      out[id] = { lastT: have[have.length - 1]?.t ?? null, added: 0, error: cut ? `${(err as Error).message} (the run's time budget ran out)` : (err as Error).message };
+      if (!cut) feeds.fail('dk-history', err);
       if (cut || spent()) break;
     }
   }
@@ -348,6 +379,15 @@ export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: 
         to = bars[0]!.t;
       }
     }
+    // v17.8: saved merged over the store as it is NOW (the hourly tail fetch may have written while this back-filled),
+    // trimmed to historyDays + 5; `full` and the meta below describe what was actually saved (a failed save: the store
+    // as last read, and this market's error)
+    try {
+      bars = (await saveMerged(redis, id, bars, now)).saved;
+    } catch (err) {
+      bars = have;
+      error = `couldn't save: ${(err as Error).message}`;
+    }
     // v17: `full` only on proof — the store reaches back, or a finished back-fill was kept (`fullKept`), or the back-fill
     // brought nothing older `backfillTries` times in a row; a short store is an error until then (retried each refresh)
     let full = bars.length > 0 && bars[0]!.t <= histFrom + slack;
@@ -368,8 +408,6 @@ export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: 
         } else error = `older history: nothing returned before ${since} (back-fill ${tries} of ${DK.backfillTries}), will retry`;
       } else error = `older history: only back to ${since} so far, will retry`;
     }
-    bars = bars.filter((b) => b.t >= now - (DK.historyDays + 5) * DAY);
-    if (bars.length) await saveDk(redis, id, bars);
     meta.ids[id] = { bars: bars.length, firstT: bars[0]?.t ?? null, lastT: bars[bars.length - 1]?.t ?? null, error, full, ...(tries ? { tries } : {}), ...(note ? { note } : {}) };
     if (error) log.warn({ id, err: error }, 'dukascopy refresh failed');
   }

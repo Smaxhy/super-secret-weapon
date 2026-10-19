@@ -1,18 +1,81 @@
 /**
  * The bot's own chart: hourly candles + what it sees (trendlines, support / resistance, yesterday's range, Asian
  * range) + its open paper trades (entry, stop, target). Plain SVG, scales to the card width.
+ * v17.8: optional extras for the Auto-bot's active-trade card (all off by default, so other pages look the same):
+ * `width` (draw at the real pixel width so text stays readable on a phone), `live` (price line / label at the live
+ * price), `entryMarker` (vertical line at the entry candle), `tradeLabels` (entry / stop / target prices in the right
+ * gutter, nudged apart), `timeAxis` (times under the candles), `interactive` (crosshair + the candle's prices). With
+ * `entryMarker` / `tradeLabels` the entry / stop / target lines stay on the plot even for a trade opened after the
+ * newest candle (`tradeAnchor`), faint over the candles before the entry.
  */
+import { useState } from 'react';
+
 export interface ChartLine { kind: 'support' | 'resistance'; t1: number; p1: number; t2: number; p2: number; pNow: number; touches: number; broken: boolean }
 export interface ChartLevel { kind: 'support' | 'resistance'; price: number; touches: number }
 export interface ChartDrawings { lines: ChartLine[]; levels: ChartLevel[]; prevDay: { h: number; l: number } | null; asia: { h: number; l: number } | null }
-export interface ChartTrade { side: 1 | -1; entryT: number; entry: number; stop: number; target: number | null; strategy: string }
+/** v17.8: `stop` may be null (a trade without a stop: no stop line) */
+export interface ChartTrade { side: 1 | -1; entryT: number; entry: number; stop: number | null; target: number | null; strategy: string }
 
-const W = 800;
 const PAD_R = 64;
+const AXIS_H = 20;
+const ENTRY = '#6366f1';
+const STOP = '#ef4444';
+const TARGET = '#22c55e';
 
-export function MarketChart({ bars, drawings, trades = [], digits = 5, height = 340, show = { lines: true, levels: true, ranges: true, trades: true } }: { bars: number[][]; drawings?: ChartDrawings | null; trades?: ChartTrade[]; digits?: number; height?: number; show?: { lines: boolean; levels: boolean; ranges: boolean; trades: boolean } }) {
+const clockOf = (t: number, long: boolean) => (long ? new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+
+/** v17.8: spread gutter labels apart (min `gap` px), keeping them inside [lo, hi]. Pure. */
+export function spreadLabels<T extends { y: number }>(items: T[], gap: number, lo: number, hi: number): Array<T & { ly: number }> {
+  const out = items.map((it) => ({ ...it, ly: it.y })).sort((a, b) => a.ly - b.ly);
+  for (let i = 0; i < out.length; i++) out[i]!.ly = Math.max(out[i]!.ly, lo, i ? out[i - 1]!.ly + gap : lo);
+  for (let i = out.length - 1; i >= 0; i--) out[i]!.ly = Math.min(out[i]!.ly, hi, i < out.length - 1 ? out[i + 1]!.ly - gap : hi);
+  return out;
+}
+
+/**
+ * v17.8: where one trade's own chart starts its solid entry / stop / target lines (`solid`) and draws the entry marker
+ * (`marker`). The newest candle sits half a bar left of the plot edge, so a trade opened after it (a fresh trade, a
+ * delayed feed: Yahoo metals run ~10 min behind) would get lines of 0 px or drawn backwards; the solid part is always
+ * at least `minLen` px long and the marker stays on the plot. `after` = the entry is past the newest candle. Pure.
+ */
+export function tradeAnchor(xe: number, cw: number, minLen = 24): { solid: number; marker: number; after: boolean } {
+  const x = Number.isFinite(xe) ? xe : 0;
+  return { solid: Math.min(Math.max(0, cw - minLen), Math.max(0, x)), marker: Math.min(cw - 2, Math.max(0, x)), after: x > cw - 2 };
+}
+
+export function MarketChart({
+  bars,
+  drawings,
+  trades = [],
+  digits = 5,
+  height = 340,
+  show = { lines: true, levels: true, ranges: true, trades: true },
+  width = 800,
+  live = null,
+  entryMarker = false,
+  tradeLabels = false,
+  timeAxis = false,
+  interactive = false,
+}: {
+  bars: number[][];
+  drawings?: ChartDrawings | null;
+  trades?: ChartTrade[];
+  digits?: number;
+  height?: number;
+  show?: { lines: boolean; levels: boolean; ranges: boolean; trades: boolean };
+  width?: number;
+  live?: number | null;
+  entryMarker?: boolean;
+  tradeLabels?: boolean;
+  timeAxis?: boolean;
+  interactive?: boolean;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
   if (bars.length < 2) return <div className="grid h-40 place-items-center text-sm text-muted">No candles yet.</div>;
-  const H = height;
+  const W = Math.max(200, width);
+  const padR = tradeLabels ? 72 : PAD_R;
+  const single = tradeLabels || entryMarker; // v17.8: one trade's own chart (the Auto-bot's active-trade card)
+  const H = timeAxis ? height - AXIS_H : height;
   const t0 = bars[0]![0]!;
   const t1 = bars[bars.length - 1]![0]!;
   const step = (t1 - t0) / (bars.length - 1);
@@ -20,27 +83,68 @@ export function MarketChart({ bars, drawings, trades = [], digits = 5, height = 
   let hi = Math.max(...bars.map((b) => b[4]!), ...bars.map((b) => b[2]!));
   const near = (p: number) => p > lo - (hi - lo) * 0.4 && p < hi + (hi - lo) * 0.4;
   const extra: number[] = [];
-  if (show.trades) for (const t of trades) extra.push(t.entry, t.stop, ...(t.target !== null ? [t.target] : []));
-  for (const p of extra) if (near(p)) {
+  if (show.trades) for (const t of trades) extra.push(t.entry, ...(t.stop !== null ? [t.stop] : []), ...(t.target !== null ? [t.target] : []));
+  if (live !== null && Number.isFinite(live)) extra.push(live);
+  // v17.8: with trade labels on (one trade's own chart) its stop and target always fit on the chart
+  for (const p of extra) if (near(p) || tradeLabels) {
     lo = Math.min(lo, p);
     hi = Math.max(hi, p);
   }
   const pad = (hi - lo) * 0.06 || 0.0001;
   lo -= pad;
   hi += pad;
-  const cw = W - PAD_R;
+  const cw = W - padR;
   const x = (t: number) => ((t - t0) / (t1 - t0 + step)) * cw + (cw / bars.length) / 2;
   const y = (p: number) => H - ((p - lo) / (hi - lo)) * H;
   const bw = Math.max(1, (cw / bars.length) * 0.65);
-  const last = bars[bars.length - 1]![4]!;
+  const last = live !== null && Number.isFinite(live) ? live : bars[bars.length - 1]![4]!;
   const ticks = Array.from({ length: 5 }, (_, k) => lo + ((hi - lo) * (k + 0.5)) / 5);
   const clipY = (p: number) => Math.max(-2, Math.min(H + 2, y(p)));
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full select-none" role="img" aria-label="Price chart with the bot's lines and trades">
+  // v17.8: gutter labels (entry / stop / target + the live price), nudged so they never overlap
+  const gutter = tradeLabels
+    ? spreadLabels(
+        [
+          ...(show.trades
+            ? trades.flatMap((t) => [
+                { key: 'e', y: clipY(t.entry), text: t.entry.toFixed(digits), color: ENTRY, solid: false },
+                ...(t.stop !== null ? [{ key: 's', y: clipY(t.stop), text: t.stop.toFixed(digits), color: STOP, solid: false }] : []),
+                ...(t.target !== null ? [{ key: 't', y: clipY(t.target), text: t.target.toFixed(digits), color: TARGET, solid: false }] : []),
+              ])
+            : []),
+          { key: 'live', y: y(last), text: last.toFixed(digits), color: ENTRY, solid: true },
+        ].map((g, k) => ({ ...g, key: `${g.key}${k}` })),
+        17,
+        9,
+        H - 9,
+      )
+    : [];
+  const long = t1 - t0 > 36 * 3_600_000;
+  const nTicks = Math.max(2, Math.min(6, Math.floor(cw / 80) + 1));
+  const axisTicks = timeAxis ? Array.from({ length: nTicks }, (_, k) => bars[Math.round((k * (bars.length - 1)) / (nTicks - 1))]![0]!) : [];
+  const hb = hover !== null ? bars[hover] : null;
+  const onMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * W;
+    if (px > cw) return setHover(null);
+    let best = 0;
+    for (let i = 1; i < bars.length; i++) if (Math.abs(x(bars[i]![0]!) - px) < Math.abs(x(bars[best]![0]!) - px)) best = i;
+    setHover(best);
+  };
+  const svg = (
+    <svg
+      viewBox={`0 0 ${W} ${height}`}
+      className="h-auto w-full select-none"
+      role="img"
+      aria-label="Price chart with the bot's lines and trades"
+      onPointerMove={interactive ? onMove : undefined}
+      onPointerDown={interactive ? onMove : undefined}
+      onPointerLeave={interactive ? () => setHover(null) : undefined}
+      style={interactive ? { touchAction: 'pan-y' } : undefined}
+    >
       {ticks.map((p) => (
         <g key={p}>
           <line x1={0} x2={cw} y1={y(p)} y2={y(p)} className="stroke-line" strokeWidth={1} />
-          <text x={W - 4} y={y(p) + 4} textAnchor="end" className="fill-muted text-[11px]">{p.toFixed(digits)}</text>
+          {(!tradeLabels || gutter.every((g) => Math.abs(g.ly - y(p)) > 15)) && <text x={W - 4} y={y(p) + 4} textAnchor="end" className="fill-muted text-[11px]">{p.toFixed(digits)}</text>}
         </g>
       ))}
       {show.ranges && drawings?.prevDay && (
@@ -58,6 +162,19 @@ export function MarketChart({ bars, drawings, trades = [], digits = 5, height = 
           <line x1={0} x2={cw} y1={y(l.price)} y2={y(l.price)} stroke={l.kind === 'support' ? '#22c55e' : '#ef4444'} strokeWidth={1 + Math.min(2, l.touches / 3)} strokeDasharray="8 5" opacity={0.55} />
         </g>
       ))}
+      {entryMarker && show.trades && trades.map((t, k) => {
+        const inside = t.entryT >= t0;
+        const xa = inside ? tradeAnchor(x(t.entryT), cw).marker : 0;
+        const right = xa > cw - 90;
+        return (
+          <g key={`em${k}`}>
+            {inside && <line x1={xa} x2={xa} y1={0} y2={H} stroke={ENTRY} strokeWidth={1} opacity={0.45} />}
+            <text x={inside ? xa + (right ? -5 : 5) : 4} y={12} textAnchor={inside && right ? 'end' : 'start'} className="fill-muted text-[11px]" stroke="var(--surface)" strokeWidth={3} paintOrder="stroke">
+              {inside ? `Entry ${clockOf(t.entryT, false)}` : `◂ entered ${clockOf(t.entryT, t1 - t.entryT > 20 * 3_600_000)}`}
+            </text>
+          </g>
+        );
+      })}
       {bars.map((b) => {
         const up = b[4]! >= b[1]!;
         const cx = x(b[0]!);
@@ -76,19 +193,62 @@ export function MarketChart({ bars, drawings, trades = [], digits = 5, height = 
         return <line key={k} x1={x(xa)} y1={clipY(pa)} x2={x(t1)} y2={clipY(l.pNow)} stroke={l.kind === 'support' ? '#22c55e' : '#ef4444'} strokeWidth={2} strokeDasharray={l.broken ? '6 4' : undefined} />;
       })}
       {show.trades && trades.map((t, k) => {
-        const xa = Math.max(0, x(Math.max(t0, t.entryT)));
+        const xe = Math.max(0, x(Math.max(t0, t.entryT)));
+        // v17.8: one trade's own chart: lines always visible (see tradeAnchor), faint over the candles before the entry
+        const xa = single ? tradeAnchor(xe, cw).solid : xe;
+        const levels: Array<[number, string, boolean]> = [[t.entry, ENTRY, false], ...(t.stop !== null ? [[t.stop, STOP, true] as [number, string, boolean]] : []), ...(t.target !== null ? [[t.target, TARGET, true] as [number, string, boolean]] : [])];
         return (
           <g key={k}>
-            <line x1={xa} x2={cw} y1={clipY(t.entry)} y2={clipY(t.entry)} stroke="#6366f1" strokeWidth={1.5} />
-            <line x1={xa} x2={cw} y1={clipY(t.stop)} y2={clipY(t.stop)} stroke="#ef4444" strokeWidth={1.5} strokeDasharray="4 3" />
-            {t.target !== null && <line x1={xa} x2={cw} y1={clipY(t.target)} y2={clipY(t.target)} stroke="#22c55e" strokeWidth={1.5} strokeDasharray="4 3" />}
+            {single && xa > 0 && levels.map(([p, c, dash], j) => <line key={`f${j}`} x1={0} x2={xa} y1={clipY(p)} y2={clipY(p)} stroke={c} strokeWidth={1} strokeDasharray={dash ? '4 3' : undefined} opacity={0.3} />)}
+            <line x1={xa} x2={cw} y1={clipY(t.entry)} y2={clipY(t.entry)} stroke={ENTRY} strokeWidth={1.5} />
+            {t.stop !== null && <line x1={xa} x2={cw} y1={clipY(t.stop)} y2={clipY(t.stop)} stroke={STOP} strokeWidth={1.5} strokeDasharray="4 3" />}
+            {t.target !== null && <line x1={xa} x2={cw} y1={clipY(t.target)} y2={clipY(t.target)} stroke={TARGET} strokeWidth={1.5} strokeDasharray="4 3" />}
             <path d={t.side === 1 ? `M${xa} ${clipY(t.entry) + 12} l-6 8 h12 z` : `M${xa} ${clipY(t.entry) - 12} l-6 -8 h12 z`} fill={t.side === 1 ? '#16a34a' : '#dc2626'} />
           </g>
         );
       })}
-      <line x1={0} x2={cw} y1={y(last)} y2={y(last)} stroke="#6366f1" strokeWidth={1} strokeDasharray="1 3" />
-      <rect x={cw + 2} y={y(last) - 9} width={PAD_R - 4} height={18} rx={4} fill="#6366f1" />
-      <text x={W - 6} y={y(last) + 4} textAnchor="end" className="fill-white text-[11px] font-semibold">{last.toFixed(digits)}</text>
+      <line x1={0} x2={cw} y1={y(last)} y2={y(last)} stroke={ENTRY} strokeWidth={1} strokeDasharray="1 3" />
+      {!tradeLabels && (
+        <>
+          <rect x={cw + 2} y={y(last) - 9} width={PAD_R - 4} height={18} rx={4} fill={ENTRY} />
+          <text x={W - 6} y={y(last) + 4} textAnchor="end" className="fill-white text-[11px] font-semibold">{last.toFixed(digits)}</text>
+        </>
+      )}
+      {gutter.map((g) => (
+        <g key={g.key}>
+          {Math.abs(g.ly - g.y) > 1 && <path d={`M${cw} ${g.y} L${cw + 4} ${g.ly}`} stroke={g.color} strokeWidth={1} fill="none" />}
+          {g.solid ? (
+            <rect x={cw + 4} y={g.ly - 8} width={padR - 6} height={16} rx={4} fill={g.color} />
+          ) : (
+            <>
+              <rect x={cw + 4} y={g.ly - 8} width={padR - 6} height={16} rx={4} className="fill-surface-2" />
+              <rect x={cw + 4} y={g.ly - 8} width={3} height={16} rx={1.5} fill={g.color} />
+            </>
+          )}
+          <text x={W - 5} y={g.ly + 4} textAnchor="end" className={`text-[11px] font-semibold ${g.solid ? 'fill-white' : 'fill-ink'}`}>{g.text}</text>
+        </g>
+      ))}
+      {timeAxis && axisTicks.map((t, k, a) => (
+        <text key={t} x={x(t)} y={height - 5} textAnchor={k === 0 ? 'start' : k === a.length - 1 ? 'end' : 'middle'} className="fill-muted text-[11px]">{clockOf(t, long)}</text>
+      ))}
+      {hb && (
+        <g pointerEvents="none">
+          <line x1={x(hb[0]!)} x2={x(hb[0]!)} y1={0} y2={H} className="stroke-ink-2" strokeWidth={1} opacity={0.5} />
+          <line x1={0} x2={cw} y1={y(hb[4]!)} y2={y(hb[4]!)} className="stroke-ink-2" strokeWidth={1} opacity={0.25} />
+        </g>
+      )}
     </svg>
+  );
+  if (!interactive) return svg;
+  return (
+    <div className="relative">
+      {svg}
+      {hb && (
+        <div className="tabular pointer-events-none absolute left-1.5 top-5 rounded-md border border-line bg-surface/95 px-2 py-1 text-[11px] leading-tight text-ink-2 shadow-sm">
+          <span className="font-semibold text-ink">{new Date(hb[0]!).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+          <span className="ml-1.5">O {hb[1]!.toFixed(digits)} · H {hb[2]!.toFixed(digits)} · L {hb[3]!.toFixed(digits)} · C <span className="font-semibold text-ink">{hb[4]!.toFixed(digits)}</span></span>
+        </div>
+      )}
+    </div>
   );
 }

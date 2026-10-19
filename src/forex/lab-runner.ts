@@ -156,7 +156,23 @@ export function tightenState(s: WorkerState, t: LearnerTighten): WorkerState {
     dropped: addOff(s.dropped, t.off),
     chosen: s.chosen.filter((k) => !off.has(k)),
     labOpen: Object.fromEntries(Object.entries(s.labOpen).filter(([k]) => !off.has(keyOfOpen(k)))),
+    // v17.8: the live market view's signals of an off key are not "chosen" either
+    marketsNow: Array.isArray(s.marketsNow) ? tightenMarkets(s.marketsNow, off) : s.marketsNow,
   };
+}
+
+/**
+ * v17.8: the newest-close signals of an off key marked not chosen (the inline run never marks them chosen: its list
+ * already left the key out). Same array back when nothing flips. Pure.
+ */
+export function tightenMarkets<M extends { firing: ReadonlyArray<{ id: string; tf: string; chosen?: boolean }> }>(markets: readonly M[], off: ReadonlySet<string>): M[] {
+  let flipped = false;
+  const res = markets.map((m) => {
+    if (!m.firing.some((f) => f.chosen && off.has(`${f.id}:${f.tf}`))) return m;
+    flipped = true;
+    return { ...m, firing: m.firing.map((f) => (f.chosen && off.has(`${f.id}:${f.tf}`) ? { ...f, chosen: false } : f)) };
+  });
+  return flipped ? res : (markets as M[]);
 }
 
 /**
@@ -168,8 +184,12 @@ export function tightenState(s: WorkerState, t: LearnerTighten): WorkerState {
 export function tightenOut(out: RunOutput, t: LearnerTighten): RunOutput {
   if (!t.off.length && !Object.keys(t.down).length) return out;
   const off = new Set(t.off);
+  // v17.8: the report's newest-close signals and the run's "chosen signals" count follow the tightened list
+  const markets = Array.isArray(out.report?.markets) ? tightenMarkets(out.report.markets, off) : null;
+  const flipped = markets !== null && markets !== out.report.markets;
   return {
     ...out,
+    ...(flipped ? { report: { ...out.report, markets }, firing: { signals: out.firing.signals, chosen: markets.flatMap((m) => m.firing).filter((f) => f.chosen && f.allowed).length } } : {}),
     dropped: addOff(out.dropped, t.off),
     chosen: out.chosen.filter((k) => !off.has(k)),
     botTrades: out.botTrades.map((x) => {

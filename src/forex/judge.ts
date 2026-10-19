@@ -186,6 +186,7 @@ export interface JudgeModel {
   /**
    * v17: backup model for signals missing ONLY soft outside feeds (`JUDGE_SOFT`): trained on the same rows with those
    * blanked as well and graded on its own unseen exam — stored only when it passed (absent = such signals wait).
+   * v17.8: it never counts toward the main judge's exam; live it is used only while the main judge is active.
    */
   fallback?: JudgeFallback | null;
 }
@@ -253,25 +254,33 @@ export interface JudgeView {
   via?: 'main' | 'fallback';
 }
 
+/** v17.8: `backup: false` = the main model alone (a signal missing a soft feed is then unscorable, as before v17.7) */
+export interface JudgeViewOpts {
+  backup?: boolean;
+}
+
 /**
  * v17: the judge's view of one signal: its win probability and the bar it must reach, or why it can't score it (a
  * reading it relies on is missing right now, or a chart × metal group it never trained on). Missing only soft outside
- * feeds → the backup model scores it (when one passed its exam). Pure.
+ * feeds → the backup model scores it (when one passed its exam, and unless `opts.backup` is false). Pure.
  */
-export function judgeView(m: JudgeModel, x: ArrayLike<number>): JudgeView {
+export function judgeView(m: JudgeModel, x: ArrayLike<number>, opts: JudgeViewOpts = {}): JudgeView {
   if (!m.masked || !m.required) return { p: judgeProb(m, x), missing: null, threshold: m.threshold, via: 'main' };
   const g = judgeGroup(x);
   const req = m.required[g];
   if (!req) return { p: null, missing: 'no training trades like this one (chart / market type)', threshold: m.threshold };
   const gone = req.filter((f) => !Number.isFinite(x[f]!));
   if (!gone.length) return { p: judgeProb(m, applyMask(x, m.masked[g])), missing: null, threshold: m.threshold, via: 'main' };
-  if (m.fallback && gone.every(isSoft)) return { p: judgeProb(m.fallback, softMask(x, m.masked[g])), missing: null, threshold: m.fallback.threshold, via: 'fallback' };
+  if (m.fallback && opts.backup !== false && gone.every(isSoft)) return { p: judgeProb(m.fallback, softMask(x, m.masked[g])), missing: null, threshold: m.fallback.threshold, via: 'fallback' };
   return { p: null, missing: labelsOf(gone), threshold: m.threshold };
 }
 
-/** v17: does the judge keep this signal (unscorable = not kept; the backup's score against its own bar)? Pure. */
-export const judgeKeeps = (m: JudgeModel, x: ArrayLike<number>) => {
-  const v = judgeView(m, x);
+/**
+ * v17: does the judge keep this signal (unscorable = not kept; the backup's score against its own bar)? v17.8: the
+ * honest-test "judged" row passes `{ backup: false }` — the backup was picked on those same unseen trades. Pure.
+ */
+export const judgeKeeps = (m: JudgeModel, x: ArrayLike<number>, opts: JudgeViewOpts = {}) => {
+  const v = judgeView(m, x, opts);
   return v.p !== null && v.p >= v.threshold;
 };
 
@@ -338,6 +347,11 @@ export interface JudgeReport {
   importance: Array<{ feature: JudgeFeature; label: string; share: number }>;
   /** v17: the backup model for signals missing only positioning / rate / mood data (its own unseen exam) */
   fallback?: { active: boolean; why: string; auc: number | null; keepPct: number; keptR: number; allR: number };
+  /**
+   * v17.8: display only — the unseen 30% kept the way the live bot keeps them (backup filling in for missing positioning /
+   * rate / mood data); null when no backup passed. `active` and every number above come from the main judge alone.
+   */
+  withBackup?: { keepPct: number; keptR: number; keptWinPct: number } | null;
 }
 
 /** Rank AUC (Mann–Whitney), ties averaged. Pure. */
@@ -486,11 +500,18 @@ async function trainMasked(ins: readonly JudgeRow[], oos: readonly JudgeRow[], m
     if (fe.pass) model.fallback = cand;
     fallback = { active: fe.pass, why: fe.why, auc: fe.a === null ? null : r2(fe.a), keepPct: oos.length ? Math.round((fe.kept.length / oos.length) * 100) : 100, keptR: r2(fe.keptR), allR: r2(fe.allR) };
   }
-  // the exam (once) on the unseen 30% — scored the way the live bot scores (backup included; unscorable = not kept)
+  // the exam (once) on the unseen 30% — v17.8: the main model alone (unscorable, incl. missing only a soft feed = not
+  // kept). The backup was picked on these same rows by its own exam; letting it fill in here would grade on them twice.
   const e = exam(oos, (x) => {
-    const v = judgeView(model, x);
+    const v = judgeView(model, x, { backup: false });
     return v.p === null ? null : { p: v.p, th: v.threshold };
   }, pick.keep, cfg);
+  // v17.8: display only — what the live bot keeps with the backup filling in (never decides `active`)
+  let withBackup: JudgeReport['withBackup'] = null;
+  if (model.fallback) {
+    const kept = oos.filter((r) => judgeKeeps(model, r.x));
+    withBackup = { keepPct: oos.length ? Math.round((kept.length / oos.length) * 100) : 100, keptR: r2(avg(kept.map((r) => r.r))), keptWinPct: kept.length ? Math.round((kept.filter((r) => r.r > 0).length / kept.length) * 100) : 0 };
+  }
   const tot = main.gain.reduce((s, g) => s + g, 0) || 1;
   const importance = JUDGE_FEATURES.map((f, k) => ({ feature: f, label: JUDGE_LABEL[f], share: Math.round((main.gain[k]! / tot) * 100) }))
     .filter((x) => x.share > 0)
@@ -513,6 +534,7 @@ async function trainMasked(ins: readonly JudgeRow[], oos: readonly JudgeRow[], m
       keptWinPct: e.kept.length ? Math.round((e.kept.filter((r) => r.r > 0).length / e.kept.length) * 100) : 0,
       importance,
       fallback,
+      withBackup,
     },
   };
 }

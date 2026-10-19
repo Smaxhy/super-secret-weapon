@@ -2,17 +2,21 @@
  * Forex → Auto-bot (the forex home page, v15): the bot trades its own $1,000 practice account by itself. This page
  * shows what it holds and the plan for each trade, what it is watching and waiting for on every market, and every
  * check it made (also the quiet ones).
+ * v17.8 (owner: "see much easier if the bot is in a trade … the active trade and graph it's in … a PnL and calendar
+ * view"): a big "In a trade" / "Not in a trade" header, the selected trade's live chart + plan, then profit and loss.
  */
 import { useState } from 'react';
 import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 import { ago } from '../lib/format';
+import { FxActiveTrade, fxUsd, sinceOpen } from './FxActiveTrade';
+import { FxPnl } from './FxPnl';
 import { Icon } from './Icon';
 import { Badge, Button, Card, Empty, Row, Rows, Stack, StatTile, Tabs, Timeline, useTab } from './ui';
 import { ConvictionCard, PortfolioCard, RiskCard, RollingCard, SniperCard, type ConvictionReport, type JudgeReport, type Ledger, type PortfolioReport, type RiskSummary, type RollReport, type SniperReport } from './FxInsights';
 
 interface Conviction { tier: 'normal' | 'sure' | 'verySure'; conf: number; of: number; mult: number; lev: number | null }
-interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number; tf?: string; conviction?: Conviction | null }
+interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number; tf?: string; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; closePending?: { reason: string; at: number } | null }
 interface Closed { id: string; pair: string; side: 1 | -1; entry: number; exit: number; pnlUsd: number; reason: string; closedAt: number; strategy?: string; tf?: string }
 interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[] }
 interface PlanSignal { tf: string; name: string; side: 1 | -1; verdict: string; tone: 'go' | 'wait' | 'no' }
@@ -38,7 +42,9 @@ const STATUS: Record<PlanMarket['status'], { label: string; tone: 'up' | 'warn' 
 };
 
 export function FxBot() {
-  const { data, reload } = useApi<Data>('/api/forex/bot', 10_000);
+  // v17.8: 5 s — the "in a trade" header and the open trade's P&L are live
+  const { data, reload } = useApi<Data>('/api/forex/bot', 5_000);
+  const [sel, setSel] = useState<string | null>(null);
   const a = data?.account;
   const plan = data?.plan ?? null;
   const wins = a ? a.closed.filter((x) => x.pnlUsd > 0 && x.reason !== 'partial').length : 0;
@@ -53,19 +59,32 @@ export function FxBot() {
     await api('/api/forex/practice/close', { method: 'POST', body: JSON.stringify({ id, acct: 'bot' }) });
     await reload();
   };
+  const positions = a?.positions ?? [];
+  const selected = positions.find((p) => p.id === sel) ?? positions[0] ?? null;
+  // tapping a trade in the header shows it in the chart card (scrolled into view when that card is off screen)
+  const pick = (id: string) => {
+    setSel(id);
+    requestAnimationFrame(() => {
+      const el = document.getElementById('fx-active-trade');
+      const top = el?.getBoundingClientRect().top ?? 0;
+      if (el && (top < 0 || top > window.innerHeight * 0.55)) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+  // the old account tiles: only when the server has no P&L report yet (older bot)
+  const tiles = a ? (
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <StatTile compact label="Equity" value={usd(a.equityUsd)} sub={`started ${usd(a.startUsd)}`} tone={a.equityUsd > a.startUsd ? 'up' : a.equityUsd < a.startUsd ? 'down' : undefined} />
+      <StatTile compact label="Profit" value={usd(a.equityUsd - a.startUsd)} sub={`${((a.equityUsd / a.startUsd - 1) * 100).toFixed(1)}%`} tone={a.equityUsd >= a.startUsd ? 'up' : 'down'} />
+      <StatTile compact label="Closed trades" value={`${closedN}`} sub={closedN ? `${Math.round((wins / closedN) * 100)}% won` : 'none yet'} />
+      <StatTile compact label="Open" value={`${a.positions.length}`} sub={`margin ${usd(a.marginUsedUsd)}`} />
+    </div>
+  ) : null;
   return (
     <Stack>
-      <PlanHero plan={plan} />
-      {a && (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatTile compact label="Equity" value={usd(a.equityUsd)} sub={`started ${usd(a.startUsd)}`} tone={a.equityUsd > a.startUsd ? 'up' : a.equityUsd < a.startUsd ? 'down' : undefined} />
-          <StatTile compact label="Profit" value={usd(a.equityUsd - a.startUsd)} sub={`${((a.equityUsd / a.startUsd - 1) * 100).toFixed(1)}%`} tone={a.equityUsd >= a.startUsd ? 'up' : 'down'} />
-          <StatTile compact label="Closed trades" value={`${closedN}`} sub={closedN ? `${Math.round((wins / closedN) * 100)}% won` : 'none yet'} />
-          <StatTile compact label="Open" value={`${a.positions.length}`} sub={`margin ${usd(a.marginUsedUsd)}`} />
-        </div>
-      )}
+      <BotHero plan={plan} a={a ?? null} loaded={!!data} selectedId={selected?.id ?? null} onPick={pick} />
+      {positions.length > 0 && <FxActiveTrade positions={positions} selectedId={selected?.id ?? null} onSelect={setSel} plan={plan?.trades ?? []} onClose={(id) => void close(id)} />}
+      <FxPnl acct="bot" fallback={tiles} />
       <RiskModeCard mode={data?.riskMode ?? 'normal'} modes={data?.riskModes} portfolio={data?.portfolio ?? null} onChange={() => void reload()} />
-      <TradesCard plan={plan} positions={a?.positions ?? []} onClose={(id) => void close(id)} />
       <MarketsCard plan={plan} />
       <ChecksCard plan={plan} log={data?.log ?? []} />
       <RollingCard r={data?.rolling} chooser={data?.chooser} ledger={data?.ledger} names={data?.names} />
@@ -137,73 +156,94 @@ function RiskModeCard({ mode, modes, portfolio, onChange }: { mode: RiskMode; mo
   );
 }
 
-function PlanHero({ plan }: { plan: BotPlan | null }) {
+/** v17.8: the first thing on the page — is the bot in a trade, how are its trades doing, what it does next. */
+function BotHero({ plan, a, loaded, selectedId, onPick }: { plan: BotPlan | null; a: Acct | null; loaded: boolean; selectedId: string | null; onPick: (id: string) => void }) {
+  const pos = a?.positions ?? [];
+  const n = pos.length;
+  const open = pos.reduce((s, p) => s + (Number.isFinite(p.pnlUsd) ? p.pnlUsd : 0), 0);
+  const name = (p: Pos) => plan?.trades.find((t) => t.id === p.id)?.name ?? p.strategy ?? 'bot';
+  if (n > 0)
+    return (
+      // a green-washed card (inline: the .card rule sets its own background and border)
+      <section className="card min-w-0 p-4 sm:p-5" style={{ background: 'color-mix(in srgb, var(--good) 7%, var(--surface))', borderColor: 'color-mix(in srgb, var(--good) 45%, transparent)' }}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <LiveDot />
+            <h2 className="text-[26px] font-bold leading-none tracking-tight text-ink">{n === 1 ? 'In a trade' : `In ${n} trades`}</h2>
+          </div>
+          <div className="shrink-0 text-right">
+            <div className={`text-[26px] font-bold leading-none tracking-tight ${tone(open)}`}>{fxUsd(open, true)}</div>
+            <div className="mt-1 text-xs text-muted">open P&L</div>
+          </div>
+        </div>
+        <p className="mt-1 text-sm text-ink-2">The bot trades by itself{a ? ` · ${usd(a.marginUsedUsd)} margin in use` : ''}. Tap a trade for its chart.</p>
+        <ul className={`mt-3 grid grid-cols-1 gap-1.5 ${n > 1 ? 'lg:grid-cols-2 2xl:grid-cols-3' : ''}`}>
+          {pos.map((p) => {
+            const on = p.id === selectedId && n > 1;
+            return (
+              <li key={p.id} className="min-w-0">
+                <button type="button" onClick={() => onPick(p.id)} aria-pressed={on} className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left transition-colors duration-150 ${on ? 'border-accent bg-surface shadow-sm' : 'border-line bg-surface/70 hover:bg-surface'}`}>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                      <Badge tone={p.side === 1 ? 'up' : 'down'}>{p.side === 1 ? 'Long' : 'Short'}</Badge>
+                      <span className="font-semibold text-ink">{p.pair}</span>
+                      {p.tf && <Badge tone="neutral">{p.tf}</Badge>}
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-muted">
+                      {p.closePending && <span className="font-semibold text-warning">closing · </span>}
+                      <span className="tabular">{sinceOpen(p.openedAt)}</span> · {name(p)}
+                    </div>
+                  </div>
+                  <span className={`tabular shrink-0 text-[15px] font-semibold ${tone(p.pnlUsd)}`}>{fxUsd(p.pnlUsd, true)}</span>
+                  <Icon name="chevron" size={16} className={`shrink-0 ${on ? 'text-accent-text' : 'text-muted'}`} />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        {plan && <p className="mt-3 text-sm text-ink-2">{plan.summary}</p>}
+        <NextChecks plan={plan} />
+      </section>
+    );
+  const next = plan?.next.filter((x) => x.at > Date.now()).sort((x, y) => x.at - y.at)[0] ?? null;
   return (
-    <Card accent>
+    <Card>
       <div className="flex items-start gap-3">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-accent/15 text-accent-text">
-          <Icon name="cpu" size={18} />
-        </span>
+        <span className="mt-2 h-3 w-3 shrink-0 rounded-full border-2 border-muted/70" aria-hidden="true" />
         <div className="min-w-0">
-          <div className="font-semibold text-ink">The bot trades by itself. You don't need to do anything.</div>
-          <p className="mt-0.5 text-sm text-ink-2">{plan?.summary ?? 'Getting its first look at the markets…'}</p>
+          <h2 className="text-[22px] font-semibold leading-tight tracking-tight text-ink">{loaded ? 'Not in a trade' : 'Checking the bot…'}</h2>
+          <p className="mt-1 text-sm text-ink-2">{plan?.summary ?? (loaded ? 'Getting its first look at the markets…' : '')}</p>
+          {next && (
+            <p className="mt-1 text-xs text-muted">
+              Next check {clock(next.at)} on the {next.tf} chart ({Math.max(1, Math.round((next.at - Date.now()) / 60_000))} min). It trades by itself; you don't need to do anything.
+            </p>
+          )}
         </div>
       </div>
-      {plan && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {plan.next.map((n) => (
-            <Badge key={n.tf} tone={plan.trading[n.tf] ? 'accent' : 'neutral'} title={plan.trading[n.tf] ? `${plan.trading[n.tf]} strategies it trades on this chart` : 'no strategy has passed its test on this chart yet'}>
-              {n.tf} next {clock(n.at)} · {plan.trading[n.tf] ? `${plan.trading[n.tf]} setups` : 'none passed yet'}
-            </Badge>
-          ))}
-        </div>
-      )}
+      <NextChecks plan={plan} />
     </Card>
   );
 }
 
-function TradesCard({ plan, positions, onClose }: { plan: BotPlan | null; positions: Pos[]; onClose: (id: string) => void }) {
-  const trades = plan?.trades ?? [];
+function LiveDot() {
   return (
-    <Card title="Its trades and the plan for each" subtitle="Every rule that can close the trade, in order. The bot does all of it by itself.">
-      {!positions.length ? (
-        <p className="text-sm text-ink-2">No trade open. It opens one when a strategy that passed its test fires on a candle close and its checks agree (see the markets below).</p>
-      ) : (
-        <ul className="divide-y divide-line">
-          {(trades.length ? trades : positions.map((p) => ({ id: p.id, pair: p.pair, side: p.side, strategy: p.strategy ?? 'bot', name: p.strategy ?? 'bot', tf: p.tf ?? '1h', entry: p.entry, px: p.px, pnlUsd: p.pnlUsd, riskPct: p.riskPct ?? null, lines: [] as PlanLine[] }))).map((t) => (
-            <li key={t.id} className="py-3 first:pt-0 last:pb-0">
-              <div className="flex items-center gap-2">
-                <Badge tone={t.side === 1 ? 'up' : 'down'}>{t.side === 1 ? 'Long' : 'Short'}</Badge>
-                <span className="font-medium text-ink">{t.pair}</span>
-                <Badge tone="neutral">{t.tf}</Badge>
-                {(() => {
-                  const cv = positions.find((p) => p.id === t.id)?.conviction;
-                  return cv && cv.mult > 1 ? <Badge tone="accent">{cv.tier === 'verySure' ? 'very sure' : 'sure'} · {cv.mult}×</Badge> : null;
-                })()}
-                <span className="min-w-0 flex-1 truncate text-xs text-muted">{t.name}</span>
-                <span className={`tabular shrink-0 font-semibold ${tone(t.pnlUsd)}`}>{usd(t.pnlUsd)}</span>
-              </div>
-              <div className="mt-0.5 text-xs text-muted">
-                in {t.entry.toFixed(dp(t.pair))} → now {t.px.toFixed(dp(t.pair))}{t.riskPct !== null ? ` · risked ${t.riskPct}% of the account` : ''}
-              </div>
-              {!!t.lines.length && (
-                <ol className="mt-2 space-y-1">
-                  {t.lines.map((l, k) => (
-                    <li key={k} className={`flex gap-2 text-sm ${l.done ? 'text-muted' : 'text-ink-2'}`}>
-                      <span aria-hidden="true" className={`mt-0.5 shrink-0 ${l.done ? 'text-up' : 'text-muted'}`}>{l.done ? '✓' : '•'}</span>
-                      <span>{l.text}</span>
-                    </li>
-                  ))}
-                </ol>
-              )}
-              <div className="mt-2 flex justify-end">
-                <Button size="sm" variant="ghost" onClick={() => onClose(t.id)}>Close now</Button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Card>
+    <span className="relative flex h-3.5 w-3.5 shrink-0" aria-hidden="true">
+      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-good opacity-60" />
+      <span className="relative inline-flex h-3.5 w-3.5 rounded-full bg-good" />
+    </span>
+  );
+}
+
+function NextChecks({ plan }: { plan: BotPlan | null }) {
+  if (!plan?.next.length) return null;
+  return (
+    <div className="mt-3 flex flex-wrap gap-1.5">
+      {plan.next.map((n) => (
+        <Badge key={n.tf} tone={plan.trading[n.tf] ? 'accent' : 'neutral'} title={plan.trading[n.tf] ? `${plan.trading[n.tf]} strategies it trades on this chart` : 'no strategy has passed its test on this chart yet'}>
+          {n.tf} next {clock(n.at)} · {plan.trading[n.tf] ? `${plan.trading[n.tf]} setup${plan.trading[n.tf] === 1 ? '' : 's'}` : 'none passed yet'}
+        </Badge>
+      ))}
+    </div>
   );
 }
 

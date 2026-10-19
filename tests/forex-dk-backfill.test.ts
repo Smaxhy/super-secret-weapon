@@ -10,11 +10,17 @@ const NOW = Date.UTC(2026, 9, 14, 14, 5); // a Wednesday afternoon, market open
 
 class MiniRedis {
   m = new Map<string, string>();
+  /** v17.8: called after every write (race tests) */
+  onSet: ((k: string, v: string) => void) | null = null;
+  /** v17.8: reads of this key fail (Redis error) */
+  failGet: string | null = null;
   async get(k: string) {
+    if (k === this.failGet) throw new Error('redis down');
     return this.m.get(k) ?? null;
   }
   async set(k: string, v: string) {
     this.m.set(k, v);
+    this.onSet?.(k, v);
     return 'OK';
   }
 }
@@ -59,12 +65,14 @@ const maxGap = (ts: number[]) => ts.slice(1).reduce((g, t, i) => Math.max(g, t -
 // note: refreshDkTail throttles per market (module state) — every test below uses its own markets
 const pause = DK.pauseMs;
 const budget = DK_TAIL.budgetMs;
+const minCall = DK_TAIL.minCallMs;
 beforeEach(() => {
   feeds.ok('dk-history'); // Dukascopy's breaker closed
 });
 afterEach(() => {
   DK.pauseMs = pause;
   DK_TAIL.budgetMs = budget;
+  DK_TAIL.minCallMs = minCall;
   vi.useRealTimers();
   clearSpreadProfiles();
 });
@@ -280,6 +288,8 @@ describe('v17 Dukascopy tail fetch keeps to its time budget', () => {
     expect(out.USDCAD).toBeUndefined();
     expect(asked).toEqual(['NZDUSD']);
     expect(redis.m.size).toBe(0);
+    expect(feeds.get('dk-history').fails).toBe(0); // v17.8: our own budget's cut, not Dukascopy's failure
+    expect(feeds.breakerSnapshot().dukascopy?.fails ?? 0).toBe(0);
   });
 
   it('a request the budget timed out ends the run even when the wall clock says time is left', async () => {
@@ -297,22 +307,175 @@ describe('v17 Dukascopy tail fetch keeps to its time budget', () => {
     expect(out.CADJPY!.error).toMatch(/timed out/);
     expect(out.NZDJPY).toBeUndefined();
     expect(redis.m.size).toBe(0);
+    expect(feeds.get('dk-history').fails).toBe(0);
   });
 
-  it('the budget is checked again before the ask side', async () => {
+  it('a provider timeout (the per-request cap, not the budget) still counts as a Dukascopy failure', async () => {
+    const cap = DK.timeoutMs;
+    DK.timeoutMs = 150;
+    DK_TAIL.budgetMs = 5_000; // plenty left: the per-request cap is the tighter one
+    try {
+      const redis = new MiniRedis();
+      const never = () => new Promise<number[][]>(() => undefined);
+      const out = await refreshDkTail(asRedis(redis), ['USDCAD'], NOW, never);
+      expect(out.USDCAD!.error).toMatch(/timed out/);
+      expect(feeds.get('dk-history').fails).toBe(1);
+      expect(redis.m.size).toBe(0);
+    } finally {
+      DK.timeoutMs = cap;
+    }
+  });
+
+  // v17.8: replaces "the budget is checked again before the ask side" — that cut the ask of a market whose bid had
+  // already come back and threw the bid away; the budget now only decides whether a NEW market is started
+  it('a market whose bid came back after the budget still gets its ask and is saved; no new market is started', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(NOW);
     const redis = new MiniRedis();
     const sides: string[] = [];
     const slowBid = async (id: string, side: 'bid' | 'ask') => {
       sides.push(`${id}:${side}`);
-      vi.setSystemTime(Date.now() + DK_TAIL.budgetMs + 1_000); // the bid answer came back after the budget
+      vi.setSystemTime(Date.now() + DK_TAIL.budgetMs + 1_000); // every answer comes back after the whole budget
       return [[NOW - 5 * H, 1.1, 1.1003, 1.0997, 1.1001, 7]];
     };
     const out = await refreshDkTail(asRedis(redis), ['USDCHF', 'EURGBP'], NOW, slowBid);
-    expect(sides).toEqual(['USDCHF:bid']);
-    expect(out.USDCHF!.error).toMatch(/budget/);
+    expect(sides).toEqual(['USDCHF:bid', 'USDCHF:ask']);
+    expect(out.USDCHF!.error).toBeNull();
+    expect(out.USDCHF!.added).toBe(1);
     expect(out.EURGBP).toBeUndefined();
-    expect(redis.m.size).toBe(0);
+    expect((await loadDk(asRedis(redis), 'USDCHF')).map((b) => b.t)).toEqual([NOW - 5 * H]);
+    expect(feeds.get('dk-history').fails).toBe(0);
   });
+
+  it('a slow but working Dukascopy: every run saves its first market, the feed never fails, the breaker stays closed', async () => {
+    DK_TAIL.budgetMs = 400;
+    DK_TAIL.minCallMs = 50;
+    const delay = 220; // each request takes 55% of the budget (VPS: ~31 s against 60 s) — bid + ask overrun it
+    const dk = fakeDk({ ids: ['AUDNZD', 'EURCHF', 'AUDJPY'] });
+    const slow = async (id: string, side: 'bid' | 'ask', from: Date, to: Date) => {
+      await new Promise((r) => setTimeout(r, delay));
+      return dk.fetcher(id, side, from, to);
+    };
+    const redis = new MiniRedis();
+    for (let run = 0; run < 3; run++) {
+      dk.calls.length = 0;
+      const out = await refreshDkTail(asRedis(redis), ['AUDNZD', 'EURCHF', 'AUDJPY'], NOW + run * H, slow);
+      expect(dk.calls.map((c) => `${c.id}:${c.side}`)).toEqual(['AUDNZD:bid', 'AUDNZD:ask']);
+      expect(out.AUDNZD!.error).toBeNull();
+      expect(out.EURCHF).toBeUndefined();
+      const saved = await loadDk(asRedis(redis), 'AUDNZD');
+      expect(saved.length).toBeGreaterThan(40);
+      expect(saved[saved.length - 1]!.t).toBe(Math.floor((NOW + run * H) / H) * H - H); // the newest complete hour
+      expect(redis.m.has(dkKey('EURCHF'))).toBe(false);
+      expect(feeds.get('dk-history').fails).toBe(0);
+      expect(feeds.breakerSnapshot().dukascopy?.fails ?? 0).toBe(0);
+      expect(feeds.allow('dukascopy')).toBe(true);
+    }
+  });
+});
+
+describe('v17.8 tail fetch and the 6-hourly refresh writing the same store', () => {
+  it('a tail save landing after the back-fill saved keeps the 3-year history (and the meta matches the store)', async () => {
+    DK.pauseMs = 0;
+    const redis = new MiniRedis();
+    const dk = fakeDk({ ids: ['EURCAD'] });
+    await refreshDkTail(asRedis(redis), ['EURCAD'], NOW, dk.fetcher); // the lab's tail on an empty store: 3 days
+    const short = await loadDk(asRedis(redis), 'EURCAD');
+    expect(short[0]!.t).toBeGreaterThan(NOW - 4 * DAY);
+
+    // the refresh back-fills 3 years; the hourly run's tail fetch reads the 3-day store first and answers after that save
+    const t2 = NOW + 2 * H;
+    let backfillSaved!: () => void;
+    const saved = new Promise<void>((r) => (backfillSaved = r));
+    redis.onSet = (k, v) => {
+      if (k === dkKey('EURCAD') && (JSON.parse(v) as unknown[]).length > 5_000) backfillSaved();
+    };
+    const refresh = refreshDukascopy(asRedis(redis), t2, dk.fetcher);
+    const tailNow = t2 + 90 * 60_000;
+    const tail = refreshDkTail(asRedis(redis), ['EURCAD'], tailNow, async (id, side, from, to) => {
+      await saved;
+      return dk.fetcher(id, side, from, to);
+    });
+    const [meta, out] = await Promise.all([refresh, tail]);
+    expect(out.EURCAD!.error).toBeNull();
+    const eur = await loadDk(asRedis(redis), 'EURCAD');
+    expect(eur[0]!.t).toBeLessThanOrEqual(histFrom(t2) + DK.slackDays * DAY); // the history survived the tail's save
+    expect(eur.length).toBeGreaterThan(15_000);
+    expect(eur[eur.length - 1]!.t).toBe(Math.floor(tailNow / H) * H - H); // and the tail's newest hour is in
+    expect(maxGap(eur.map((b) => b.t))).toBeLessThan(3 * DAY);
+    expect(meta.ids.EURCAD!.full).toBe(true);
+    expect(meta.ids.EURCAD!.error).toBeNull();
+    expect(meta.ids.EURCAD!.firstT).toBe(eur[0]!.t);
+  }, 60_000);
+
+  it('a back-fill save landing after a tail save keeps the newer hours the tail brought', async () => {
+    DK.pauseMs = 0;
+    const redis = new MiniRedis();
+    const dk = fakeDk({ ids: ['GBPCHF'] });
+    await refreshDkTail(asRedis(redis), ['GBPCHF'], NOW, dk.fetcher);
+    const staleFirst = (await loadDk(asRedis(redis), 'GBPCHF'))[0]!.t;
+
+    // the refresh holds its copy of the store while it back-fills; the tail fetch saves newer hours meanwhile
+    const t2 = NOW + 2 * H;
+    let backfilling!: () => void;
+    const started = new Promise<void>((r) => (backfilling = r));
+    let tailDone!: () => void;
+    const done = new Promise<void>((r) => (tailDone = r));
+    const refresh = refreshDukascopy(asRedis(redis), t2, async (id, side, from, to) => {
+      if (id === 'GBPCHF' && to.getTime() <= staleFirst) {
+        backfilling();
+        await done;
+      }
+      return dk.fetcher(id, side, from, to);
+    });
+    await started;
+    const tailNow = t2 + 90 * 60_000;
+    const out = await refreshDkTail(asRedis(redis), ['GBPCHF'], tailNow, dk.fetcher);
+    const newest = Math.floor(tailNow / H) * H - H;
+    expect(out.GBPCHF!.lastT).toBe(newest); // newer than anything the refresh fetched (its clock is t2)
+    tailDone();
+    const meta = await refresh;
+    const gbp = await loadDk(asRedis(redis), 'GBPCHF');
+    expect(gbp[gbp.length - 1]!.t).toBe(newest);
+    expect(gbp[0]!.t).toBeLessThanOrEqual(histFrom(t2) + DK.slackDays * DAY);
+    expect(meta.ids.GBPCHF!.lastT).toBe(newest);
+    expect(meta.ids.GBPCHF!.bars).toBe(gbp.length);
+    expect(meta.ids.GBPCHF!.full).toBe(true);
+  }, 60_000);
+
+  it('a failed re-read right before the save writes nothing (an unreadable store is never taken as empty)', async () => {
+    DK.pauseMs = 0;
+    const redis = new MiniRedis();
+    const dk = fakeDk({ ids: ['GBPAUD'] });
+    await refreshDukascopy(asRedis(redis), NOW, dk.fetcher); // 3 years stored
+    const before = redis.m.get(dkKey('GBPAUD'));
+    expect((await loadDk(asRedis(redis), 'GBPAUD')).length).toBeGreaterThan(15_000);
+    const out = await refreshDkTail(asRedis(redis), ['GBPAUD'], NOW + 3 * H, async (id, side, from, to) => {
+      redis.failGet = dkKey('GBPAUD'); // Redis fails after the tail read the store, before it saves
+      return dk.fetcher(id, side, from, to);
+    });
+    expect(out.GBPAUD!.error).toMatch(/redis down/);
+    redis.failGet = null;
+    expect(redis.m.get(dkKey('GBPAUD'))).toBe(before);
+  }, 60_000);
+
+  it('the refresh: a market whose store can not be re-read is only that market\'s error, the others are saved', async () => {
+    DK.pauseMs = 0;
+    const redis = new MiniRedis();
+    const dk = fakeDk({ ids: ['AUDJPY', 'EURAUD'] });
+    let reads = 0;
+    redis.onSet = null;
+    const get = redis.get.bind(redis);
+    redis.get = async (k: string) => {
+      if (k === dkKey('AUDJPY') && ++reads === 2) throw new Error('redis down'); // the re-read right before the save
+      return get(k);
+    };
+    const meta = await refreshDukascopy(asRedis(redis), NOW, dk.fetcher);
+    expect(meta.ids.AUDJPY!.error).toMatch(/couldn't save: redis down/);
+    expect(meta.ids.AUDJPY!.bars).toBe(0);
+    expect(redis.m.has(dkKey('AUDJPY'))).toBe(false);
+    expect(meta.ids.EURAUD!.error).toBeNull();
+    expect(meta.ids.EURAUD!.full).toBe(true);
+    expect(redis.m.has(DK_META)).toBe(true);
+  }, 60_000);
 });

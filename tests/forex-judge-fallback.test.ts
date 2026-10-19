@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { judgeCuts } from '../src/forex/conviction';
-import { JUDGE_FEATURES, JUDGE_SOFT, judgeKeeps, judgeMainP, judgeProb, judgeScores, judgeView, pickKeep, trainJudge, type JudgeModel, type JudgeRow } from '../src/forex/judge';
+import { auc, JUDGE_CONFIG, JUDGE_FEATURES, JUDGE_SOFT, judgeKeeps, judgeMainP, judgeProb, judgeScores, judgeView, pickKeep, trainJudge, type JudgeModel, type JudgeRow } from '../src/forex/judge';
 import type { TreeNode } from '../src/lib/gbdt';
 
 const F = JUDGE_FEATURES.length;
@@ -135,8 +135,12 @@ describe('v17 judge backup model (soft outside feeds)', () => {
     }
     // the halt no longer stops every such trade …
     expect(halted.some((r) => judgeKeeps(model!, r.x))).toBe(true);
-    // … and the main exam counted rows exactly the way live keeps them (backup included)
-    expect(report.keepPct).toBe(Math.round((oos.filter((r) => judgeKeeps(model!, r.x)).length / oos.length) * 100));
+    // v17.8: … the main exam counts the main judge alone (a halted row = not kept, as before v17.7); what live keeps with
+    // the backup filling in is shown apart (display only)
+    expect(report.keepPct).toBe(Math.round((oos.filter((r) => judgeKeeps(model!, r.x, { backup: false })).length / oos.length) * 100));
+    expect(halted.some((r) => judgeKeeps(model!, r.x, { backup: false }))).toBe(false);
+    expect(report.withBackup!.keepPct).toBe(Math.round((oos.filter((r) => judgeKeeps(model!, r.x)).length / oos.length) * 100));
+    expect(report.withBackup!.keepPct).toBeGreaterThan(report.keepPct);
   }, 30_000);
 
   it('trained: a backup that fails its exam is not stored (cot halt → wait, as before)', async () => {
@@ -152,6 +156,7 @@ describe('v17 judge backup model (soft outside feeds)', () => {
     const { model, report } = await trainJudge(rows, 2100);
     expect(report.fallback!.active).toBe(false);
     expect(model!.fallback).toBeUndefined();
+    expect(report.withBackup).toBeNull();
     const x = Float64Array.from(rows[2500]!.x);
     x[idx('cot')] = NaN;
     expect(judgeView(model!, x).p).toBeNull();
@@ -222,5 +227,81 @@ describe('v17 judge backup model (soft outside feeds)', () => {
     const noFb: JudgeModel = { ...m, fallback: undefined };
     const old = judgeCuts(Array.from(Float64Array.from(xs.map((x) => (x ? judgeView(noFb, x).p : null)) as number[])));
     expect(old.pHi!).toBeLessThan(judgeCuts(ps).pHi!);
+  });
+
+  // ── v17.8: the backup was picked on the unseen 30% by its own exam, so it must not also grade the main judge there ──
+
+  /** the main exam by hand: kept = scored and at its bar; unscorable = not kept (pre-v17.7 rule unless `backup`) */
+  const examBy = (m: JudgeModel, oos: readonly JudgeRow[], backup: boolean) => {
+    const v = oos.map((r) => judgeView(m, r.x, { backup }));
+    const a = auc(v.map((s) => (s.p === null ? -Infinity : s.p)), oos.map((r) => (r.r > 0 ? 1 : 0)));
+    const kept = oos.filter((_, k) => v[k]!.p !== null && v[k]!.p! >= v[k]!.threshold);
+    const mean = (xs: readonly JudgeRow[]) => (xs.length ? xs.reduce((s, r) => s + r.r, 0) / xs.length : 0);
+    const allR = mean(oos);
+    const keptR = mean(kept);
+    const c = JUDGE_CONFIG;
+    return { a, kept: kept.length, pass: m.keepShare < 1 && a !== null && a >= c.minAuc && keptR >= allR + c.minGainR && kept.length >= c.minKept };
+  };
+
+  it('a failing main exam is not flipped to active by a passing backup', async () => {
+    // cot known in 95% of history (→ required); in the unseen part a CFTC halt leaves it on only 1 row in 20, so the
+    // main judge can score 45 of 900 unseen rows — too few to pass — while the backup (cot blanked) passes on all of them
+    const rows = makeRows(3000, 17, (k) => (k < 2100 ? k % 20 !== 0 : k % 20 === 0));
+    const { model, report } = await trainJudge(rows, 2100);
+    const oos = rows.filter((r) => r.t >= 2100);
+    expect(report.fallback!.active).toBe(true);
+    expect(model!.fallback).toBeTruthy();
+    expect(model!.keepShare).toBeLessThan(1);
+    // the main judge alone: too few trades kept → off
+    const main = examBy(model!, oos, false);
+    expect(main.pass).toBe(false);
+    expect(main.kept).toBeLessThan(JUDGE_CONFIG.minKept);
+    expect(report.active).toBe(false);
+    expect(report.why).toMatch(/only \d+ trades kept/);
+    expect(Math.round((main.kept / oos.length) * 100)).toBe(report.keepPct);
+    // scored with the backup filling in (the v17.7 exam) it would have passed
+    const both = examBy(model!, oos, true);
+    expect(both.pass).toBe(true);
+    // shown for information only
+    expect(report.withBackup!.keepPct).toBe(Math.round((both.kept / oos.length) * 100));
+  }, 30_000);
+
+  it('pure noise: backups never raise how often the main judge switches on', async () => {
+    let active = 0;
+    let unscorable = 0;
+    let withFill = 0;
+    let backups = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      const r = rnd(seed * 7919 + 13);
+      const rows: JudgeRow[] = Array.from({ length: 2000 }, (_, k) => {
+        const x = new Float64Array(F).map(() => r() * 2 - 1);
+        x[idx('tf')] = 1;
+        x[idx('metal')] = 0;
+        if (k >= 1400 && k % 2 === 0) x[idx('cot')] = NaN; // CFTC halt on half the unseen rows
+        return { x, r: r() < 0.4 ? 1.5 : -1, t: k, exitT: k }; // the result ignores every feature
+      });
+      const { model, report } = await trainJudge(rows, 1400);
+      const oos = rows.filter((x) => x.t >= 1400);
+      const bare = examBy(model!, oos, false).pass;
+      expect(report.active).toBe(bare); // decided exactly as if the halted rows were unscorable
+      if (report.active) active++;
+      if (bare) unscorable++;
+      if (examBy(model!, oos, true).pass) withFill++;
+      if (model!.fallback) backups++;
+    }
+    expect(backups).toBeGreaterThan(0); // the case is exercised
+    expect(active).toBeLessThanOrEqual(unscorable);
+    // the v17.7 exam (backup filling in) can only switch the main judge on more often, never less
+    expect(active).toBeLessThanOrEqual(withFill);
+  }, 60_000);
+
+  it('the honest-test "judged" row helper ignores the backup', () => {
+    const m: JudgeModel = { ...steps(-1), threshold: 0.6, keepShare: 0.5, ...masks, fallback: { ...steps(-0.6), threshold: 0.55, keepShare: 0.6 } };
+    const halted = live(0, NaN);
+    expect(judgeKeeps(m, halted)).toBe(true); // live: the backup keeps it
+    expect(judgeKeeps(m, halted, { backup: false })).toBe(false); // honest test: the main judge can't score it
+    expect(judgeView(m, halted, { backup: false }).missing).toMatch(/positioning/);
+    // with every reading there both agree
+    for (const s of [-0.9, 0, 0.3, 0.9]) expect(judgeKeeps(m, live(s), { backup: false })).toBe(judgeKeeps(m, live(s)));
   });
 });
