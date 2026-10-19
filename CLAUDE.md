@@ -753,6 +753,22 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v18.10 crypto checker plumbing (Oct 19, owner: "crypto still isn't trading or learning")
+Cause suspected from the code (VPS not reachable from the sandbox): a coin is only SCORED once its safety check (RPC
+`getAccountInfo` + Postgres, safety queue worker, concurrency 4) has landed; every checkpoint before that returns silently.
+A backed-up / failing safety worker = "52 coins checked in 7 h" with the stream healthy. Built: evaluator early-exit
+counters (`stats.jobs / alreadyDone / noToken / noView / waitSafety / safetyAsked`); safety worker stats
+(`registry.safetyStats`: done / failed / stale / queue wait EWMA / last done) and **stale jobs skipped** (a safety job
+older than 20 min is dropped unless the coin migrated — `SAFETY_STALE_MS`; a backlog no longer burns RPC on dead
+launches); `HealthSnapshot.checker` (`setCheckerStatsSource` in index.ts: counters + BullMQ `getJobCounts` for the
+evaluate / safety queues + the RPC provider) with `checkerVerdict` = one plain-words line naming the bottleneck (no RPC /
+worker not running / Postgres behind / safety worker stuck or failing / safety queue backed up / live state dropping
+coins / scoring). Scanner → Bot health → "Bot process" card → **Coin checker** block. Watchdog rewritten
+(`src/lib/checker-watch.ts`): rolling 20-min window, every minute ≥ 10 launches and ≤ 2 coins scored in the whole window
+→ WARN `checker_stalled` carrying the verdict; self-restart at most twice per 6 h (Redis `bot:checkerRestarts`), then the
+warning only (a restart loop fixes nothing). FIRST thing to read when crypto is quiet: that verdict line.
+tests/checker-watch.test.ts.
+
 ## v15.4 crypto reset (Oct 18 night, owner's explicit request — overrides the VERDICT's "no more tweaks" for this one)
 Owner: "copy only the consistent wallets; reset the crypto strategies, trade smarter and faster; track
 5aLY85pyxiuX3fd4RgM3Yc1e3MAL6b7UgaZz6MS3JUfG (trustworthy); only SOON and migrated coins; stick to what worked somewhat

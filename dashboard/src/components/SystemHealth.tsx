@@ -26,6 +26,14 @@ export interface SystemData {
   meme?: { enabled: boolean; hasKey: boolean; today: number; spentTodayUsd: number; budgetUsd: number } | null;
   /** v11.7: requests per provider today vs the owner's budgets. */
   usage?: { day: string; providers: Record<string, { used: number; budget: number; softLimitHit: boolean }> } | null;
+  /** v18.10: the coin checker's plumbing. */
+  checker?: {
+    evaluator: { jobs: number; evaluated: number; alreadyDone: number; noToken: number; noView: number; waitSafety: number; safetyAsked: number; buys: number };
+    safety: { done: number; failed: number; stale: number; waitSec: number; lastDoneAgoSec: number | null };
+    queues: { evaluate: { waiting: number; delayed: number; active: number; failed: number } | null; safety: { waiting: number; delayed: number; active: number; failed: number } | null };
+    rpc: { provider: string; configured: boolean };
+    verdict: string;
+  } | null;
   /** v11.14: the live path (dry-run simulations of the real transactions). */
   live?: { mode: 'PAPER' | 'LIVE'; wallet: string | null; simulated: number; okPct: number | null; errors: number; blockers: string[] } | null;
   trading?: {
@@ -208,6 +216,18 @@ export function SystemDetails({ data, upd }: { data: SystemData; upd: UpdateInfo
         )}
         {data.lastExit && <Row label="Last stop" value={<span className={crashed(data.lastExit.reason) ? 'text-down' : 'text-ink-2'}>{data.lastExit.reason}</span>} sub={new Date(data.lastExit.at).toLocaleString()} />}
       </Rows>
+      {data.checker && (
+        <div className="mt-4">
+          <SectionLabel>Coin checker (since start)</SectionLabel>
+          <p className={`mb-2 text-sm ${data.checker.evaluator.evaluated > 0 && /^scoring/.test(data.checker.verdict) ? 'text-ink-2' : 'text-down'}`}>{data.checker.verdict}</p>
+          <Rows>
+            <Row label="Checkpoints" value={data.checker.evaluator.jobs.toLocaleString()} sub={`${data.checker.evaluator.evaluated.toLocaleString()} scored · ${data.checker.evaluator.waitSafety.toLocaleString()} waiting for a safety check · ${data.checker.evaluator.noView.toLocaleString()} coin gone · ${data.checker.evaluator.noToken.toLocaleString()} no database row · ${data.checker.evaluator.alreadyDone.toLocaleString()} already finished`} />
+            <Row label="Safety checks" value={data.checker.safety.done.toLocaleString()} sub={`${data.checker.safety.failed} failed · ${data.checker.safety.stale} too old, skipped · waits ${data.checker.safety.waitSec} s in the queue${data.checker.safety.lastDoneAgoSec !== null ? ` · last ${Math.round(data.checker.safety.lastDoneAgoSec / 60)} min ago` : ' · none yet'}`} tone={data.checker.safety.done === 0 && data.checker.evaluator.waitSafety > 20 ? 'down' : undefined} />
+            <Row label="Queues" value={data.checker.queues.evaluate ? `${data.checker.queues.evaluate.waiting + data.checker.queues.evaluate.delayed} coins due` : '—'} sub={data.checker.queues.safety ? `safety: ${data.checker.queues.safety.waiting} waiting · ${data.checker.queues.safety.active} running · ${data.checker.queues.safety.failed} failed` : 'safety queue unreadable'} />
+            <Row label="RPC" value={data.checker.rpc.provider} tone={data.checker.rpc.configured ? undefined : 'down'} sub={data.checker.rpc.configured ? 'safety checks and holder reads go here' : 'nothing configured — set HELIUS_API_KEY or RPC_HTTP_URL'} />
+          </Rows>
+        </div>
+      )}
       {data.recentErrors.length > 0 && (
         <div className="mt-4">
           <SectionLabel>Recent errors</SectionLabel>

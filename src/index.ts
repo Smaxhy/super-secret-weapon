@@ -90,10 +90,11 @@ import { OutcomeLabeler } from './learner/outcome-labeler';
 import { startRegimeDetector } from './learner/regime-detector';
 import { logger } from './lib/logger';
 import { installProcessGuards } from './lib/process-guard';
-import { recordError, recordExit, recordStart, setDeployerStatsSource, setMemeStatsSource, setTapeStatsSource, setWalletBookStatsSource } from './lib/bot-health';
+import { checkerVerdict, recordError, recordExit, recordStart, setCheckerStatsSource, setDeployerStatsSource, setMemeStatsSource, setTapeStatsSource, setWalletBookStatsSource, type CheckerStats, type QueueCounts } from './lib/bot-health';
+import { CHECKER_WATCH, checkerStalled, restartAllowed, type WatchMinute } from './lib/checker-watch';
 import { prisma } from './lib/prisma';
 import { setLastEntryAt } from './lib/entry-blockers';
-import { closeQueues } from './lib/queues';
+import { closeQueues, evaluateQueue, safetyQueue } from './lib/queues';
 import { closeRedis, redis } from './lib/redis';
 import { rpcLimiter } from './lib/solana';
 import { LiveState } from './scanner/live-state';
@@ -615,6 +616,24 @@ async function main(): Promise<void> {
   sellManager.scaleIn = (id, action, why, px) => trader.scaleInLeg(id, action, why, px);
   registry.onTradeApplied.push((mint) => sellManager.onTrade(mint));
   registry.startSafetyWorker();
+  // v18.10: the checker's plumbing on Bot health (where checkpoints stop, the safety worker, the queues, the RPC)
+  const queueCounts = async (q: typeof evaluateQueue | typeof safetyQueue): Promise<QueueCounts | null> => {
+    const c = await q.getJobCounts('waiting', 'delayed', 'active', 'failed').catch(() => null);
+    return c ? { waiting: c.waiting ?? 0, delayed: c.delayed ?? 0, active: c.active ?? 0, failed: c.failed ?? 0 } : null;
+  };
+  const checkerStats = async (): Promise<CheckerStats> => {
+    const e = evaluator.stats;
+    const sf = registry.safetyStats;
+    const ep = rpcEndpoints();
+    const base: Omit<CheckerStats, 'verdict'> = {
+      evaluator: { jobs: e.jobs, evaluated: e.evaluated, alreadyDone: e.alreadyDone, noToken: e.noToken, noView: e.noView, waitSafety: e.waitSafety, safetyAsked: e.safetyAsked, buys: e.buys },
+      safety: { done: sf.done, failed: sf.failed, stale: sf.stale, waitSec: Math.round(sf.waitMsAvg / 1000), lastDoneAgoSec: sf.lastDoneAt ? Math.round((Date.now() - sf.lastDoneAt) / 1000) : null },
+      queues: { evaluate: await queueCounts(evaluateQueue), safety: await queueCounts(safetyQueue) },
+      rpc: { provider: ep.http ? (/helius/i.test(ep.http) ? 'helius' : /flux/i.test(ep.http) ? 'fluxrpc' : 'other') : 'none', configured: !!ep.http },
+    };
+    return { ...base, verdict: checkerVerdict(base, process.uptime()) };
+  };
+  setCheckerStatsSource(checkerStats);
   // Copy trading: watch the wallets you added on the dashboard.
   const whales = new WhaleTracker(redis, liveState, evaluator);
   whales.onAdopt = (ev) => registry.adopt(ev);
@@ -834,8 +853,8 @@ async function main(): Promise<void> {
   let lastAmm = 0;
   let lastCompletes = -1;
   let lastEvaluated = 0;
-  let stallMin = 0;
-  const CHECKER_STALL_MIN = 20;
+  const watchMinutes: WatchMinute[] = [];
+  let stallTripped = false;
   const statsTimer = setInterval(async () => {
     const s = statsOf();
     const [balance, openPositions] = await Promise.all([
@@ -871,19 +890,27 @@ async function main(): Promise<void> {
         .recordMinute({ trades: (s?.trades ?? 0) - lastTrades, ammTrades: (s?.ammTrades ?? 0) - lastAmm, launches: (s?.creates ?? 0) - lastCreates, migrations: Math.max(0, (s?.completes ?? 0) - lastCompletes) })
         .catch(() => undefined);
     }
-    // v18.2 checker watchdog (owner: 52 coins checked in 7 hours while the stream ran at 7,500 trades/min): the trade
-    // stream flows (launches arrive) but the evaluator scores (almost) nothing for CHECKER_STALL_MIN minutes in a row →
-    // WARN event + a clean exit, so Docker brings a fresh process instead of a stuck one sitting there for hours.
+    // v18.2 / v18.10 checker watchdog (owner: 52 coins checked in 7 hours while the stream ran at 7,500 trades/min): the
+    // trade stream flows (launches arrive) but the checker scores (almost) nothing over a 20-minute window → WARN event
+    // with the plumbing diagnosis, and a clean exit (Docker brings a fresh process) at most twice in 6 hours — a restart
+    // loop fixes nothing, so after that only the warning repeats.
     const launchesNow = (s?.creates ?? 0) - lastCreates;
     const evalNow = evaluator.stats.evaluated - lastEvaluated;
     lastEvaluated = evaluator.stats.evaluated;
-    if (launchesNow >= 10 && evalNow === 0) stallMin++;
-    else stallMin = 0;
-    if (stallMin >= CHECKER_STALL_MIN) {
-      log.error({ stallMin, launchesNow }, 'coin checker stalled while the stream flows — restarting the bot');
-      void recordEvent({ level: 'WARN', module: 'evaluator', type: 'checker_stalled', message: `no coin scored for ${stallMin} min while ${launchesNow} launches/min arrived — the bot restarted itself` }).catch(() => undefined);
-      setTimeout(() => void shutdown('checker stalled'), 2_000);
-      stallMin = -1_000_000; // once
+    watchMinutes.push({ launches: launchesNow, evaluated: evalNow });
+    if (watchMinutes.length > CHECKER_WATCH.windowMin) watchMinutes.splice(0, watchMinutes.length - CHECKER_WATCH.windowMin);
+    if (checkerStalled(watchMinutes) && !stallTripped) {
+      stallTripped = true;
+      watchMinutes.length = 0;
+      const diag = await checkerStats().then((c) => c.verdict).catch(() => 'diagnosis unavailable');
+      const prev = (await redis.lrange('bot:checkerRestarts', 0, 9).catch(() => [])).map(Number);
+      const restart = restartAllowed(prev, Date.now());
+      log.error({ launchesNow, diag, restart }, 'coin checker stalled while the stream flows');
+      void recordEvent({ level: 'WARN', module: 'evaluator', type: 'checker_stalled', message: `almost no coin scored for ${CHECKER_WATCH.windowMin} min while ${launchesNow} launches/min arrived — ${diag}${restart ? ' — the bot restarted itself' : ' — not restarting again (twice in 6 h already)'}` }).catch(() => undefined);
+      if (restart) {
+        await redis.multi().lpush('bot:checkerRestarts', String(Date.now())).ltrim('bot:checkerRestarts', 0, 9).exec().catch(() => undefined);
+        setTimeout(() => void shutdown('checker stalled'), 2_000);
+      } else setTimeout(() => (stallTripped = false), CHECKER_WATCH.windowMin * 60_000).unref?.();
     }
     lastCreates = s?.creates ?? 0;
     lastAmm = s?.ammTrades ?? 0;

@@ -36,12 +36,16 @@ import type { WalletBook } from '../learner/wallet-book';
 import type { WalletPnl } from '../learner/wallet-pnl';
 
 const log = moduleLogger('token-registry');
+/** v18.10: a safety check that waited longer than this is dropped unless the coin migrated (its checkpoints are over) */
+const SAFETY_STALE_MS = 20 * 60_000;
 /** pump.fun's BOOST buys run ~5 min after migration (focus.migrated.noEntryFirstSec 330) — re-read the pool just after. */
 const BOOST_REREAD_SEC = 345;
 
 export class TokenRegistry {
   private safetyWorker: Worker<SafetyJob> | null = null;
   readonly stats: { created: number; createErrors: number; completed: number; tradeErrors: number; latencyMsAvg: number; nonSolSkipped?: number } = { created: 0, createErrors: 0, completed: 0, tradeErrors: 0, latencyMsAvg: 0, nonSolSkipped: 0 };
+  /** v18.10: the safety worker — checks done / failed, stale jobs skipped, how long a job waited in the queue (EWMA ms) */
+  readonly safetyStats = { done: 0, failed: 0, stale: 0, waitMsAvg: 0, lastDoneAt: 0 };
   /** Smart-money discovery: every trade's realised profit per wallet (set in index.ts). */
   pnl: WalletPnl | null = null;
   /** Called with the mint after every trade is applied to the live state (exits react instantly). */
@@ -330,11 +334,29 @@ export class TokenRegistry {
   startSafetyWorker(concurrency = 4): void {
     if (!this.safety || !env.ENABLE_SAFETY_CHECKS) return;
     const checker = this.safety;
-    this.safetyWorker = new Worker<SafetyJob>(QUEUE_NAMES.safety, async (job) => void (await checker.check(job.data.mint)), {
-      connection: bullConnection(),
-      concurrency,
-    });
+    const st = this.safetyStats;
+    this.safetyWorker = new Worker<SafetyJob>(
+      QUEUE_NAMES.safety,
+      async (job) => {
+        // v18.10: a check queued long ago is useless for a fresh launch (its checkpoints ended) — skipping it keeps a
+        // backlog from eating the RPC budget on dead coins; a migrated / bigger coin is still checked (it lives on)
+        const waited = Math.max(0, Date.now() - job.timestamp);
+        if (waited > SAFETY_STALE_MS) {
+          const t = await prisma.token.findUnique({ where: { mint: job.data.mint }, select: { status: true } }).catch(() => null);
+          if (t?.status !== 'COMPLETED') {
+            st.stale++;
+            return;
+          }
+        }
+        await checker.check(job.data.mint);
+        st.done++;
+        st.lastDoneAt = Date.now();
+        st.waitMsAvg = st.waitMsAvg ? st.waitMsAvg * 0.9 + waited * 0.1 : waited;
+      },
+      { connection: bullConnection(), concurrency },
+    );
     this.safetyWorker.on('failed', (job, err) => {
+      st.failed++;
       log.warn({ mint: job?.data.mint, attempt: job?.attemptsMade, err: err.message }, 'safety check failed');
     });
   }

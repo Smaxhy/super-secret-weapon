@@ -102,8 +102,46 @@ export interface HealthSnapshot {
   live?: { mode: 'PAPER' | 'LIVE'; wallet: string | null; simulated: number; okPct: number | null; errors: number; blockers: string[] } | null;
   /** v11.16: AI meme reader — reads today and their cost. */
   meme?: { enabled: boolean; hasKey: boolean; today: number; spentTodayUsd: number; budgetUsd: number } | null;
+  /** v18.10: the coin checker's plumbing — where checkpoints stop, the safety worker, the queues, the RPC in use. */
+  checker?: CheckerStats | null;
 }
 
+export interface QueueCounts {
+  waiting: number;
+  delayed: number;
+  active: number;
+  failed: number;
+}
+export interface CheckerStats {
+  evaluator: { jobs: number; evaluated: number; alreadyDone: number; noToken: number; noView: number; waitSafety: number; safetyAsked: number; buys: number };
+  safety: { done: number; failed: number; stale: number; waitSec: number; lastDoneAgoSec: number | null };
+  queues: { evaluate: QueueCounts | null; safety: QueueCounts | null };
+  rpc: { provider: string; configured: boolean };
+  /** one line: what is (not) flowing, in plain words */
+  verdict: string;
+}
+
+/** v18.10 pure: why the checker scores (almost) nothing, from its own counters. */
+export function checkerVerdict(c: Omit<CheckerStats, 'verdict'>, uptimeSec: number): string {
+  const e = c.evaluator;
+  const sq = c.queues.safety;
+  if (!c.rpc.configured) return 'no RPC endpoint configured — safety checks cannot run, so no coin is ever scored';
+  if (e.jobs === 0) return uptimeSec < 300 ? 'just started — the first checkpoints come in a minute or two' : 'no checkpoints are being processed — the evaluate queue worker is not running';
+  if (e.evaluated === 0 && e.noToken > e.jobs * 0.5) return 'coins are checked before their database row exists — Postgres writes are behind';
+  const waitShare = e.jobs ? e.waitSafety / e.jobs : 0;
+  if (waitShare > 0.8 && c.safety.done === 0 && c.safety.failed > 0) return `every checkpoint is still waiting for a safety check and the safety worker keeps failing (${c.safety.failed} failed) — RPC trouble`;
+  if (waitShare > 0.8 && c.safety.done === 0 && uptimeSec > 300) return `every checkpoint is still waiting for a safety check and none has finished${sq ? ` (${sq.waiting + sq.delayed} queued, ${sq.active} running)` : ''} — the safety worker is stuck`;
+  if (waitShare > 0.8 && c.safety.waitSec > 600) return `safety checks arrive too late (a job waits ${Math.round(c.safety.waitSec / 60)} min in the queue; the coin's checkpoints are over by then) — the safety queue is backed up`;
+  if (e.evaluated === 0 && e.noView > e.jobs * 0.5) return 'coins are forgotten before their checkpoint — the live state drops them (memory pressure?)';
+  if (e.evaluated > 0) return `scoring coins: ${e.evaluated} scored of ${e.jobs} checkpoints (${Math.round(waitShare * 100)}% still waiting for their safety check)`;
+  return 'checkpoints run but nothing gets scored — see the counters';
+}
+
+let checkerSource: (() => Promise<CheckerStats>) | null = null;
+/** index.ts: the coin checker's plumbing counters (v18.10). */
+export function setCheckerStatsSource(fn: (() => Promise<CheckerStats>) | null): void {
+  checkerSource = fn;
+}
 let tapeSource: (() => TapeStats) | null = null;
 /** index.ts: where the Bot health panel reads the tape recorder's stats from. */
 export function setTapeStatsSource(fn: (() => TapeStats) | null): void {
@@ -146,6 +184,7 @@ export async function healthSnapshot(now = Date.now()): Promise<HealthSnapshot> 
     deployers: deployerSource?.() ?? null,
   };
   if (memeSource) base.meme = await memeSource().catch(() => null);
+  if (checkerSource) base.checker = await checkerSource().catch(() => null);
   if (!redisRef) return base;
   try {
     const st = liveStatus();

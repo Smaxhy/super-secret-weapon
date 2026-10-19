@@ -99,7 +99,9 @@ export class Evaluator {
   /** Edge gate: refused signals per strategy (every Nth one goes through as a probe). */
   private readonly edgeRefused = new Map<string, number>();
   private worker: Worker<EvaluateJob> | null = null;
-  readonly stats = { evaluated: 0, buys: 0, rejects: 0, walletLookups: 0, feeSamples: 0 };
+  /** v18.10: `jobs` = checkpoints processed; the early exits say where a coin stopped before it was scored
+   * (`evaluated`): no Token row yet (DB write behind), no live view (forgotten), its safety check not back yet. */
+  readonly stats = { evaluated: 0, buys: 0, rejects: 0, walletLookups: 0, feeSamples: 0, jobs: 0, alreadyDone: 0, noToken: 0, noView: 0, waitSafety: 0, safetyAsked: 0 };
   private readonly fees: FeeEstimator;
   private readonly social: SocialAnalyzer;
   /** Live per-trade crowd log (set in index.ts). */
@@ -265,25 +267,31 @@ export class Evaluator {
 
   private async process(job: Job<EvaluateJob>): Promise<void> {
     const { mint, checkpointSec, final } = job.data;
+    this.stats.jobs++;
     // Swing trades on bigger coins have their own decision maker (executor/swing-trader.ts).
     if (job.data.strategy === 'SWING') return;
     const STRATEGY = STRATEGIES[job.data.strategy ?? 'CURVE_SNIPE'];
     const doneKey = `eval:${mint}:${STRATEGY.name}:done`;
     // Swing re-entries re-check a token we already finished with.
     const swing = job.data.swing === true;
-    if (!swing && !job.data.rescan && (await this.redis.exists(doneKey))) return;
+    if (!swing && !job.data.rescan && (await this.redis.exists(doneKey))) return void this.stats.alreadyDone++;
     const markDone = () => this.redis.set(doneKey, '1', 'EX', STATE_TTL_SECONDS);
 
     const token = await prisma.token.findUnique({ where: { mint }, select: { symbol: true, name: true, uri: true, creator: true, bondingCurve: true, safetyScore: true, safetyHardFail: true, description: true, twitter: true, telegram: true, website: true, metadataFetchedAt: true } });
-    if (!token) return;
+    if (!token) return void this.stats.noToken++;
     const view = await this.liveState.read(mint);
-    if (!view) return void (await markDone());
+    if (!view) {
+      this.stats.noView++;
+      return void (await markDone());
+    }
 
     // No safety result yet. Request one only once the token has real holders
     // (saves RPC credits — most launches never get there); the result is
     // used from the next checkpoint on.
     if (token.safetyScore === null || token.safetyHardFail === null) {
+      this.stats.waitSafety++;
       if (view.balances.size >= getConfig().scoring.safetyMinHolders) {
+        this.stats.safetyAsked++;
         await safetyQueue.add('check', { mint }, { jobId: `safety-${mint}` });
         // Free (no Helius credits): read its X / Telegram / website links in the background.
         void this.social.fetchAndStore(mint, token.uri);
