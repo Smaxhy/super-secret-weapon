@@ -1042,6 +1042,21 @@ export class Practice {
     if (ev.length || mv.moved) await this.save(a, acct);
   }
 
+  /** v17.14: the open trades valued at the newest prices + those quotes (1-minute candles) — reads only, saves nothing
+   * (the 1-second check books stops / targets) */
+  async openNow(acct: AcctId): Promise<{ positions: AccountView['positions']; quotes: Record<string, Quote> }> {
+    const a = await this.load(acct);
+    if (!a.open.length) return { positions: [], quotes: {} };
+    const q = await this.quotes(this.neededIds(a));
+    const mids: Record<string, number> = {};
+    const halves: Record<string, number> = {};
+    for (const x of Object.values(q)) {
+      mids[x.id] = x.mid;
+      halves[x.id] = (x.ask - x.bid) / 2;
+    }
+    return { positions: view(a, mids, halves).positions, quotes: q };
+  }
+
   async snapshot(acct: AcctId = 'me'): Promise<{ account: AccountView; quotes: Record<string, Quote> }> {
     return this.serial(async () => {
       const a = await this.load(acct);

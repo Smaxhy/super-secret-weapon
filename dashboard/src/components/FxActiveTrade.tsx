@@ -4,6 +4,7 @@
  * stop and the target, time in the trade; every rule that can close it; "Close now". Several trades → a switch.
  * v17.9: the price ticks live (the bot's 'fx' push): price now, P&L in $ and pips, room to the stop / target, and the
  * newest candle (a new one opens when its time comes) between the 15-second candle refreshes.
+ * v17.14: under the chart, the trade's live read (goal, progress, moves, what it notices) and the AI's read of it.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useApi } from '../hooks/useApi';
@@ -12,6 +13,7 @@ import { FRESH_MS, foldTick, liveExit, liveOf, livePnl, overlayLive, useFxLive, 
 import { duration } from '../lib/format';
 import { LiveBadge, LivePrice } from './LivePrice';
 import { fitBars, MarketChart } from './MarketChart';
+import { TradeReadPanel, type ReadsData } from './FxTradeRead';
 import { TvChart } from './TvChart';
 import { Badge, Button, Card, Tabs, useStored } from './ui';
 
@@ -96,10 +98,11 @@ function useOnScreen<T extends HTMLElement>(ref: React.RefObject<T>): boolean {
   return on;
 }
 
-export function FxActiveTrade({ positions, selectedId, onSelect, plan, onClose, id = 'fx-active-trade' }: { positions: ActivePos[]; selectedId: string | null; onSelect: (id: string) => void; plan: ActivePlan[]; onClose: (id: string) => void; id?: string }) {
+export function FxActiveTrade({ positions, selectedId, onSelect, plan, onClose, reads, onReadsChanged, id = 'fx-active-trade' }: { positions: ActivePos[]; selectedId: string | null; onSelect: (id: string) => void; plan: ActivePlan[]; onClose: (id: string) => void; /** v17.14 live + AI reads */ reads?: ReadsData | null; onReadsChanged?: () => void; id?: string }) {
   const p = positions.find((x) => x.id === selectedId) ?? positions[0];
   if (!p) return null;
   const pl = plan.find((x) => x.id === p.id) ?? null;
+  const row = reads?.trades.find((x) => x.id === p.id) ?? null;
   return (
     <Card id={id} padded={false} className="scroll-mt-[calc(var(--hdr)+0.75rem)] md:scroll-mt-20">
       {positions.length > 1 && (
@@ -107,12 +110,12 @@ export function FxActiveTrade({ positions, selectedId, onSelect, plan, onClose, 
           <Tabs label="Open trades" tabs={positions.map((x) => ({ key: x.id, label: `${x.side === 1 ? '▲' : '▼'} ${x.pair}` }))} value={p.id} onChange={onSelect} />
         </div>
       )}
-      <TradeView key={p.id} p={p} plan={pl} onClose={onClose} />
+      <TradeView key={p.id} p={p} plan={pl} onClose={onClose} read={row ? <TradeReadPanel row={row} info={reads?.ai ?? null} acct="bot" onAsked={() => onReadsChanged?.()} /> : null} />
     </Card>
   );
 }
 
-function TradeView({ p, plan, onClose }: { p: ActivePos; plan: ActivePlan | null; onClose: (id: string) => void }) {
+function TradeView({ p, plan, onClose, read }: { p: ActivePos; plan: ActivePlan | null; onClose: (id: string) => void; read?: ReactNode }) {
   const pip = fxPip(p.pair);
   const dg = fxDigits(p.pair);
   const tf = p.tf ?? plan?.tf ?? null;
@@ -211,6 +214,7 @@ function TradeView({ p, plan, onClose }: { p: ActivePos; plan: ActivePlan | null
         </div>
       )}
 
+      {read && <div className="mt-4">{read}</div>}
       {!!plan?.lines.length && (
         <div className="mt-4">
           <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Every rule that can close the trade</div>

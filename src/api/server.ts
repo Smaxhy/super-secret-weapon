@@ -220,6 +220,22 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       reply.header('Cache-Control', 'no-store');
       return botStatus(deps.practice ? (await deps.practice.snapshot('bot')).account : null, fxNames());
     });
+    // v17.14 (owner: "an active diagnosis of what the goal of the trade is … an AI that scans all active trades and
+    // analyses the price action"): every open trade's live read (rules, free) + its newest AI read (display only)
+    secured.get('/api/forex/trades/read', async (req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      const acct = (req.query as { acct?: string }).acct === 'me' ? 'me' : 'bot';
+      if (!deps.tradeWatch) return { trades: [], ai: null };
+      return deps.tradeWatch.reads(acct);
+    });
+    secured.post<{ Body: { id?: string; acct?: string } }>('/api/forex/trades/ai', async (req, reply) => {
+      const id = typeof req.body?.id === 'string' ? req.body.id : '';
+      if (!id || !deps.tradeWatch) {
+        reply.code(400);
+        return { ok: false, error: !id ? 'id is needed' : 'not running' };
+      }
+      return deps.tradeWatch.askNow(req.body?.acct === 'me' ? 'me' : 'bot', id);
+    });
     secured.get('/api/forex/pnl', async (req, reply) => {
       reply.header('Cache-Control', 'no-store');
       const q = parsePnlQuery(req.query as Record<string, unknown>);

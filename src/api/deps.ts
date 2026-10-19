@@ -15,6 +15,7 @@ import type { FastLab } from '../forex/fast';
 import type { Practice } from '../forex/practice';
 import type { ForexCalendar } from '../forex/calendar';
 import type { ForexHeadlines } from '../forex/headlines';
+import type { TradeWatch } from '../forex/trade-watch';
 import type { MemeReader } from '../evaluator/meme-reader';
 import type { TaLab } from '../learner/ta-lab';
 import type { TrendingHub } from '../scanner/trending-hub';
@@ -72,6 +73,8 @@ export interface ApiDeps {
   fxCalendar?: ForexCalendar | null;
   /** v12.5: live headlines. */
   fxNews?: ForexHeadlines | null;
+  /** v17.14: the live read + AI read of every open forex trade. */
+  tradeWatch?: TradeWatch | null;
 }
 
 /** Classify a token for the live feed colour code. */

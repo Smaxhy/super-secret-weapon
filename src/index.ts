@@ -70,6 +70,8 @@ import { yahooLive } from './forex/yahoo-live';
 import { startLivePush } from './forex/live-push';
 import { ForexCalendar } from './forex/calendar';
 import { ForexHeadlines } from './forex/headlines';
+import { TradeAi } from './forex/trade-ai';
+import { TradeWatch } from './forex/trade-watch';
 import { MemeReader } from './evaluator/meme-reader';
 import { NewPairWatcher } from './scanner/new-pair-watcher';
 import { TaLab } from './learner/ta-lab';
@@ -407,6 +409,9 @@ async function main(): Promise<void> {
   // v15: the same strategies on 15-minute and 1-minute candles (tested hourly, checked live at every close)
   const fastFx = new FastLab(redis, forex);
   fastFx.start();
+  // v17.14: a live read of every open trade + an AI read of its price action every 15 min (display only)
+  const tradeWatch = new TradeWatch(practice, new TradeAi(redis), { markets: () => forex.marketsNow, news: (pair, now) => fxCalendar.upcoming(pair, now) });
+  tradeWatch.start();
   // Shadow trades: pretend trades on coins it didn't buy (refused / just under the bar / skipped by a rule).
   const shadow = new ShadowTrades(redis, crowd);
   evaluator.shadow = shadow;
@@ -795,7 +800,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament, meme: memeReader, forex, fastFx, practice, fxCalendar, fxNews }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament, meme: memeReader, forex, fastFx, practice, fxCalendar, fxNews, tradeWatch }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -882,6 +887,7 @@ async function main(): Promise<void> {
       forex.stop();
       fastFx.stop();
       practice.stop();
+      tradeWatch.stop();
       pythLive.stop();
       yahooLive.stop();
       stopLivePush();

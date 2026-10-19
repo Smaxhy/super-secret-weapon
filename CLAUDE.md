@@ -563,6 +563,33 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     crosshair). `TvChart` `compact` (the active-trade card on a phone): no top / side toolbar, date ranges, legend,
     volume — the candles get the box (440 px); the card's own 1m / 5m / 15m / 1h buttons set the interval. Legend
     "profit lock" key. Verified by rendering the chart (esbuild + Playwright) at 376 px. tests/fx-chart-axis.
+  - **v17.14 live trade read + AI read (owner: "an active diagnosis of what the goal of the trade is, or an AI that
+    scans all active trades and actively analyses the price action")** — DISPLAY ONLY, nothing here touches a trade.
+    `src/forex/trade-read.ts` `liveRead` (pure, free, per request): goal sentence (strategy, chart, target / stop in
+    pips), pips from the entry (+ = its way) for now / target / stop / lock / best / worst, progress %, moves over 5 / 15
+    / 60 min from the quote's 1-minute candles, best price + minutes since, pace → ETA to the target, thesis check by
+    `styleOf` (trend / pullback: the trade's chart trend from `MarketNow.mtf`; revert: has the price turned), nearest
+    level ahead / behind (drawings within 1.5 hourly ATR), news ≤ 2 h (`ForexCalendar.upcoming`), and ONE status
+    (`READ`: closing > near_target ≥ 80% > near_stop ≥ 75% of a losing-side stop > pressure (under water and the last
+    15 min ≥ 0.35 hourly ATR / 0.3 stop distance against it, or the thesis broke) > locked > early < 5 min > stalling
+    (no new best for max(15 min, ¼ of the usual hold), < half way, only when the candles reach the best) > on_track >
+    holding). `src/forex/trade-ai.ts` `TradeAi`: one Claude call per trade (`AI_TRADE_MODEL`, default
+    `claude-haiku-5-5`, ~$0.001 a read; no server-side fallback param for Haiku; `stop_reason` refusal → none),
+    structured output {verdict on_track / watch / at_risk, headline, read, watch ≤ 3, confidence 1–5}; input = trade,
+    live read, trend / RSI / strength gap / levels within 2 ATR, 24 hourly + 12 quarter-hour candles + 30 minute
+    closes, news 6 h (`buildTradePrompt`). `aiDue`: new trade at once, then every `FX_AI.everyMin` 15 (env
+    `AI_TRADE_EVERY_MIN`) while forex is open, sooner (≥ 5 min) when the status turns near_stop / pressure /
+    near_target / locked. Caps: 60 an hour, `AI_TRADE_BUDGET_USD` 0.5 a day (`fx:ai:spend:<day>`, also added to
+    `ai:spend:<day>`); the owner's "Ask AI now" skips both (≥ 60 s apart per trade); `AI_TRADE=off` switches it off; no
+    `ANTHROPIC_API_KEY` → none (the live read still works). Reads in Redis `fx:ai:read:<acct>:<posId>` (3 days) with the
+    last 8 headlines (`history`). `src/forex/trade-watch.ts` `TradeWatch` (index.ts, every 60 s, both accounts, one call
+    at a time; `Practice.openNow(acct)` values open trades without saving) + `readContext`. API GET
+    `/api/forex/trades/read?acct=bot|me` {trades: [{id, pair, read, ai}], ai status}, POST `/api/forex/trades/ai` {id,
+    acct}. Dashboard `components/FxTradeRead.tsx`: Auto-bot active-trade card → "Live read" (goal, stop ← entry →
+    target track with price / best / lock, 5 / 15 / 60-min move tiles, notes, why it took it) + "AI read" (verdict,
+    headline, read, watch list, confidence dots, how the read changed, Ask AI now, spend today); status chip on the
+    header rows; Trade by hand → a chip under each open trade opens the same panel. tests: forex-trade-read,
+    forex-trade-ai.
   - **Price stretch** (`src/forex/stretch.ts`, no outside feed): per currency the 63-day return in normal-move units
     (averaged over its pairs, ≥ 3 pairs), ranked within its own last ~2 years (520 days, ≥ 120 ranked) → −1…+1; a
     pair = base − quote (−2…+2, the CFTC score's scale; metals none; > 4 days old → none). `MarketBook.stretch`

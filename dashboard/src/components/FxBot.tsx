@@ -13,6 +13,7 @@ import { api } from '../lib/api';
 import { ago } from '../lib/format';
 import { FxActiveTrade, fxUsd, sinceOpen } from './FxActiveTrade';
 import { FxPnl } from './FxPnl';
+import { ReadChip, useTradeReads, type ReadsData } from './FxTradeRead';
 import { Icon } from './Icon';
 import { LiveBadge, LivePrice } from './LivePrice';
 import { Badge, Button, Card, Empty, Row, Rows, Stack, StatTile, Tabs, Timeline, useTab } from './ui';
@@ -64,6 +65,8 @@ export function FxBot() {
   };
   const positions = a?.positions ?? [];
   const selected = positions.find((p) => p.id === sel) ?? positions[0] ?? null;
+  // v17.14: every open trade's live read + AI read
+  const reads = useTradeReads('bot', positions.length > 0);
   // tapping a trade in the header shows it in the chart card (scrolled into view when that card is off screen)
   const pick = (id: string) => {
     setSel(id);
@@ -84,8 +87,8 @@ export function FxBot() {
   ) : null;
   return (
     <Stack>
-      <BotHero plan={plan} a={a ?? null} loaded={!!data} selectedId={selected?.id ?? null} onPick={pick} />
-      {positions.length > 0 && <FxActiveTrade positions={positions} selectedId={selected?.id ?? null} onSelect={setSel} plan={plan?.trades ?? []} onClose={(id) => void close(id)} />}
+      <BotHero plan={plan} a={a ?? null} loaded={!!data} selectedId={selected?.id ?? null} onPick={pick} reads={reads.data} />
+      {positions.length > 0 && <FxActiveTrade positions={positions} selectedId={selected?.id ?? null} onSelect={setSel} plan={plan?.trades ?? []} onClose={(id) => void close(id)} reads={reads.data} onReadsChanged={() => void reads.reload()} />}
       <FxPnl acct="bot" fallback={tiles} />
       <RiskModeCard mode={data?.riskMode ?? 'normal'} modes={data?.riskModes} portfolio={data?.portfolio ?? null} onChange={() => void reload()} />
       <MarketsCard plan={plan} />
@@ -160,7 +163,7 @@ function RiskModeCard({ mode, modes, portfolio, onChange }: { mode: RiskMode; mo
 }
 
 /** v17.8: the first thing on the page — is the bot in a trade, how are its trades doing, what it does next. */
-function BotHero({ plan, a, loaded, selectedId, onPick }: { plan: BotPlan | null; a: Acct | null; loaded: boolean; selectedId: string | null; onPick: (id: string) => void }) {
+function BotHero({ plan, a, loaded, selectedId, onPick, reads }: { plan: BotPlan | null; a: Acct | null; loaded: boolean; selectedId: string | null; onPick: (id: string) => void; reads?: ReadsData | null }) {
   const pos = a?.positions ?? [];
   const n = pos.length;
   // v17.9: live P&L between the 5-second refreshes (falls back to the polled numbers)
@@ -201,7 +204,10 @@ function BotHero({ plan, a, loaded, selectedId, onPick }: { plan: BotPlan | null
                       <Badge tone={p.side === 1 ? 'up' : 'down'}>{p.side === 1 ? 'Long' : 'Short'}</Badge>
                       <span className="font-semibold text-ink">{p.pair}</span>
                       {p.tf && <Badge tone="neutral">{p.tf}</Badge>}
-                      {p.locked && <Badge tone="up" title="The stop is past the entry and trails the best price">profit locked</Badge>}
+                      {(() => {
+                        const r = reads?.trades.find((x) => x.id === p.id);
+                        return r ? <ReadChip read={r.read} ai={r.ai} /> : p.locked ? <Badge tone="up" title="The stop is past the entry and trails the best price">profit locked</Badge> : null;
+                      })()}
                     </div>
                     <div className="mt-0.5 truncate text-xs text-muted">
                       {p.closePending && <span className="font-semibold text-warning">closing · </span>}

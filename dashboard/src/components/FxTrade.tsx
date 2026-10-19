@@ -7,6 +7,7 @@ import { FRESH_MS, liveExit, liveOf, livePnl, useFxLive } from '../hooks/useFxLi
 import { api } from '../lib/api';
 import { ago } from '../lib/format';
 import { LiveBadge, LivePrice } from './LivePrice';
+import { ReadChip, TradeReadPanel, useTradeReads } from './FxTradeRead';
 import { TvChart } from './TvChart';
 import { fitBars, MarketChart, type ChartDrawings } from './MarketChart';
 import { Badge, Button, Card, Chip, NumberInput, Row, Rows, Stack, StatTile, ToggleRow, useStored } from './ui';
@@ -35,6 +36,8 @@ export function FxTrade() {
   const [tpPips, setTpPips] = useState('40');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  // v17.14: the live read + AI read of your open trades (tap the chip under a trade)
+  const [readOpen, setReadOpen] = useState<string | null>(null);
   const [view, setView] = useStored<'tv' | 'bot'>('fx.chartView', 'tv', ['tv', 'bot']);
   const lab = useApi<{ last: { markets?: Array<{ id: string; bars: number[][]; drawings: ChartDrawings }> } | null }>(view === 'bot' ? '/api/forex' : null, 60_000);
   // v17.13: the bot's chart drawn at the real width (readable on a phone)
@@ -50,6 +53,7 @@ export function FxTrade() {
   const acct = data?.account ?? null;
   const dEq = acct ? acct.positions.reduce((s, x) => s + (Number.isFinite(x.pnlUsd) ? livePnl(x, fx, now) - x.pnlUsd : 0), 0) : 0;
   const a = acct && dEq ? { ...acct, equityUsd: acct.equityUsd + dEq, freeMarginUsd: acct.freeMarginUsd + dEq, marginLevelPct: acct.marginUsedUsd > 0 ? Math.round(((acct.equityUsd + dEq) / acct.marginUsedUsd) * 1000) / 10 : acct.marginLevelPct } : acct;
+  const reads = useTradeReads('me', !!a?.positions.length);
   const q = liveQ(pair);
   const qLive = !!liveOf(fx, pair, FRESH_MS, now);
   const p = pipOf(pair);
@@ -203,8 +207,10 @@ export function FxTrade() {
             {a.positions.map((x) => {
               const pnl = livePnl(x, fx, now);
               const pct = x.marginUsd > 0 && pnl !== x.pnlUsd ? Math.round((pnl / x.marginUsd) * 1000) / 10 : x.pnlPct;
+              const rr = reads.data?.trades.find((t) => t.id === x.id) ?? null;
               return (
-              <li key={x.id} className="flex items-center gap-3 py-2.5">
+              <li key={x.id} className="py-2.5">
+              <div className="flex items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <Badge tone={x.side === 1 ? 'up' : 'down'}>{x.side === 1 ? 'Buy' : 'Sell'}</Badge>
@@ -219,12 +225,23 @@ export function FxTrade() {
                     {x.target !== null && ` · TP ${x.target.toFixed(dp(x.pair))}`}
                     {x.lock && !x.locked && ` · lock at ${x.lock.at.toFixed(dp(x.pair))}`} · {ago(new Date(x.openedAt).toISOString())}
                   </div>
+                  {rr && (
+                    <div className="mt-1">
+                      <ReadChip read={rr.read} ai={rr.ai} onClick={() => setReadOpen(readOpen === x.id ? null : x.id)} />
+                    </div>
+                  )}
                 </div>
                 <div className="shrink-0 text-right">
                   <div className={`tabular font-semibold ${tone(pnl)}`}>{usd(pnl)}</div>
                   <div className={`text-xs ${tone(pct)}`}>{pct > 0 ? '+' : ''}{pct}%</div>
                 </div>
                 <Button size="sm" variant="outline" onClick={() => void close(x.id)}>Close</Button>
+              </div>
+              {rr && readOpen === x.id && (
+                <div className="mt-2.5">
+                  <TradeReadPanel row={rr} info={reads.data?.ai ?? null} acct="me" onAsked={() => void reads.reload()} />
+                </div>
+              )}
               </li>
               );
             })}
