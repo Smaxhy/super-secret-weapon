@@ -19,7 +19,7 @@ import { Badge, Button, Card, Empty, Row, Rows, Stack, StatTile, Tabs, Timeline,
 import { ConvictionCard, PortfolioCard, RiskCard, RollingCard, SniperCard, type ConvictionReport, type JudgeReport, type Ledger, type PortfolioReport, type RiskSummary, type RollReport, type SniperReport } from './FxInsights';
 
 interface Conviction { tier: 'normal' | 'sure' | 'verySure'; conf: number; of: number; mult: number; lev: number | null }
-interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; /** v17.9 */ pnlPerPx?: number; units?: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number; tf?: string; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; closePending?: { reason: string; at: number } | null }
+interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; /** v17.9 */ pnlPerPx?: number; units?: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number; tf?: string; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; closePending?: { reason: string; at: number } | null; /** v17.11 profit lock */ lock?: { at: number; to: number; gap: number } | null; locked?: boolean }
 interface Closed { id: string; pair: string; side: 1 | -1; entry: number; exit: number; pnlUsd: number; reason: string; closedAt: number; strategy?: string; tf?: string }
 interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[] }
 interface PlanSignal { tf: string; name: string; side: 1 | -1; verdict: string; tone: 'go' | 'wait' | 'no' }
@@ -201,6 +201,7 @@ function BotHero({ plan, a, loaded, selectedId, onPick }: { plan: BotPlan | null
                       <Badge tone={p.side === 1 ? 'up' : 'down'}>{p.side === 1 ? 'Long' : 'Short'}</Badge>
                       <span className="font-semibold text-ink">{p.pair}</span>
                       {p.tf && <Badge tone="neutral">{p.tf}</Badge>}
+                      {p.locked && <Badge tone="up" title="The stop is past the entry and trails the best price">profit locked</Badge>}
                     </div>
                     <div className="mt-0.5 truncate text-xs text-muted">
                       {p.closePending && <span className="font-semibold text-warning">closing · </span>}

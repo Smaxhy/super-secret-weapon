@@ -28,7 +28,7 @@ import { carrySeries, cotSeries, loadMacro, macroNow, refreshMacro, type MacroDa
 import { RISK_MODES, newSyncReport, type HeatLive, type LabOpenTrade, type Practice, type SyncReport } from './practice';
 import { marketClock, type ForexCalendar } from './calendar';
 import type { ForexHeadlines } from './headlines';
-import { equityCurve, rStats, signalsFor, simulate, type RiskResult, type RStats } from './engine';
+import { DEFAULT_SIM, equityCurve, rStats, signalsFor, simulate, type RiskResult, type RStats } from './engine';
 import { STRATEGIES, runsOn, strategyById, styleOf, type Family, type Strategy, type Style } from './strategies';
 import { buildCtx, to4h, type Ctx } from './ta';
 import { drawingsFor, type Drawings } from './drawings';
@@ -107,6 +107,53 @@ export interface Row {
   why: string;
   /** v17 luck meter: where its unseen R falls among 20 random-timing copies (weekend job; same filter + exit only) */
   luck?: { pctl: number; twinsP90: number; twinPassPct: number };
+  /** v17.11: the same filter + exit WITHOUT the owner's profit lock (what the lock changed) */
+  noLock?: { inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number };
+}
+
+/** v17.11: what the owner's profit lock changed across the strategies (each on its own filter + exit) */
+export interface LockSummary {
+  on: boolean;
+  /** strategies compared (30+ trades in the first 70%) */
+  compared: number;
+  /** average change in R a trade, first 70% / unseen 30% (with − without) */
+  inDeltaR: number;
+  outDeltaR: number;
+  /** of those with 15+ unseen trades: share where the lock did better */
+  outBetterPct: number;
+  /** strategies the bot trades (Edge / Maybe): unseen R a trade with / without the lock */
+  traded: { n: number; withR: number; withoutR: number };
+}
+
+/** Pure: the profit lock's effect, strategy by strategy (with vs without, same filter + exit). */
+export function summarizeLock(rows: ReadonlyArray<Pick<Row, 'id' | 'verdict' | 'inSample' | 'outSample' | 'noLock'>>, on: boolean): LockSummary {
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  let compared = 0;
+  let inD = 0;
+  let outD = 0;
+  let outN = 0;
+  let better = 0;
+  let tn = 0;
+  let tw = 0;
+  let to = 0;
+  for (const r of rows) {
+    if (r.id === 'random' || !r.noLock) continue;
+    if (r.inSample.n >= 30 && r.noLock.inN >= 30) {
+      compared++;
+      inD += r.inSample.avgR - r.noLock.inAvgR;
+      if (r.outSample.n >= 15 && r.noLock.outN >= 15) {
+        outN++;
+        outD += r.outSample.avgR - r.noLock.outAvgR;
+        if (r.outSample.avgR > r.noLock.outAvgR) better++;
+      }
+    }
+    if (r.verdict !== 'no' && r.outSample.n && r.noLock.outN) {
+      tn += r.outSample.n;
+      tw += r.outSample.avgR * r.outSample.n;
+      to += r.noLock.outAvgR * r.noLock.outN;
+    }
+  }
+  return { on, compared, inDeltaR: compared ? r2(inD / compared) : 0, outDeltaR: outN ? r2(outD / outN) : 0, outBetterPct: outN ? Math.round((better / outN) * 100) : 0, traded: { n: tn, withR: tn ? r2(tw / tn) : 0, withoutR: tn ? r2(to / tn) : 0 } };
 }
 
 export interface PaperRow {
@@ -215,6 +262,8 @@ export interface FxReport {
   portfolio?: PortfolioReport | null;
   news?: NewsStudy | null;
   exits?: ExitSummary[];
+  /** v17.11 the owner's profit lock: what it changed (with vs without, per strategy) */
+  lock?: LockSummary;
   judge?: JudgeReport | null;
   /** v15.2: bigger size when more sure — the tiers and whether they proved themselves */
   conviction?: ConvictionReport | null;
@@ -671,7 +720,6 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
         await yieldNow();
       }
     }
-    sigsBy.clear();
     designedBy.clear();
     const eStats = [...byExit.keys()].map((k) => ({ exit: k, ...statsOf(byExit.get(k)!.trades, o.oosFrom) }));
     let exit: ExitKind = s.id === 'random' ? 'designed' : chooseVariant(eStats.map((x) => ({ key: x.exit, inSample: x.inSample })), 'designed' as ExitKind, 40, prev?.e);
@@ -691,6 +739,19 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
     const v = byExit.get(exit)!;
     const done = v.trades.filter((t) => t.reason !== 'open');
     const vRow = (x: Split) => ({ inN: x.inSample.n, inAvgR: x.inSample.avgR, outN: x.outSample.n, outAvgR: x.outSample.avgR, outPf: x.outSample.pf, allN: x.all.n });
+    // v17.11: the chosen filter + exit once more without the owner's profit lock (shows what the lock changes)
+    let noLock: Row['noLock'];
+    if (s.id !== 'random' && DEFAULT_SIM.profitLock) {
+      const off: Trade[] = [];
+      for (const se of seriesTf) {
+        const sigs = sigsBy.get(se)!;
+        const mapped = exit === 'designed' ? sigs : sigs.map((sg, i) => applyExit(sg, exit, se.ctx, i));
+        off.push(...simulate(se.inst, tf, se.ctx, s.id, mapped, allowFor(filter, se.env, style), { ...DEFAULT_SIM, profitLock: false }));
+        if (se.ctx.bars.length > 8_000) await yieldNow();
+      }
+      noLock = vRow(statsOf(off, o.oosFrom));
+    }
+    sigsBy.clear();
     rows.push({
       id: s.id,
       name: s.name,
@@ -709,6 +770,7 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
       pairs: v.perPair.sort((a, b) => b.totalR - a.totalR).map((x) => ({ pair: x.pair, n: x.n, winPct: x.winPct, pf: x.pf, totalR: x.totalR })) as Row['pairs'],
       verdict: 'no',
       why: '',
+      ...(noLock ? { noLock } : {}),
     });
     const paper = v.trades.filter((t) => t.entryT >= o.since);
     const pDone = paper.filter((t) => t.reason !== 'open');
@@ -1368,6 +1430,7 @@ export class ForexLab {
     await this.applyLuck(rows, series, oosFrom);
     const filters = summarizeFilters(rows);
     const exits = summarizeExits(rows);
+    const lockSummary = summarizeLock(rows, DEFAULT_SIM.profitLock);
     const chosenStore: ChosenStore = { oosFrom, picks: Object.fromEntries(rows.map((r) => [`${r.id}:${r.tf}`, { f: r.filter, e: r.exit }])) };
     await this.redis.set(FX_FILTERS_CHOSEN, JSON.stringify(chosenStore)).catch(() => undefined);
 
@@ -1609,6 +1672,7 @@ export class ForexLab {
       mood: moodNow(mood),
       filters,
       exits,
+      lock: lockSummary,
       judge,
       portfolio,
       news,

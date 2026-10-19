@@ -6,6 +6,9 @@
  * taken from its inverse or built from the two USD legs (EUR/JPY = EUR/USD × USD/JPY). Keeps the newest price per
  * feed, builds 1-minute candles per pair from the ticks (so stop / target checks see the highs and lows between
  * checks), reconnects with back-off, and reports to the feed book ('pyth-live').
+ * v17.11: since August 2026 Hermes refuses requests without a Pyth API key (401), so this stream only starts when
+ * `PYTH_API_KEY` is in the VPS .env (sent as `Authorization: Bearer …`; `PYTH_HERMES_URL` overrides the endpoint).
+ * Without a key the live prices come from Yahoo's streamer (yahoo-live.ts).
  */
 import { moduleLogger } from '../lib/logger';
 import { feeds } from './feeds';
@@ -15,7 +18,7 @@ const log = moduleLogger('forex-pyth');
 
 /** fixed settings */
 export const PYTH = {
-  base: 'https://hermes.pyth.network',
+  base: (process.env.PYTH_HERMES_URL || 'https://hermes.pyth.network').replace(/\/+$/, ''),
   /** a composed price older than this is not live (falls back to Yahoo) */
   staleMs: 15_000,
   /** no bytes at all (Hermes sends keep-alive comments) for this long → reconnect */
@@ -27,6 +30,10 @@ export const PYTH = {
   /** 1-minute candles kept per pair */
   keepBars: 180,
 };
+
+/** the Pyth API key from the VPS .env ('' = none: the stream stays off) */
+export const pythKey = (): string => (process.env.PYTH_API_KEY ?? '').trim();
+const auth = (): Record<string, string> => (pythKey() ? { authorization: `Bearer ${pythKey()}` } : {});
 
 export interface PythMeta {
   id: string;
@@ -177,6 +184,7 @@ export interface LiveTick {
 
 /** The live stream. `get(id)` = the newest composed price of a currency pair (null when not live). */
 export class PythLive {
+  readonly name = 'pyth';
   private plans: Record<string, Leg[]> = {};
   private byFeed = new Map<string, string[]>();
   private latest = new Map<string, FeedPrice>();
@@ -243,7 +251,7 @@ export class PythLive {
   /** feed ids by symbol (also used by tests) */
   async resolve(): Promise<void> {
     const metas: PythMeta[] = [];
-    const res = await this.fetcher(`${PYTH.base}/v2/price_feeds?asset_type=fx`, { signal: AbortSignal.timeout(20_000), headers: { accept: 'application/json' } });
+    const res = await this.fetcher(`${PYTH.base}/v2/price_feeds?asset_type=fx`, { signal: AbortSignal.timeout(20_000), headers: { accept: 'application/json', ...auth() } });
     if (!res.ok) throw new Error(`price_feeds HTTP ${res.status}`);
     const j = (await res.json()) as PythMeta[];
     if (Array.isArray(j)) metas.push(...j);
@@ -316,7 +324,7 @@ export class PythLive {
     const qs = ids.map((id) => `ids[]=${id}`).join('&');
     this.abort = new AbortController();
     this.lastByteAt = this.clock();
-    const res = await this.fetcher(`${PYTH.base}/v2/updates/price/stream?${qs}&parsed=true&ignore_invalid_price_ids=true`, { signal: this.abort.signal, headers: { accept: 'text/event-stream' } });
+    const res = await this.fetcher(`${PYTH.base}/v2/updates/price/stream?${qs}&parsed=true&ignore_invalid_price_ids=true`, { signal: this.abort.signal, headers: { accept: 'text/event-stream', ...auth() } });
     if (!res.ok || !res.body) throw new Error(`stream HTTP ${res.status}`);
     const parser = new SseParser();
     const dec = new TextDecoder();

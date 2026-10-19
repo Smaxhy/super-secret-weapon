@@ -1,26 +1,19 @@
 /**
  * v17.9 live forex prices (owner: "I want to see the price actively change"). The bot pushes the newest mid / bid /
  * ask of every currency pair that moved over the WebSocket ('fx'); gold and silver are never in it (they keep updating
- * by polling). v17.10 (owner: "way faster, less than a second"): the bot pushes every 200 ms (was 1 s), components
- * re-render up to 10× a second (was 2×), and when the bot's push goes quiet the page streams the same Pyth prices
- * itself (lib/pythDirect.ts) until the bot's push is steady again. One shared store for every page.
+ * by polling). v17.10 (owner: "way faster, less than a second"): the bot pushes every 200 ms (was 1 s) and components
+ * re-render up to 10× a second (was 2×). One shared store for every page. (v17.11: the page's own Pyth backup stream
+ * was removed — Pyth refuses requests without an API key since August 2026; the bot streams Yahoo's prices instead.)
  * Live P&L of a position = pnlUsd + (live exit price − px) × pnlPerPx, with the exit at the bid for a long and at the
- * ask for a short (what a close would get). Older servers send no 'fx' and no pnlPerPx: everything stays as polled
- * (or ticks from the page's own stream). Pure helpers are exported for tests.
+ * ask for a short (what a close would get). Older servers send no 'fx' and no pnlPerPx: everything stays as polled.
+ * Pure helpers are exported for tests.
  */
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { useBotEvents, type BotEvent } from './useWebSocket';
-import { browserEnv, PythDirect, typicalHalf, wantDirect, BOT_QUIET_MS } from '../lib/pythDirect';
 
 /** Newest live price of one pair. `at` = when this browser got it, `dir` = up / down vs the previous mid. */
 export interface FxTick { mid: number; bid: number; ask: number; priceT: number; at: number; dir: 1 | -1 | 0 }
-export interface FxLive {
-  ticks: Record<string, FxTick>;
-  /** last push that changed anything (client ms) */
-  at: number;
-  /** where that push came from: the bot's WebSocket, or the page's own Pyth stream (the bot's push was quiet) */
-  src?: 'bot' | 'direct';
-}
+export interface FxLive { ticks: Record<string, FxTick>; /** last push that changed anything (client ms) */ at: number }
 
 export const EMPTY_FX: FxLive = { ticks: {}, at: 0 };
 /** a pair's price older than this is not used (the page falls back to the polled numbers) */
@@ -33,7 +26,7 @@ const MAX_JUMP = 0.03;
 const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
 /** Fold one 'fx' push into the store. Broken rows are skipped; an older price never replaces a newer one. Pure. */
-export function applyFx(store: FxLive, data: unknown, now: number, src: 'bot' | 'direct' = 'bot'): FxLive {
+export function applyFx(store: FxLive, data: unknown, now: number): FxLive {
   const px = data && typeof data === 'object' ? (data as { px?: unknown }).px : null;
   if (!px || typeof px !== 'object') return store;
   let ticks: Record<string, FxTick> | null = null;
@@ -47,7 +40,7 @@ export function applyFx(store: FxLive, data: unknown, now: number, src: 'bot' | 
     ticks ??= { ...store.ticks };
     ticks[id] = { mid, bid, ask, priceT: t, at: now, dir: !prev || mid === prev.mid ? 0 : mid > prev.mid ? 1 : -1 };
   }
-  return ticks ? { ticks, at: now, src } : store;
+  return ticks ? { ticks, at: now } : store;
 }
 
 /** A pair's live price, or null when there is none or it is older than `maxAgeMs`. Pure. */
@@ -123,13 +116,6 @@ let freshSig = '';
 const subs = new Set<() => void>();
 export const RENDER_MS = 100;
 
-// v17.10: the bot's push timing (quiet → the page's own stream) and the spread it last sent per pair
-let botLastAt = 0;
-let botSteadySince = 0;
-const botHalf = new Map<string, number>();
-let direct: PythDirect | null = null;
-let directTimer: ReturnType<typeof setInterval> | null = null;
-
 const sigOf = (s: FxLive, now: number) => `${isLive(s, now) ? 1 : 0}:${Object.keys(s.ticks).filter((id) => liveOf(s, id, FRESH_MS, now)).join(',')}`;
 
 function publish() {
@@ -140,35 +126,14 @@ function publish() {
   subs.forEach((f) => f());
 }
 
-function fold(data: unknown, src: 'bot' | 'direct') {
-  const next = applyFx(store, data, Date.now(), src);
-  if (next === store) return;
-  store = next;
-  if (!timer) timer = setTimeout(publish, Math.max(0, shownAt + RENDER_MS - Date.now()));
-}
-
 function ingest(e: BotEvent) {
   // every subscribed component passes the same event object on: fold it once
   if (e.type !== 'fx' || e === lastEvent) return;
   lastEvent = e;
-  const now = Date.now();
-  if (!botLastAt || now - botLastAt > BOT_QUIET_MS) botSteadySince = now;
-  botLastAt = now;
-  const px = (e.data as { px?: Record<string, unknown> }).px;
-  if (px && typeof px === 'object') {
-    for (const [id, row] of Object.entries(px)) {
-      if (Array.isArray(row) && typeof row[1] === 'number' && typeof row[2] === 'number' && row[2] >= row[1]) botHalf.set(id, (row[2] - row[1]) / 2);
-    }
-  }
-  fold(e.data, 'bot');
-}
-
-const visible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden';
-
-function syncDirect() {
-  if (typeof EventSource === 'undefined') return;
-  direct ??= new PythDirect(browserEnv, (px) => fold({ px }, 'direct'), (pair) => botHalf.get(pair) ?? typicalHalf(pair));
-  direct.sync(wantDirect({ watchers: subs.size, visible: visible(), running: direct.running, botLastAt, botSteadySince, now: Date.now() }));
+  const next = applyFx(store, e.data, Date.now());
+  if (next === store) return;
+  store = next;
+  if (!timer) timer = setTimeout(publish, Math.max(0, shownAt + RENDER_MS - Date.now()));
 }
 
 function subscribe(f: () => void) {
@@ -181,21 +146,11 @@ function subscribe(f: () => void) {
     shown = { ...shown };
     subs.forEach((g) => g());
   }, 2_000);
-  if (!directTimer) {
-    directTimer = setInterval(syncDirect, 1_000);
-    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', syncDirect);
-  }
-  // first look a moment after the socket had its chance to deliver the bot's push
-  setTimeout(syncDirect, 1_500);
   return () => {
     subs.delete(f);
-    if (!subs.size) {
-      if (ticker) clearInterval(ticker);
+    if (!subs.size && ticker) {
+      clearInterval(ticker);
       ticker = null;
-      if (directTimer) clearInterval(directTimer);
-      directTimer = null;
-      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', syncDirect);
-      direct?.stop();
     }
   };
 }

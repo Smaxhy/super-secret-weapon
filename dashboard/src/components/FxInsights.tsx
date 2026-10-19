@@ -151,6 +151,29 @@ export function ExitsCard({ e }: { e: ExitSummary[] | undefined }) {
   );
 }
 
+/** v17.11 the owner's profit lock (from the hourly report) */
+export interface LockSummary { on: boolean; compared: number; inDeltaR: number; outDeltaR: number; outBetterPct: number; traded: { n: number; withR: number; withoutR: number } }
+
+/** v17.11: what the owner's profit lock does to the tested results (same strategies, filters and exits, with vs without). */
+export function LockCard({ l }: { l: LockSummary | undefined }) {
+  if (!l) return null;
+  const d = l.traded.n ? Math.round((l.traded.withR - l.traded.withoutR) * 100) / 100 : null;
+  return (
+    <Card
+      title="Your profit lock"
+      subtitle="A third of the way to the target the stop jumps past the entry (a small profit locked), then trails a third of the target distance behind the best price. The bot uses it on every trade, and every test below already includes it; this compares the same trades without it."
+      action={<Badge tone={l.on ? 'up' : 'neutral'}>{l.on ? 'on' : 'off'}</Badge>}
+    >
+      <Rows>
+        <Row label="Strategies the bot trades (unseen 30%)" value={l.traded.n ? `${signed(l.traded.withR, 2)}R vs ${signed(l.traded.withoutR, 2)}R a trade` : 'none yet'} sub={d === null ? undefined : `${l.traded.n} trades · the lock ${d > 0 ? 'added' : d < 0 ? 'cost' : 'changed'} ${signed(d, 2)}R a trade`} tone={d === null ? undefined : d > 0 ? 'up' : d < 0 ? 'down' : undefined} />
+        <Row label="Every strategy, first 70%" value={`${signed(l.inDeltaR, 2)}R a trade`} sub={`${l.compared} strategies compared`} tone={l.inDeltaR > 0 ? 'up' : l.inDeltaR < 0 ? 'down' : undefined} />
+        <Row label="Every strategy, unseen 30%" value={`${signed(l.outDeltaR, 2)}R a trade`} sub={`better on ${l.outBetterPct}% of them`} tone={l.outDeltaR > 0 ? 'up' : l.outDeltaR < 0 ? 'down' : undefined} />
+      </Rows>
+      <p className="mt-2 text-xs text-muted">More trades close in profit with the lock, but some winners get stopped out early in normal back-and-forth before reaching the target — the R a trade above is the net of both.</p>
+    </Card>
+  );
+}
+
 /** The signal judge: a learned model that scores every signal from its context. */
 export function JudgeCard({ j }: { j: JudgeReport | null | undefined }) {
   if (!j) return null;

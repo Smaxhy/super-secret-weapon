@@ -20,6 +20,7 @@ import { cohortTestRunning, lastCohortTest, runCohortTest } from '../learner/coh
 import { marketClock } from '../forex/calendar';
 import { loadOanda, maskToken, oandaReady, saveOanda, testOanda } from '../forex/oanda';
 import { feedHealth, feeds as fxFeeds } from '../forex/feeds';
+import { pythKey } from '../forex/pyth';
 import { RISK_MODES, isRiskMode, ledgerSummary, pnlUsd, riskSummary } from '../forex/practice';
 import { buildPlan } from '../forex/plan';
 import { botStatus, dayTrades, parsePnlQuery, pnlReport } from '../forex/pnl';
@@ -271,6 +272,18 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       if (!r.ok) reply.code(400);
       return r;
     });
+    // v17.11: the owner's profit lock on their own trades (the bot account always uses it)
+    secured.post<{ Body: { on?: boolean } }>('/api/forex/practice/lock', async (req, reply) => {
+      if (typeof req.body?.on !== 'boolean') {
+        reply.code(400);
+        return { ok: false, error: 'on must be true or false' };
+      }
+      if (!deps.practice) {
+        reply.code(503);
+        return { ok: false, error: 'not running' };
+      }
+      return { ok: true, on: await deps.practice.setProfitLock(req.body.on) };
+    });
     secured.get('/api/forex/candles', async (req, reply) => {
       reply.header('Cache-Control', 'no-store');
       const q = req.query as { pair?: string; tf?: string; count?: string };
@@ -294,7 +307,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       return {
         at: now,
         open: clock.open,
-        feeds: feedHealth(fxFeeds.snapshot(), { now, open: clock.open, oanda: oandaReady(await loadOanda()), paused: (p) => fxFeeds.pausedUntil(p) }),
+        feeds: feedHealth(fxFeeds.snapshot(), { now, open: clock.open, oanda: oandaReady(await loadOanda()), pyth: !!pythKey(), paused: (p) => fxFeeds.pausedUntil(p) }),
         dataAge: ages,
         calendarBlind: deps.fxCalendar?.blind(now) ?? null,
         labError: deps.forex?.lastError ?? null,

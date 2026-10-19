@@ -65,7 +65,8 @@ import { ForexLab } from './forex/lab';
 import { feeds as fxFeeds } from './forex/feeds';
 import { FastLab } from './forex/fast';
 import { Practice } from './forex/practice';
-import { pythLive } from './forex/pyth';
+import { pythKey, pythLive } from './forex/pyth';
+import { yahooLive } from './forex/yahoo-live';
 import { startLivePush } from './forex/live-push';
 import { ForexCalendar } from './forex/calendar';
 import { ForexHeadlines } from './forex/headlines';
@@ -384,8 +385,10 @@ async function main(): Promise<void> {
   forex.start();
   const practice = new Practice(redis);
   practice.start();
-  // v17.9: live currency-pair prices (Pyth, free, no account) → the practice account's checks + the dashboard
-  pythLive.start();
+  // v17.9 / v17.11: live currency-pair prices → the practice account's checks + the dashboard. Yahoo's streamer (free,
+  // no account); Pyth only with an API key (Hermes refuses keyless requests since August 2026)
+  yahooLive.start();
+  if (pythKey()) pythLive.start();
   const stopLivePush = startLivePush();
   forex.practice = practice;
   const fxCalendar = new ForexCalendar(redis);
@@ -873,6 +876,7 @@ async function main(): Promise<void> {
       fastFx.stop();
       practice.stop();
       pythLive.stop();
+      yahooLive.stop();
       stopLivePush();
       await fxFeeds.persist(redis, true).catch(() => undefined);
       fxCalendar.stop();

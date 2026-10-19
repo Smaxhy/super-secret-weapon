@@ -73,7 +73,7 @@ export interface PlanMarket {
 }
 
 export interface PlanLine {
-  k: 'size' | 'stop' | 'target' | 'trail' | 'be' | 'scale' | 'time' | 'rule' | 'weekend' | 'closing';
+  k: 'size' | 'stop' | 'target' | 'trail' | 'be' | 'lock' | 'scale' | 'time' | 'rule' | 'weekend' | 'closing';
   text: string;
   done?: boolean;
 }
@@ -201,9 +201,19 @@ export function tradeLines(p: PracticePosition & { px: number }, now: number, pn
   if (p.stop !== null) {
     const atStop = pnlAt(p, p.stop);
     if (p.tpHit) out.push({ k: 'stop', text: `Stop locked at ${fmtPx(pair, p.stop)}: if it comes back there it still closes ${usd(atStop)}.` });
+    else if (p.locked) out.push({ k: 'stop', text: `Profit locked: stop at ${fmtPx(pair, p.stop)} — if it comes back there it still closes ${usd(atStop)}.` });
     else if (p.be) out.push({ k: 'stop', text: `Stop at break-even (${fmtPx(pair, p.stop)}): this trade can no longer lose, apart from the spread.` });
     else out.push({ k: 'stop', text: `Stop ${fmtPx(pair, p.stop)} (${pips(pair, p.entry - p.stop)} pips away from entry): if hit it closes ${usd(atStop)}.` });
   } else out.push({ k: 'stop', text: 'No stop.' });
+  // v17.11 the owner's profit lock
+  if (p.lock) {
+    const L = p.lock;
+    out.push(
+      p.locked
+        ? { k: 'lock', text: `Profit lock on: the stop trails ${pips(pair, L.gap)} pips behind the best price, checked every second, and only ever moves with the trade.`, done: true }
+        : { k: 'lock', text: `Profit lock: at ${fmtPx(pair, L.at)} (${usd(pnlAt(p, L.at))}, a third of the way to the target) the stop jumps past the entry to ${fmtPx(pair, L.to)} (${usd(pnlAt(p, L.to))}), then trails ${pips(pair, L.gap)} pips behind the best price.` },
+    );
+  }
   if (p.beAt != null) out.push({ k: 'be', text: p.be ? 'Stop moved to break-even.' : `At ${fmtPx(pair, p.beAt)} (+1R) the stop moves to the entry price.`, done: !!p.be });
   if (p.scaleAt != null) out.push({ k: 'scale', text: p.scaled ? `Took ${Math.round((p.scaleFrac ?? 0.5) * 100)}% off at +1R.` : `At ${fmtPx(pair, p.scaleAt)} (+1R) it takes ${Math.round((p.scaleFrac ?? 0.5) * 100)}% off and moves the stop to entry.`, done: !!p.scaled });
   if (p.tpHit) out.push({ k: 'target', text: 'Target reached: now a trailing take-profit, no fixed exit — the winner keeps running until the trailing stop catches it.', done: true });

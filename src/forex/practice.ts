@@ -19,7 +19,8 @@ import { SIZING, addExposure, clampRisk, ddFactor, exposureBlock, type Exposure 
 import type { Tier } from './conviction';
 import { SNIPER } from './sniper';
 import { parsePnlRow, pnlRowOf, type PnlRow } from './pnl';
-import { pythLive } from './pyth';
+import { liveFeed } from './live-feed';
+import { lockedStop, lockPlan, PROFIT_LOCK, type LockPlan } from './profit-lock';
 
 const log = moduleLogger('forex-practice');
 export type AcctId = 'me' | 'bot';
@@ -97,7 +98,7 @@ export interface Quote {
   bars: Array<[number, number, number, number, number?]>;
   dayChangePct: number | null;
   /** where the price came from (v17: Dukascopy = the backup when Yahoo fails, currency pairs only) */
-  source: 'oanda' | 'yahoo' | 'dukascopy' | 'pyth';
+  source: 'oanda' | 'yahoo' | 'dukascopy' | 'pyth' | 'yahoo-live';
   barsAt?: number;
   /** v17.9: yesterday's close (Yahoo) — the day change of a live Pyth price */
   prevClose?: number;
@@ -160,6 +161,13 @@ export interface PracticePosition {
   trailAtr?: number | null;
   maxBars?: number | null;
   exitWhen?: string | null;
+  /** v17.11 the owner's profit lock (profit-lock.ts): its plan (null = none; missing = not worked out yet — the next
+   * check does), whether it armed, the best exit-side price since, and the minute the stop was last moved in (that
+   * minute's earlier low / high no longer counts against the new stop) */
+  lock?: LockPlan | null;
+  locked?: boolean;
+  lockBest?: number | null;
+  stopMovedT?: number | null;
 }
 
 export interface ClosedPractice extends PracticePosition {
@@ -222,6 +230,8 @@ export interface PracticeAccount {
   riskMode?: RiskMode;
   /** v17: finished bot trades in R per strategy and chart (newest 60, ≤ 120 days) */
   ledger?: Record<string, LedgerRow[]>;
+  /** v17.11: the owner's profit lock on this account's trades (missing = on) */
+  profitLock?: boolean;
   open: PracticePosition[];
   closed: ClosedPractice[];
   createdAt: number;
@@ -428,8 +438,11 @@ function closePart(a: PracticeAccount, p: PracticePosition, frac: number, px: nu
   return pl;
 }
 
-/** Check stops / targets on the new 1-minute bars, then the stop-out. Mutates `a`. Pure apart from that. */
-export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: number): string[] {
+/**
+ * Check stops / targets on the new 1-minute bars, then the stop-out. Mutates `a`. Pure apart from that. `mv.moved` is
+ * set when a stop moved without an event (the profit lock trailing) — the caller saves the account then too.
+ */
+export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: number, mv?: { moved: boolean }): string[] {
   const mids: Record<string, number> = {};
   const halves: Record<string, number> = {};
   for (const q of Object.values(quotes)) {
@@ -453,10 +466,17 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
     }
     const inst = instrument(p.pair)!;
     const half = halves[p.pair] ?? (inst.spreadPips * inst.pip) / 2;
+    // v17.11 the owner's profit lock, worked out once per position from its entry, target (else its stop) and costs
+    if (p.lock === undefined) {
+      p.lock = a.profitLock !== false && PROFIT_LOCK.on ? lockPlan(p.side, p.entry, p.stop, p.target, half) : null;
+      if (mv) mv.moved = true;
+    }
     for (const [t, h, l, cl, o] of q.bars) {
       if (t <= p.checkedT || t < p.openedAt - 60_000) continue;
-      // exit side of the book: a long sells at the bid (mid − half), a short buys at the ask (mid + half)
-      const worst = p.side === 1 ? l - half : h + half;
+      // exit side of the book: a long sells at the bid (mid − half), a short buys at the ask (mid + half). In the minute
+      // the stop was last moved in, only its close counts against the new stop (its low / high may have come before)
+      const exitClose0 = cl - p.side * half;
+      const worst = t === p.stopMovedT ? exitClose0 : p.side === 1 ? l - half : h + half;
       const best = p.side === 1 ? h - half : l + half;
       // v17: a minute that OPENS past the level fills at that open (a gap), not at the level
       const openX = o !== undefined && Number.isFinite(o) ? o - p.side * half : null;
@@ -507,6 +527,30 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
       if (toBe && !p.be) {
         if (p.stop === null || (p.side === 1 ? p.entry > p.stop : p.entry < p.stop)) p.stop = p.entry;
         p.be = true;
+      }
+      // v17.11 the owner's profit lock: ⅓ of the way to the target → the stop goes past the entry, then it trails ⅓ of
+      // the target distance behind the best price, every check (live prices, about every second)
+      if (p.lock) {
+        if (!p.locked && (p.side === 1 ? best >= p.lock.at : best <= p.lock.at)) {
+          p.locked = true;
+          p.be = true;
+          events.push(`${p.pair} profit lock: a third of the way to the target, stop moved past the entry`);
+        }
+        if (p.locked) {
+          p.lockBest = p.lockBest == null ? best : p.side === 1 ? Math.max(p.lockBest, best) : Math.min(p.lockBest, best);
+          const ns = lockedStop(p.side, p.lock, p.lockBest, p.stop);
+          if (ns !== p.stop) {
+            p.stop = ns;
+            p.stopMovedT = t;
+            if (mv) mv.moved = true;
+          }
+          // the rest of this minute: only its close is left to judge
+          if (p.side === 1 ? exitClose0 <= p.stop : exitClose0 >= p.stop) {
+            closePos(a, p, p.stop, mids, 'stop', now);
+            events.push(`${p.pair} locked-profit stop hit`);
+            break;
+          }
+        }
       }
       // v17: the minute still forming is checked again next time (its high / low can still grow)
       if (t + 60_000 <= now) p.checkedT = t;
@@ -691,9 +735,9 @@ export interface SyncReport {
 }
 export const newSyncReport = (): SyncReport => ({ at: Date.now(), candidates: 0, opened: 0, heldOpen: 0, skipped: [], waits: [] });
 
-/** v17.9: where live prices come from (the Pyth stream; tests swap it) */
+/** v17.9: where live prices come from (v17.11: the freshest live stream, `liveFeed`; tests swap it) */
 export interface LiveSource {
-  get(id: string): { px: number; t: number; bars: Array<[number, number, number, number, number]> } | null;
+  get(id: string): { px: number; t: number; bars: Array<[number, number, number, number, number]>; source?: string } | null;
   flowing(now?: number): boolean;
 }
 
@@ -701,7 +745,7 @@ export class Practice {
   private cache = new Map<string, Quote>();
   private timer: NodeJS.Timeout | null = null;
   /** v17.9: live currency-pair prices (seconds old) */
-  live: LiveSource = pythLive;
+  live: LiveSource = liveFeed;
   /** v17.9: yesterday's close per market (Yahoo, refreshed in the background ≤ every 30 min) for live prices' day change */
   private prev = new Map<string, { close: number; at: number }>();
   private checking = false;
@@ -744,8 +788,8 @@ export class Practice {
     const c = this.cache.get(id);
     const inst = instrument(id);
     if (!inst) return null;
-    // v17.9: a live Pyth price first for currency pairs (seconds old; synthetic spread like Yahoo's). Metals never:
-    // the lab tests them on COMEX futures, Pyth's are spot.
+    // v17.9: a live streamed price first for currency pairs (seconds old; synthetic spread like Yahoo's). Metals never:
+    // the lab tests them on COMEX futures (Pyth's are spot, Yahoo's streamed futures are delayed).
     if (inst.kind === 'fx') {
       const lp = this.live.get(id);
       if (lp) {
@@ -753,12 +797,12 @@ export class Practice {
         const half = syntheticHalf(inst, now);
         const pc = this.prev.get(id) ?? (c?.prevClose ? { close: c.prevClose, at: c.t } : undefined);
         if (!pc || now - pc.at > 30 * 60_000) this.refreshPrev(inst, now);
-        const q: Quote = { id, mid: lp.px, bid: lp.px - half, ask: lp.px + half, t: now, bars: lp.bars, dayChangePct: pc ? Math.round((lp.px / pc.close - 1) * 10_000) / 100 : null, source: 'pyth', priceT: lp.t, ...(pc ? { prevClose: pc.close } : {}) };
+        const q: Quote = { id, mid: lp.px, bid: lp.px - half, ask: lp.px + half, t: now, bars: lp.bars, dayChangePct: pc ? Math.round((lp.px / pc.close - 1) * 10_000) / 100 : null, source: lp.source === 'yahoo-live' ? 'yahoo-live' : 'pyth', priceT: lp.t, ...(pc ? { prevClose: pc.close } : {}) };
         this.cache.set(id, q);
         return q;
       }
     }
-    if (c && Date.now() - c.t < maxAgeMs && c.source !== 'pyth') return c;
+    if (c && Date.now() - c.t < maxAgeMs && c.source !== 'pyth' && c.source !== 'yahoo-live') return c;
     let q = feeds.allow('yahoo') ? await fetchQuote(inst) : null;
     if (q) {
       this.cache.set(id, q);
@@ -934,7 +978,8 @@ export class Practice {
     const a = await this.load(acct);
     if (!a.open.length) return;
     const q = await this.quotes(this.neededIds(a));
-    const ev = tick(a, q, Date.now());
+    const mv = { moved: false };
+    const ev = tick(a, q, Date.now(), mv);
     if (acct === 'bot' && marketClock(Date.now()).flattenNow && a.open.length) {
       const mids: Record<string, number> = {};
       for (const x of Object.values(q)) mids[x.id] = x.mid;
@@ -957,17 +1002,16 @@ export class Practice {
       }
       ev.push('weekend: every bot trade closed before the Friday close (re-opened after Monday\'s open if still running)');
     }
-    if (ev.length) {
-      log.info({ acct, ev }, 'practice account event');
-      await this.save(a, acct);
-    }
+    if (ev.length) log.info({ acct, ev }, 'practice account event');
+    if (ev.length || mv.moved) await this.save(a, acct);
   }
 
   async snapshot(acct: AcctId = 'me'): Promise<{ account: AccountView; quotes: Record<string, Quote> }> {
     return this.serial(async () => {
       const a = await this.load(acct);
       const q = await this.quotes(INSTRUMENTS.map((i) => i.id), 20_000);
-      if (tick(a, q, Date.now()).length) await this.save(a, acct);
+      const mv = { moved: false };
+      if (tick(a, q, Date.now(), mv).length || mv.moved) await this.save(a, acct);
       const mids: Record<string, number> = {};
       const halves: Record<string, number> = {};
       for (const x of Object.values(q)) {
@@ -1398,6 +1442,9 @@ export class Practice {
       if (!p) return { ok: false, error: 'no such position' };
       p.stop = stop;
       p.target = target;
+      // v17.11: a new target / stop → the profit lock is worked out again (unless it already armed)
+      if (!p.locked) p.lock = undefined;
+      p.stopMovedT = null;
       await this.save(a, acct);
       return { ok: true };
     });
@@ -1457,10 +1504,10 @@ export class Practice {
     await this.serial(async () => {
       const fresh = newAccount(Math.min(1_000_000, Math.max(10, startUsd)));
       // the bot keeps its risk mode across a reset
-      if (acct === 'bot') {
-        const mode = (await this.load('bot').catch(() => null))?.riskMode;
-        if (mode) fresh.riskMode = mode;
-      }
+      const old = await this.load(acct).catch(() => null);
+      if (acct === 'bot' && old?.riskMode) fresh.riskMode = old.riskMode;
+      // v17.11: the profit-lock switch survives a reset too
+      if (old?.profitLock === false) fresh.profitLock = false;
       // v17.8: the P&L log starts again with the account
       await this.save(fresh, acct, { clearLog: true });
     });
@@ -1474,6 +1521,18 @@ export class Practice {
       await this.save(a, 'bot');
       log.info({ mode }, 'forex bot risk mode');
       return mode;
+    });
+  }
+
+  /** v17.11: the owner's profit lock on your own trades (the bot account always uses it: its tests assume it). Open
+   * trades that haven't armed yet are worked out again under the new setting. */
+  async setProfitLock(on: boolean): Promise<boolean> {
+    return this.serial(async () => {
+      const a = await this.load('me');
+      a.profitLock = on;
+      for (const p of a.open) if (!p.locked) p.lock = undefined;
+      await this.save(a, 'me');
+      return on;
     });
   }
 

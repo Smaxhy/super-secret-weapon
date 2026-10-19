@@ -8,12 +8,12 @@ import { ago } from '../lib/format';
 import { LiveBadge, LivePrice } from './LivePrice';
 import { TvChart } from './TvChart';
 import { MarketChart, type ChartDrawings } from './MarketChart';
-import { Badge, Button, Card, Chip, NumberInput, Row, Rows, Stack, StatTile, useStored } from './ui';
+import { Badge, Button, Card, Chip, NumberInput, Row, Rows, Stack, StatTile, ToggleRow, useStored } from './ui';
 
-interface Quote { id: string; mid: number; bid: number; ask: number; t: number; dayChangePct: number | null; source: 'oanda' | 'yahoo' | 'dukascopy'; tradeable?: boolean }
-interface Pos { id: string; pair: string; side: 1 | -1; units: number; entry: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; px: number; pnlUsd: number; pnlPct: number; /** v17.9 */ pnlPerPx?: number; closePending?: { reason: string; at: number } | null }
+interface Quote { id: string; mid: number; bid: number; ask: number; t: number; dayChangePct: number | null; source: 'oanda' | 'yahoo' | 'dukascopy' | 'pyth' | 'yahoo-live'; tradeable?: boolean }
+interface Pos { id: string; pair: string; side: 1 | -1; units: number; entry: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; px: number; pnlUsd: number; pnlPct: number; /** v17.9 */ pnlPerPx?: number; closePending?: { reason: string; at: number } | null; /** v17.11 profit lock */ lock?: { at: number; to: number; gap: number } | null; locked?: boolean }
 interface Closed { id: string; pair: string; side: 1 | -1; entry: number; exit: number; leverage: number; marginUsd: number; pnlUsd: number; reason: string; closedAt: number }
-interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[] }
+interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[]; /** v17.11 (missing = on) */ profitLock?: boolean }
 interface Data { account: Acct | null; quotes: Record<string, Quote> }
 
 const PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'USDCHF', 'NZDUSD', 'EURJPY', 'GBPJPY', 'EURGBP', 'XAUUSD', 'XAGUSD'];
@@ -87,6 +87,12 @@ export function FxTrade() {
     });
     // v17: no live price right now → it closes at the first real one (never a made-up price)
     if (r?.ok && r.error) setMsg({ ok: true, text: r.error });
+    await reload();
+  };
+  // v17.11 the owner's profit lock on their own trades
+  const lockOn = a?.profitLock !== false;
+  const setLock = async (on: boolean) => {
+    await api('/api/forex/practice/lock', { method: 'POST', body: JSON.stringify({ on }) }).catch((e: Error) => setMsg({ ok: false, text: e.message }));
     await reload();
   };
   const reset = async () => {
@@ -163,6 +169,20 @@ export function FxTrade() {
           {pipValue && Number(stopPips) > 0 ? ` · stop risks ≈ ${usd(pipValue * Number(stopPips))} (${((pipValue * Number(stopPips) * 100) / Math.max(1, a?.equityUsd ?? 1000)).toFixed(1)}% of the account)` : ''}
           {pipValue && Number(tpPips) > 0 ? ` · target ≈ +${usd(pipValue * Number(tpPips))}` : ''}
         </p>
+        <ToggleRow
+          label="Profit lock"
+          checked={lockOn}
+          onChange={(v) => void setLock(v)}
+          sub={(() => {
+            const tp = Number(tpPips) > 0 ? Number(tpPips) : Number(stopPips) > 0 ? 2 * Number(stopPips) : 0;
+            const money = (pp: number) => (pipValue ? ` (≈ +${usd(pipValue * pp)})` : '');
+            const third = Math.round((tp / 3) * 10) / 10;
+            const keep = Math.round(tp * 0.1 * 10) / 10;
+            return tp > 0
+              ? `At +${third} pips${money(third)} the stop jumps past your entry to about +${keep} pips${money(keep)}, then trails ${third} pips behind the best price — checked every second.`
+              : 'A third of the way to your take profit the stop jumps past your entry, then trails a third of the target distance behind the best price.';
+          })()}
+        />
         <div className="mt-3 grid grid-cols-2 gap-3">
           <Button size="lg" variant="primary" disabled={busy || !q} className="!bg-up" onClick={() => void place(1)}>Buy {q ? q.ask.toFixed(dp(pair)) : ''}</Button>
           <Button size="lg" variant="danger" disabled={busy || !q} onClick={() => void place(-1)}>Sell {q ? q.bid.toFixed(dp(pair)) : ''}</Button>
@@ -188,11 +208,13 @@ export function FxTrade() {
                     <span className="font-medium text-ink">{x.pair}</span>
                     <span className="text-xs text-muted">{x.leverage}× · {usd(x.marginUsd)}</span>
                     {x.closePending && <Badge tone="warn">closing at the next price</Badge>}
+                    {x.locked && <Badge tone="up" title="The stop is past the entry and trails the best price">profit locked</Badge>}
                   </div>
                   <div className="mt-0.5 text-xs text-muted">
                     {x.entry.toFixed(dp(x.pair))} → <LivePrice value={liveExit(x, fx, now) ?? x.px} digits={dp(x.pair)} />
                     {x.stop !== null && ` · SL ${x.stop.toFixed(dp(x.pair))}`}
-                    {x.target !== null && ` · TP ${x.target.toFixed(dp(x.pair))}`} · {ago(new Date(x.openedAt).toISOString())}
+                    {x.target !== null && ` · TP ${x.target.toFixed(dp(x.pair))}`}
+                    {x.lock && !x.locked && ` · lock at ${x.lock.at.toFixed(dp(x.pair))}`} · {ago(new Date(x.openedAt).toISOString())}
                   </div>
                 </div>
                 <div className="shrink-0 text-right">

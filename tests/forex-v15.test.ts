@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type Redis from 'ioredis';
-import { simulate, WARMUP } from '../src/forex/engine';
+import { DEFAULT_SIM, simulate, WARMUP, type SimOpts } from '../src/forex/engine';
 import { applyExit, OWNER_EXITS } from '../src/forex/exits';
 import { preferVariant } from '../src/forex/filters';
 import { runsOn, strategyById, type Strategy } from '../src/forex/strategies';
@@ -58,7 +58,9 @@ describe('trailing take-profit in the engine (v15)', () => {
     return bars;
   }
   const sig = (extra: Partial<Signal> = {}): Signal => ({ side: 1, stop: 1.099, target: 1.101, ...extra });
-  const run = (bars: Bar[], s: Signal) => simulate(EUR, '1h', buildCtx(bars, 60, 'EURUSD'), 'x', bars.map((_, i) => (i === 250 ? s : null)));
+  const run = (bars: Bar[], s: Signal, opts?: SimOpts) => simulate(EUR, '1h', buildCtx(bars, 60, 'EURUSD'), 'x', bars.map((_, i) => (i === 250 ? s : null)), undefined, opts);
+  // v17.11: the trailing stop-loss on its own (the owner's profit lock would also save this trade)
+  const NO_LOCK: SimOpts = { ...DEFAULT_SIM, profitLock: false };
 
   // a green candle through the target, a run higher, then a drop
   const runner = market([{ o: 1.1, h: 1.1015, l: 1.0999, c: 1.1014 }, { c: 1.102 }, { c: 1.103 }, { c: 1.104 }, { c: 1.104 }, { o: 1.104, h: 1.104, l: 1.1, c: 1.1 }, { c: 1.1 }]);
@@ -98,10 +100,10 @@ describe('trailing take-profit in the engine (v15)', () => {
     // up 15 pips (1.5R) without reaching the 2R target, then back down through the old stop
     const bars = market([{ c: 1.1005 }, { c: 1.101 }, { c: 1.1015 }, { o: 1.1015, h: 1.1016, l: 1.098, c: 1.098 }, { c: 1.098 }]);
     const s = sig({ target: 1.102 });
-    const plain = run(bars, s)[0]!;
+    const plain = run(bars, s, NO_LOCK)[0]!;
     expect(plain.reason).toBe('stop');
     expect(plain.r).toBeLessThan(-0.9);
-    const safe = run(bars, { ...s, trailR: 1 })[0]!;
+    const safe = run(bars, { ...s, trailR: 1 }, NO_LOCK)[0]!;
     expect(safe.reason).toBe('trail');
     // best close 1.1015, starting distance ≈ 10.04 pips → stop ≈ 1.10046 ≈ +0.4R
     expect(safe.stop).toBeCloseTo(1.1015 - (1.1 + HALF - 1.099), 6);

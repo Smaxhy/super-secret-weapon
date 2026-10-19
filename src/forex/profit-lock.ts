@@ -1,0 +1,54 @@
+/**
+ * v17.11 the owner's profit lock (owner: "it's not actively trailing its stop-loss closer; TP is +30 €, when it reaches
+ * a 10 € profit it moves the stop past the buying price so we always sell in profit"). For every trade with a target
+ * (or, without one, twice the starting stop distance) — D = the distance from the entry to it:
+ * - once the price has gone `atFrac` (⅓) of D its way, the stop jumps past the entry: entry + costs + `keepFrac` (10%)
+ *   of D, so a stop-out from there still closes in profit (a gap can still fill worse);
+ * - from then on the stop trails `gapFrac` (⅓) of D behind the best price reached, and only ever moves with the trade.
+ * Example: target +30 → at +10 the stop goes to about +3, at +20 it sits at +10, at +29 at +19.
+ * The engine simulates it on every backtest / paper trade (so the tested numbers are what the bot does), the bot
+ * account and the owner's own trades apply it on live prices every second. Pure.
+ */
+
+export const PROFIT_LOCK = {
+  on: true,
+  /** arms once the price went this share of the way to the target */
+  atFrac: 1 / 3,
+  /** then trails this share of the target distance behind the best price */
+  gapFrac: 1 / 3,
+  /** profit kept by the first locked stop (share of the target distance), on top of the costs */
+  keepFrac: 0.1,
+};
+
+export interface LockPlan {
+  /** the price that arms the lock */
+  at: number;
+  /** the stop it jumps to (past the entry) */
+  to: number;
+  /** how far the stop trails behind the best price once armed (price) */
+  gap: number;
+}
+
+/**
+ * The lock for one trade, or null (no target and no usable stop, or costs so large the locked stop would not sit
+ * between the entry and the arming price). `costPx` = what a close costs on top of the price (spread / slippage).
+ */
+export function lockPlan(side: 1 | -1, entry: number, stop0: number | null, target0: number | null, costPx: number, cfg = PROFIT_LOCK): LockPlan | null {
+  if (!Number.isFinite(entry) || entry <= 0) return null;
+  let d = NaN;
+  if (target0 !== null && Number.isFinite(target0) && side * (target0 - entry) > 0) d = Math.abs(target0 - entry);
+  else if (stop0 !== null && Number.isFinite(stop0) && side * (entry - stop0) > 0) d = 2 * Math.abs(entry - stop0);
+  if (!(d > 0)) return null;
+  const at = entry + side * cfg.atFrac * d;
+  const to = entry + side * (Math.max(0, costPx) + cfg.keepFrac * d);
+  if (side * (at - to) <= 0) return null;
+  return { at, to, gap: cfg.gapFrac * d };
+}
+
+/** The stop after the best price moved to `best` (armed lock): never looser than `stop` or the locked level. Pure. */
+export function lockedStop(side: 1 | -1, plan: LockPlan, best: number, stop: number | null): number {
+  const trail = best - side * plan.gap;
+  let s = side === 1 ? Math.max(plan.to, trail) : Math.min(plan.to, trail);
+  if (stop !== null && (side === 1 ? stop > s : stop < s)) s = stop;
+  return s;
+}

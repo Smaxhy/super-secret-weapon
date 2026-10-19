@@ -27,12 +27,12 @@ export function LivePrice({ value, digits = 5, text, className = '', flash = tru
   );
 }
 
-/** "● LIVE" while any pair moved in the last 10 s (bot push or the page's own Pyth stream); nothing otherwise (market closed). */
+/** "● LIVE" while any pair moved in the last 10 s; nothing otherwise (older server, market closed, socket down). */
 export function LiveBadge({ fx, className = '' }: { fx?: FxLive; className?: string }) {
   const own = useFxLive();
   if (!isLive(fx ?? own)) return null;
   return (
-    <span title={(fx ?? own).src === 'direct' ? 'Live prices straight from Pyth (the bot\'s own price push is quiet)' : 'Live prices from the bot, several times a second'} className={`inline-flex shrink-0 items-center gap-1 rounded-full border border-good/40 bg-good/10 px-1.5 py-0.5 text-[10px] font-bold uppercase leading-none tracking-[0.1em] text-up ${className}`}>
+    <span title="Live prices from the bot, as they change" className={`inline-flex shrink-0 items-center gap-1 rounded-full border border-good/40 bg-good/10 px-1.5 py-0.5 text-[10px] font-bold uppercase leading-none tracking-[0.1em] text-up ${className}`}>
       <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-good opacity-70" />
         <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-good" />

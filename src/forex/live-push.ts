@@ -1,11 +1,12 @@
 /**
- * v17.9 live prices to the dashboard: the Pyth ticks since the last push, folded per pair, published on the bus (the
+ * v17.9 live prices to the dashboard: the live ticks (v17.11: Yahoo's streamer, or Pyth with a key) since the last push, folded per pair, published on the bus (the
  * WebSocket forwards it as { type: 'fx', data: { t, px: { EURUSD: [mid, bid, ask, priceT] } } }) — every 200 ms
  * (v17.10, owner: "less than a second"; was 1 s) and only when something moved. Bid / ask use the same synthetic spread as the practice account, so the
  * dashboard's live P&L matches what a close would get.
  */
 import { bus } from '../lib/bus';
-import { pythLive, type LiveTick } from './pyth';
+import type { LiveTick } from './pyth';
+import { liveFeed } from './live-feed';
 import { syntheticHalf } from './practice';
 import { instrument } from './types';
 
@@ -26,7 +27,7 @@ export function pushPayload(ticks: Iterable<LiveTick>, now: number): Record<stri
 }
 
 /** Start pushing; returns the stop function. */
-export function startLivePush(live: { onTicks(fn: (ticks: LiveTick[]) => void): () => void } = pythLive, everyMs = LIVE_PUSH_MS): () => void {
+export function startLivePush(live: { onTicks(fn: (ticks: LiveTick[]) => void): () => void } = liveFeed, everyMs = LIVE_PUSH_MS): () => void {
   const pending = new Map<string, LiveTick>();
   const off = live.onTicks((ts) => {
     for (const t of ts) pending.set(t.id, t);

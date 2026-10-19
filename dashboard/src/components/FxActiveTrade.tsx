@@ -27,6 +27,9 @@ export interface ActivePos {
   pnlUsd: number;
   /** v17.9: USD change of pnlUsd per 1.0 move of the exit price px (live P&L between refreshes) */
   pnlPerPx?: number;
+  /** v17.11 the profit lock (where it arms, the stop it jumps to, the trail distance) and whether it armed */
+  lock?: { at: number; to: number; gap: number } | null;
+  locked?: boolean;
   pnlPct?: number;
   marginUsd?: number;
   leverage?: number;
@@ -196,7 +199,7 @@ function TradeView({ p, plan, onClose }: { p: ActivePos; plan: ActivePlan | null
           <TvChart pair={p.pair} interval={GRANS.find((g) => g[0] === gran)![2]} height={phone ? 380 : 460} />
         ) : bars.length >= 2 && width > 0 ? (
           <div className={`rounded-xl border border-line bg-surface p-1.5 transition-opacity ${candles.error ? 'opacity-60' : ''}`}>
-            <MarketChart bars={shownBars} trades={[{ side: p.side, entryT: p.openedAt, entry: p.entry, stop: p.stop, target: p.target, strategy: name }]} digits={dg} width={width - 14} height={phone ? 250 : 340} live={px} entryMarker tradeLabels timeAxis interactive />
+            <MarketChart bars={shownBars} trades={[{ side: p.side, entryT: p.openedAt, entry: p.entry, stop: p.stop, target: p.target, strategy: name, lockAt: p.lock && !p.locked ? p.lock.at : null }]} digits={dg} width={width - 14} height={phone ? 250 : 340} live={px} entryMarker tradeLabels timeAxis interactive />
           </div>
         ) : (
           <div className="grid h-56 place-items-center rounded-xl border border-dashed border-line-strong px-4 text-center text-sm text-muted">

@@ -509,6 +509,35 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     steady 20 s, or the page is hidden (every Hermes message carries a several-KB signed blob — too heavy on a phone).
     `FxLive.src` 'bot' | 'direct' → LIVE badge tooltip. Display only: the practice account still fills at the BOT's
     price. tests/fx-live-direct.test.ts.
+  - **v17.11 (owner: "live ticking is down"; "it's not actively trailing its stop-loss closer: TP +30 €, at +10 € the
+    stop moves past the buying price so we always sell in profit")**:
+    - **Pyth needs an API key** since Aug 2026 (Hermes answers 401 without `Authorization: Bearer`; Pyth Terminal, free
+      trial then paid plans from ~$500/month) — so v17.9 / v17.10 never got a price. `pythLive` now only starts with
+      `PYTH_API_KEY` (VPS .env; `PYTH_HERMES_URL` overrides the endpoint); feed card shows it 'off' without one. The
+      browser Hermes backup (v17.10 `dashboard/src/lib/pythDirect.ts`) was removed (keyless = useless).
+    - **Yahoo live stream** (`src/forex/yahoo-live.ts` `yahooLive`, the streamer finance.yahoo.com and yfinance use:
+      `wss://streamer.finance.yahoo.com/?version=2`, `ws` client, origin finance.yahoo.com; {subscribe: [EURUSD=X …]}
+      re-sent every 15 s; messages {type:'pricing', message: base64 protobuf PricingData} — `decodePricing` reads id 1,
+      price 2 (float32 → rounded to a tenth of a pip), time 3 (sint64 ms), prev close 16, bid 23, ask 25). Currency
+      pairs only. A price counts as live 90 s after it last arrived (Yahoo sends changes only); watchdog reconnects
+      after 90 s of silence while forex is open; back-off 1 s…60 s; feed 'yahoo-live' (provider 'yahoo-stream', so the
+      REST breaker is separate). `src/forex/live-feed.ts` `liveFeed` = the freshest of [pythLive, yahooLive]
+      (`get` adds `source`) → `Practice.live`, `startLivePush`. Quote.source 'yahoo-live'. UNVERIFIED from the
+      sandbox (can't reach Yahoo): Setup → Data feeds "Live ticking prices (Yahoo stream)" says whether it works.
+    - **Profit lock** (`src/forex/profit-lock.ts`, `PROFIT_LOCK` {atFrac ⅓, gapFrac ⅓, keepFrac 0.1}): D = entry →
+      target (no target: 2 × the stop distance); at ⅓ D its way the stop jumps to entry + costs + 0.1 D, then trails
+      ⅓ D behind the best price, only ever tighter (`lockPlan`, `lockedStop`). Engine (`SimOpts.profitLock`, DEFAULT
+      on): on the candle high / low, then only the rest of the candle can hit it (green long: its close; red: its low);
+      exits 'breakeven' / 'trail'. EVERY backtest / paper / honest-test trade includes it → one re-pick event after
+      deploy. Lab: each row is simulated once more without it (`Row.noLock`) → `summarizeLock` → report `lock` →
+      Strategies card "Your profit lock" (with vs without, first 70% / unseen, and for the traded rows). Practice
+      `tick(a, q, now, mv)`: positions get `lock` (worked out on the first check from entry / target / stop + half
+      spread; null = none), `locked`, `lockBest`, `stopMovedT` (in the minute the stop moved, only its close counts
+      against the new stop — the forming minute is re-checked every second); `mv.moved` → the account is saved on
+      silent stop moves too. Bot account always on; owner's own account `PracticeAccount.profitLock` (missing = on),
+      POST `/api/forex/practice/lock` {on}, "Profit lock" switch on the Trade-by-hand ticket (with the pip / $ example);
+      a TP / SL edit re-plans it unless armed. Plan lines k 'lock'; badges "profit locked"; dashed amber lock line on
+      the active-trade chart. tests: forex-yahoo-live, forex-profit-lock.
   - **Price stretch** (`src/forex/stretch.ts`, no outside feed): per currency the 63-day return in normal-move units
     (averaged over its pairs, ≥ 3 pairs), ranked within its own last ~2 years (520 days, ≥ 120 ranked) → −1…+1; a
     pair = base − quote (−2…+2, the CFTC score's scale; metals none; > 4 days old → none). `MarketBook.stretch`

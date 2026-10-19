@@ -14,13 +14,14 @@ export interface ChartLine { kind: 'support' | 'resistance'; t1: number; p1: num
 export interface ChartLevel { kind: 'support' | 'resistance'; price: number; touches: number }
 export interface ChartDrawings { lines: ChartLine[]; levels: ChartLevel[]; prevDay: { h: number; l: number } | null; asia: { h: number; l: number } | null }
 /** v17.8: `stop` may be null (a trade without a stop: no stop line) */
-export interface ChartTrade { side: 1 | -1; entryT: number; entry: number; stop: number | null; target: number | null; strategy: string }
+export interface ChartTrade { side: 1 | -1; entryT: number; entry: number; stop: number | null; target: number | null; strategy: string; /** v17.11: the price that arms the profit lock (until it armed) */ lockAt?: number | null }
 
 const PAD_R = 64;
 const AXIS_H = 20;
 const ENTRY = '#6366f1';
 const STOP = '#ef4444';
 const TARGET = '#22c55e';
+const LOCK = '#f59e0b';
 
 const clockOf = (t: number, long: boolean) => (long ? new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 
@@ -109,6 +110,7 @@ export function MarketChart({
                 { key: 'e', y: clipY(t.entry), text: t.entry.toFixed(digits), color: ENTRY, solid: false },
                 ...(t.stop !== null ? [{ key: 's', y: clipY(t.stop), text: t.stop.toFixed(digits), color: STOP, solid: false }] : []),
                 ...(t.target !== null ? [{ key: 't', y: clipY(t.target), text: t.target.toFixed(digits), color: TARGET, solid: false }] : []),
+                ...(t.lockAt != null && Number.isFinite(t.lockAt) ? [{ key: 'l', y: clipY(t.lockAt), text: t.lockAt.toFixed(digits), color: LOCK, solid: false }] : []),
               ])
             : []),
           { key: 'live', y: y(last), text: last.toFixed(digits), color: ENTRY, solid: true },
@@ -203,6 +205,7 @@ export function MarketChart({
             <line x1={xa} x2={cw} y1={clipY(t.entry)} y2={clipY(t.entry)} stroke={ENTRY} strokeWidth={1.5} />
             {t.stop !== null && <line x1={xa} x2={cw} y1={clipY(t.stop)} y2={clipY(t.stop)} stroke={STOP} strokeWidth={1.5} strokeDasharray="4 3" />}
             {t.target !== null && <line x1={xa} x2={cw} y1={clipY(t.target)} y2={clipY(t.target)} stroke={TARGET} strokeWidth={1.5} strokeDasharray="4 3" />}
+            {t.lockAt != null && Number.isFinite(t.lockAt) && <line x1={xa} x2={cw} y1={clipY(t.lockAt)} y2={clipY(t.lockAt)} stroke={LOCK} strokeWidth={1} strokeDasharray="2 3" />}
             <path d={t.side === 1 ? `M${xa} ${clipY(t.entry) + 12} l-6 8 h12 z` : `M${xa} ${clipY(t.entry) - 12} l-6 -8 h12 z`} fill={t.side === 1 ? '#16a34a' : '#dc2626'} />
           </g>
         );

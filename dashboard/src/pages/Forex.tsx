@@ -17,7 +17,7 @@ import { Icon } from '../components/Icon';
 import { FxTrade } from '../components/FxTrade';
 import { OandaCard } from '../components/OandaCard';
 import { MarketChart, type ChartDrawings } from '../components/MarketChart';
-import { EXIT_SHORT, ExitsCard, FILTER_SHORT, FiltersCard, JudgeCard, MoodCard, NewsStudyCard, StrengthCard, TrendArrows, type ExitKind, type ExitSummary, type FilterKind, type FilterSummary, type JudgeReport, type MoodNow, type NewsStudy, type PortfolioReport, type StrengthNow } from '../components/FxInsights';
+import { EXIT_SHORT, ExitsCard, LockCard, FILTER_SHORT, FiltersCard, JudgeCard, MoodCard, NewsStudyCard, StrengthCard, TrendArrows, type ExitKind, type ExitSummary, type FilterKind, type FilterSummary, type JudgeReport, type LockSummary, type MoodNow, type NewsStudy, type PortfolioReport, type StrengthNow } from '../components/FxInsights';
 import { Badge, Button, Card, Chip, Drawer, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Sparkline, Stack, StatTile, useStored } from '../components/ui';
 
 interface RStats { n: number; winPct: number; avgR: number; medianR: number; pf: number | null; totalR: number; maxDdR: number }
@@ -31,7 +31,7 @@ interface HeatLevel { price: number; kind: 'round' | 'half' | 'swing' | 'yesterd
 interface Heatmap { levels: HeatLevel[]; read: { positioning: number | null; stretch?: number | null; carry: number | null; volF: number | null; hurst: number | null; long: number; short: number; of: number; why: string[] } }
 interface ExtFeeds { dukascopy: { at: number; ids: Record<string, { bars: number; firstT: number | null; lastT: number | null; error: string | null }> } | null; spreadProfiles: string[]; macro: { cot: Array<{ ccy: string; score: number; net: number; asOf: number }>; rates: Array<{ ccy: string; rate: number }>; errors: string[]; at: number | null }; historyFrom: number }
 interface PaperRow { id: string; name: string; tf: string; stats: RStats; risk1: Risk; open: number }
-interface Report { at: number; durationMs: number; feed: Array<{ id: string; role?: 'traded' | 'strength' | 'mood'; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; markets?: MarketNow[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string; strength?: StrengthNow; mood?: MoodNow; filters?: FilterSummary[]; exits?: ExitSummary[]; judge?: JudgeReport | null; portfolio?: PortfolioReport | null; news?: NewsStudy | null; extFeeds?: ExtFeeds }
+interface Report { at: number; durationMs: number; feed: Array<{ id: string; role?: 'traded' | 'strength' | 'mood'; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; markets?: MarketNow[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string; strength?: StrengthNow; mood?: MoodNow; filters?: FilterSummary[]; exits?: ExitSummary[]; lock?: LockSummary; judge?: JudgeReport | null; portfolio?: PortfolioReport | null; news?: NewsStudy | null; extFeeds?: ExtFeeds }
 interface FastFeed { id: string; tf: '15m' | '1m'; bars: number; firstT: number | null; lastT: number | null; source: 'oanda' | 'yahoo' | null; error: string | null }
 interface FastReport { at: number; durationMs: number; feed: FastFeed[]; spans: Record<'15m' | '1m', { from: number | null; to: number | null; oosFrom: number | null; markets: number }>; rows: RowT[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string }
 interface Data { running: boolean; last: Report | null; fast?: FastReport | null }
@@ -108,6 +108,7 @@ export function Forex() {
           {section === 'live' && <Markets r={r} onTrade={(id) => { try { localStorage.setItem('fx.pair', id); } catch { /* ignore */ } navigate('/forex/practice'); }} />}
           {section === 'strategies' && <JudgeCard j={r.judge} />}
           {section === 'strategies' && <FiltersCard f={r.filters} />}
+          {section === 'strategies' && <LockCard l={r.lock} />}
           {section === 'strategies' && <ExitsCard e={r.exits} />}
           {section === 'strategies' && <Strategies r={r} />}
           {section === 'strategies' && <NewsStudyCard n={r.news} />}

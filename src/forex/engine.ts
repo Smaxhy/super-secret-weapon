@@ -5,6 +5,7 @@
  * can be applied afterwards (`equityCurve`).
  */
 import { spreadMultAt } from './spreads';
+import { lockedStop, lockPlan, PROFIT_LOCK, type LockPlan } from './profit-lock';
 import type { Ctx } from './ta';
 import type { Strategy } from './strategies';
 import type { Instrument, Signal, Timeframe, Trade } from './types';
@@ -65,8 +66,10 @@ export interface SimOpts {
   /** v15: a signal on the LAST closed bar becomes an open trade filled at that close (the next bar's open is not
    * known yet). Without it the live bot only saw a trade one bar after its signal and entered a whole bar late. */
   liveEdge?: boolean;
+  /** v17.11: the owner's profit lock (profit-lock.ts) on every trade — the bot does it live */
+  profitLock?: boolean;
 }
-export const DEFAULT_SIM: Required<SimOpts> = { weekendPause: true, sessionSpreads: true, liveEdge: true };
+export const DEFAULT_SIM: Required<SimOpts> = { weekendPause: true, sessionSpreads: true, liveEdge: true, profitLock: PROFIT_LOCK.on };
 
 export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: string, sigs: ReadonlyArray<Signal | null>, allow?: Allow, opts: SimOpts = DEFAULT_SIM): Trade[] {
   const o = { ...DEFAULT_SIM, ...opts };
@@ -114,6 +117,10 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
     trailPx: number | null;
     /** v15.3: the trade's identity time = its signal bar's close (stays the same when the next bar is missing) */
     keyT: number;
+    /** v17.11 the owner's profit lock (null = none) and its state */
+    lock: LockPlan | null;
+    locked: boolean;
+    lockBest: number;
   };
   let pos: Pos | null = null;
   const finish = (i: number, fill: number, reason: Trade['reason']) => {
@@ -216,6 +223,27 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
           // the same candle may have come back to the new stop afterwards: assume it did (the order inside a candle is unknown)
           if (p.side === 1 ? b.l <= p.stop : b.h >= p.stop) finish(i, exitFill(i, p.side, p.stop, true), 'breakeven');
         }
+        // v17.11 the owner's profit lock: ⅓ of the way to the target → the stop jumps past the entry, then trails ⅓ of
+        // the target distance behind the best price (the bot does it on live prices; here on the candle's high / low).
+        // After the candle's best price only the rest of the candle can hit it: a long's green candle (open → low →
+        // high → close) only its close, a red one (open → high → low → close) its low.
+        if (pos && p.lock) {
+          const ext = p.side === 1 ? b.h : b.l;
+          if (!p.locked && (p.side === 1 ? ext >= p.lock.at : ext <= p.lock.at)) {
+            p.locked = true;
+            p.be = true;
+          }
+          if (p.locked) {
+            p.lockBest = p.side === 1 ? Math.max(p.lockBest, ext) : Math.min(p.lockBest, ext);
+            const ns = lockedStop(p.side, p.lock, p.lockBest, p.stop);
+            if (ns !== p.stop) {
+              p.stop = ns;
+              if (p.side * (ns - p.lock.to) > 0) p.trailed = true;
+            }
+            const after = p.side === 1 ? (b.c >= b.o ? b.c : b.l) : b.c <= b.o ? b.c : b.h;
+            if (p.side === 1 ? after <= p.stop : after >= p.stop) finish(i, exitFill(i, p.side, p.stop, true), stopReason(p));
+          }
+        }
         if (pos) {
           const held = i - p.entryIdx + 1;
           const ew = p.exitWhen;
@@ -279,6 +307,9 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
             tpHit: false,
             target0: sig.target,
             trailPx: sig.trailR && sig.trailR > 0 ? sig.trailR * risk : null,
+            lock: o.profitLock ? lockPlan(sig.side, entry, sig.stop, sig.target, spr(i + 1)) : null,
+            locked: false,
+            lockBest: entry,
           };
         }
       }
