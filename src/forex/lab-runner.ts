@@ -3,20 +3,58 @@
  * limit (a run that blows up can't take the crypto bot or the API down with it) and its own CPU core. Failure rules:
  * the child could not START (spawn / load error) → the caller may run inline once; it started and then failed, timed
  * out or ran out of memory → that run is skipped (re-running a pathological run in the main process is exactly what
- * this is meant to avoid).
+ * this is meant to avoid). v17: but a child that fails `inlineAfterFails` hours in a row with a LIGHT failure (it threw,
+ * or its result couldn't come back) is not left to skip every hour — the next `inlineRuns` runs go inline (the flag-off
+ * path), then the child is tried again (`planLabRun` / `afterLabRun`); a good child run clears the streak. A HEAVY
+ * failure (timed out, out of memory, killed) never sends a run inline: that would repeat it in the main process.
  */
 import { fork } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import type { WorkerInput, WorkerResult } from './lab';
+import type { RunOutput, WorkerInput, WorkerResult, WorkerState } from './lab';
+import type { LearnKey } from './learner';
 
-export const LAB_WORKER = { heapMb: 900, timeoutMs: 15 * 60_000 };
+export const LAB_WORKER = { heapMb: 900, timeoutMs: 15 * 60_000, inlineAfterFails: 2, inlineRuns: 6 };
 
-export type ForkOutcome = { kind: 'ok'; res: Extract<WorkerResult, { ok: true }> } | { kind: 'spawn'; error: string } | { kind: 'failed'; error: string };
+/** v17: the child's failure streak (started, then failed / timed out / ran out of memory) and inline runs still owed. */
+export interface WorkerStreak {
+  fails: number;
+  inlineLeft: number;
+}
+export const NO_STREAK: WorkerStreak = { fails: 0, inlineLeft: 0 };
+
+/** v17: where the next run goes while the worker flag is on: inline while a failure streak is sat out, else the child. Pure. */
+export function planLabRun(st: WorkerStreak): 'worker' | 'inline' {
+  return st.inlineLeft > 0 ? 'inline' : 'worker';
+}
+
+/**
+ * v17: the streak after a run. `ok` clears it; `failed` (light) counts (reaching `inlineAfterFails` in a row →
+ * `tripped`, the next `inlineRuns` runs go inline; a failed retry after that trips again at once); `heavy` (timed out /
+ * out of memory / killed) clears it and owes no inline run; `inline` uses up one owed inline run; `spawn` (could not
+ * start — that hour already ran inline) changes nothing. Pure.
+ */
+export function afterLabRun(st: WorkerStreak, what: 'ok' | 'failed' | 'heavy' | 'inline' | 'spawn', cfg: Pick<typeof LAB_WORKER, 'inlineAfterFails' | 'inlineRuns'> = LAB_WORKER): { st: WorkerStreak; tripped: boolean } {
+  if (what === 'ok' || what === 'heavy') return { st: { ...NO_STREAK }, tripped: false };
+  if (what === 'inline') return { st: { fails: st.fails, inlineLeft: Math.max(0, st.inlineLeft - 1) }, tripped: false };
+  if (what === 'spawn') return { st: { ...st }, tripped: false };
+  const fails = st.fails + 1;
+  const tripped = fails >= cfg.inlineAfterFails;
+  return { st: { fails, inlineLeft: tripped ? cfg.inlineRuns : st.inlineLeft }, tripped };
+}
+
+/** v17: a failed run says whether it was heavy (timed out / out of memory / killed) and may carry the child's feed reports */
+export type ForkOutcome =
+  | { kind: 'ok'; res: Extract<WorkerResult, { ok: true }> }
+  | { kind: 'spawn'; error: string }
+  | { kind: 'failed'; error: string; heavy: boolean; feeds?: Extract<WorkerResult, { ok: false }>['feeds']; breakers?: Extract<WorkerResult, { ok: false }>['breakers'] };
+
+/** v17: an error text that means the child ran out of memory (a JS-level heap error the child still caught). Pure. */
+export const memoryError = (e: string) => /heap|out of memory|allocation failed/i.test(e);
 
 export const labWorkerOn = () => process.env.FX_LAB_WORKER === 'on';
 
-export function forkLabRun(refresh: boolean, input: WorkerInput, cfg = LAB_WORKER): Promise<ForkOutcome> {
+export function forkLabRun(refresh: boolean, input: WorkerInput, cfg: Pick<typeof LAB_WORKER, 'heapMb' | 'timeoutMs'> = LAB_WORKER): Promise<ForkOutcome> {
   const js = path.join(__dirname, 'lab-worker.js');
   const ts = path.join(__dirname, 'lab-worker.ts');
   const useJs = existsSync(js);
@@ -44,7 +82,7 @@ export function forkLabRun(refresh: boolean, input: WorkerInput, cfg = LAB_WORKE
     }
     timer = setTimeout(() => {
       child.kill('SIGKILL');
-      settle({ kind: 'failed', error: `timed out after ${Math.round(cfg.timeoutMs / 60_000)} min` });
+      settle({ kind: 'failed', error: `timed out after ${Math.round(cfg.timeoutMs / 60_000)} min`, heavy: true });
     }, cfg.timeoutMs);
     child.on('message', (m: unknown) => {
       const msg = m as ({ ready?: boolean } & Partial<WorkerResult>) | null;
@@ -53,12 +91,92 @@ export function forkLabRun(refresh: boolean, input: WorkerInput, cfg = LAB_WORKE
         child.send({ cmd: 'run', refresh, input });
         return;
       }
-      if (msg && 'ok' in msg) settle(msg.ok ? { kind: 'ok', res: msg as Extract<WorkerResult, { ok: true }> } : { kind: 'failed', error: (msg as { error?: string }).error ?? 'failed' });
+      if (msg && 'ok' in msg) {
+        if (msg.ok) settle({ kind: 'ok', res: msg as Extract<WorkerResult, { ok: true }> });
+        else {
+          const f = msg as Extract<WorkerResult, { ok: false }>;
+          const error = f.error ?? 'failed';
+          settle({ kind: 'failed', error, heavy: memoryError(error), feeds: f.feeds, breakers: f.breakers });
+        }
+      }
     });
-    child.on('error', (err) => settle(ready ? { kind: 'failed', error: err.message } : { kind: 'spawn', error: err.message }));
+    child.on('error', (err) => settle(ready ? { kind: 'failed', error: err.message, heavy: false } : { kind: 'spawn', error: err.message }));
     child.on('exit', (code, signal) => {
-      const why = signal === 'SIGKILL' || code === 134 ? 'killed (out of memory?)' : `exited with ${code ?? signal}`;
-      settle(ready ? { kind: 'failed', error: why } : { kind: 'spawn', error: `could not start: ${why}` });
+      // v17: Node's heap-limit crash aborts (SIGABRT / 134); SIGKILL = the kernel's OOM killer or our own timeout
+      const killed = signal === 'SIGKILL' || signal === 'SIGABRT' || code === 134;
+      const why = killed ? 'killed (out of memory?)' : `exited with ${code ?? signal}`;
+      settle(ready ? { kind: 'failed', error: why, heavy: killed } : { kind: 'spawn', error: `could not start: ${why}` });
     });
   });
+}
+
+/**
+ * v17: whose restricted-learner state the parent keeps after a run in the child. While the child runs, the parent's
+ * fast-chart checks keep calling `botRecord` (every 1–15 min); the child started from the fork-time states, so once the
+ * parent's states moved since the fork (`forkSig`) the child's view has stale hysteresis (an 'off' key could step back
+ * to half size) → keep the parent's. Unchanged since the fork → the child's (it saw the newer ledger). No fork recorded
+ * (null) → the child's. Pure.
+ */
+export function learnerSource(forkSig: string | null, parentSig: string): 'parent' | 'child' {
+  return forkSig !== null && parentSig !== forkSig ? 'parent' : 'child';
+}
+
+/** v17: keys where the parent's learner is stricter than the child's: off where the child wasn't, half where it had normal. */
+export interface LearnerTighten {
+  off: string[];
+  /** key → the parent's size factor */
+  down: Record<string, number>;
+}
+/** Pure. */
+export function learnerTighten(parent: Readonly<Record<string, LearnKey>>, child: Readonly<Record<string, LearnKey>>): LearnerTighten {
+  const off: string[] = [];
+  const down: Record<string, number> = {};
+  for (const [k, p] of Object.entries(parent)) {
+    const c = child[k]?.state ?? 'on';
+    if (p.state === 'off' && c !== 'off') off.push(k);
+    else if (p.state === 'down' && c === 'on') down[k] = p.sizeF;
+  }
+  return { off, down };
+}
+
+const addOff = (dropped: readonly string[], off: readonly string[]) => [...dropped, ...off.filter((k) => !dropped.includes(k))];
+/** `strategy:tf:pair` → `strategy:tf` */
+const keyOfOpen = (k: string) => k.slice(0, k.lastIndexOf(':'));
+
+/**
+ * v17: the child's learner-derived state (dropped list, chosen list, the plan's open trades) made as strict as the
+ * parent's learner. Only ever tightens: a key the child had off but the parent doesn't stays dropped for this hour (the
+ * dropped list also holds the bot record's losers, which can't be told apart here). Pure.
+ */
+export function tightenState(s: WorkerState, t: LearnerTighten): WorkerState {
+  if (!t.off.length) return s;
+  const off = new Set(t.off);
+  return {
+    ...s,
+    dropped: addOff(s.dropped, t.off),
+    chosen: s.chosen.filter((k) => !off.has(k)),
+    labOpen: Object.fromEntries(Object.entries(s.labOpen).filter(([k]) => !off.has(keyOfOpen(k)))),
+  };
+}
+
+/**
+ * v17: the run's bot hand-over made as strict as the parent's learner: an off key's trades are no longer chosen (never
+ * opened; a held one is still managed), a half-size key's trades are sized down by the parent's factor. The ×1.15
+ * "proven" bonus the child may have given a key it still had at normal can't be told apart here and stays for that
+ * hour. Pure.
+ */
+export function tightenOut(out: RunOutput, t: LearnerTighten): RunOutput {
+  if (!t.off.length && !Object.keys(t.down).length) return out;
+  const off = new Set(t.off);
+  return {
+    ...out,
+    dropped: addOff(out.dropped, t.off),
+    chosen: out.chosen.filter((k) => !off.has(k)),
+    botTrades: out.botTrades.map((x) => {
+      const k = `${x.strategy}:${x.tf}`;
+      if (off.has(k)) return x.chosen ? { ...x, chosen: false } : x;
+      const f = t.down[k];
+      return f === undefined ? x : { ...x, sizeF: (x.sizeF ?? 1) * f };
+    }),
+  };
 }

@@ -19,7 +19,7 @@ export interface TierStats { tier: 'sure' | 'verySure'; label: string; from: num
 export interface ConvictionReport { scope: string; judge: boolean; all: { inN: number; inAvgR: number; outN: number; outAvgR: number }; tiers: TierStats[]; active: boolean; why: string }
 export interface PortfolioReport { from: number; to: number; picked: Array<{ id: string; name: string; tf: string; filter: FilterKind; exit?: ExitKind; inAvgR: number; inN: number; unseenN: number }>; oldPicked: number; levels: PortfolioResult[]; old: PortfolioResult; judged?: PortfolioResult | null; walkForward?: WalkForward | null; convicted?: PortfolioResult | null; sniped?: PortfolioResult | null; heated?: PortfolioResult | null; heatWhy?: string; note: string }
 export interface ExitSummary { exit: ExitKind; label: string; chosenBy: number; compared: number; inDeltaR: number; outDeltaR: number; outBetterPct: number }
-export interface JudgeReport { active: boolean; why: string; trainedOn: number; tested: number; auc: number | null; threshold: number | null; keepPct: number; allR: number; keptR: number; skippedR: number; allWinPct: number; keptWinPct: number; importance: Array<{ feature: string; label: string; share: number }> }
+export interface JudgeReport { active: boolean; why: string; trainedOn: number; tested: number; auc: number | null; threshold: number | null; keepPct: number; allR: number; keptR: number; skippedR: number; allWinPct: number; keptWinPct: number; importance: Array<{ feature: string; label: string; share: number }>; fallback?: { active: boolean; why: string; auc: number | null; keepPct: number; keptR: number; allR: number } }
 export interface RiskSummary { exposure: Array<{ ccy: string; pct: number }>; capPct: number; ddPct: number; ddFactor: number; baseRiskPct: number; openRiskPct: number }
 
 export const FILTER_SHORT: Record<FilterKind | 'regime', string> = { none: 'no filter', strength: '+ strength', mtf: '+ bigger chart', mood: '+ mood', regime: '+ regime', volf: '+ vol forecast', hurst: '+ trend/chop', crowd: '+ not crowded', stretch: '+ not overstretched', all: '+ all 3 checks' };
@@ -167,6 +167,11 @@ export function JudgeCard({ j }: { j: JudgeReport | null | undefined }) {
         <StatTile compact label="R per trade, kept" value={`${signed(j.keptR, 2)}R`} sub={`all ${signed(j.allR, 2)}R · skipped ${signed(j.skippedR, 2)}R`} tone={j.keptR > j.allR ? 'up' : undefined} />
       </div>
       <p className="mt-3 text-sm text-ink-2">{j.why}.</p>
+      {j.fallback && (
+        <p className="mt-1 text-sm text-ink-2">
+          Backup judge (used when positioning / interest-rate / mood data is missing): <span className={j.fallback.active ? 'text-up' : 'text-muted'}>{j.fallback.active ? 'on' : 'off'}</span> — {j.fallback.why}.
+        </p>
+      )}
       {j.importance.length > 0 && (
         <div className="mt-3">
           <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">What it looks at most</div>

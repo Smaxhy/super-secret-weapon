@@ -162,6 +162,14 @@ export function judgeFeatures(c: Ctx, env: FilterEnv | null, i: number, side: 1 
   return x;
 }
 
+/** v17: the backup model (soft outside feeds blanked too), with its own pickiness picked on the first 70% */
+export interface JudgeFallback {
+  trees: TreeNode[][];
+  base: number;
+  threshold: number;
+  keepShare: number;
+}
+
 export interface JudgeModel {
   trees: TreeNode[][];
   base: number;
@@ -175,10 +183,23 @@ export interface JudgeModel {
    */
   masked?: Record<string, number[]>;
   required?: Record<string, number[]>;
+  /**
+   * v17: backup model for signals missing ONLY soft outside feeds (`JUDGE_SOFT`): trained on the same rows with those
+   * blanked as well and graded on its own unseen exam — stored only when it passed (absent = such signals wait).
+   */
+  fallback?: JudgeFallback | null;
 }
 
 /** v17: share of training rows a feature must be known in, per group, to be used (else blanked) */
 export const JUDGE_PRESENCE = 0.9;
+/**
+ * v17: outside feeds that can go quiet for days (CFTC positioning: no report for 17+ days → NaN; BIS rates: 100+ days;
+ * the Yahoo mood symbols). A signal missing only these is scored by the backup model instead of waiting, so a
+ * reporting halt can't stop every trade.
+ */
+export const JUDGE_SOFT: JudgeFeature[] = ['mood', 'carry', 'cot'];
+const SOFT_IDX = JUDGE_SOFT.map((f) => JUDGE_FEATURES.indexOf(f));
+const isSoft = (f: number) => SOFT_IDX.includes(f);
 const TF_IDX = JUDGE_FEATURES.indexOf('tf');
 const METAL_IDX = JUDGE_FEATURES.indexOf('metal');
 /** the presence group of a feature row: chart (hours) × metal */
@@ -212,25 +233,75 @@ function applyMask(x: ArrayLike<number>, masked: readonly number[] | undefined):
   return out;
 }
 
-/**
- * v17: the judge's view of one signal: its win probability, or why it can't score it (a reading it relies on is
- * missing right now, or a chart × metal group it never trained on). Pure.
- */
-export function judgeView(m: JudgeModel, x: ArrayLike<number>): { p: number | null; missing: string | null } {
-  if (!m.masked || !m.required) return { p: judgeProb(m, x), missing: null };
-  const g = judgeGroup(x);
-  const req = m.required[g];
-  if (!req) return { p: null, missing: 'no training trades like this one (chart / market type)' };
-  const gone = req.filter((f) => !Number.isFinite(x[f]!));
-  if (gone.length) return { p: null, missing: gone.map((f) => JUDGE_LABEL[JUDGE_FEATURES[f]!]).join(', ') };
-  return { p: judgeProb(m, applyMask(x, m.masked[g])), missing: null };
+/** v17: the backup model's input: the group's mask plus every soft feature blanked */
+function softMask(x: ArrayLike<number>, masked: readonly number[] | undefined): Float64Array {
+  const out = applyMask(x, masked);
+  for (const f of SOFT_IDX) out[f] = NaN;
+  return out;
 }
 
-/** v17: does the judge keep this signal (unscorable = not kept)? Pure. */
+const labelsOf = (fs: readonly number[]) => fs.map((f) => JUDGE_LABEL[JUDGE_FEATURES[f]!]).join(', ');
+
+export interface JudgeView {
+  /** win probability, null = it can't score this signal now */
+  p: number | null;
+  /** what it relies on that is missing right now (null when it scored) */
+  missing: string | null;
+  /** v17: the score p must reach — the backup model's own when it scored the signal */
+  threshold: number;
+  /** v17: which model scored it */
+  via?: 'main' | 'fallback';
+}
+
+/**
+ * v17: the judge's view of one signal: its win probability and the bar it must reach, or why it can't score it (a
+ * reading it relies on is missing right now, or a chart × metal group it never trained on). Missing only soft outside
+ * feeds → the backup model scores it (when one passed its exam). Pure.
+ */
+export function judgeView(m: JudgeModel, x: ArrayLike<number>): JudgeView {
+  if (!m.masked || !m.required) return { p: judgeProb(m, x), missing: null, threshold: m.threshold, via: 'main' };
+  const g = judgeGroup(x);
+  const req = m.required[g];
+  if (!req) return { p: null, missing: 'no training trades like this one (chart / market type)', threshold: m.threshold };
+  const gone = req.filter((f) => !Number.isFinite(x[f]!));
+  if (!gone.length) return { p: judgeProb(m, applyMask(x, m.masked[g])), missing: null, threshold: m.threshold, via: 'main' };
+  if (m.fallback && gone.every(isSoft)) return { p: judgeProb(m.fallback, softMask(x, m.masked[g])), missing: null, threshold: m.fallback.threshold, via: 'fallback' };
+  return { p: null, missing: labelsOf(gone), threshold: m.threshold };
+}
+
+/** v17: does the judge keep this signal (unscorable = not kept; the backup's score against its own bar)? Pure. */
 export const judgeKeeps = (m: JudgeModel, x: ArrayLike<number>) => {
   const v = judgeView(m, x);
-  return v.p !== null && v.p >= m.threshold;
+  return v.p !== null && v.p >= v.threshold;
 };
+
+/**
+ * v17: the main model's own score, for the conviction / sniper cut points (they were graded on its scores) — null when
+ * it can't score the signal itself (unscorable, or only the backup could). Pure.
+ */
+export function judgeMainP(m: JudgeModel, x: ArrayLike<number>): number | null {
+  const v = judgeView(m, x);
+  return v.via === 'main' ? v.p : null;
+}
+
+/** v17: main-model scores for `judgeCuts`: signals it can't score are dropped, never counted as 0. Pure. */
+export function judgeScores(m: JudgeModel, xs: Iterable<ArrayLike<number> | undefined>): number[] {
+  const out: number[] = [];
+  for (const x of xs) {
+    const p = x ? judgeMainP(m, x) : null;
+    if (p !== null) out.push(p);
+  }
+  return out;
+}
+
+/** v17: the backup's score as live would give it when every soft feed is missing (a missing hard reading → null). */
+function fallbackScore(m: JudgeModel, fb: JudgeFallback, x: ArrayLike<number>): number | null {
+  const g = judgeGroup(x);
+  const req = m.required?.[g];
+  if (m.required && !req) return null;
+  if (req?.some((f) => !isSoft(f) && !Number.isFinite(x[f]!))) return null;
+  return judgeProb(fb, softMask(x, m.masked?.[g]));
+}
 
 export function judgeProb(m: Pick<JudgeModel, 'trees' | 'base'>, x: ArrayLike<number>): number {
   let z = m.base;
@@ -265,6 +336,8 @@ export interface JudgeReport {
   allWinPct: number;
   keptWinPct: number;
   importance: Array<{ feature: JudgeFeature; label: string; share: number }>;
+  /** v17: the backup model for signals missing only positioning / rate / mood data (its own unseen exam) */
+  fallback?: { active: boolean; why: string; auc: number | null; keepPct: number; keptR: number; allR: number };
 }
 
 /** Rank AUC (Mann–Whitney), ties averaged. Pure. */
@@ -309,7 +382,9 @@ function toMatrix(rows: readonly JudgeRow[]): Matrix {
 
 /**
  * Train on rows finished before `oosFrom` (v17 purge), choose how picky to be on the newest 20% of those, then grade
- * once on the rows entered from `oosFrom` on. Returns the model (null when there is too little data) and the report.
+ * once on the rows entered from `oosFrom` on. v17: a backup model (soft outside feeds blanked) is trained and graded
+ * the same way and kept only when it passes its own exam. Returns the model (null when there is too little data) and
+ * the report.
  */
 export async function trainJudge(rows: readonly JudgeRow[], oosFrom: number, cfg = JUDGE_CONFIG): Promise<{ model: JudgeModel | null; report: JudgeReport }> {
   const ins = rows.filter((r) => doneBefore(r, oosFrom)).sort((a, b) => a.t - b.t).slice(-cfg.maxTrainRows);
@@ -319,11 +394,11 @@ export async function trainJudge(rows: readonly JudgeRow[], oosFrom: number, cfg
   // v17: blank the features that were often unknown in training (per chart × metal) — in training AND in the exam
   const masks = presenceMasks(ins);
   const masked = (r: JudgeRow): JudgeRow => ({ ...r, x: applyMask(r.x, masks.masked[judgeGroup(r.x)]) });
-  return trainMasked(ins.map(masked), oos, masks, cfg, empty);
+  return trainMasked(ins.map(masked), oos, masks, cfg);
 }
 
-async function trainMasked(ins: readonly JudgeRow[], oosRaw: readonly JudgeRow[], masks: { masked: Record<string, number[]>; required: Record<string, number[]> }, cfg: typeof JUDGE_CONFIG, empty: (why: string) => { model: null; report: JudgeReport }): Promise<{ model: JudgeModel | null; report: JudgeReport }> {
-  void empty;
+/** boosted trees on the first 70%: the trees learn from rows finished before its newest 20% (watched for early stop) */
+async function fitTrees(ins: readonly JudgeRow[], cfg: typeof JUDGE_CONFIG): Promise<{ trees: TreeNode[][]; base: number; gain: Float64Array; cut: number }> {
   const cut = Math.floor(ins.length * 0.8);
   // the trees learn only from trades finished before the newest 20% starts (same purge, one level down)
   const vFrom = ins[cut]?.t ?? Infinity;
@@ -332,65 +407,112 @@ async function trainMasked(ins: readonly JudgeRow[], oosRaw: readonly JudgeRow[]
   const opts = { ...DEFAULT_TREE_OPTIONS, depth: 3, learningRate: 0.06, rounds: cfg.rounds, minChildWeight: 20, l2: 5, colSample: 0.8, earlyStop: 25 };
   const cuts = cutPoints(tr, opts.bins);
   const fit = await boost(tr, cuts, opts, cfg.rounds, va, 11);
-  const model0 = { trees: fit.trees, base: fit.base };
-  // how picky: the keep share that gives the best R × √n on the newest 20% of the first 70%
-  const vrows = ins.slice(cut);
-  const vp = vrows.map((r) => judgeProb(model0, r.x));
+  return { trees: fit.trees, base: fit.base, gain: fit.gain, cut };
+}
+
+/**
+ * How picky: the keep share that gives the best R × √n on the newest 20% of the first 70%. v17: only rows the model
+ * scores (non-null) take part — a signal it can't score live never reaches its threshold. Pure.
+ */
+export function pickKeep(rows: ReadonlyArray<{ r: number }>, ps: ReadonlyArray<number | null>, shares: readonly number[]): { keep: number; th: number } {
+  const sc: Array<{ r: number; p: number }> = [];
+  rows.forEach((x, k) => {
+    const p = ps[k];
+    if (p !== null && p !== undefined) sc.push({ r: x.r, p });
+  });
+  const vp = sc.map((x) => x.p);
   const score = (keep: number) => {
     const th = quantile(vp, 1 - keep);
-    const kept = vrows.filter((_, k) => vp[k]! >= th);
-    return { th, s: avg(kept.map((r) => r.r)) * Math.sqrt(kept.length) };
+    const kept = sc.filter((x) => x.p >= th);
+    return { th, s: avg(kept.map((x) => x.r)) * Math.sqrt(kept.length) };
   };
-  const all = score(1);
-  let best = { keep: 1, th: -Infinity, s: all.s };
-  for (const k of cfg.keepShares) {
-    const sc = score(k);
-    if (sc.s > best.s) best = { keep: k, th: sc.th, s: sc.s };
+  let best = { keep: 1, th: -Infinity, s: score(1).s };
+  for (const k of shares) {
+    const sc2 = score(k);
+    if (sc2.s > best.s) best = { keep: k, th: sc2.th, s: sc2.s };
   }
-  // the exam (once) on the unseen 30% — scored the way the live bot scores (unscorable = not kept)
-  const view = { ...model0, threshold: best.th, keepShare: best.keep, ...masks };
-  const oos = oosRaw;
-  const op = oos.map((r) => judgeView(view, r.x).p ?? -Infinity);
-  const a = auc(op, oos.map((r) => (r.r > 0 ? 1 : 0)));
-  const kept = oos.filter((_, k) => op[k]! >= best.th);
-  const skipped = oos.filter((_, k) => op[k]! < best.th);
+  return { keep: best.keep, th: best.th };
+}
+
+/** the exam (once) on the unseen 30%: a row is kept when it was scored and reached its own bar; unscorable = not kept */
+function exam(oos: readonly JudgeRow[], score: (x: Float64Array) => { p: number; th: number } | null, keep: number, cfg: typeof JUDGE_CONFIG, what = 'all signals') {
+  const s = oos.map((r) => score(r.x));
+  const a = auc(s.map((v) => (v ? v.p : -Infinity)), oos.map((r) => (r.r > 0 ? 1 : 0)));
+  const keptOf = s.map((v) => v !== null && v.p >= v.th);
+  const kept = oos.filter((_, k) => keptOf[k]);
+  const skipped = oos.filter((_, k) => !keptOf[k]);
   const allR = avg(oos.map((r) => r.r));
   const keptR = avg(kept.map((r) => r.r));
-  const tot = fit.gain.reduce((s, g) => s + g, 0) || 1;
-  const importance = JUDGE_FEATURES.map((f, k) => ({ feature: f, label: JUDGE_LABEL[f], share: Math.round((fit.gain[k]! / tot) * 100) }))
-    .filter((x) => x.share > 0)
-    .sort((x, y) => y.share - x.share)
-    .slice(0, 8);
-  const pass = best.keep < 1 && a !== null && a >= cfg.minAuc && keptR >= allR + cfg.minGainR && kept.length >= cfg.minKept;
-  const why = best.keep === 1
+  const pass = keep < 1 && a !== null && a >= cfg.minAuc && keptR >= allR + cfg.minGainR && kept.length >= cfg.minKept;
+  const why = keep === 1
     ? 'on the newest part of the first 70% no level of pickiness beat taking every signal'
     : a === null
       ? 'not enough unseen trades to grade it'
       : pass
-        ? `on the unseen 30% the trades it keeps made ${r2(keptR)}R each vs ${r2(allR)}R for all signals (AUC ${r2(a)})`
+        ? `on the unseen 30% the trades it keeps made ${r2(keptR)}R each vs ${r2(allR)}R for ${what} (AUC ${r2(a)})`
         : `failed the unseen test: ${[
             a < cfg.minAuc ? `ranking skill (AUC) ${r2(a)}, needs ${cfg.minAuc}` : null,
-            keptR < allR + cfg.minGainR ? `the trades it keeps made ${r2(keptR)}R each vs ${r2(allR)}R for all signals, needs ${cfg.minGainR}R more` : null,
+            keptR < allR + cfg.minGainR ? `the trades it keeps made ${r2(keptR)}R each vs ${r2(allR)}R for ${what}, needs ${cfg.minGainR}R more` : null,
             kept.length < cfg.minKept ? `only ${kept.length} trades kept, needs ${cfg.minKept}` : null,
           ]
             .filter(Boolean)
             .join('; ')}`;
+  return { a, kept, skipped, allR, keptR, pass, why };
+}
+
+async function trainMasked(ins: readonly JudgeRow[], oos: readonly JudgeRow[], masks: { masked: Record<string, number[]>; required: Record<string, number[]> }, cfg: typeof JUDGE_CONFIG): Promise<{ model: JudgeModel | null; report: JudgeReport }> {
+  const main = await fitTrees(ins, cfg);
+  // v17: pickiness picked on the validation rows scored the way live scores them (rows it can't score sit out)
+  const vrows = ins.slice(main.cut);
+  const view0: JudgeModel = { trees: main.trees, base: main.base, threshold: -Infinity, keepShare: 1, ...masks };
+  const pick = pickKeep(vrows, vrows.map((r) => judgeView(view0, r.x).p), cfg.keepShares);
+  const model: JudgeModel = { trees: main.trees, base: main.base, threshold: pick.th, keepShare: pick.keep, masked: masks.masked, required: masks.required };
+  // v17 backup: same rows with the soft outside feeds blanked too, its own pickiness and its own unseen exam
+  let fallback: JudgeReport['fallback'];
+  if (!Object.values(masks.required).some((req) => req.some(isSoft))) {
+    fallback = { active: false, why: 'not needed: no chart relies on positioning, interest-rate or mood data', auc: null, keepPct: 100, keptR: r2(avg(oos.map((r) => r.r))), allR: r2(avg(oos.map((r) => r.r))) };
+  } else {
+    const fins = ins.map((r) => ({ ...r, x: softMask(r.x, undefined) }));
+    const fb = await fitTrees(fins, cfg);
+    const fv = fins.slice(fb.cut);
+    // its pickiness on the rows it could score live (a missing hard reading sits out, like the main pick)
+    const fb0: JudgeFallback = { trees: fb.trees, base: fb.base, threshold: -Infinity, keepShare: 1 };
+    const fpick = pickKeep(fv, fv.map((r) => fallbackScore(model, fb0, r.x)), cfg.keepShares);
+    const cand: JudgeFallback = { trees: fb.trees, base: fb.base, threshold: fpick.th, keepShare: fpick.keep };
+    const fe = exam(oos, (x) => {
+      const p = fallbackScore(model, cand, x);
+      return p === null ? null : { p, th: cand.threshold };
+    }, fpick.keep, cfg, 'all signals (positioning, rate and mood data blanked)');
+    if (fe.pass) model.fallback = cand;
+    fallback = { active: fe.pass, why: fe.why, auc: fe.a === null ? null : r2(fe.a), keepPct: oos.length ? Math.round((fe.kept.length / oos.length) * 100) : 100, keptR: r2(fe.keptR), allR: r2(fe.allR) };
+  }
+  // the exam (once) on the unseen 30% — scored the way the live bot scores (backup included; unscorable = not kept)
+  const e = exam(oos, (x) => {
+    const v = judgeView(model, x);
+    return v.p === null ? null : { p: v.p, th: v.threshold };
+  }, pick.keep, cfg);
+  const tot = main.gain.reduce((s, g) => s + g, 0) || 1;
+  const importance = JUDGE_FEATURES.map((f, k) => ({ feature: f, label: JUDGE_LABEL[f], share: Math.round((main.gain[k]! / tot) * 100) }))
+    .filter((x) => x.share > 0)
+    .sort((x, y) => y.share - x.share)
+    .slice(0, 8);
   return {
-    model: { trees: fit.trees, base: fit.base, threshold: best.th, keepShare: best.keep, masked: masks.masked, required: masks.required },
+    model,
     report: {
-      active: pass,
-      why,
+      active: e.pass,
+      why: e.why,
       trainedOn: ins.length,
       tested: oos.length,
-      auc: a === null ? null : r2(a),
-      threshold: Number.isFinite(best.th) ? r2(best.th) : null,
-      keepPct: oos.length ? Math.round((kept.length / oos.length) * 100) : 100,
-      allR: r2(allR),
-      keptR: r2(keptR),
-      skippedR: r2(avg(skipped.map((r) => r.r))),
+      auc: e.a === null ? null : r2(e.a),
+      threshold: Number.isFinite(pick.th) ? r2(pick.th) : null,
+      keepPct: oos.length ? Math.round((e.kept.length / oos.length) * 100) : 100,
+      allR: r2(e.allR),
+      keptR: r2(e.keptR),
+      skippedR: r2(avg(e.skipped.map((r) => r.r))),
       allWinPct: oos.length ? Math.round((oos.filter((r) => r.r > 0).length / oos.length) * 100) : 0,
-      keptWinPct: kept.length ? Math.round((kept.filter((r) => r.r > 0).length / kept.length) * 100) : 0,
+      keptWinPct: e.kept.length ? Math.round((e.kept.filter((r) => r.r > 0).length / e.kept.length) * 100) : 0,
       importance,
+      fallback,
     },
   };
 }

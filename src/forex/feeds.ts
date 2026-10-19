@@ -3,6 +3,7 @@
  * how many times in a row it failed, the newest data it returned. A provider that fails 3 times in a row is paused
  * (2 → 4 → 8 → 16 → 30 min) so a hung service can't stall the hourly run; any success closes the breaker. Redis HASH
  * `fx:feeds` (saved at most every 30 s). `feedHealth` turns the raw states into the Setup card's table (pure).
+ * v17: the breakers travel with the hourly run's child process (`breakerSnapshot` / `mergeBreakers`, newer update wins).
  */
 import type Redis from 'ioredis';
 
@@ -53,10 +54,17 @@ export const FX_FEEDS = 'fx:feeds';
 
 const empty = (): FeedState => ({ okAt: null, tryAt: null, fails: 0, error: null, items: null, asOf: null });
 
+/** one provider's breaker: consecutive failures, when calls may start again, when it was last updated (v17) */
+export interface BreakerState {
+  fails: number;
+  until: number;
+  at: number;
+}
+
 export class FeedBook {
   private states = new Map<FeedId, FeedState>();
   /** per provider: consecutive failures and when calls may start again */
-  private breaker = new Map<Provider, { fails: number; until: number }>();
+  private breaker = new Map<Provider, BreakerState>();
   private dirty = false;
   private savedAt = 0;
   constructor(private readonly clock: () => number = Date.now) {}
@@ -68,7 +76,7 @@ export class FeedBook {
     const now = this.clock();
     const s = { ...this.get(id), okAt: now, tryAt: now, fails: 0, error: null, ...(info.items !== undefined ? { items: info.items } : {}), ...(info.asOf !== undefined ? { asOf: info.asOf } : {}) };
     this.states.set(id, s);
-    this.breaker.set(FEED_INFO[id].provider, { fails: 0, until: 0 });
+    this.breaker.set(FEED_INFO[id].provider, { fails: 0, until: 0, at: now });
     this.dirty = true;
   }
   fail(id: FeedId, err: unknown): void {
@@ -77,10 +85,10 @@ export class FeedBook {
     const s = this.get(id);
     this.states.set(id, { ...s, tryAt: now, fails: s.fails + 1, error: msg.slice(0, 200) });
     const p = FEED_INFO[id].provider;
-    const b = this.breaker.get(p) ?? { fails: 0, until: 0 };
+    const b = this.breaker.get(p) ?? { fails: 0, until: 0, at: 0 };
     const fails = b.fails + 1;
     const until = fails >= OPEN_AFTER ? now + BACKOFF_MIN[Math.min(BACKOFF_MIN.length - 1, fails - OPEN_AFTER)]! * 60_000 : 0;
-    this.breaker.set(p, { fails, until });
+    this.breaker.set(p, { fails, until, at: now });
     this.dirty = true;
   }
   /** false while the provider's breaker is open (calls would only waste the run's time) */
@@ -105,6 +113,21 @@ export class FeedBook {
   }
   snapshot(): Partial<Record<FeedId, FeedState>> {
     return Object.fromEntries(this.states) as Partial<Record<FeedId, FeedState>>;
+  }
+  /** v17: the per-provider breakers (in memory only), for the other process of the hourly run */
+  breakerSnapshot(): Partial<Record<Provider, BreakerState>> {
+    return Object.fromEntries([...this.breaker].map(([p, b]) => [p, { ...b }])) as Partial<Record<Provider, BreakerState>>;
+  }
+  /**
+   * v17: take the other process's breakers — per provider the later update wins (an open breaker the child hit pauses
+   * the parent's quote / candle calls too, and the child starts with the parent's open ones).
+   */
+  mergeBreakers(snap: Partial<Record<Provider, BreakerState>> | null | undefined): void {
+    for (const [p, v] of Object.entries(snap ?? {}) as Array<[Provider, BreakerState | undefined]>) {
+      if (!v || !Number.isFinite(v.at) || !Number.isFinite(v.until) || !Number.isFinite(v.fails)) continue;
+      const mine = this.breaker.get(p);
+      if (!mine || v.at > mine.at) this.breaker.set(p, { fails: v.fails, until: v.until, at: v.at });
+    }
   }
   async load(redis: Pick<Redis, 'hgetall'>): Promise<void> {
     const raw = await redis.hgetall(FX_FEEDS).catch(() => ({}) as Record<string, string>);

@@ -49,8 +49,9 @@ export const FX_FAST = {
   maxEvalBars: 14_000,
   /** fewest bars a market needs before it is tested */
   minEvalBars: 1_500,
-  /** bars of recent history for the live pass */
-  liveBars: 2_000,
+  /** bars of recent history for the live pass. v17: 15m covers the volatility forecast's month of warm-up (22 × 96 + 1
+   * bars) so a check tested with it isn't always blank live; on 1m it is blank in the tested history too (never required) */
+  liveBars: { '15m': 2_300, '1m': 2_000 } as Record<FastTf, number>,
   /** seconds between 1-minute checks with OANDA / with Yahoo (Yahoo is rate-limited) */
   oneMinuteEverySec: { oanda: 60, yahoo: 120 },
   /** how far back Yahoo serves intraday bars */
@@ -80,8 +81,12 @@ export interface FastReport {
   paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] };
   /** v15.2: bigger size when more sure, per chart (market checks only: no judge here) */
   conviction?: Partial<Record<FastTf, ConvictionReport>>;
+  /** v17: per chart × market, how often each filter input was known on that chart's first 70% (the bars before its
+   * `oosFrom` = the history the rows' filters were picked on); the live missing-data guard reads this (`liveCoverage`) */
+  coverage?: Partial<Record<FastTf, Record<string, FilterCoverage>>>;
   note: string;
 }
+type FilterCoverage = ReturnType<typeof filterCoverage>;
 
 /** What fired on a chart's newest close, per market (the bot's plan). */
 export interface FastFiring {
@@ -152,6 +157,25 @@ export const DEFAULT_FAST_SOURCE: FastSource = {
 /** The fast-chart strategies the bot trades: passed on unseen data, not dropped for losing in its account. Pure. */
 export const chosenOf = (rows: ReadonlyArray<Pick<Row, 'id' | 'tf' | 'verdict'>>, dropped: readonly string[]) =>
   rows.filter((r) => r.id !== 'random' && r.verdict !== 'no' && !dropped.includes(`${r.id}:${r.tf}`)).map((r) => `${r.id}:${r.tf}`);
+
+/** v17: filter-input coverage of one tested series on its first 70% (bars before `oosFrom`, as the hourly lab measures it). Pure. */
+export function testedCoverage(se: Pick<Series, 'ctx' | 'env'>, oosFrom: number): FilterCoverage {
+  if (!se.env) return {};
+  const upTo = se.ctx.bars.findIndex((b) => b.t >= oosFrom);
+  return filterCoverage(se.env, upTo < 0 ? se.ctx.bars.length : upTo);
+}
+
+/**
+ * v17: the coverage the live missing-data guard compares against: the one stored with the hourly fast test (that
+ * chart's first 70% — the history the row's filter was picked on), so a feed that has been down for hours can't pull
+ * the live window under the 80% bar and switch the guard off. A report from before this (or a market the test didn't
+ * have) falls back to the first 70% of the live window. Pure.
+ */
+export function liveCoverage(rep: Pick<FastReport, 'coverage'> | null | undefined, tf: FastTf, pair: string, se: Pick<Series, 'ctx' | 'env'>): FilterCoverage {
+  const stored = rep?.coverage?.[tf]?.[pair];
+  if (stored) return stored;
+  return se.env ? filterCoverage(se.env, Math.floor(se.ctx.bars.length * 0.7)) : {};
+}
 
 /** The next run time on a grid: every `periodMs`, `offsetMs` past each boundary. Pure. */
 export function nextOnGrid(now: number, periodMs: number, offsetMs: number): number {
@@ -336,6 +360,7 @@ export class FastLab {
     const recent: Trade[] = [];
     const spans = { '15m': { from: null, to: null, oosFrom: null, markets: 0 }, '1m': { from: null, to: null, oosFrom: null, markets: 0 } } as FastReport['spans'];
     const conviction: Partial<Record<FastTf, ConvictionReport>> = {};
+    const coverage: NonNullable<FastReport['coverage']> = {};
     for (const tf of FX_FAST.tfs) {
       let series: Series[] = [];
       let from = Infinity;
@@ -352,6 +377,8 @@ export class FastLab {
       }
       if (!series.length) continue;
       const oosFrom = from + 0.7 * (to - from);
+      // v17: what the live missing-data guard compares against (each market's bars before this chart's oosFrom)
+      coverage[tf] = Object.fromEntries(series.map((se) => [se.inst.id, testedCoverage(se, oosFrom)]));
       // v15.2: closed trades of the strategies picked on the first 70%, with how many market checks backed them
       const byPair = new Map(series.map((se) => [se.inst.id, se]));
       const conv: ConvRow[] = [];
@@ -385,6 +412,7 @@ export class FastLab {
       rows,
       paper: { since, rows: paperRows, open: open.slice(0, 200).map(slimTrade), recent: recent.slice(0, 150).map(slimTrade) },
       conviction,
+      coverage,
       note: rows.length
         ? `${rows.length} strategy × chart combinations on the 15-minute (${days('15m')} days of history) and 1-minute (${days('1m')} days) charts, same spreads as everywhere. ${pass} pass on their unseen last 30%. Short histories: the paper results decide.`
         : 'Not enough 15-minute / 1-minute candles yet (the server keeps collecting them).',
@@ -428,7 +456,7 @@ export class FastLab {
         const all = this.series(tf, inst.id);
         ages[inst.id] = dataAgeOf(inst.id, tf, all, now, TF_MIN[tf] * MIN);
         if (all.length < WARMUP + 60) continue;
-        const bars = all.slice(-FX_FAST.liveBars);
+        const bars = all.slice(-FX_FAST.liveBars[tf]);
         if (bars[bars.length - 1]!.t + 4 * TF_MIN[tf] * 60_000 >= now) pairsSeen.add(inst.id);
         const [b1, b2] = this.bigFor(tf, inst.id, book);
         const se = makeSeries(inst, tf, bars, book, b1, b2);
@@ -444,7 +472,7 @@ export class FastLab {
           fired.push({ id: s.id, name: s.name, side: sig.side, allowed: why === null, why, chosen: chosenRows.some((r) => r.id === s.id) });
         }
         if (fired.length) byPair[inst.id] = fired;
-        let cov: ReturnType<typeof filterCoverage> | null = null;
+        let cov: FilterCoverage | null = null;
         for (const row of followRows) {
           const s = strategyById(row.id);
           if (!s) continue;
@@ -458,8 +486,9 @@ export class FastLab {
             const si = signalIndex(se.ctx.bars, t.entryT, se.ctx.barMin);
             const conf = si >= 0 ? agreeCount(se.env, si, t.side) : 0;
             const b = boostFor(tierOf(conf, false), this.report?.conviction?.[tf]);
-            // v17: a check it was tested with has no data at the signal bar right now → the trade waits
-            cov = cov ?? (se.env ? filterCoverage(se.env, Math.floor(se.ctx.bars.length * 0.7)) : {});
+            // v17: a check it was tested with has no data at the signal bar right now → the trade waits (measured
+            // against the tested history's coverage, stored with the hourly test — not this live window's)
+            cov = cov ?? liveCoverage(this.report, tf, inst.id, se);
             const dataWait = si >= 0 ? missingInput(row.filter ?? 'none', se.env, si, cov) : null;
             labOpen.push(toLabTrade(t, { chosen: isChosen, sizeF, prio: row.all.avgR, judge: null, conviction: { tier: b.tier, conf, of: maxConfirmations(tf, false), mult: b.mult, lev: b.lev }, dataWait }));
           }

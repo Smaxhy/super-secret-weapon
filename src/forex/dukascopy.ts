@@ -4,7 +4,9 @@
  * spread at the bar's close). Used for (a) older history in front of Yahoo's 730 days, so the honest test has years
  * more data — FX only: gold / silver trade as futures on Yahoo and a spot history would jump at the seam — and (b) the
  * real spread per UTC hour (`spreads.ts`). First pull goes back `DK.historyDays` in 90-day pieces, then once a day the
- * newest days. Redis `fx:dk:meta` = what was fetched.
+ * newest days. v17: a store that doesn't reach back that far (e.g. only the lab's 3-day tail) gets its older part
+ * back-filled until it does (or `backfillTries` back-fills in a row brought nothing older). Redis `fx:dk:meta` = what was
+ * fetched.
  */
 import type Redis from 'ioredis';
 import { getHistoricalRates } from 'dukascopy-node';
@@ -32,6 +34,10 @@ export const DK = {
   pauseMs: 300,
   /** one request may take at most this long (the library has no abort) */
   timeoutMs: 45_000,
+  /** v17: stored history starting within this many days of `historyDays` back counts as reaching back */
+  slackDays: 7,
+  /** v17: back-fills in a row that brought nothing older before the store's start is trusted as where the data begins */
+  backfillTries: 3,
 };
 const HOUR = 3_600_000;
 
@@ -45,10 +51,21 @@ export interface DkBar extends Bar {
 
 export interface DkMeta {
   at: number;
-  ids: Record<string, { bars: number; firstT: number | null; lastT: number | null; error: string | null }>;
+  /** v17: `full` = the older history needs no more back-fill; `tries` = back-fills in a row that brought nothing older */
+  ids: Record<string, { bars: number; firstT: number | null; lastT: number | null; error: string | null; full?: boolean; tries?: number; note?: string }>;
 }
 
 type Fetch = (id: string, priceType: 'bid' | 'ask', from: Date, to: Date) => Promise<number[][]>;
+
+/** v17: a request cut off by `withTimeout`; `what` says which one. */
+export class DkTimeoutError extends Error {
+  constructor(
+    readonly what: string,
+    ms: number,
+  ) {
+    super(`${what} timed out after ${Math.round(ms / 1000)} s`);
+  }
+}
 
 /** Reject after `ms` (dukascopy-node has no abort option). */
 export function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
@@ -58,7 +75,7 @@ export function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise
       if (timer) clearTimeout(timer);
     }),
     new Promise<T>((_, rej) => {
-      timer = setTimeout(() => rej(new Error(`${what} timed out after ${Math.round(ms / 1000)} s`)), ms);
+      timer = setTimeout(() => rej(new DkTimeoutError(what, ms)), ms);
     }),
   ]);
 }
@@ -209,24 +226,36 @@ export function stitchHistory(id: string, yahoo: readonly Bar[], dk: readonly Dk
 }
 
 /** v17: the newest hours of a few markets, fetched only for markets whose Yahoo candles fell behind (`fill.ts`). */
-export const DK_TAIL = { days: 3, minGapMs: 10 * 60_000, budgetMs: 60_000 };
+export const DK_TAIL = { days: 3, minGapMs: 10 * 60_000, budgetMs: 60_000, minCallMs: 5_000 };
 const tailAt = new Map<string, number>();
 
 /**
  * Pull the last few days of hourly candles for `ids` from Dukascopy (each at most once per 10 minutes, the whole call at
  * most `budgetMs`, nothing while Dukascopy's breaker is open) and merge them into the stored history. Never throws.
+ * v17: each request gets only what is left of the budget (at least `minCallMs`, never more than the whole budget) and
+ * the budget is checked again before the ask side — a market cut off by it is an error (nothing saved) and ends the run.
+ * A request timed out by the budget always ends the run (it used up what was left), whatever the clocks say.
  */
 export async function refreshDkTail(redis: Redis, ids: readonly string[], now = Date.now(), fetcher: Fetch = fetchDk): Promise<Record<string, { lastT: number | null; added: number; error: string | null }>> {
   const out: Record<string, { lastT: number | null; added: number; error: string | null }> = {};
   const t0 = Date.now();
+  const spent = () => Date.now() - t0 >= DK_TAIL.budgetMs;
+  let cut = false;
+  const timed = <T>(p: Promise<T>, what: string): Promise<T> =>
+    withTimeout(p, Math.max(Math.min(DK_TAIL.minCallMs, DK_TAIL.budgetMs), DK_TAIL.budgetMs - (Date.now() - t0)), what).catch((err: unknown) => {
+      if (err instanceof DkTimeoutError && err.what === what) cut = true;
+      throw err;
+    });
   for (const id of ids) {
-    if (Date.now() - t0 > DK_TAIL.budgetMs || !feeds.allow('dukascopy')) break;
+    if (cut || spent() || !feeds.allow('dukascopy')) break;
     if (now - (tailAt.get(id) ?? 0) < DK_TAIL.minGapMs) continue;
     tailAt.set(id, now);
     const have = await loadDk(redis, id);
     const from = Math.max((have[have.length - 1]?.t ?? 0) - 2 * HOUR, now - DK_TAIL.days * DAY);
     try {
-      const [bid, ask] = [await fetcher(id, 'bid', new Date(from), new Date(now)), await fetcher(id, 'ask', new Date(from), new Date(now))];
+      const bid = await timed(fetcher(id, 'bid', new Date(from), new Date(now)), `dukascopy tail ${id} bid`);
+      if (spent()) throw new Error(`dukascopy tail ${id}: time budget used up before the ask side`);
+      const ask = await timed(fetcher(id, 'ask', new Date(from), new Date(now)), `dukascopy tail ${id} ask`);
       const fresh = midBars(id, bid, ask, now);
       const prevLast = have[have.length - 1]?.t ?? 0;
       const merged = mergeDk(have, fresh);
@@ -236,6 +265,7 @@ export async function refreshDkTail(redis: Redis, ids: readonly string[], now = 
     } catch (err) {
       out[id] = { lastT: have[have.length - 1]?.t ?? null, added: 0, error: (err as Error).message };
       feeds.fail('dk-history', err);
+      if (cut || spent()) break;
     }
   }
   return out;
@@ -257,6 +287,12 @@ export async function installSpreadProfiles(redis: Redis, now = Date.now()): Pro
 /**
  * Refresh every market's Dukascopy history (first time: `historyDays` back in pieces; then the newest days), then
  * install the spread profiles. Never throws; one market failing doesn't stop the others.
+ * v17: a non-empty store that doesn't reach `historyDays` back (the lab's tail fetch on an empty store saves only 3 days)
+ * gets the older range back-filled, each piece ending at the oldest bar so far (a failure leaves no hole; the next
+ * refresh goes on from there); a piece that brings nothing older ends it. "No error" is NOT proof that nothing older
+ * exists — dukascopy-node answers HTTP errors / throttling with an empty result — so `full` (no more back-fill) only
+ * when the store reaches back, or after `DK.backfillTries` back-fills in a row brought nothing older (kept while the
+ * store still starts there). Until then a short store is reported as an error and retried every refresh.
  */
 export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: Fetch = fetchDk): Promise<DkMeta> {
   let prev: DkMeta | null = null;
@@ -271,25 +307,70 @@ export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: 
   }
   const meta: DkMeta = { at: now, ids: {} };
   const ids = [...INSTRUMENTS.map((i) => i.id), ...STRENGTH_PAIRS.map((p) => p.id)];
+  const histFrom = now - DK.historyDays * DAY;
+  const slack = DK.slackDays * DAY;
   for (const id of ids) {
     const have = await loadDk(redis, id);
-    const start = have.length ? Math.max(have[have.length - 1]!.t - DAY, now - DK.historyDays * DAY) : now - DK.historyDays * DAY;
+    const was = prev?.ids?.[id];
+    const start = have.length ? Math.max(have[have.length - 1]!.t - DAY, histFrom) : histFrom;
+    // v17: older range still missing? (not when it reaches back, or a complete download said there's nothing older)
+    const reaches = have.length > 0 && have[0]!.t <= histFrom + slack;
+    const fullKept = was?.full === true && have.length > 0 && typeof was.firstT === 'number' && have[0]!.t <= was.firstT + slack;
+    const backTo = have.length && !reaches && !fullKept ? have[0]!.t : null;
     let bars = have;
     let error: string | null = null;
+    const piece = async (from: number, to: number) => {
+      const [bid, ask] = [await fetcher(id, 'bid', new Date(from), new Date(to)), await fetcher(id, 'ask', new Date(from), new Date(to))];
+      bars = mergeDk(bars, midBars(id, bid, ask, now));
+      if (DK.pauseMs > 0) await new Promise((r) => setTimeout(r, DK.pauseMs));
+    };
+    const dayOf = (t: number) => new Date(t).toISOString().slice(0, 10);
     for (let from = start; from < now; from += DK.chunkDays * DAY) {
-      const to = Math.min(now, from + DK.chunkDays * DAY);
       try {
-        const [bid, ask] = [await fetcher(id, 'bid', new Date(from), new Date(to)), await fetcher(id, 'ask', new Date(from), new Date(to))];
-        bars = mergeDk(bars, midBars(id, bid, ask, now));
+        await piece(from, Math.min(now, from + DK.chunkDays * DAY));
       } catch (err) {
         error = (err as Error).message;
         break;
       }
-      if (DK.pauseMs > 0) await new Promise((r) => setTimeout(r, DK.pauseMs));
+    }
+    // v17: back-fill [histFrom, oldest bar): each piece ends at the oldest bar so far; one that brings nothing older ends it
+    let progressed = false;
+    if (backTo !== null && !error) {
+      for (let n = 0, to = Math.min(backTo, bars[0]!.t); to > histFrom && n < 2 * Math.ceil(DK.historyDays / DK.chunkDays); n++) {
+        try {
+          await piece(Math.max(histFrom, to - DK.chunkDays * DAY), to);
+        } catch (err) {
+          error = `older history: ${(err as Error).message}`;
+          break;
+        }
+        if (bars[0]!.t >= to) break;
+        progressed = true;
+        to = bars[0]!.t;
+      }
+    }
+    // v17: `full` only on proof — the store reaches back, or a finished back-fill was kept (`fullKept`), or the back-fill
+    // brought nothing older `backfillTries` times in a row; a short store is an error until then (retried each refresh)
+    let full = bars.length > 0 && bars[0]!.t <= histFrom + slack;
+    let tries = 0;
+    let note: string | undefined;
+    if (!full && have.length && backTo === null) {
+      full = true; // fullKept
+      tries = was?.tries ?? 0;
+      note = was?.note;
+    } else if (!full && error) tries = backTo !== null && !progressed ? (was?.tries ?? 0) : 0;
+    else if (!full && bars.length) {
+      const since = dayOf(bars[0]!.t);
+      if (backTo !== null && !progressed) {
+        tries = (was?.tries ?? 0) + 1;
+        if (tries >= DK.backfillTries) {
+          full = true;
+          note = `older history: nothing before ${since} in ${tries} back-fills in a row — taken as where the data starts`;
+        } else error = `older history: nothing returned before ${since} (back-fill ${tries} of ${DK.backfillTries}), will retry`;
+      } else error = `older history: only back to ${since} so far, will retry`;
     }
     bars = bars.filter((b) => b.t >= now - (DK.historyDays + 5) * DAY);
     if (bars.length) await saveDk(redis, id, bars);
-    meta.ids[id] = { bars: bars.length, firstT: bars[0]?.t ?? null, lastT: bars[bars.length - 1]?.t ?? null, error };
+    meta.ids[id] = { bars: bars.length, firstT: bars[0]?.t ?? null, lastT: bars[bars.length - 1]?.t ?? null, error, full, ...(tries ? { tries } : {}), ...(note ? { note } : {}) };
     if (error) log.warn({ id, err: error }, 'dukascopy refresh failed');
   }
   await redis.set(DK_META, JSON.stringify(meta)).catch(() => undefined);

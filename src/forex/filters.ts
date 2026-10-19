@@ -146,15 +146,25 @@ export function filterCoverage(e: FilterEnv, upTo: number): Partial<Record<keyof
 }
 
 /**
+ * v17: can the mood check ever block this pair? Asks `passMood` itself with the strongest readings the score can take
+ * (±3, either side), so the two can't drift: a pair with little risk exposure (|riskLong| ≤ RISK_TRADE: EURGBP,
+ * AUDNZD …) is never blocked by mood, so missing mood data changes nothing for it. Pure.
+ */
+export const moodCanBlock = (e: FilterEnv): boolean =>
+  [3, -3].some((m) => ([1, -1] as const).some((side) => !passMood({ ...e, mood: Float64Array.of(m) }, 0, side)));
+
+/**
  * v17 live guard: the strategy was tested WITH this filter, but the data the filter reads is missing at the signal bar
  * (a feed is down) although it was there for ≥ 80% of the tested history → trading now would be an untested variant,
- * so the trade waits. Data that was rarely there in the history (e.g. positioning on metals) never blocks. Pure.
+ * so the trade waits. Data that was rarely there in the history (e.g. positioning on metals) never blocks, nor does
+ * mood on a pair the mood check can't block anyway ('all' still checks its other inputs). Pure.
  */
 export function missingInput(kind: FilterKind, e: FilterEnv | null, i: number, coverage: Partial<Record<keyof FilterEnv, number>>, minCover = 0.8): string | null {
   if (!e) return null;
   for (const [k, label] of FILTER_INPUTS[kind] ?? []) {
     const a = e[k] as Float64Array | undefined;
     if (!a || (coverage[k] ?? 0) < minCover) continue;
+    if (k === 'mood' && !moodCanBlock(e)) continue;
     if (!Number.isFinite(a[i]!)) return `its ${label} check has no data right now (feed missing): waiting rather than trading it untested`;
   }
   return null;

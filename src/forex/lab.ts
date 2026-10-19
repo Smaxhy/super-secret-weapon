@@ -18,8 +18,8 @@ import { learnFromLedger, type LearnKey } from './learner';
 import { gradeRolling, nullKey, randomPickerNull, ROLL, rollRow, rollWeeks, type NullStats, type RollReport, type RollRow, type RollTrade } from './rolling';
 import { FILL, fillFromDk, type FillResult } from './fill';
 import { dataAgeOf, staleReason, type DataAge } from './freshness';
-import { feeds, type FeedId, type FeedState } from './feeds';
-import { forkLabRun, labWorkerOn } from './lab-runner';
+import { feeds, type BreakerState, type FeedId, type FeedState, type Provider } from './feeds';
+import { afterLabRun, forkLabRun, labWorkerOn, learnerSource, learnerTighten, LAB_WORKER, NO_STREAK, planLabRun, tightenOut, tightenState, type LearnerTighten, type WorkerStreak } from './lab-runner';
 import { moduleLogger } from '../lib/logger';
 import { refreshInstrument, refreshSeries, loadBars, type FeedStatus } from './data';
 import { DK_META, refreshDkTail, installSpreadProfiles, loadDk, refreshDukascopy, stitchHistory, type DkMeta } from './dukascopy';
@@ -41,7 +41,7 @@ import { FILTERS, FILTER_LABEL, allowFor, blockReason, chooseFilter, chooseVaria
 import { SIZING, simulatePortfolio, stratFactorFromStats, stratFactorFromVerdict, volFactor, walkForward, weekOf, type PortfolioResult, type PTrade, type WalkForward, type WTrade } from './portfolio';
 import { newsStudy, type NewsStudy } from './news-study';
 import { EXITS, EXIT_LABEL, OWNER_EXITS, applyExit, type ExitKind } from './exits';
-import { judgeFeatures, judgeKeeps, judgeView, trainJudge, type JudgeModel, type JudgeReport, type JudgeRow } from './judge';
+import { judgeFeatures, judgeKeeps, judgeMainP, judgeScores, judgeView, trainJudge, type JudgeModel, type JudgeReport, type JudgeRow } from './judge';
 import { alignAt, mtdSeries, pairRanks, strengthRanks, z24Series, type TimeSeries } from './intermarket';
 import { extraVotes, gradeSniper, SNIPER, type SniperReport } from './sniper';
 import { heatmapFor, type Heatmap } from './heatmap';
@@ -246,6 +246,8 @@ export interface WorkerInput {
   learnSig: string;
   chosenSig: string;
   heatActive: boolean | null;
+  /** v17: the parent's per-provider breakers (the child honours an open one) */
+  breakers?: Partial<Record<Provider, BreakerState>>;
 }
 /** v17.2: what the live bot (parent) needs after a run in the child. */
 export interface WorkerState {
@@ -264,7 +266,9 @@ export interface WorkerState {
   book: MarketBook | null;
   logs: string[];
 }
-export type WorkerResult = { ok: true; out: RunOutput | null; state: WorkerState; feeds: Partial<Record<FeedId, FeedState>> } | { ok: false; error: string };
+export type WorkerResult =
+  | { ok: true; out: RunOutput | null; state: WorkerState; feeds: Partial<Record<FeedId, FeedState>>; /** v17: the child's breakers (newer update wins in the parent) */ breakers?: Partial<Record<Provider, BreakerState>> }
+  | { ok: false; error: string; /** v17: what the child's feeds / breakers saw before it failed */ feeds?: Partial<Record<FeedId, FeedState>>; breakers?: Partial<Record<Provider, BreakerState>> };
 
 /** v17.2: what one hourly run hands to the bot sync (in worker mode: what the child hands to the parent). */
 export interface RunOutput {
@@ -868,19 +872,47 @@ export class ForexLab {
     }
   }
 
-  /** v17.2: the run in a child process; inline only when the child could not even start. */
+  /**
+   * v17.2: the run in a child process; inline only when the child could not even start. v17: the parent's breakers go
+   * along and come back merged; the learner's fork-time states are remembered (`importState` keeps the parent's when
+   * they moved meanwhile); a child that started and then failed lightly (threw / its result didn't come back)
+   * `LAB_WORKER.inlineAfterFails` runs in a row sends the next `LAB_WORKER.inlineRuns` runs inline (warn + a bot-log
+   * line); a heavy failure (timed out / out of memory) is only skipped; a good child run clears the streak.
+   */
   private async runInWorker(refresh: boolean): Promise<RunOutput | null> {
     const t0 = Date.now();
-    const r = await forkLabRun(refresh, { learned: this.learned, learnSig: this.learnSig, chosenSig: this.chosenSig, heatActive: this.heatNow?.active ?? null });
-    if (r.kind === 'spawn') {
-      log.warn({ err: r.error }, 'forex lab worker could not start — running this hour inline');
-      return this.computeRun(refresh);
+    const input: WorkerInput = { learned: this.learned, learnSig: this.learnSig, chosenSig: this.chosenSig, heatActive: this.heatNow?.active ?? null, breakers: feeds.breakerSnapshot() };
+    this.forkLearnSig = input.learnSig;
+    try {
+      const r = await forkLabRun(refresh, input);
+      if (r.kind === 'spawn') {
+        log.warn({ err: r.error }, 'forex lab worker could not start — running this hour inline');
+        this.forkLearnSig = null;
+        return await this.computeRun(refresh);
+      }
+      if (r.kind === 'failed') {
+        // v17: the child's feed reports + breakers count even when the run failed (a Yahoo outage it hit pauses us too)
+        if (r.feeds) feeds.merge(r.feeds);
+        if (r.breakers) feeds.mergeBreakers(r.breakers);
+        const a = afterLabRun(this.workerStreak, r.heavy ? 'heavy' : 'failed');
+        this.workerStreak = a.st;
+        if (r.heavy) log.warn({ err: r.error }, 'forex lab worker ran out of time / memory — this hour is skipped (never re-run in the main process)');
+        if (a.tripped) {
+          log.warn({ err: r.error, fails: a.st.fails, inlineRuns: a.st.inlineLeft }, 'forex lab worker keeps failing — the next runs go inline');
+          this.logBot([`hourly test: its separate process failed ${a.st.fails} times in a row (${r.error}) — the next ${a.st.inlineLeft} runs go in the main process, then it tries the separate process again`]);
+        }
+        throw new Error(`lab worker: ${r.error}`);
+      }
+      if (this.workerStreak.fails >= LAB_WORKER.inlineAfterFails) this.logBot(['hourly test: its separate process works again']);
+      this.workerStreak = afterLabRun(this.workerStreak, 'ok').st;
+      feeds.merge(r.res.feeds);
+      feeds.mergeBreakers(r.res.breakers);
+      const t = this.importState(r.res.state);
+      log.info({ ms: Date.now() - t0, heapMb: Math.round(process.memoryUsage().heapUsed / 1e6), learner: t ? 'parent' : 'child' }, 'forex lab run done in the worker');
+      return r.res.out && t ? tightenOut(r.res.out, t) : r.res.out;
+    } finally {
+      this.forkLearnSig = null;
     }
-    if (r.kind === 'failed') throw new Error(`lab worker: ${r.error}`);
-    this.importState(r.res.state);
-    feeds.merge(r.res.feeds);
-    log.info({ ms: Date.now() - t0, heapMb: Math.round(process.memoryUsage().heapUsed / 1e6) }, 'forex lab run done in the worker');
-    return r.res.out;
   }
 
   /** v17.2 (child): carry over the parent's learner / chosen-list / heat state. */
@@ -910,8 +942,18 @@ export class ForexLab {
       logs: this.collectLog ?? [],
     };
   }
-  /** v17.2 (parent): take the child's state. */
-  importState(s: WorkerState): void {
+  /**
+   * v17.2 (parent): take the child's state. v17: the restricted learner is the one piece the parent moves too while the
+   * child runs (its fast-chart checks call `botRecord`). When the parent's states changed since the fork (`forkSig`) its
+   * own learner is kept, the child's "learner:" lines are dropped (the parent logged its own changes), the dropped /
+   * chosen lists and the plan's open trades are tightened to it, and `fx:learn` is written again from here when the
+   * child wrote its older view. Everything else is written only by the hourly run, so the child's copy is the newest.
+   * Returns what was tightened (for the run's bot hand-over), null when the child's learner was taken.
+   */
+  importState(s: WorkerState, forkSig: string | null = this.forkLearnSig): LearnerTighten | null {
+    const keepParent = learnerSource(forkSig, this.learnSig) === 'parent';
+    const t = keepParent ? learnerTighten(this.learned, s.learned) : null;
+    if (t) s = tightenState(s, t);
     this.marketsNow = s.marketsNow;
     this.moodNow = s.moodNow;
     this.atr1h = s.atr1h;
@@ -920,19 +962,34 @@ export class ForexLab {
     this.chooser = s.chooser;
     this.dataAge = s.dataAge;
     this.dropped = s.dropped;
-    this.learned = s.learned;
-    this.learnSig = s.learnSig;
+    if (!keepParent) {
+      this.learned = s.learned;
+      this.learnSig = s.learnSig;
+    } else if (s.learnSig !== forkSig) {
+      void this.redis.set(FX_LEARN, JSON.stringify({ at: Date.now(), keys: this.learned })).catch(() => undefined);
+    }
     this.chosenSig = s.chosenSig;
     if (s.heat) this.heatNow = { active: s.heat.active, book: { idx: s.heat.idx }, m: s.heat.m ? Float32Array.from(s.heat.m) : null };
     if (s.book) this.book = s.book;
-    this.logBot(s.logs);
+    this.logBot(keepParent ? s.logs.filter((e) => !e.startsWith('learner: ')) : s.logs);
+    return t;
   }
   /** v17.2: in the child, bot-log lines are collected for the parent instead of written */
   private collectLog: string[] | null = null;
+  /** v17: the learner's states when the running child was forked (null = no child running) */
+  private forkLearnSig: string | null = null;
+  /** v17: the child's failure streak (worker flag on) */
+  workerStreak: WorkerStreak = { ...NO_STREAK };
 
   run(refresh = true): Promise<FxReport | null> {
     if (this.running) return this.running;
-    this.running = (labWorkerOn() ? this.runInWorker(refresh) : this.computeRun(refresh))
+    // v17: worker flag on, but the child kept failing → this run goes inline (the flag-off path) while the streak is sat out
+    let viaWorker = labWorkerOn();
+    if (viaWorker && planLabRun(this.workerStreak) === 'inline') {
+      viaWorker = false;
+      this.workerStreak = afterLabRun(this.workerStreak, 'inline').st;
+    }
+    this.running = (viaWorker ? this.runInWorker(refresh) : this.computeRun(refresh))
       .then(async (out) => {
         // the bot account always follows in this process (never in the child)
         if (out && !out.noSync) await this.syncFrom(out);
@@ -1293,8 +1350,9 @@ export class ForexLab {
     judgeRows.length = 0;
     // ── v15.2 bigger size when more sure: judge cut points from the first 70%, tiers graded on the unseen 30% ──
     const hasJudge = judgeModel !== null;
-    const pOf = (x: Float64Array | undefined) => (judgeModel && x ? judgeView(judgeModel, x).p : null);
-    const cuts = hasJudge ? judgeCuts(convPend.filter((c) => c.exitT < oosFrom).map((c) => pOf(c.x)!)) : { pHi: null, pTop: null };
+    // v17: the main model's own scores only (the tiers are graded on them); one it can't score is dropped, never a 0
+    const pOf = (x: Float64Array | undefined) => (judgeModel && x ? judgeMainP(judgeModel, x) : null);
+    const cuts = judgeModel ? judgeCuts(judgeScores(judgeModel, convPend.filter((c) => c.exitT < oosFrom).map((c) => c.x))) : { pHi: null, pTop: null };
     const confOf = new Map<string, number>();
     for (const c of convPend) confOf.set(c.key, confirmations(c.agree, pOf(c.x), cuts));
     const conviction = gradeConviction(convPend.map((c) => ({ t: c.t, exitT: c.exitT, r: c.r, conf: confOf.get(c.key)! })), oosFrom, 'hourly', hasJudge, cuts);
@@ -1553,9 +1611,11 @@ export class ForexLab {
       const x = judgeX.get(tradeKey(t));
       const jv = judgeModel && x ? judgeView(judgeModel, x) : null;
       const p = jv?.p ?? null;
-      // v17: an active judge that can't score a signal (a reading it relies on is missing now) → the trade waits
-      const judgeOk = !judge?.active || !judgeModel || !jv || (jv.p !== null && jv.p >= judgeModel.threshold);
-      const conf = confirmations(openAgree.get(tradeKey(t)) ?? 0, p, cuts);
+      // v17: an active judge that can't score a signal (a reading it relies on is missing now) → the trade waits;
+      // a score from the backup model is held to the backup's own bar (jv.threshold)
+      const judgeOk = !judge?.active || !judgeModel || !jv || (jv.p !== null && jv.p >= jv.threshold);
+      // v17: conviction cut points are the main model's, so only its own score counts there
+      const conf = confirmations(openAgree.get(tradeKey(t)) ?? 0, jv?.via === 'main' ? p : null, cuts);
       const b = boostFor(tierOf(conf, hasJudge), conviction);
       // v17: the row's filter has no data at the signal bar right now (it had in the tested history) → wait
       const se = seriesOf.get(`${t.pair}:${t.tf}`);
@@ -1566,7 +1626,7 @@ export class ForexLab {
         sizeF,
         prio: row ? row.all.avgR : -1,
         dataWait,
-        judge: !jv ? null : { p: p === null ? 0 : Math.round(p * 100) / 100, ok: judgeOk, need: judgeModel ? Math.round(judgeModel.threshold * 100) / 100 : null, ...(jv.missing ? { missing: jv.missing } : {}) },
+        judge: !jv ? null : { p: p === null ? 0 : Math.round(p * 100) / 100, ok: judgeOk, need: Number.isFinite(jv.threshold) ? Math.round(jv.threshold * 100) / 100 : null, ...(jv.missing ? { missing: jv.missing } : {}) },
         conviction: { tier: b.tier, conf, of: maxConfirmations(t.tf, hasJudge), mult: b.mult, lev: b.lev },
         sniper: (() => {
           const ex = openExtra.get(tradeKey(t));

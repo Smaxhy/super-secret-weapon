@@ -443,7 +443,10 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     cached calendar + headlines (`loadCached`), reads the bot's record read-only, runs `computeRun`, and hands back the
     `RunOutput` + `WorkerState` (markets, mood, ATRs, chosen list, chooser, data ages, learner, heat ρ, MarketBook for
     the fast lab, bot-log lines it collected) + its feed reports (`feeds.merge`). Could not START → this hour runs
-    inline; started then failed / timed out / OOM → the hour is skipped (`lastError`), never inline. Verified on a local
+    inline; started then failed / timed out / OOM → the hour is skipped (`lastError`). v17.7: a LIGHT failure (it threw /
+    its result couldn't come back) 2 hours in a row → the next 6 runs inline, then the child again (`planLabRun` /
+    `afterLabRun`); a HEAVY one (timed out, out of memory, killed — `ForkOutcome.heavy`, `memoryError`) is only ever
+    skipped. Breakers go to the child and come back (also from a failed run); the child exits on IPC 'disconnect'. Verified on a local
     Redis: identical rows / verdicts / chosen list inline vs worker, parent heap 38 MB. The "forex lab run done" log
     line now carries heapMb / rssMb — read it on the VPS (`docker compose logs bot | grep "forex lab run done"`)
     before switching the worker on (the bot container's cap is 2 GB: main heap + 900 MB child must fit).
@@ -451,6 +454,23 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     price GAPPED past fills at that open, not the level; the minute still forming is re-checked next tick (`checkedT`
     only moves past complete minutes). Yahoo price fails → currency pairs take Dukascopy's newest complete 1-minute
     candle (`dkQuote`, real bid / ask, cached 30 s, breaker, feed `dk-quotes`, `Quote.source` 'dukascopy'); metals never.
+  - **v17.7 review fixes** (independent review of the judge / fill / worker batch, then each fix adversarially checked):
+    Dukascopy: a store that doesn't reach `historyDays` back (e.g. started by the lab's 3-day tail fetch) is back-filled
+    newest piece first from its oldest bar; `DkMeta.ids[id]` `full` / `tries` / `note` — marked full only once the
+    store reaches back or 3 back-fills in a row brought nothing older (the library swallows HTTP errors, so "no error"
+    proves nothing); until then the market shows as an error on the Setup card. Tail fetch: each call gets at most the
+    remaining budget (`DkTimeoutError`). Judge: `JUDGE_SOFT` (mood, carry, cot) are never hard requirements — a
+    **backup judge** trained with them blanked (own pickiness, own unseen exam, kept only if it passes;
+    `JudgeModel.fallback`, `JudgeReport.fallback`, JudgeCard line) scores a signal live when only those are missing,
+    else it waits as before; `judgeView` → {p, missing, threshold, via} and every caller compares p with that row's
+    threshold; pickiness picked only on rows the model can score live (`pickKeep`); conviction cuts skip unscorable
+    rows (`judgeScores`). Fast charts: filter-input coverage measured on each chart's tested first 70% at the :31 test
+    and stored in the fast report (`testedCoverage` / `liveCoverage`; old reports → the old live-window rule); 15m
+    live window 2,300 bars (the vol forecast's month of warm-up). `missingInput` ignores mood on pairs the mood filter
+    can't block (`moodCanBlock`, EURGBP / AUDNZD). Worker: the parent keeps its own learner if it moved while the child
+    ran and tightens the child's dropped / chosen / open trades to it (`learnerSource`, `learnerTighten`,
+    `tightenState`, `tightenOut`). Training time ≈ 1.5–1.8× (two judge models). tests: forex-dk-backfill,
+    forex-judge-fallback, forex-coverage, forex-worker-fixes.
   - **Price stretch** (`src/forex/stretch.ts`, no outside feed): per currency the 63-day return in normal-move units
     (averaged over its pairs, ≥ 3 pairs), ranked within its own last ~2 years (520 days, ≥ 120 ranked) → −1…+1; a
     pair = base − quote (−2…+2, the CFTC score's scale; metals none; > 4 days old → none). `MarketBook.stretch`
