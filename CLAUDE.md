@@ -750,6 +750,11 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   `RollReport.thisWeek.paused` [{key, n, pf}]; the random pickers' fixed set follows the picks. Live chooser (lab.ts,
   verdict mode): botAlways keeps a 'no' row only while not paused; one bot-log line per rest (`pausedNoted`). Dashboard
   card "What it learned this week" lists the resting always-on rows. Fewer than 12 trades → published evidence keeps it.
+- **v18.12 (Oct 19): the Today card can't go blank** (owner: "I don't see the Next look area"). `/api/forex/bot`: `buildPlan`
+  in a try/catch → `planError` (also 'forex lab not running' / 'bot account unreadable'); the route no longer 500s on a
+  plan bug. `FxBrief`: "Next look" always shows (`localNextLook`: the next 1h / 4h close + 90 s on the UTC grid when the
+  server's plan is missing); a red line says why there is no plan (`planError`), or that the page failed to load
+  (`useApi` `error`, which FxBot had ignored), or that the first hourly look since the restart hasn't finished.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

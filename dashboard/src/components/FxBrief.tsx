@@ -31,7 +31,16 @@ const readGoal = () => {
   }
 };
 
-export function FxBrief({ plan, riskMode, modes, equityUsd, orders = [], names = {}, labError = null }: { plan: Plan | null; riskMode: RiskMode; modes?: Record<RiskMode, RiskLimits>; equityUsd: number | null; orders?: Order[]; names?: Record<string, string>; labError?: { t: number; msg: string } | null }) {
+/** v18.12: the next hourly / 4-hour check on the UTC grid (candle close + 90 s), when the server's plan is missing. */
+export function localNextLook(now = Date.now()): { tf: string; at: number } {
+  const H = 3_600_000;
+  const grid = (period: number) => Math.floor((now - 90_000) / period) * period + period + 90_000;
+  const h1 = grid(H);
+  const h4 = grid(4 * H);
+  return h4 <= h1 ? { tf: '4h', at: h4 } : { tf: '1h', at: h1 };
+}
+
+export function FxBrief({ plan, riskMode, modes, equityUsd, orders = [], names = {}, labError = null, planError = null, loadError = null }: { plan: Plan | null; riskMode: RiskMode; modes?: Record<RiskMode, RiskLimits>; equityUsd: number | null; orders?: Order[]; names?: Record<string, string>; labError?: { t: number; msg: string } | null; planError?: string | null; loadError?: string | null }) {
   const tz = new Date().getTimezoneOffset();
   const { data: pnl } = useApi<PnlData>(`/api/forex/pnl?acct=bot&tz=${tz}`, 60_000);
   const [goal, setGoal] = useState(readGoal);
@@ -57,7 +66,7 @@ export function FxBrief({ plan, riskMode, modes, equityUsd, orders = [], names =
   const close = (plan?.markets ?? [])
     .flatMap((m) => m.signals.filter((s) => s.tone === 'wait').map((s) => ({ m, s })))
     .slice(0, 5);
-  const next = plan?.next.slice().sort((a, b) => a.at - b.at)[0];
+  const next = plan?.next.slice().sort((a, b) => a.at - b.at)[0] ?? localNextLook();
   return (
     <Card title="Today" subtitle={plan?.summary ?? 'Its plan appears after the first look at the markets.'} className="hero-glow card-accent">
       <div className="space-y-4">
@@ -164,7 +173,9 @@ export function FxBrief({ plan, riskMode, modes, equityUsd, orders = [], names =
           </div>
         )}
 
-        {next && <p className="text-xs text-muted">Next look: {clock(next.at)} ({next.tf} candles). It checks every chart on every candle close.</p>}
+        {loadError && <p className="text-sm text-down">Couldn't load the bot's page: {loadError}</p>}
+        {!loadError && !plan && <p className="text-sm text-down">{planError ? `No plan right now: ${planError}.` : 'No plan yet: the bot has not finished its first hourly look since it started.'}</p>}
+        <p className="text-xs text-muted">Next look: {clock(next.at)} ({next.tf} candles). It checks every chart on every candle close.</p>
       </div>
     </Card>
   );

@@ -165,31 +165,42 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       const mids: Record<string, number> = {};
       for (const x of Object.values(snap?.quotes ?? {})) mids[x.id] = x.mid;
       const now = Date.now();
-      const plan =
-        deps.forex && snap
-          ? buildPlan({
+      let planError: string | null = null;
+      const oandaOn = oandaReady(await loadOanda());
+      const fx = deps.forex;
+      let plan: ReturnType<typeof buildPlan> | null = null;
+      try {
+        plan =
+          fx && snap
+            ? buildPlan({
               now,
               clock: marketClock(now),
-              oanda: oandaReady(await loadOanda()),
-              markets: deps.forex.marketsNow,
-              mood: deps.forex.moodNow,
+              oanda: oandaOn,
+              markets: fx.marketsNow,
+              mood: fx.moodNow,
               fastFiring: deps.fastFx?.firing ?? {},
-              chosen: [...deps.forex.chosen, ...(deps.fastFx?.chosen ?? [])],
+              chosen: [...fx.chosen, ...(deps.fastFx?.chosen ?? [])],
               fastCharts: FX_CONFIG.botFastCharts,
               names: Object.fromEntries(STRATEGIES.map((x) => [x.id, x.name])),
               positions: snap.account.positions,
               resume: snap.account.resume ?? [],
               equityUsd: snap.account.equityUsd,
-              lastSync: deps.forex.lastSync,
-              labOpen: Object.assign({}, deps.forex.labOpen, ...Object.values(deps.fastFx?.labOpen ?? {})),
-              runs: deps.forex.runs,
+              lastSync: fx.lastSync,
+              labOpen: Object.assign({}, fx.labOpen, ...Object.values(deps.fastFx?.labOpen ?? {})),
+              runs: fx.runs,
               upcoming: (pair) => deps.fxCalendar?.upcoming(pair, now) ?? [],
               blockNow: (pair) => deps.fxCalendar?.blockFor(pair, now) ?? deps.fxNews?.blockFor(pair) ?? null,
               pnlAt: (p, price) => pnlUsd(p, price, mids),
             })
-          : null;
+            : null;
+      } catch (err) {
+        planError = (err as Error).message;
+        log.warn({ err: planError }, 'forex plan failed to build');
+      }
       return {
         plan,
+        // v18.12: why the plan is missing (the Today card says so instead of going quiet)
+        planError: planError ?? (!deps.forex ? 'forex lab not running' : !snap ? 'bot account unreadable' : null),
         account: snap ? { ...snap.account, ledger: undefined } : null,
         risk: snap ? riskSummary(snap.account, mids, snap.account.equityUsd) : null,
         // v17: what the bot itself made per strategy:chart, in R (its own trades only — never rewritten)
