@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 /**
  * Forex v13 cards: currency strength, market mood, the filter check, "after big moves", the whole-bot test and the
  * bot's risk per currency. Data comes from the lab report (`/api/forex`) or the bot endpoint (`/api/forex/bot`).
@@ -80,12 +81,36 @@ export function MoodCard({ m }: { m: MoodNow | undefined }) {
   );
 }
 
+
+/** v18.6: the summary tables on a phone — one stacked block per row instead of a sideways-scrolling table. */
+function SummaryList({ rows }: { rows: Array<{ key: string; title: ReactNode; sub?: ReactNode; stats: Array<[string, ReactNode]> }> }) {
+  return (
+    <ul className="divide-y divide-line md:hidden">
+      {rows.map((r) => (
+        <li key={r.key} className="py-2.5 first:pt-0 last:pb-0">
+          <div className="font-medium text-ink">{r.title}</div>
+          {r.sub && <div className="text-xs text-muted">{r.sub}</div>}
+          <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+            {r.stats.map(([k, v]) => (
+              <div key={k} className="flex items-baseline justify-between gap-2">
+                <dt className="text-xs text-muted">{k}</dt>
+                <dd className="tabular text-right">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** Do the new checks help? Raw vs filtered, first 70% and unseen 30%, plus random entries with each check. */
 export function FiltersCard({ f }: { f: FilterSummary[] | undefined }) {
   if (!f?.length) return null;
   return (
     <Card title="Do the new checks help?" subtitle="Every strategy was run without a check and with each one. R per trade = profit per trade in units of the amount risked. A check only counts if it also helps on the unseen 30%, and if random entries with that check alone stay near zero (else the check, not the strategy, is doing the work).">
-      <div className="overflow-x-auto">
+      <SummaryList rows={f.map((x) => ({ key: x.filter, title: x.label, sub: `picked by ${x.chosenBy} ${x.chosenBy === 1 ? 'strategy' : 'strategies'} · keeps ${x.keptPct}% of the trades`, stats: [['R/trade first 70%', <span className={tone(x.inDeltaR)}>{signed(x.inDeltaR, 2)}</span>], ['R/trade unseen', <span className={`font-semibold ${tone(x.outDeltaR)}`}>{signed(x.outDeltaR, 2)}</span>], ['Better unseen', `${x.outBetterPct}% of ${x.compared}`], ['Random + check', <span className={tone(x.random.outAvgR)}>{signed(x.random.outAvgR, 2)}R</span>]] }))} />
+      <div className="hidden overflow-x-auto md:block">
         <table className="tabular w-full min-w-[40rem] text-sm">
           <thead>
             <tr className="text-left text-xs text-muted">
@@ -123,7 +148,8 @@ export function ExitsCard({ e }: { e: ExitSummary[] | undefined }) {
   if (!e?.length) return null;
   return (
     <Card title="Do other exits help?" subtitle="Same entries, different ways out: stop to break-even once +1R up, half off at +1R, a closer or bigger target, no target with a trailing stop, a shorter time limit, a trailing take-profit (at the target the stop locks in profit and trails instead of closing; or half off there and the rest trails), or a trailing stop-loss (the stop follows the price from the start: break-even at +1R, +1R locked at +2R…). Each strategy keeps the exit that did best on the first 70% only; where they test as well, the trailing stop-loss and then the trailing take-profit win.">
-      <div className="overflow-x-auto">
+      <SummaryList rows={e.map((x) => ({ key: x.exit, title: x.label, sub: `picked by ${x.chosenBy} ${x.chosenBy === 1 ? 'strategy' : 'strategies'}`, stats: [['R/trade first 70%', <span className={tone(x.inDeltaR)}>{signed(x.inDeltaR, 2)}</span>], ['R/trade unseen', <span className={`font-semibold ${tone(x.outDeltaR)}`}>{signed(x.outDeltaR, 2)}</span>], ['Better unseen', `${x.outBetterPct}% of ${x.compared}`]] }))} />
+      <div className="hidden overflow-x-auto md:block">
         <table className="tabular w-full min-w-[34rem] text-sm">
           <thead>
             <tr className="text-left text-xs text-muted">
@@ -161,7 +187,8 @@ export function EntriesCard({ e }: { e: EntrySummary[] | undefined }) {
   if (!e?.length) return null;
   return (
     <Card title="Does entry timing help?" subtitle="Same signals, same checks, same exits — only the way in changes. A limit order at the signal's close (good for one bar) or a quarter ATR back (three bars) gets a better price when the market comes back, but misses the trades that never do; waiting for a confirming bar skips the false starts but enters later. Each is graded against entering at the next open, which is what the bot does. Nothing here changes a trade: the practice account can't hold a limit order yet.">
-      <div className="overflow-x-auto">
+      <SummaryList rows={e.map((x) => ({ key: x.entry, title: x.label, sub: `${x.compared} strategies compared · still takes ${x.filledPct}% of the trades`, stats: [['R/trade first 70%', <span className={tone(x.inDeltaR)}>{signed(x.inDeltaR, 2)}</span>], ['R/trade unseen', <span className={`font-semibold ${tone(x.outDeltaR)}`}>{signed(x.outDeltaR, 2)}</span>], ['Better unseen', `${x.outBetterPct}%`], ['Total unseen R', <span className={tone(x.outTotalDeltaR)}>{signed(x.outTotalDeltaR, 1)}</span>]] }))} />
+      <div className="hidden overflow-x-auto md:block">
         <table className="tabular w-full min-w-[36rem] text-sm">
           <thead>
             <tr className="text-left text-xs text-muted">
@@ -201,13 +228,16 @@ export function FinancingCard({ f }: { f: FinancingSummary | undefined }) {
   const fmt = (x: { id: string; tf: string; outAvgR: number }) => `${x.id} ${x.tf} ${signed(x.outAvgR, 2)}R`;
   return (
     <Card title="Overnight financing" subtitle={`Every trade held past 17:00 New York earns the interest of the currency it bought and pays the one it sold (the central-bank rates the bot pulls), minus a broker markup of ${f.markupPct}% a year either way. ${f.on ? 'It is inside every tested trade and booked on the practice accounts at each roll (Wednesday counts three nights).' : 'It is switched off.'}`}>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <StatTile label="Rows with rates" value={`${f.known} of ${f.rows}`} sub="the rates feed covered their trades" />
-        <StatTile label="R a trade, first 70%" value={signed(f.inAvgR, 3)} tone={f.inAvgR > 0 ? 'up' : f.inAvgR < 0 ? 'down' : undefined} sub="financing share of the result" />
-        <StatTile label="R a trade, unseen" value={signed(f.outAvgR, 3)} tone={f.outAvgR > 0 ? 'up' : f.outAvgR < 0 ? 'down' : undefined} sub="financing share of the result" />
-        <StatTile label="Hurt most" value={f.hurt[0] ? fmt(f.hurt[0]) : '—'} sub={f.hurt.slice(1).map(fmt).join(' · ') || 'no row loses to it'} />
+      <div className="grid grid-cols-3 gap-2">
+        <StatTile compact label="Rows with rates" value={`${f.known} of ${f.rows}`} sub="feed covered them" />
+        <StatTile compact label="R a trade, first 70%" value={signed(f.inAvgR, 3)} tone={f.inAvgR > 0 ? 'up' : f.inAvgR < 0 ? 'down' : undefined} sub="financing share" />
+        <StatTile compact label="R a trade, unseen" value={signed(f.outAvgR, 3)} tone={f.outAvgR > 0 ? 'up' : f.outAvgR < 0 ? 'down' : undefined} sub="financing share" />
       </div>
-      {f.helped.length > 0 && <p className="mt-2 text-xs text-muted">Helped most: {f.helped.map(fmt).join(' · ')}. Short hourly trades barely notice it; the slow ones (weeks held) live or die by it.</p>}
+      <p className="mt-2 text-xs text-muted">
+        {f.hurt.length > 0 && <>Hurt most: {f.hurt.map(fmt).join(' · ')}. </>}
+        {f.helped.length > 0 && <>Helped most: {f.helped.map(fmt).join(' · ')}. </>}
+        Short hourly trades barely notice it; the slow ones (weeks held) live or die by it.
+      </p>
     </Card>
   );
 }
@@ -308,11 +338,13 @@ export function DeskCard({ d }: { d: DeskReport | null | undefined }) {
       {held.length ? (
         <ul className="mt-1 divide-y divide-line">
           {held.map((m) => (
-            <li key={m.id} className="flex items-center gap-2 py-1.5 text-sm">
-              <Badge tone={m.forecast > 0 ? 'up' : 'down'}>{m.forecast > 0 ? 'long' : 'short'}</Badge>
-              <span className="font-medium text-ink">{m.label}</span>
-              <span className="text-xs text-muted">forecast {signed(m.forecast)} of ±20 · {Object.keys(m.rules).length} rules</span>
-              <span className="tabular ml-auto text-ink-2">${Math.abs(m.notionalUsd).toLocaleString()}</span>
+            <li key={m.id} className="py-1.5 text-sm">
+              <div className="flex items-center gap-2">
+                <Badge tone={m.forecast > 0 ? 'up' : 'down'}>{m.forecast > 0 ? 'long' : 'short'}</Badge>
+                <span className="font-medium text-ink">{m.label}</span>
+                <span className="tabular ml-auto text-ink-2">${Math.abs(m.notionalUsd).toLocaleString()}</span>
+              </div>
+              <div className="mt-0.5 text-xs text-muted">forecast {signed(m.forecast)} of ±20 · {Object.keys(m.rules).length} rules</div>
             </li>
           ))}
         </ul>
