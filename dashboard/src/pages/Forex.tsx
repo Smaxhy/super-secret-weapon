@@ -16,6 +16,7 @@ import { ago } from '../lib/format';
 import { Icon } from '../components/Icon';
 import { FxTrade } from '../components/FxTrade';
 import { OandaCard } from '../components/OandaCard';
+import { PythCard } from '../components/PythCard';
 import { MarketChart, type ChartDrawings } from '../components/MarketChart';
 import { EXIT_SHORT, ExitsCard, LockCard, FILTER_SHORT, FiltersCard, JudgeCard, MoodCard, NewsStudyCard, StrengthCard, TrendArrows, type ExitKind, type ExitSummary, type FilterKind, type FilterSummary, type JudgeReport, type LockSummary, type MoodNow, type NewsStudy, type PortfolioReport, type StrengthNow } from '../components/FxInsights';
 import { Badge, Button, Card, Chip, Drawer, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Sparkline, Stack, StatTile, useStored } from '../components/ui';
@@ -92,7 +93,7 @@ export function Forex() {
       {(section === 'live' || section === 'practice' || section === 'bot') && <div className="mb-4"><MarketClockBar /></div>}
       {section === 'practice' && <FxTrade />}
       {section === 'bot' && <FxBot />}
-      {section === 'setup' && <Stack><FxFeeds /><OandaCard />{r && <Setup r={r} fast={fast} />}</Stack>}
+      {section === 'setup' && <Stack><FxFeeds /><PythCard /><OandaCard />{r && <Setup r={r} fast={fast} />}</Stack>}
       {labNeeded && !data && !error && <Loading kind="tiles" />}
       {labNeeded && data && !r && <Empty icon={<Icon name="globe" size={20} />}>{running ? 'First run: downloading 2 years of candles for 12 markets. About a minute.' : 'Not run yet. It starts by itself a minute after the bot starts, or press Update now.'}</Empty>}
       {labNeeded && r && (

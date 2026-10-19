@@ -6,11 +6,15 @@
  * taken from its inverse or built from the two USD legs (EUR/JPY = EUR/USD × USD/JPY). Keeps the newest price per
  * feed, builds 1-minute candles per pair from the ticks (so stop / target checks see the highs and lows between
  * checks), reconnects with back-off, and reports to the feed book ('pyth-live').
- * v17.11: since August 2026 Hermes refuses requests without a Pyth API key (401), so this stream only starts when
- * `PYTH_API_KEY` is in the VPS .env (sent as `Authorization: Bearer …`; `PYTH_HERMES_URL` overrides the endpoint).
- * Without a key the live prices come from Yahoo's streamer (yahoo-live.ts).
+ * v17.11: since August 2026 Hermes refuses requests without a Pyth API key (401), so this stream only starts with a
+ * key (sent as `Authorization: Bearer …`). v17.12: the key is pasted on the dashboard (Setup → "Pyth live prices",
+ * tested first, stored in this server's DB as BotConfig `_pyth` {key, base}, never in git) or set as `PYTH_API_KEY`
+ * in the VPS .env; the endpoint is the upgraded Hermes `https://pyth.dourolabs.app/hermes` (the old
+ * `hermes.pyth.network` is tried too; `PYTH_HERMES_URL` overrides). Without a key the live prices come from Yahoo's
+ * streamer (yahoo-live.ts).
  */
 import { moduleLogger } from '../lib/logger';
+import { prisma } from '../lib/prisma';
 import { feeds } from './feeds';
 import { INSTRUMENTS, type Instrument } from './types';
 
@@ -18,7 +22,8 @@ const log = moduleLogger('forex-pyth');
 
 /** fixed settings */
 export const PYTH = {
-  base: (process.env.PYTH_HERMES_URL || 'https://hermes.pyth.network').replace(/\/+$/, ''),
+  /** where a key is tried, in order (the upgraded Hermes first) */
+  bases: [...new Set([process.env.PYTH_HERMES_URL, 'https://pyth.dourolabs.app/hermes', 'https://hermes.pyth.network'].filter((x): x is string => !!x).map((x) => x.replace(/\/+$/, '')))],
   /** a composed price older than this is not live (falls back to Yahoo) */
   staleMs: 15_000,
   /** no bytes at all (Hermes sends keep-alive comments) for this long → reconnect */
@@ -31,9 +36,56 @@ export const PYTH = {
   keepBars: 180,
 };
 
-/** the Pyth API key from the VPS .env ('' = none: the stream stays off) */
-export const pythKey = (): string => (process.env.PYTH_API_KEY ?? '').trim();
-const auth = (): Record<string, string> => (pythKey() ? { authorization: `Bearer ${pythKey()}` } : {});
+/** the key in use + where it worked: the dashboard's (DB) first, else the VPS .env's */
+const conf: { key: string; base: string; source: 'dashboard' | 'env' | null } = { key: (process.env.PYTH_API_KEY ?? '').trim(), base: PYTH.bases[0]!, source: process.env.PYTH_API_KEY?.trim() ? 'env' : null };
+/** the Pyth API key ('' = none: the stream stays off) */
+export const pythKey = (): string => conf.key;
+export const pythConf = (): Readonly<typeof conf> => conf;
+/** v17.12: the key from the dashboard (null = back to the .env one, if any) */
+export function setPythConf(c: { key: string; base: string } | null): void {
+  const env = (process.env.PYTH_API_KEY ?? '').trim();
+  if (c?.key) Object.assign(conf, { key: c.key, base: c.base.replace(/\/+$/, ''), source: 'dashboard' as const });
+  else Object.assign(conf, { key: env, base: PYTH.bases[0]!, source: env ? ('env' as const) : null });
+}
+const auth = (): Record<string, string> => (conf.key ? { authorization: `Bearer ${conf.key}` } : {});
+
+/** v17.12: the dashboard's key lives in this server's DB only (BotConfig row, never in git, masked on read) */
+export const PYTH_ROW = '_pyth';
+export async function loadPythConf(): Promise<void> {
+  try {
+    const row = await prisma.botConfig.findUnique({ where: { key: PYTH_ROW } });
+    const v = (row?.value ?? null) as { key?: string; base?: string } | null;
+    if (v?.key && v.base) setPythConf({ key: v.key, base: v.base });
+  } catch (err) {
+    log.warn({ err: (err as Error).message }, 'pyth key not loaded');
+  }
+}
+export async function savePythConf(c: { key: string; base: string } | null): Promise<void> {
+  const value = c ? { key: c.key, base: c.base, updatedAt: new Date().toISOString() } : { updatedAt: new Date().toISOString() };
+  await prisma.botConfig.upsert({ where: { key: PYTH_ROW }, update: { value }, create: { key: PYTH_ROW, value } });
+  setPythConf(c);
+}
+
+/** v17.12: try a key on each endpoint (the feed list must answer with currency pairs); the first that works. */
+export async function testPythKey(key: string, fetcher: (url: string, init: { signal: AbortSignal; headers: Record<string, string> }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }> = fetch as never): Promise<{ ok: true; base: string; pairs: number } | { ok: false; error: string }> {
+  const errs: string[] = [];
+  for (const base of PYTH.bases) {
+    try {
+      const res = await fetcher(`${base}/v2/price_feeds?asset_type=fx`, { signal: AbortSignal.timeout(15_000), headers: { accept: 'application/json', authorization: `Bearer ${key}` } });
+      if (!res.ok) {
+        errs.push(`${new URL(base).host}: ${res.status === 401 ? '401 (no key accepted)' : res.status === 403 ? '403 (key not allowed)' : `HTTP ${res.status}`}`);
+        continue;
+      }
+      const j = await res.json();
+      const pairs = Object.keys(planFeeds(Array.isArray(j) ? (j as PythMeta[]) : [])).length;
+      if (pairs) return { ok: true, base, pairs };
+      errs.push(`${new URL(base).host}: no currency pairs in the answer`);
+    } catch (err) {
+      errs.push(`${(() => { try { return new URL(base).host; } catch { return base; } })()}: ${(err as Error).message}`);
+    }
+  }
+  return { ok: false, error: errs.join('; ') };
+}
 
 export interface PythMeta {
   id: string;
@@ -192,6 +244,8 @@ export class PythLive {
   private listeners = new Set<(ticks: LiveTick[]) => void>();
   private abort: AbortController | null = null;
   private stopped = true;
+  /** v17.12: each start runs its own loop; an older loop (before a restart) ends at its next turn */
+  private gen = 0;
   private fails = 0;
   private resolvedAt = 0;
   private lastByteAt = 0;
@@ -211,7 +265,7 @@ export class PythLive {
   start(): void {
     if (!this.stopped) return;
     this.stopped = false;
-    void this.loop();
+    void this.loop(++this.gen);
     this.watchdog = setInterval(() => {
       if (this.abort && this.clock() - this.lastByteAt > PYTH.watchdogMs) {
         log.warn('pyth stream silent — reconnecting');
@@ -223,6 +277,7 @@ export class PythLive {
 
   stop(): void {
     this.stopped = true;
+    this.gen++;
     this.abort?.abort();
     if (this.watchdog) clearInterval(this.watchdog);
     this.watchdog = null;
@@ -251,7 +306,7 @@ export class PythLive {
   /** feed ids by symbol (also used by tests) */
   async resolve(): Promise<void> {
     const metas: PythMeta[] = [];
-    const res = await this.fetcher(`${PYTH.base}/v2/price_feeds?asset_type=fx`, { signal: AbortSignal.timeout(20_000), headers: { accept: 'application/json', ...auth() } });
+    const res = await this.fetcher(`${conf.base}/v2/price_feeds?asset_type=fx`, { signal: AbortSignal.timeout(20_000), headers: { accept: 'application/json', ...auth() } });
     if (!res.ok) throw new Error(`price_feeds HTTP ${res.status}`);
     const j = (await res.json()) as PythMeta[];
     if (Array.isArray(j)) metas.push(...j);
@@ -300,19 +355,30 @@ export class PythLive {
     }
   }
 
-  private async loop(): Promise<void> {
-    while (!this.stopped) {
+  /** v17.12: start again with the current key / endpoint (feeds looked up again) */
+  restart(): void {
+    this.stop();
+    this.resolvedAt = 0;
+    this.plans = {};
+    this.fails = 0;
+    if (conf.key) this.start();
+  }
+
+  private async loop(gen: number): Promise<void> {
+    const live = () => !this.stopped && gen === this.gen;
+    while (live()) {
       try {
         if (!this.pairs.length || this.clock() - this.resolvedAt > PYTH.resolveEveryMs) await this.resolve();
+        if (!live()) break;
         await this.stream();
         this.fails = 0;
       } catch (err) {
-        if (this.stopped) break;
+        if (!live()) break;
         this.fails++;
         feeds.fail('pyth-live', err);
         log.warn({ err: (err as Error).message, fails: this.fails }, 'pyth stream failed');
       }
-      if (this.stopped) break;
+      if (!live()) break;
       const wait = PYTH.backoffMs[Math.min(PYTH.backoffMs.length - 1, Math.max(0, this.fails - 1))]!;
       await new Promise((r) => setTimeout(r, this.fails ? wait : 1_000));
     }
@@ -324,7 +390,7 @@ export class PythLive {
     const qs = ids.map((id) => `ids[]=${id}`).join('&');
     this.abort = new AbortController();
     this.lastByteAt = this.clock();
-    const res = await this.fetcher(`${PYTH.base}/v2/updates/price/stream?${qs}&parsed=true&ignore_invalid_price_ids=true`, { signal: this.abort.signal, headers: { accept: 'text/event-stream', ...auth() } });
+    const res = await this.fetcher(`${conf.base}/v2/updates/price/stream?${qs}&parsed=true&ignore_invalid_price_ids=true`, { signal: this.abort.signal, headers: { accept: 'text/event-stream', ...auth() } });
     if (!res.ok || !res.body) throw new Error(`stream HTTP ${res.status}`);
     const parser = new SseParser();
     const dec = new TextDecoder();

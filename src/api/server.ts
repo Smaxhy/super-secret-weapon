@@ -20,7 +20,7 @@ import { cohortTestRunning, lastCohortTest, runCohortTest } from '../learner/coh
 import { marketClock } from '../forex/calendar';
 import { loadOanda, maskToken, oandaReady, saveOanda, testOanda } from '../forex/oanda';
 import { feedHealth, feeds as fxFeeds } from '../forex/feeds';
-import { pythKey } from '../forex/pyth';
+import { pythConf, pythKey, pythLive, savePythConf, testPythKey } from '../forex/pyth';
 import { RISK_MODES, isRiskMode, ledgerSummary, pnlUsd, riskSummary } from '../forex/practice';
 import { buildPlan } from '../forex/plan';
 import { botStatus, dayTrades, parsePnlQuery, pnlReport } from '../forex/pnl';
@@ -314,6 +314,32 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       };
     });
     // OANDA demo token = a free DATA feed only (no trading through it); masked on read.
+    // v17.12: the Pyth API key, pasted on the dashboard: tested on Pyth first, kept in this server's DB, shown masked
+    secured.get('/api/forex/pyth', async () => {
+      const c = pythConf();
+      return { connected: !!c.key, source: c.source, key: maskToken(c.key || null), host: c.key ? new URL(c.base).host : null, flowing: pythLive.flowing(), lastTickAt: pythLive.lastTickAt || null, pairs: pythLive.pairs.length };
+    });
+    secured.put<{ Body: { key?: string; clear?: boolean } }>('/api/forex/pyth', async (req, reply) => {
+      const b = req.body ?? {};
+      if (b.clear) {
+        await savePythConf(null);
+        pythLive.restart();
+        return { ok: true };
+      }
+      const key = String(b.key ?? '').trim();
+      if (!/^[A-Za-z0-9._~+/=-]{16,300}$/.test(key)) {
+        reply.code(400);
+        return { ok: false, error: 'paste the API key from Pyth Terminal' };
+      }
+      const t = await testPythKey(key);
+      if (!t.ok) {
+        reply.code(400);
+        return { ok: false, error: `Pyth said no: ${t.error}` };
+      }
+      await savePythConf({ key, base: t.base });
+      pythLive.restart();
+      return { ok: true, host: new URL(t.base).host, pairs: t.pairs };
+    });
     secured.get('/api/forex/oanda', async () => {
       const s = await loadOanda();
       return { connected: oandaReady(s), token: maskToken(s.token), accountId: s.accountId ? `${s.accountId.slice(0, 4)}…${s.accountId.slice(-3)}` : null, env: s.env ?? 'practice', updatedAt: s.updatedAt ?? null };

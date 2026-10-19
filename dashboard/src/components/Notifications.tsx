@@ -7,7 +7,7 @@ import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 import { Card } from './ui';
 
-interface Settings { profitClose: boolean; minProfitSol: number; lossClose: boolean; takeProfit: boolean }
+interface Settings { profitClose: boolean; minProfitSol: number; lossClose: boolean; takeProfit: boolean; /** v17.12 forex */ fxGood?: boolean; fxClose?: boolean }
 interface PushInfo { publicKey: string; subscribers: number; settings: Settings }
 
 const toKey = (b64: string) => {
@@ -133,6 +133,8 @@ export function Notifications() {
             <Toggle label="A trade closes in profit (with the amount)" checked={s.profitClose} onChange={(v) => void setSetting({ profitClose: v })} />
             <Toggle label="A take-profit is sold while the trade keeps running" checked={s.takeProfit} onChange={(v) => void setSetting({ takeProfit: v })} />
             <Toggle label="A trade closes at a loss" checked={s.lossClose} onChange={(v) => void setSetting({ lossClose: v })} />
+            <Toggle label="Forex: a trade is doing really well (profit locked, two thirds of the way to its target)" checked={s.fxGood !== false} onChange={(v) => void setSetting({ fxGood: v })} />
+            <Toggle label="Forex: a trade closes in profit" checked={s.fxClose !== false} onChange={(v) => void setSetting({ fxClose: v })} />
             <label className="flex items-center justify-between gap-3 text-ink-2">
               <span>Only profits of at least</span>
               <span className="flex items-center gap-1">

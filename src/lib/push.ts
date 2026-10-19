@@ -26,8 +26,12 @@ export interface PushSettings {
   lossClose: boolean;
   /** A take-profit tier was sold while the trade keeps running. */
   takeProfit: boolean;
+  /** v17.12 forex: a trade is doing really well (its profit got locked, ⅔ of the way to its target) */
+  fxGood: boolean;
+  /** v17.12 forex: a trade closed in profit (losses follow `lossClose`) */
+  fxClose: boolean;
 }
-export const DEFAULT_PUSH_SETTINGS: PushSettings = { profitClose: true, minProfitSol: 0, lossClose: false, takeProfit: false };
+export const DEFAULT_PUSH_SETTINGS: PushSettings = { profitClose: true, minProfitSol: 0, lossClose: false, takeProfit: false, fxGood: true, fxClose: true };
 
 export interface PushMessage {
   title: string;
@@ -35,6 +39,24 @@ export interface PushMessage {
   /** Opens this dashboard route when tapped. */
   url: string;
   tag?: string;
+}
+
+const fxUsd = (x: number) => `${x >= 0 ? '+' : '−'}$${Math.abs(x).toFixed(2)}`;
+const FX_WHY: Record<string, string> = { stop: 'its stop', target: 'its target', signal: "its strategy's exit", manual: 'closed by hand', 'stop-out': 'margin call' };
+
+/** v17.12 Pure: the notification for a forex trade event, or null when the owner doesn't want it. */
+export function fxMessageFor(n: Extract<BusEvent, { type: 'fxTrade' }>['data'], s: PushSettings): PushMessage | null {
+  const who = n.acct === 'bot' ? 'Bot' : 'Your trade';
+  const dir = n.side === 1 ? 'long' : 'short';
+  const url = n.acct === 'bot' ? '/forex' : '/forex/practice';
+  const pair = n.pair.length === 6 ? `${n.pair.slice(0, 3)}/${n.pair.slice(3)}` : n.pair;
+  const safe = typeof n.stopPnlUsd === 'number' ? ` — even if it turns, it closes ${fxUsd(n.stopPnlUsd)}` : '';
+  if (n.kind === 'lock') return s.fxGood ? { title: `🔒 ${pair} ${fxUsd(n.pnlUsd)} — profit locked`, body: `${who} (${dir}): the stop moved past the entry and now trails the price${safe}.`, url, tag: `fx-${n.acct}-${n.pair}` } : null;
+  if (n.kind === 'run') return s.fxGood ? { title: `🚀 ${pair} ${fxUsd(n.pnlUsd)} — two thirds of the way to the target`, body: `${who} (${dir}) is doing really well${safe}.`, url, tag: `fx-${n.acct}-${n.pair}` } : null;
+  const why = FX_WHY[n.reason ?? ''] ?? n.reason ?? 'closed';
+  if (n.pnlUsd > 0 && s.fxClose) return { title: `💰 ${pair} closed ${fxUsd(n.pnlUsd)}`, body: `${who} (${dir}) · ${why}`, url, tag: `fx-close-${n.acct}-${n.pair}` };
+  if (n.pnlUsd <= 0 && s.lossClose) return { title: `🔻 ${pair} closed ${fxUsd(n.pnlUsd)}`, body: `${who} (${dir}) · ${why}`, url, tag: `fx-close-${n.acct}-${n.pair}` };
+  return null;
 }
 
 /** Pure: the notification for a trade event, or null when the owner doesn't want it. */
@@ -113,6 +135,8 @@ export async function saveSettings(patch: Partial<PushSettings>): Promise<PushSe
     profitClose: typeof patch.profitClose === 'boolean' ? patch.profitClose : cur.profitClose,
     lossClose: typeof patch.lossClose === 'boolean' ? patch.lossClose : cur.lossClose,
     takeProfit: typeof patch.takeProfit === 'boolean' ? patch.takeProfit : cur.takeProfit,
+    fxGood: typeof patch.fxGood === 'boolean' ? patch.fxGood : cur.fxGood,
+    fxClose: typeof patch.fxClose === 'boolean' ? patch.fxClose : cur.fxClose,
     minProfitSol: Number.isFinite(Number(patch.minProfitSol)) ? Math.max(0, Math.min(100, Number(patch.minProfitSol))) : cur.minProfitSol,
   };
   await redis.set(SETTINGS, JSON.stringify(next));
@@ -165,10 +189,11 @@ export async function hasSubscription(endpoint: string): Promise<boolean> {
 /** Listen for trades and notify (call once at start). */
 export function startPushNotifier(): () => void {
   const listener = (e: BusEvent) => {
-    if (e.type !== 'trade') return;
+    if (e.type !== 'trade' && e.type !== 'fxTrade') return;
     void (async () => {
       if (!(await subscriberCount())) return;
-      const m = messageFor(e.data, await getSettings());
+      const s = await getSettings();
+      const m = e.type === 'trade' ? messageFor(e.data, s) : fxMessageFor(e.data, s);
       if (m) await sendAll(m);
     })().catch((err: Error) => log.warn({ err: err.message }, 'notification not sent'));
   };

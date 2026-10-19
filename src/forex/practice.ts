@@ -7,6 +7,7 @@
  */
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
+import { bus, type FxNotice } from '../lib/bus';
 import { feeds } from './feeds';
 import { dkQuote } from './dukascopy';
 import { HEAT, maxRiskUnder, topCorrelated, type CorrBook } from './risk';
@@ -31,6 +32,20 @@ export const PNL_KEEP = 20_000;
 /** v17.8: closes booked on an account object since its last save — that save writes them to the log in the same Redis
  * transaction as the account (so a close is in the log exactly when it is in the stored account), then forgets them */
 const pnlQueue = new WeakMap<PracticeAccount, PnlRow[]>();
+/** v17.12: phone alerts waiting for the account's next save (published once it is written) */
+const noticeQueue = new WeakMap<PracticeAccount, FxNotice[]>();
+function notice(a: PracticeAccount, n: FxNotice): void {
+  const q = noticeQueue.get(a);
+  if (q) q.push(n);
+  else noticeQueue.set(a, [n]);
+}
+/** The alerts gathered on this account object since the last call (and clears them). */
+export function takeNotices(a: PracticeAccount): FxNotice[] {
+  const q = noticeQueue.get(a) ?? [];
+  noticeQueue.delete(a);
+  return q;
+}
+
 function logClose(a: PracticeAccount, c: ClosedPractice): void {
   const q = pnlQueue.get(a);
   if (q) q.push(pnlRowOf(c));
@@ -168,6 +183,8 @@ export interface PracticePosition {
   locked?: boolean;
   lockBest?: number | null;
   stopMovedT?: number | null;
+  /** v17.12: phone alerts already sent (1 = profit locked, 2 = two thirds of the way to the target) */
+  alerts?: number;
 }
 
 export interface ClosedPractice extends PracticePosition {
@@ -412,6 +429,8 @@ function closePos(a: PracticeAccount, p: PracticePosition, px: number, mids: Rec
   a.closed.unshift({ ...p, exit: px, closedAt: at, pnlUsd: pl, reason });
   a.closed = a.closed.slice(0, 200);
   logClose(a, a.closed[0]!); // v17.8
+  // v17.12: a phone alert for a finished trade (a weekend pause is not the end of it)
+  if (reason !== 'weekend' && reason !== 'partial') notice(a, { kind: 'close', pair: p.pair, side: p.side, pnlUsd: Math.round((pl + (p.bankedUsd ?? 0)) * 100) / 100, reason, strategy: p.strategy ?? null });
   if (reason !== 'weekend' && reason !== 'partial') recordTrade(a, statKey(p), at, pl + (p.bankedUsd ?? 0), { ...(p.ref ? { ref: p.ref } : {}), ...(p.riskUsd0 ? { riskUsd0: p.riskUsd0 } : {}), why: reason });
   return pl;
 }
@@ -531,7 +550,8 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
       // v17.11 the owner's profit lock: ⅓ of the way to the target → the stop goes past the entry, then it trails ⅓ of
       // the target distance behind the best price, every check (live prices, about every second)
       if (p.lock) {
-        if (!p.locked && (p.side === 1 ? best >= p.lock.at : best <= p.lock.at)) {
+        const arming = !p.locked && (p.side === 1 ? best >= p.lock.at : best <= p.lock.at);
+        if (arming) {
           p.locked = true;
           p.be = true;
           events.push(`${p.pair} profit lock: a third of the way to the target, stop moved past the entry`);
@@ -544,6 +564,10 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
             p.stopMovedT = t;
             if (mv) mv.moved = true;
           }
+          if (arming && !((p.alerts ?? 0) & 1)) {
+            p.alerts = (p.alerts ?? 0) | 1;
+            notice(a, { kind: 'lock', pair: p.pair, side: p.side, pnlUsd: Math.round(pnlUsd(p, exitClose0, mids) * 100) / 100, stopPnlUsd: Math.round(pnlUsd(p, p.stop, mids) * 100) / 100, strategy: p.strategy ?? null });
+          }
           // the rest of this minute: only its close is left to judge
           if (p.side === 1 ? exitClose0 <= p.stop : exitClose0 >= p.stop) {
             closePos(a, p, p.stop, mids, 'stop', now);
@@ -551,6 +575,12 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
             break;
           }
         }
+      }
+      // v17.12: "doing really well" — two thirds of the way to its target (one phone alert)
+      if (p.target !== null && !((p.alerts ?? 0) & 2) && p.side * (best - p.entry) >= (2 / 3) * p.side * (p.target - p.entry) && p.side * (p.target - p.entry) > 0) {
+        p.alerts = (p.alerts ?? 0) | 2;
+        if (mv) mv.moved = true;
+        notice(a, { kind: 'run', pair: p.pair, side: p.side, pnlUsd: Math.round(pnlUsd(p, exitClose0, mids) * 100) / 100, stopPnlUsd: p.stop !== null ? Math.round(pnlUsd(p, p.stop, mids) * 100) / 100 : null, strategy: p.strategy ?? null });
       }
       // v17: the minute still forming is checked again next time (its high / low can still grow)
       if (t + 60_000 <= now) p.checkedT = t;
@@ -899,6 +929,7 @@ export class Practice {
     if (!this.pnlLogs()) {
       await this.redis.set(keyFor(acct), JSON.stringify(a));
       pnlQueue.delete(a);
+      this.publishNotices(a, acct);
       return;
     }
     const key = pnlKey(acct);
@@ -915,6 +946,11 @@ export class Practice {
     pnlQueue.delete(a);
     this.pnlReady.add(acct);
     if (rows.length || opts.clearLog) this.pnlDirty(acct);
+    this.publishNotices(a, acct);
+  }
+  /** v17.12: the account is written — its trade alerts go out (phone notifications, the dashboard) */
+  private publishNotices(a: PracticeAccount, acct: AcctId): void {
+    for (const n of takeNotices(a)) bus.publish({ type: 'fxTrade', data: { ...n, acct } });
   }
   /** v17.8: the P&L log needs list + transaction support (a bare get / set client just saves the account) */
   private pnlLogs(): boolean {

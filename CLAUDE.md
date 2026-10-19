@@ -538,6 +538,20 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
       POST `/api/forex/practice/lock` {on}, "Profit lock" switch on the Trade-by-hand ticket (with the pip / $ example);
       a TP / SL edit re-plans it unless armed. Plan lines k 'lock'; badges "profit locked"; dashed amber lock line on
       the active-trade chart. tests: forex-yahoo-live, forex-profit-lock.
+  - **v17.12 (owner: "active updates if a trade is doing really good"; "where do I get the APIs for Pyth")**:
+    **Phone alerts** — practice.ts `notice` / `takeNotices` (per account object, published by `save()` once the
+    account is written → bus `{type:'fxTrade', data: FxNotice & {acct}}` (lib/bus.ts `FxNotice`): 'lock' (profit lock
+    armed), 'run' (⅔ of the way to the target, once — `PracticePosition.alerts` bits 1 / 2), 'close' (every finished
+    trade, total incl. parts; weekend pauses / parts excluded). lib/push.ts `fxMessageFor` + settings `fxGood` /
+    `fxClose` (default on; losses follow `lossClose`, off) → Controls → Alerts toggles; tapping opens /forex (bot) or
+    /forex/practice. **Pyth key on the dashboard** — Setup card "Pyth live prices" (`components/PythCard.tsx`): GET /
+    PUT `/api/forex/pyth` {key | clear}: `testPythKey` tries `PYTH.bases` (`PYTH_HERMES_URL`, the upgraded Hermes
+    `https://pyth.dourolabs.app/hermes` (from Mysten's deepbook-v3 SDK `PYTH_UPGRADED_HERMES`), then
+    `hermes.pyth.network`) with `Authorization: Bearer`; the first that lists currency pairs is saved in BotConfig
+    `_pyth` {key, base} (DB only, masked on read) → `setPythConf` + `pythLive.restart()` (generation counter: an old
+    loop never runs on after a restart). At start `loadPythConf()`; a .env key finds its endpoint first. The owner
+    pasted a key in chat — it was NOT put anywhere; they paste it into the card themselves. tests:
+    forex-alerts-pyth-key.
   - **Price stretch** (`src/forex/stretch.ts`, no outside feed): per currency the 63-day return in normal-move units
     (averaged over its pairs, ≥ 3 pairs), ranked within its own last ~2 years (520 days, ≥ 120 ranked) → −1…+1; a
     pair = base − quote (−2…+2, the CFTC score's scale; metals none; > 4 days old → none). `MarketBook.stretch`
