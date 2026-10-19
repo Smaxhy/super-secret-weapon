@@ -92,7 +92,10 @@ export function sniperVotes(c: Ctx, e: FilterEnv, i: number, side: 1 | -1, style
 }
 
 export interface SniperRow {
+  /** entry time */
   t: number;
+  /** v17: exit time — only rows finished before the boundary count in the first 70% (default: the entry time) */
+  exitT?: number;
   r: number;
   votes: number;
 }
@@ -127,7 +130,7 @@ const pf = (xs: readonly SniperRow[]) => {
 
 /** Pick K on the first 70%, grade it once on the unseen 30%. Pure. */
 export function gradeSniper(rows: readonly SniperRow[], oosFrom: number): SniperReport {
-  const ins = rows.filter((x) => x.t < oosFrom);
+  const ins = rows.filter((x) => (x.exitT ?? x.t) < oosFrom);
   const out = rows.filter((x) => x.t >= oosFrom);
   const all = { inN: ins.length, inAvgR: r2(avg(ins)), outN: out.length, outAvgR: r2(avg(out)) };
   const levels: SniperLevel[] = [];

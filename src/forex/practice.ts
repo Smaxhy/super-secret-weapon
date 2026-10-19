@@ -30,6 +30,8 @@ export const BOT = {
   freshMsByTf: { '1m': 2 * 60_000, '15m': 20 * 60_000, '1h': 2 * 3_600_000, '4h': 2 * 3_600_000 } as Record<string, number>,
   /** v15: most open bot trades per chart, so the fast charts can't take every slot */
   maxOpenByTf: { '1m': 2, '15m': 3 } as Record<string, number>,
+  /** v17: the price a new bot trade opens on may be at most this old, per chart (a 1-minute trade needs a fresh price) */
+  quoteAgeMsByTf: { '1m': 2 * 60_000, '15m': 5 * 60_000, '1h': 10 * 60_000, '4h': 10 * 60_000 } as Record<string, number>,
 };
 /**
  * v15.6 (owner: "I need a lot more, at least 10%+ a month"): how hard the bot account trades. Same strategies and checks in
@@ -77,10 +79,15 @@ export interface Quote {
   /** where the price came from */
   source: 'oanda' | 'yahoo';
   barsAt?: number;
-  /** broker time of the price */
+  /** broker time of the price (v17: Yahoo too — its market time) */
   priceT?: number;
   tradeable?: boolean;
+  /** v17: an older cached price handed back because the feed failed just now */
+  stale?: boolean;
 }
+
+/** v17: how old the price behind a quote is (ms; the broker / market time when known). Pure. */
+export const quoteAge = (q: Pick<Quote, 'priceT' | 'bars' | 't'>, now: number) => now - (q.priceT ?? q.bars[q.bars.length - 1]?.[0] ?? q.t);
 
 export interface PracticePosition {
   id: string;
@@ -118,6 +125,8 @@ export interface PracticePosition {
   sniper?: { votes: number; of: number } | null;
   /** bot trades (v15.3): USD already banked by parts taken off (and legs before a weekend pause) */
   bankedUsd?: number;
+  /** v17: closing was asked for while there was no price — it closes at the first price that arrives */
+  closePending?: { reason: 'signal' | 'manual' | 'weekend'; at: number } | null;
   /** bot trades (v15): the strategy's chart and the exit rules still in force (shown as the trade's plan); v15.1:
    * `trailPx` = the trailing stop-loss distance (price) */
   tf?: string;
@@ -338,6 +347,13 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
   for (const p of [...a.open]) {
     const q = quotes[p.pair];
     if (!q) continue;
+    // v17: a close asked for while there was no price happens at the first real one
+    if (p.closePending && !q.stale) {
+      const leg = closePos(a, p, p.side === 1 ? q.bid : q.ask, mids, p.closePending.reason, now);
+      if (p.closePending.reason === 'weekend') recordTrade(a, statKey(p), now, leg + (p.bankedUsd ?? 0));
+      events.push(`${p.pair} closed at the first price after its exit (${p.closePending.reason})`);
+      continue;
+    }
     const inst = instrument(p.pair)!;
     const half = halves[p.pair] ?? (inst.spreadPips * inst.pip) / 2;
     for (const [t, h, l, cl] of q.bars) {
@@ -395,7 +411,8 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
     }
   }
   const v = view(a, mids, halves);
-  if (v.marginLevelPct !== null && v.marginLevelPct <= STOP_OUT_PCT) {
+  // v17: never a margin call on made-up prices — every open market needs a quote this tick
+  if (v.marginLevelPct !== null && v.marginLevelPct <= STOP_OUT_PCT && a.open.every((p) => mids[p.pair] !== undefined)) {
     for (const p of [...a.open]) closePos(a, p, exitPx(p, mids[p.pair] ?? p.entry, halves[p.pair]), mids, 'stop-out', now);
     events.push('margin call: every position closed');
   }
@@ -411,7 +428,7 @@ async function fetchQuote(inst: Instrument): Promise<Quote | null> {
       const url = `https://${host}/v8/finance/chart/${encodeURIComponent(inst.yahoo)}?interval=1m&range=1d`;
       const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64)' }, signal: AbortSignal.timeout(10_000) });
       if (!res.ok) continue;
-      const j = (await res.json()) as { chart?: { result?: Array<{ meta?: { regularMarketPrice?: number; chartPreviousClose?: number }; timestamp?: number[]; indicators?: { quote?: Array<{ high?: Array<number | null>; low?: Array<number | null>; close?: Array<number | null> }> } }> } };
+      const j = (await res.json()) as { chart?: { result?: Array<{ meta?: { regularMarketPrice?: number; regularMarketTime?: number; chartPreviousClose?: number }; timestamp?: number[]; indicators?: { quote?: Array<{ high?: Array<number | null>; low?: Array<number | null>; close?: Array<number | null> }> } }> } };
       const r = j.chart?.result?.[0];
       const q = r?.indicators?.quote?.[0];
       const bars: Quote['bars'] = [];
@@ -426,7 +443,9 @@ async function fetchQuote(inst: Instrument): Promise<Quote | null> {
       // v16: the synthetic spread follows the measured hour-of-day profile (wider at rollover)
       const half = (inst.spreadPips * inst.pip * spreadMultAt(inst.id, Date.now(), null)) / 2;
       const prev = r?.meta?.chartPreviousClose;
-      return { id: inst.id, mid, bid: mid - half, ask: mid + half, t: Date.now(), bars: bars.slice(-180), dayChangePct: prev ? Math.round(((mid / prev - 1) * 100) * 100) / 100 : null, source: 'yahoo' };
+      const mt = r?.meta?.regularMarketTime;
+      const priceT = mt && mt > 0 ? mt * 1000 : bars[bars.length - 1]?.[0];
+      return { id: inst.id, mid, bid: mid - half, ask: mid + half, t: Date.now(), bars: bars.slice(-180), dayChangePct: prev ? Math.round(((mid / prev - 1) * 100) * 100) / 100 : null, source: 'yahoo', ...(priceT ? { priceT } : {}) };
     } catch {
       // next host
     }
@@ -506,7 +525,7 @@ export interface ExitPlan {
   exitWhen?: string | null;
 }
 
-export interface OpenReq extends ExitPlan { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; bankedUsd?: number }
+export interface OpenReq extends ExitPlan { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; bankedUsd?: number; /** v17: refuse a price older than this (default 30 min) */ maxQuoteAgeMs?: number }
 
 /** The exit-plan fields of a lab trade, ready for `openIn`. Pure. */
 export function planOf(t: LabOpenTrade): ExitPlan {
@@ -581,7 +600,7 @@ export class Practice {
     if (!inst) return null;
     const q = await fetchQuote(inst);
     if (q) this.cache.set(id, q);
-    return q ?? c ?? null;
+    return q ?? (c ? { ...c, stale: true } : null);
   }
 
   async quotes(ids: readonly string[] = INSTRUMENTS.map((i) => i.id), maxAgeMs = 15_000): Promise<Record<string, Quote>> {
@@ -625,16 +644,19 @@ export class Practice {
     return out;
   }
 
+  /**
+   * v17: a Redis error (or an unreadable account) THROWS — it used to hand back a fresh $1,000 account, and the next save
+   * wiped the real one. Only a missing key is a new account.
+   */
   private async load(acct: AcctId = 'me'): Promise<PracticeAccount> {
-    const raw = await this.redis.get(keyFor(acct)).catch(() => null);
-    if (raw) {
-      try {
-        return JSON.parse(raw) as PracticeAccount;
-      } catch {
-        // fall through
-      }
+    const raw = await this.redis.get(keyFor(acct));
+    if (raw === null) return newAccount();
+    try {
+      return JSON.parse(raw) as PracticeAccount;
+    } catch (err) {
+      log.error({ acct, err: (err as Error).message }, 'practice account unreadable — not touching it');
+      throw new Error('practice account unreadable');
     }
-    return newAccount();
   }
   private async save(a: PracticeAccount, acct: AcctId = 'me'): Promise<void> {
     await this.redis.set(keyFor(acct), JSON.stringify(a));
@@ -666,8 +688,14 @@ export class Practice {
         const mids: Record<string, number> = {};
         for (const x of Object.values(q)) mids[x.id] = x.mid;
         for (const p of [...a.open]) {
-          const qq = q[p.pair];
-          const leg = closePos(a, p, qq ? (p.side === 1 ? qq.bid : qq.ask) : exitPx(p, mids[p.pair] ?? p.entry), mids, 'weekend', Date.now());
+          // v17: at the live price, else the last price this process saw (never the entry price); none at all → it
+          // closes at the first price that arrives
+          const qq = q[p.pair] ?? this.cache.get(p.pair);
+          if (!qq) {
+            if (!p.closePending) p.closePending = { reason: 'weekend', at: Date.now() };
+            continue;
+          }
+          const leg = closePos(a, p, p.side === 1 ? qq.bid : qq.ask, mids, 'weekend', Date.now());
           if (p.ref) a.resume = [...(a.resume ?? []), { ref: p.ref, ...(p.strategy ? { strategy: p.strategy } : {}), pair: p.pair, side: p.side, ...(p.riskPct !== undefined ? { riskPct: p.riskPct } : {}), scaled: !!p.scaled, tpHit: !!p.tpHit, lev: p.leverage, bankedUsd: Math.round(((p.bankedUsd ?? 0) + leg) * 100) / 100, at: Date.now() }];
           else recordTrade(a, statKey(p), Date.now(), leg + (p.bankedUsd ?? 0));
         }
@@ -714,7 +742,9 @@ export class Practice {
       const q = await this.quotes(this.neededIds(a, [inst.id]), 10_000);
       const quote = q[inst.id];
       if (!quote) return { ok: false, error: 'no price right now (market closed or feed down)' };
-      if (quote.tradeable === false || Date.now() - (quote.priceT ?? quote.bars[quote.bars.length - 1]?.[0] ?? 0) > 30 * 60_000) return { ok: false, error: 'market is closed right now (forex: Sunday 22:00 – Friday 22:00 UTC)' };
+      if (quote.stale) return { ok: false, error: 'the price feed failed just now (only an older price): not opening on it' };
+      if (quote.tradeable === false || quoteAge(quote, Date.now()) > 30 * 60_000) return { ok: false, error: 'market is closed right now (forex: Sunday 22:00 – Friday 22:00 UTC)' };
+      if (req.maxQuoteAgeMs !== undefined && quoteAge(quote, Date.now()) > req.maxQuoteAgeMs) return { ok: false, error: `the newest price is ${Math.round(quoteAge(quote, Date.now()) / 60_000)} min old (this chart needs ≤ ${Math.round(req.maxQuoteAgeMs / 60_000)} min)` };
       const mids: Record<string, number> = {};
       for (const x of Object.values(q)) mids[x.id] = x.mid;
       const v = view(a, mids, { [inst.id]: (quote.ask - quote.bid) / 2 });
@@ -766,7 +796,7 @@ export class Practice {
    * the charts this call manages (the hourly lab passes 1h + 4h, the fast lab 15m or 1m), so one never closes the
    * other's trades; `report` collects what it saw for the bot's plan.
    */
-  async syncBot(labOpen: LabOpenTrade[], blockFor: (pair: string) => string | null = () => null, atr1h: Record<string, number> = {}, opts: { scope?: readonly string[]; report?: SyncReport } = {}): Promise<string[]> {
+  async syncBot(labOpen: LabOpenTrade[], blockFor: (pair: string) => string | null = () => null, atr1h: Record<string, number> = {}, opts: { scope?: readonly string[]; report?: SyncReport; pairsSeen?: ReadonlySet<string> } = {}): Promise<string[]> {
     const inScope = (ref: string | undefined) => !opts.scope || opts.scope.includes(tfOfRef(ref));
     const rep = opts.report;
     return this.serial(async () => {
@@ -786,7 +816,20 @@ export class Practice {
         if (!p.ref || !inScope(p.ref)) continue;
         const lab = byRef.get(p.ref);
         if (!lab) {
-          closePos(a, p, pxNow(p.pair, p.side) ?? exitPx(p, mids[p.pair] ?? p.entry), mids, 'signal', Date.now());
+          // v17: the lab had no candles for this market this time → it can't know the trade ended: keep it
+          if (opts.pairsSeen && !opts.pairsSeen.has(p.pair)) {
+            events.push(`kept ${p.pair} (${p.strategy}): no fresh candles for it this check, its stop / target still guard it`);
+            continue;
+          }
+          const px = q[p.pair]?.stale ? null : pxNow(p.pair, p.side);
+          if (px === null) {
+            if (!p.closePending) {
+              p.closePending = { reason: 'signal', at: Date.now() };
+              events.push(`${p.pair} (${p.strategy}): its strategy's exit fired but there's no live price — it closes at the first one`);
+            }
+            continue;
+          }
+          closePos(a, p, px, mids, 'signal', Date.now());
           events.push(`closed ${p.pair} (${p.strategy}): its strategy's exit fired`);
           continue;
         }
@@ -845,6 +888,10 @@ export class Practice {
             continue;
           }
           const lab = byRef.get(r.ref);
+          if (!lab && opts.pairsSeen && !opts.pairsSeen.has(r.pair)) {
+            keep.push(r);
+            continue;
+          }
           if (!lab) {
             events.push(`${r.pair} (${r.strategy ?? 'bot'}) ended over the weekend, not re-opened`);
             done();
@@ -872,7 +919,7 @@ export class Practice {
           const rlev = r.lev ?? L.leverage;
           const margin = Math.min((v.equityUsd * risk) / 100 / (dist / entry) / rlev, v.freeMarginUsd * SIZING.marginShare);
           if (margin < 1) continue;
-          const res = await this.openIn(a, { pair: r.pair, side: r.side, marginUsd: margin, leverage: rlev, stop: lab.stop, target: lab.target, ...(r.strategy ? { strategy: r.strategy } : {}), ref: r.ref, riskPct: Math.round(risk * 100) / 100, ...planOf(lab), scaled: !!r.scaled || !!lab.scaled, tpHit: !!r.tpHit || !!lab.tpHit, bankedUsd: r.bankedUsd ?? 0 });
+          const res = await this.openIn(a, { pair: r.pair, side: r.side, marginUsd: margin, leverage: rlev, stop: lab.stop, target: lab.target, ...(r.strategy ? { strategy: r.strategy } : {}), ref: r.ref, riskPct: Math.round(risk * 100) / 100, ...planOf(lab), scaled: !!r.scaled || !!lab.scaled, tpHit: !!r.tpHit || !!lab.tpHit, bankedUsd: r.bankedUsd ?? 0, maxQuoteAgeMs: BOT.quoteAgeMsByTf[tfOfRef(r.ref)] ?? 10 * 60_000 });
           events.push(res.ok ? `re-opened ${r.side === 1 ? 'long' : 'short'} ${r.pair} (${r.strategy ?? 'bot'}) after the weekend` : `could not re-open ${r.pair}: ${res.error}`);
         }
         a.resume = keep;
@@ -969,7 +1016,7 @@ export class Practice {
           continue;
         }
         const actual = Math.round(((margin * lev * (dist / entry)) / v.equityUsd) * 10_000) / 100;
-        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}) });
+        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}), maxQuoteAgeMs: BOT.quoteAgeMsByTf[tf] ?? 10 * 60_000 });
         const sure = snipe ? ` — SNIPER: ${snipe.votes} of ${snipe.of} checks agree, risking ${actual}% at ${lev}×` : conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
         events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${sure}${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}` : `skipped ${t.pair}: ${r.error}`);
         if (r.ok) {
@@ -1003,12 +1050,19 @@ export class Practice {
       const q = await this.quotes(this.neededIds(a), 5_000);
       const mids: Record<string, number> = {};
       for (const x of Object.values(q)) mids[x.id] = x.mid;
+      let pending = 0;
       for (const p of targets) {
         const qq = q[p.pair];
-        closePos(a, p, qq ? (p.side === 1 ? qq.bid : qq.ask) : exitPx(p, mids[p.pair] ?? p.entry), mids, 'manual', Date.now());
+        // v17: no price → never a made-up close at the entry price: it closes at the first price that arrives
+        if (!qq || qq.stale) {
+          p.closePending = { reason: 'manual', at: Date.now() };
+          pending++;
+          continue;
+        }
+        closePos(a, p, p.side === 1 ? qq.bid : qq.ask, mids, 'manual', Date.now());
       }
       await this.save(a, acct);
-      return { ok: true };
+      return pending ? { ok: true, error: `${pending} position${pending > 1 ? 's' : ''} will close at the first price (no live price right now)` } : { ok: true };
     });
   }
 
@@ -1079,7 +1133,7 @@ export class Practice {
       const fresh = newAccount(Math.min(1_000_000, Math.max(10, startUsd)));
       // the bot keeps its risk mode across a reset
       if (acct === 'bot') {
-        const mode = (await this.load('bot')).riskMode;
+        const mode = (await this.load('bot').catch(() => null))?.riskMode;
         if (mode) fresh.riskMode = mode;
       }
       await this.save(fresh, acct);

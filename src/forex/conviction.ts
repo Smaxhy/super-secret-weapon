@@ -105,6 +105,8 @@ export interface ConvictionReport {
 export interface ConvRow {
   /** entry time */
   t: number;
+  /** v17: exit time — only rows finished before the boundary count in the first 70% (default: the entry time) */
+  exitT?: number;
   r: number;
   conf: number;
 }
@@ -117,7 +119,7 @@ const avg = (xs: readonly ConvRow[]) => (xs.length ? xs.reduce((a, b) => a + b.r
  * clearly more on the unseen part. `judge` = the confirmations include the judge's score. Pure.
  */
 export function gradeConviction(rows: readonly ConvRow[], oosFrom: number, scope: string, judge: boolean, cuts: Cuts): ConvictionReport {
-  const ins = rows.filter((x) => x.t < oosFrom);
+  const ins = rows.filter((x) => (x.exitT ?? x.t) < oosFrom);
   const out = rows.filter((x) => x.t >= oosFrom);
   const all = { inN: ins.length, inAvgR: r2(avg(ins)), outN: out.length, outAvgR: r2(avg(out)) };
   const stat = (tier: 'sure' | 'verySure', from: number): TierStats => {

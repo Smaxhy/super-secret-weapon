@@ -147,7 +147,12 @@ export interface JudgeRow {
   r: number;
   /** entry time */
   t: number;
+  /** v17: exit time — a row only teaches the first 70% if it finished before the boundary (default: the entry time) */
+  exitT?: number;
 }
+
+/** v17 purge: finished before `t` (rows without an exit time count by their entry). Pure. */
+export const doneBefore = (r: { t: number; exitT?: number }, t: number) => (r.exitT ?? r.t) < t;
 
 export interface JudgeReport {
   active: boolean;
@@ -207,16 +212,18 @@ function toMatrix(rows: readonly JudgeRow[]): Matrix {
 }
 
 /**
- * Train on rows entered before `oosFrom`, choose how picky to be on the newest 20% of those, then grade once on the
- * rows entered from `oosFrom` on. Returns the model (null when there is too little data) and the report.
+ * Train on rows finished before `oosFrom` (v17 purge), choose how picky to be on the newest 20% of those, then grade
+ * once on the rows entered from `oosFrom` on. Returns the model (null when there is too little data) and the report.
  */
 export async function trainJudge(rows: readonly JudgeRow[], oosFrom: number, cfg = JUDGE_CONFIG): Promise<{ model: JudgeModel | null; report: JudgeReport }> {
-  const ins = rows.filter((r) => r.t < oosFrom).sort((a, b) => a.t - b.t).slice(-cfg.maxTrainRows);
+  const ins = rows.filter((r) => doneBefore(r, oosFrom)).sort((a, b) => a.t - b.t).slice(-cfg.maxTrainRows);
   const oos = rows.filter((r) => r.t >= oosFrom);
   const empty = (why: string): { model: null; report: JudgeReport } => ({ model: null, report: { active: false, why, trainedOn: ins.length, tested: oos.length, auc: null, threshold: null, keepPct: 100, allR: r2(avg(oos.map((r) => r.r))), keptR: r2(avg(oos.map((r) => r.r))), skippedR: 0, allWinPct: 0, keptWinPct: 0, importance: [] } });
   if (ins.length < cfg.minTrain) return empty(`needs ${cfg.minTrain} trades from the first 70% to learn from (has ${ins.length})`);
   const cut = Math.floor(ins.length * 0.8);
-  const tr = toMatrix(ins.slice(0, cut));
+  // the trees learn only from trades finished before the newest 20% starts (same purge, one level down)
+  const vFrom = ins[cut]?.t ?? Infinity;
+  const tr = toMatrix(ins.slice(0, cut).filter((r) => doneBefore(r, vFrom)));
   const va = toMatrix(ins.slice(cut));
   const opts = { ...DEFAULT_TREE_OPTIONS, depth: 3, learningRate: 0.06, rounds: cfg.rounds, minChildWeight: 20, l2: 5, colSample: 0.8, earlyStop: 25 };
   const cuts = cutPoints(tr, opts.bins);

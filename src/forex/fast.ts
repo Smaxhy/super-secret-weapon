@@ -25,7 +25,7 @@ import { stratFactorFromVerdict, volFactor } from './portfolio';
 import { marketClock } from './calendar';
 import { newSyncReport, type LabOpenTrade } from './practice';
 import { withEnd } from './mtf';
-import { bigChart, evaluateTf, makeSeries, pickedOnInSample, signalIndex, slimTrade, toLabTrade, type BigChart, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
+import { bigChart, evaluateTf, makeSeries, paperSince, pickedOnInSample, signalIndex, slimTrade, toLabTrade, type BigChart, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
 import type { ExitKind } from './exits';
 import type { FilterKind } from './filters';
 import { agreeCount, boostFor, gradeConviction, maxConfirmations, tierOf, type ConvictionReport, type ConvRow } from './conviction';
@@ -317,11 +317,7 @@ export class FastLab {
     if (!book) return null;
     await this.ensureLoaded();
     const t0 = Date.now();
-    let since = Number(await this.redis.get(FX_FAST_SINCE).catch(() => null));
-    if (!Number.isFinite(since) || since <= 0) {
-      since = now;
-      await this.redis.set(FX_FAST_SINCE, String(since)).catch(() => undefined);
-    }
+    const since = await paperSince(this.redis, FX_FAST_SINCE, now);
     let prev: Record<string, { f?: FilterKind; e?: ExitKind }> = {};
     try {
       prev = JSON.parse((await this.redis.get(FX_FAST_CHOSEN).catch(() => null)) ?? '{}') as typeof prev;
@@ -358,7 +354,7 @@ export class FastLab {
         for (const t of x.done) {
           const se = byPair.get(t.pair);
           const si = se ? signalIndex(se.ctx.bars, t.entryT, se.ctx.barMin) : -1;
-          if (se && si >= 0) conv.push({ t: t.entryT, r: t.r, conf: agreeCount(se.env, si, t.side) });
+          if (se && si >= 0) conv.push({ t: t.entryT, exitT: t.exitT, r: t.r, conf: agreeCount(se.env, si, t.side) });
         }
       });
       conviction[tf] = gradeConviction(conv, oosFrom, tf, false, { pHi: null, pTop: null });
@@ -418,10 +414,13 @@ export class FastLab {
       const openKeys: Record<string, number> = {};
       const byPair: FastFiring['byPair'] = {};
       let newest = 0;
+      /** v17: markets this pass really looked at (enough candles, the newest one recent) — a held trade on any other market is kept, not closed */
+      const pairsSeen = new Set<string>();
       for (const inst of INSTRUMENTS) {
         const all = this.series(tf, inst.id);
         if (all.length < WARMUP + 60) continue;
         const bars = all.slice(-FX_FAST.liveBars);
+        if (bars[bars.length - 1]!.t + 4 * TF_MIN[tf] * 60_000 >= now) pairsSeen.add(inst.id);
         const [b1, b2] = this.bigFor(tf, inst.id, book);
         const se = makeSeries(inst, tf, bars, book, b1, b2);
         const last = bars.length - 1;
@@ -460,7 +459,7 @@ export class FastLab {
       if (!practice || !rowsTf.length) return;
       const sync = newSyncReport();
       const ev = await practice
-        .syncBot(labOpen, (pair) => this.lab.calendar?.blockFor(pair) ?? this.lab.headlines?.blockFor(pair) ?? null, this.lab.atr1h, { scope: [tf], report: sync })
+        .syncBot(labOpen, (pair) => this.lab.calendar?.blockFor(pair) ?? this.lab.headlines?.blockFor(pair) ?? null, this.lab.atr1h, { scope: [tf], report: sync, pairsSeen })
         .catch((err: Error) => [`bot sync (${tf}) failed: ${err.message}`]);
       this.lab.lastSync[tf] = sync;
       this.lab.logBot(ev);

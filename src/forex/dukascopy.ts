@@ -11,6 +11,7 @@ import { getHistoricalRates } from 'dukascopy-node';
 import { moduleLogger } from '../lib/logger';
 import { INSTRUMENTS, STRENGTH_PAIRS, instrument, type Bar } from './types';
 import { profileFrom, setSpreadProfile } from './spreads';
+import { marketClock } from './calendar';
 
 const log = moduleLogger('forex-dukascopy');
 const DAY = 86_400_000;
@@ -28,7 +29,10 @@ export const DK = {
   maxSeamGap: 0.004,
   /** pause between requests (be polite to the free service) */
   pauseMs: 300,
+  /** one request may take at most this long (the library has no abort) */
+  timeoutMs: 45_000,
 };
+const HOUR = 3_600_000;
 
 export const dkKey = (id: string) => `fx:bars:dk:${id}`;
 export const DK_META = 'fx:dk:meta';
@@ -45,20 +49,54 @@ export interface DkMeta {
 
 type Fetch = (id: string, priceType: 'bid' | 'ask', from: Date, to: Date) => Promise<number[][]>;
 
-/** The real fetcher (dukascopy-node, h1 candles). */
-const fetchDk: Fetch = async (id, priceType, from, to) =>
-  (await getHistoricalRates({ instrument: id.toLowerCase() as never, dates: { from, to }, timeframe: 'h1', priceType, format: 'array', volumes: false, batchSize: 5, pauseBetweenBatchesMs: 800, retryCount: 2, failAfterRetryCount: false })) as unknown as number[][];
+/** Reject after `ms` (dukascopy-node has no abort option). */
+export function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  return Promise.race([
+    p.finally(() => {
+      if (timer) clearTimeout(timer);
+    }),
+    new Promise<T>((_, rej) => {
+      timer = setTimeout(() => rej(new Error(`${what} timed out after ${Math.round(ms / 1000)} s`)), ms);
+    }),
+  ]);
+}
+
+/**
+ * The real fetcher (dukascopy-node, h1 candles). v17: `volumes: true` + `ignoreFlats: true` — the library's flat-candle
+ * filter reads the volume column, so with volumes off every weekend / holiday hour came back as a flat filler candle.
+ */
+const fetchDk: Fetch = (id, priceType, from, to) =>
+  withTimeout(
+    getHistoricalRates({ instrument: id.toLowerCase() as never, dates: { from, to }, timeframe: 'h1', priceType, format: 'array', volumes: true, ignoreFlats: true, batchSize: 5, pauseBetweenBatchesMs: 800, retryCount: 2, failAfterRetryCount: false }) as unknown as Promise<number[][]>,
+    DK.timeoutMs,
+    `dukascopy ${id} ${priceType}`,
+  );
+
+/** A real trading hour: not a weekend / holiday filler and not still forming. Pure. */
+export function liveHour(t: number, now: number | null, barMs = HOUR): boolean {
+  if (now !== null && t + barMs > now) return false;
+  return marketClock(t + barMs / 2).open;
+}
+const flatRow = (r: readonly number[]) => r[1] === r[2] && r[2] === r[3] && r[3] === r[4];
 
 const pipOf = (id: string) => instrument(id)?.pip ?? (id.includes('JPY') ? 0.01 : 0.0001);
 
-/** Bid + ask candles → mid bars with the close spread in pips. Bars missing on either side are dropped. Pure. */
-export function midBars(id: string, bid: ReadonlyArray<readonly number[]>, ask: ReadonlyArray<readonly number[]>): DkBar[] {
+/**
+ * Bid + ask candles → mid bars with the close spread in pips. Dropped (v17): bars missing on either side, bars with no
+ * volume on either side, bars flat on both sides (filler), weekend / holiday hours and the still-forming bar (`now`).
+ * Pure.
+ */
+export function midBars(id: string, bid: ReadonlyArray<readonly number[]>, ask: ReadonlyArray<readonly number[]>, now: number | null = null): DkBar[] {
   const pip = pipOf(id);
   const askBy = new Map(ask.map((r) => [r[0]!, r]));
   const out: DkBar[] = [];
   for (const b of bid) {
     const a = askBy.get(b[0]!);
     if (!a) continue;
+    if (b[5] === 0 || a[5] === 0) continue;
+    if (flatRow(b) && flatRow(a)) continue;
+    if (!liveHour(b[0]!, now)) continue;
     const [t, bo, bh, bl, bc] = b as [number, number, number, number, number];
     const [, ao, ah, al, ac] = a as [number, number, number, number, number];
     if (![bo, bh, bl, bc, ao, ah, al, ac].every((x) => Number.isFinite(x) && x > 0)) continue;
@@ -69,14 +107,27 @@ export function midBars(id: string, bid: ReadonlyArray<readonly number[]>, ask: 
 
 const px7 = (x: number) => Number(x.toPrecision(7));
 
+/** Stored rows without the filler / weekend bars older versions saved (pure). */
+export function cleanDk(bars: readonly DkBar[]): DkBar[] {
+  return bars.filter((b) => !(b.o === b.h && b.h === b.l && b.l === b.c) && liveHour(b.t, null));
+}
+
+/** Stored bars; v17: rows saved before the flat-candle fix are cleaned on load and re-saved once. */
 export async function loadDk(redis: Redis, id: string): Promise<DkBar[]> {
   const raw = await redis.get(dkKey(id)).catch(() => null);
   if (!raw) return [];
+  let bars: DkBar[];
   try {
-    return (JSON.parse(raw) as number[][]).map(([t, o, h, l, c, s]) => ({ t: t!, o: o!, h: h!, l: l!, c: c!, s: s ?? 0 }));
+    bars = (JSON.parse(raw) as number[][]).map(([t, o, h, l, c, s]) => ({ t: t!, o: o!, h: h!, l: l!, c: c!, s: s ?? 0 }));
   } catch {
     return [];
   }
+  const clean = cleanDk(bars);
+  if (clean.length !== bars.length) {
+    log.info({ id, removed: bars.length - clean.length }, 'dukascopy: removed flat / weekend filler bars');
+    await saveDk(redis, id, clean).catch(() => undefined);
+  }
+  return clean;
 }
 
 async function saveDk(redis: Redis, id: string, bars: readonly DkBar[]): Promise<void> {
@@ -144,7 +195,7 @@ export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: 
       const to = Math.min(now, from + DK.chunkDays * DAY);
       try {
         const [bid, ask] = [await fetcher(id, 'bid', new Date(from), new Date(to)), await fetcher(id, 'ask', new Date(from), new Date(to))];
-        bars = mergeDk(bars, midBars(id, bid, ask));
+        bars = mergeDk(bars, midBars(id, bid, ask, now));
       } catch (err) {
         error = (err as Error).message;
         break;

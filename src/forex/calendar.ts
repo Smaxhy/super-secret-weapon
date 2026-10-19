@@ -63,12 +63,30 @@ export function upcomingFor(pair: string, now: number, events: readonly CalEvent
   });
 }
 
-/** New York weekday (0 = Sun) + minutes since NY midnight. */
+/** v17: US daylight time (since 2007): 2nd Sunday of March 02:00 EST → 1st Sunday of November 02:00 EDT, in UTC ms. */
+const dstSpan = new Map<number, [number, number]>();
+function usDst(y: number): [number, number] {
+  let s = dstSpan.get(y);
+  if (!s) {
+    const firstSun = (m: number) => 1 + ((7 - new Date(Date.UTC(y, m, 1)).getUTCDay()) % 7);
+    s = [Date.UTC(y, 2, firstSun(2) + 7, 7), Date.UTC(y, 10, firstSun(10), 6)];
+    dstSpan.set(y, s);
+  }
+  return s;
+}
+/** New York UTC offset at t (ms). Pure. */
+export function nyOffsetMs(t: number): number {
+  const [a, b] = usDst(new Date(t).getUTCFullYear());
+  return t >= a && t < b ? -4 * 3_600_000 : -5 * 3_600_000;
+}
+
+/**
+ * New York weekday (0 = Sun) + minutes since NY midnight. v17: plain arithmetic (the Intl formatter it replaces cost
+ * ~50 µs a call, and the Dukascopy cleaner asks for every hour of three years).
+ */
 function nyClock(t: number): { dow: number; min: number } {
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }).formatToParts(new Date(t));
-  const get = (k: string) => parts.find((p) => p.type === k)?.value ?? '0';
-  const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(get('weekday'));
-  return { dow, min: Number(get('hour')) * 60 + Number(get('minute')) };
+  const d = new Date(t + nyOffsetMs(t));
+  return { dow: d.getUTCDay(), min: d.getUTCHours() * 60 + d.getUTCMinutes() };
 }
 
 export interface MarketClock {

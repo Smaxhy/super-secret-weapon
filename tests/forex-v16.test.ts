@@ -88,7 +88,8 @@ describe('v16 Dukascopy history', () => {
         const pip = id.includes('JPY') ? 0.01 : 0.0001;
         const half = (new Date(t).getUTCHours() === 22 ? 3 : 0.5) * pip;
         const p = side === 'bid' ? px - half : px + half;
-        rows.push([t, p, p, p, p]);
+        // a real candle (v17 drops flat filler bars) with volume
+        rows.push([t, p, p + pip, p - pip, p, 5]);
       }
       return rows;
     };
@@ -101,7 +102,7 @@ describe('v16 Dukascopy history', () => {
     expect(Object.keys(meta.ids).sort()).toEqual(ids.sort());
     expect(calls.length).toBe(ids.length * 2 * Math.ceil(DK.historyDays / DK.chunkDays));
     const eur = await loadDk(asRedis(redis), 'EURUSD');
-    expect(eur.length).toBeGreaterThan(20_000);
+    expect(eur.length).toBeGreaterThan(15_000); // weekdays only (v17: weekend filler dropped)
     expect(spreadMultAt('EURUSD', Date.UTC(2026, 9, 1, 22), Date.UTC(2026, 9, 1, 21))).toBe(6);
     // within the refresh window: no new download
     calls.length = 0;

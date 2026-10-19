@@ -314,10 +314,27 @@ export function summarizeExits(rows: ReadonlyArray<Pick<Row, 'id' | 'exit' | 'ex
   });
 }
 
-/** closed trades → all / first 70% / unseen 30% stats */
-function statsOf(trades: readonly Trade[], oosFrom: number): Split {
+/**
+ * When the forward test (paper) started. v17: a Redis error throws (the run is skipped) instead of looking like "never
+ * set" and restarting the paper clock; a missing value is set only if still missing (`NX`).
+ */
+export async function paperSince(redis: Pick<Redis, 'get' | 'set'>, key: string, now: number): Promise<number> {
+  const raw = await redis.get(key);
+  const v = Number(raw);
+  if (raw !== null && Number.isFinite(v) && v > 0) return v;
+  await redis.set(key, String(now), 'NX');
+  const again = Number(await redis.get(key));
+  return Number.isFinite(again) && again > 0 ? again : now;
+}
+
+/**
+ * closed trades → all / first 70% / unseen 30% stats. v17 purge: the first 70% only holds trades that were FINISHED
+ * before the boundary (a trade opened before it and closed after would carry unseen prices into the pick); the unseen
+ * part holds trades opened after it. Trades straddling the boundary count in `all` only.
+ */
+export function statsOf(trades: readonly Trade[], oosFrom: number): Split {
   const done = trades.filter((t) => t.reason !== 'open');
-  return { all: rStats(done), inSample: rStats(done.filter((t) => t.entryT < oosFrom)), outSample: rStats(done.filter((t) => t.entryT >= oosFrom)) };
+  return { all: rStats(done), inSample: rStats(done.filter((t) => t.exitT < oosFrom)), outSample: rStats(done.filter((t) => t.entryT >= oosFrom)) };
 }
 type Split = { all: RStats; inSample: RStats; outSample: RStats };
 
@@ -729,11 +746,24 @@ export class ForexLab {
 
   run(refresh = true): Promise<FxReport | null> {
     if (this.running) return this.running;
-    this.running = this.doRun(refresh).finally(() => {
-      this.running = null;
-    });
+    this.running = this.doRun(refresh)
+      .then((r) => {
+        this.lastError = null;
+        return r;
+      })
+      .catch((err: Error) => {
+        // v17: a failed hourly run is logged and shown (it used to vanish)
+        this.lastError = { t: Date.now(), msg: err?.message ?? String(err) };
+        log.error({ err: this.lastError.msg }, 'forex lab run failed');
+        throw err;
+      })
+      .finally(() => {
+        this.running = null;
+      });
     return this.running;
   }
+  /** v17: the last run's error (null after a good run) */
+  lastError: { t: number; msg: string } | null = null;
 
   /** The bot's per strategy:chart record: losers (12+ trades, net loss) are dropped, winners sized a bit up. */
   async botRecord(): Promise<{ dropped: string[]; proven: Set<string> }> {
@@ -760,11 +790,7 @@ export class ForexLab {
         await new Promise((r) => setTimeout(r, 700));
       }
     }
-    let since = Number(await this.redis.get(FX_PAPER_SINCE).catch(() => null));
-    if (!Number.isFinite(since) || since <= 0) {
-      since = Date.now();
-      await this.redis.set(FX_PAPER_SINCE, String(since)).catch(() => undefined);
-    }
+    const since = await paperSince(this.redis, FX_PAPER_SINCE, Date.now());
 
     // ── market read: strength (traded FX + crosses), mood ──
     const h1ById = new Map<string, Bar[]>();
@@ -860,7 +886,7 @@ export class ForexLab {
     const judgeRows: JudgeRow[] = [];
     const judgeX = new Map<string, Float64Array>();
     /** v15.2 conviction: closed trades of the picked strategies (market checks + judge features), and every open trade's checks */
-    const convPend: Array<{ key: string; t: number; r: number; agree: number; x: Float64Array; extra: number }> = [];
+    const convPend: Array<{ key: string; t: number; exitT: number; r: number; agree: number; x: Float64Array; extra: number }> = [];
     const openAgree = new Map<string, number>();
     /** v16 sniper: the extra votes (and their words) of every open trade */
     const openExtra = new Map<string, { total: number; yes: string[]; of: number }>();
@@ -874,15 +900,26 @@ export class ForexLab {
         const exitTs = byExitT.map((t) => t.exitT);
         const prefix = [0];
         for (const t of byExitT) prefix.push(prefix[prefix.length - 1]! + t.r);
-        const formAt = (entryT: number) => {
+        /** how many of the strategy's trades had finished before t */
+        const doneBy = (t: number) => {
           let lo = 0;
           let hi = exitTs.length;
           while (lo < hi) {
             const mid = (lo + hi) >> 1;
-            if (exitTs[mid]! < entryT) lo = mid + 1;
+            if (exitTs[mid]! < t) lo = mid + 1;
             else hi = mid;
           }
+          return lo;
+        };
+        const formAt = (entryT: number) => {
+          const lo = doneBy(entryT);
           return prefix[lo]! - prefix[Math.max(0, lo - 10)]!;
+        };
+        // v17: the strategy's record so far (every trade finished before this one opened), not its whole first-70% average —
+        // that average holds this trade's own result and later ones, which taught the judge to trust a number it can't know
+        const priorAt = (entryT: number) => {
+          const lo = doneBy(entryT);
+          return lo >= 5 ? prefix[lo]! / lo : NaN;
         };
         const always = FX_CONFIG.botAlways.includes(x.s.id);
         const picked = always || pickedOnInSample(x.ch.inSample);
@@ -893,7 +930,7 @@ export class ForexLab {
           if (si < 0) continue;
           // the target it was opened with (a trailing take-profit clears the live one: that would leak the outcome)
           const tgt = t.target0 !== undefined ? t.target0 : t.target;
-          const fx = judgeFeatures(se.ctx, se.env, si, t.side, t.stop0, tgt, { style: x.style, prior: x.ch.inSample.avgR, form: formAt(t.entryT), tf });
+          const fx = judgeFeatures(se.ctx, se.env, si, t.side, t.stop0, tgt, { style: x.style, prior: priorAt(t.entryT), form: formAt(t.entryT), tf });
           const agree = agreeCount(se.env, si, t.side);
           const ex = extraVotes(se.ctx, se.env, si, t.side, x.style);
           if (t.reason === 'open') {
@@ -901,9 +938,9 @@ export class ForexLab {
             openAgree.set(tradeKey(t), agree);
             openExtra.set(tradeKey(t), ex);
           } else {
-            judgeRows.push({ x: fx, r: t.r, t: t.entryT });
+            judgeRows.push({ x: fx, r: t.r, t: t.entryT, exitT: t.exitT });
             if (t.entryT >= oosFrom) judgeX.set(tradeKey(t), fx);
-            if (picked) convPend.push({ key: tradeKey(t), t: t.entryT, r: t.r, agree, x: fx, extra: ex.total });
+            if (picked) convPend.push({ key: tradeKey(t), t: t.entryT, exitT: t.exitT, r: t.r, agree, x: fx, extra: ex.total });
           }
         }
         // walk-forward pool: the raw rules
@@ -946,14 +983,14 @@ export class ForexLab {
     // ── v15.2 bigger size when more sure: judge cut points from the first 70%, tiers graded on the unseen 30% ──
     const hasJudge = judgeModel !== null;
     const pOf = (x: Float64Array | undefined) => (judgeModel && x ? judgeProb(judgeModel, x) : null);
-    const cuts = hasJudge ? judgeCuts(convPend.filter((c) => c.t < oosFrom).map((c) => pOf(c.x)!)) : { pHi: null, pTop: null };
+    const cuts = hasJudge ? judgeCuts(convPend.filter((c) => c.exitT < oosFrom).map((c) => pOf(c.x)!)) : { pHi: null, pTop: null };
     const confOf = new Map<string, number>();
     for (const c of convPend) confOf.set(c.key, confirmations(c.agree, pOf(c.x), cuts));
-    const conviction = gradeConviction(convPend.map((c) => ({ t: c.t, r: c.r, conf: confOf.get(c.key)! })), oosFrom, 'hourly', hasJudge, cuts);
+    const conviction = gradeConviction(convPend.map((c) => ({ t: c.t, exitT: c.exitT, r: c.r, conf: confOf.get(c.key)! })), oosFrom, 'hourly', hasJudge, cuts);
     // ── v16 sniper: every check's vote (market checks + quant engines + judge), K picked on the first 70%, graded unseen ──
     const votesOf = new Map<string, number>();
     for (const c of convPend) votesOf.set(c.key, confOf.get(c.key)! + c.extra);
-    const sniper = gradeSniper(convPend.map((c) => ({ t: c.t, r: c.r, votes: votesOf.get(c.key)! })), oosFrom);
+    const sniper = gradeSniper(convPend.map((c) => ({ t: c.t, exitT: c.exitT, r: c.r, votes: votesOf.get(c.key)! })), oosFrom);
     convPend.length = 0;
     await this.redis.set(FX_CONVICTION, JSON.stringify(conviction)).catch(() => undefined);
     await this.redis.set(FX_SNIPER, JSON.stringify(sniper)).catch(() => undefined);
@@ -1156,7 +1193,8 @@ export class ForexLab {
           }),
           (pair) => this.calendar?.blockFor(pair) ?? this.headlines?.blockFor(pair) ?? null,
           this.atr1h,
-          { scope: FX_CONFIG.timeframes, report: sync },
+          // v17: a held trade on a market with no fresh hourly candles this run is kept (the lab couldn't see it end)
+          { scope: FX_CONFIG.timeframes, report: sync, pairsSeen: new Set(series.filter((se) => se.tf === '1h' && se.ctx.bars.length && se.ctx.bars[se.ctx.bars.length - 1]!.t + 4 * 3_600_000 >= Date.now()).map((se) => se.inst.id)) },
         )
         .catch((err: Error) => [`bot sync failed: ${err.message}`]);
       this.lastSync['1h'] = sync;
