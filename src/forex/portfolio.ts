@@ -135,8 +135,8 @@ export interface PortfolioResult {
 const DAY = 86_400_000;
 const WEEK = 7 * DAY;
 const r1 = (x: number) => Math.round(x * 10) / 10;
-export const weekOf = (t: number) => Math.floor((t + 4 * DAY) / WEEK); // weeks start Monday 00:00 UTC
-/** v17: Monday 00:00 UTC of week number w (inverse of `weekOf`). */
+export const weekOf = (t: number) => Math.floor((t + 4 * DAY) / WEEK); // weeks start Sunday 00:00 UTC (the forex week opens that evening)
+/** v17: Sunday 00:00 UTC of week number w (inverse of `weekOf`). */
 export const weekStart = (w: number) => w * WEEK - 4 * DAY;
 const monthOf = (t: number) => {
   const d = new Date(t);
