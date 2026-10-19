@@ -7,7 +7,7 @@ import { TvChart } from './TvChart';
 import { MarketChart, type ChartDrawings } from './MarketChart';
 import { Badge, Button, Card, Chip, NumberInput, Row, Rows, Stack, StatTile, useStored } from './ui';
 
-interface Quote { id: string; mid: number; bid: number; ask: number; t: number; dayChangePct: number | null; source: 'oanda' | 'yahoo'; tradeable?: boolean }
+interface Quote { id: string; mid: number; bid: number; ask: number; t: number; dayChangePct: number | null; source: 'oanda' | 'yahoo' | 'dukascopy'; tradeable?: boolean }
 interface Pos { id: string; pair: string; side: 1 | -1; units: number; entry: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; px: number; pnlUsd: number; pnlPct: number; closePending?: { reason: string; at: number } | null }
 interface Closed { id: string; pair: string; side: 1 | -1; entry: number; exit: number; leverage: number; marginUsd: number; pnlUsd: number; reason: string; closedAt: number }
 interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[] }
@@ -130,7 +130,7 @@ export function FxTrade() {
         </div>
       </Card>
       <div className="xl:sticky xl:top-20 xl:self-start">
-      <Card title={`Trade ${pair}`} subtitle={q ? `Bid ${q.bid.toFixed(dp(pair))} · Ask ${q.ask.toFixed(dp(pair))} · spread ${((q.ask - q.bid) / p).toFixed(1)} pips · ${q.source === 'oanda' ? 'live OANDA price' : 'Yahoo price (slower; connect OANDA data in Setup)'}` : 'Loading price…'}>
+      <Card title={`Trade ${pair}`} subtitle={q ? `Bid ${q.bid.toFixed(dp(pair))} · Ask ${q.ask.toFixed(dp(pair))} · spread ${((q.ask - q.bid) / p).toFixed(1)} pips · ${q.source === 'oanda' ? 'live OANDA price' : q.source === 'dukascopy' ? 'Dukascopy backup price (Yahoo failed)' : 'Yahoo price (slower; connect OANDA data in Setup)'}` : 'Loading price…'}>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
           <NumberInput label="Amount (margin)" value={amount} onChange={setAmount} min={1} step={10} unit="$" />
           <div>

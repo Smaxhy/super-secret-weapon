@@ -130,7 +130,7 @@ export function headlineBlock(pair: string, now: number, items: readonly Headlin
 }
 
 /** Price shock: the last 15 one-minute bars moved more than `k` × a normal hour. Pure. */
-export function priceShock(bars: ReadonlyArray<readonly [number, number, number, number]>, atr1h: number, k = 1.5): boolean {
+export function priceShock(bars: ReadonlyArray<readonly [number, number, number, number, number?]>, atr1h: number, k = 1.5): boolean {
   if (!(atr1h > 0) || bars.length < 5) return false;
   const last = bars.slice(-15);
   const hi = Math.max(...last.map((b) => b[1]));

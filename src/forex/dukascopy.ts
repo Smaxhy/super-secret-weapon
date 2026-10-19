@@ -74,6 +74,57 @@ const fetchDk: Fetch = (id, priceType, from, to) =>
     `dukascopy ${id} ${priceType}`,
   );
 
+/** v17: 1-minute candles (backup live prices for the practice / bot account). */
+export const fetchDkM1: Fetch = (id, priceType, from, to) =>
+  withTimeout(
+    getHistoricalRates({ instrument: id.toLowerCase() as never, dates: { from, to }, timeframe: 'm1', priceType, format: 'array', volumes: true, ignoreFlats: true, retryCount: 1, failAfterRetryCount: false }) as unknown as Promise<number[][]>,
+    15_000,
+    `dukascopy ${id} m1 ${priceType}`,
+  );
+
+export interface DkQuote {
+  bid: number;
+  ask: number;
+  /** close time of the newest complete minute */
+  priceT: number;
+  /** complete 1-minute mid candles [t, h, l, c, o] */
+  bars: Array<[number, number, number, number, number]>;
+}
+const dkQuoteCache = new Map<string, { at: number; q: DkQuote | null }>();
+
+/**
+ * v17: a live price from Dukascopy's 1-minute candles (the last 3 hours, complete minutes only) — currency pairs only
+ * (its metals are spot, Yahoo's are futures). Cached 30 s per market; nothing while its breaker is open. Pure-ish.
+ */
+export async function dkQuote(id: string, now = Date.now(), fetcher: Fetch = fetchDkM1): Promise<DkQuote | null> {
+  if (id.startsWith('XA')) return null;
+  const c = dkQuoteCache.get(id);
+  if (c && now - c.at < 30_000) return c.q;
+  if (!feeds.allow('dukascopy')) return c?.q ?? null;
+  let q: DkQuote | null = null;
+  try {
+    const from = new Date(now - 3 * HOUR);
+    const [bid, ask] = [await fetcher(id, 'bid', from, new Date(now)), await fetcher(id, 'ask', from, new Date(now))];
+    const askBy = new Map(ask.map((r) => [r[0]!, r]));
+    const bars: DkQuote['bars'] = [];
+    let last: { b: number; a: number; t: number } | null = null;
+    for (const b of bid) {
+      const a = askBy.get(b[0]!);
+      if (!a || b[0]! + 60_000 > now || b[5] === 0 || a[5] === 0) continue;
+      bars.push([b[0]!, (b[2]! + a[2]!) / 2, (b[3]! + a[3]!) / 2, (b[4]! + a[4]!) / 2, (b[1]! + a[1]!) / 2]);
+      last = { b: b[4]!, a: a[4]!, t: b[0]! + 60_000 };
+    }
+    if (last && last.a >= last.b && last.b > 0) {
+      q = { bid: last.b, ask: last.a, priceT: last.t, bars: bars.slice(-180) };
+      feeds.ok('dk-quotes', { items: bars.length, asOf: last.t });
+    } else feeds.fail('dk-quotes', `no complete minutes for ${id}`);
+  } catch (err) {
+    feeds.fail('dk-quotes', err);
+  }
+  dkQuoteCache.set(id, { at: now, q });
+  return q;
+}
+
 /** A real trading hour: not a weekend / holiday filler and not still forming. Pure. */
 export function liveHour(t: number, now: number | null, barMs = HOUR): boolean {
   if (now !== null && t + barMs > now) return false;

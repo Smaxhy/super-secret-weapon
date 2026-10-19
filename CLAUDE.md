@@ -447,6 +447,10 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     Redis: identical rows / verdicts / chosen list inline vs worker, parent heap 38 MB. The "forex lab run done" log
     line now carries heapMb / rssMb — read it on the VPS (`docker compose logs bot | grep "forex lab run done"`)
     before switching the worker on (the bot container's cap is 2 GB: main heap + 900 MB child must fit).
+  - **Account realism + backup prices**: `Quote.bars` may carry the minute's open (Yahoo / OANDA) → a stop / target the
+    price GAPPED past fills at that open, not the level; the minute still forming is re-checked next tick (`checkedT`
+    only moves past complete minutes). Yahoo price fails → currency pairs take Dukascopy's newest complete 1-minute
+    candle (`dkQuote`, real bid / ask, cached 30 s, breaker, feed `dk-quotes`, `Quote.source` 'dukascopy'); metals never.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

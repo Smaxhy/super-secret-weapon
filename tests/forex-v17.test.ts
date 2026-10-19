@@ -416,3 +416,32 @@ describe('v17 entry guards', () => {
     expect((JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount).open).toHaveLength(1);
   });
 });
+
+describe('v17 account realism', () => {
+  const pos = (o: Partial<PracticePosition> = {}): PracticePosition => ({ id: 'p1', pair: 'EURUSD', side: 1, units: 10_000, entry: 1.1, marginUsd: 100, leverage: 30, stop: 1.099, target: 1.102, openedAt: WED - 10 * M, checkedT: WED - 10 * M, ...o });
+  const q = (bars: Quote['bars']): Quote => ({ id: 'EURUSD', mid: bars[bars.length - 1]![3], bid: bars[bars.length - 1]![3] - HALF, ask: bars[bars.length - 1]![3] + HALF, t: WED, bars, dayChangePct: 0, source: 'yahoo', priceT: WED });
+  it('a minute that opens past the stop fills at that open (not the stop); same for a target', () => {
+    const a: PracticeAccount = { ...newAccount(1000), open: [pos()] };
+    tick(a, { EURUSD: q([[WED - 2 * M, 1.0985, 1.097, 1.0975, 1.0982]]) }, WED);
+    expect(a.closed[0]!.reason).toBe('stop');
+    expect(a.closed[0]!.exit).toBeCloseTo(1.0982 - HALF, 8);
+    const b: PracticeAccount = { ...newAccount(1000), open: [pos()] };
+    tick(b, { EURUSD: q([[WED - 2 * M, 1.1035, 1.1025, 1.103, 1.103]]) }, WED);
+    expect(b.closed[0]!.reason).toBe('target');
+    expect(b.closed[0]!.exit).toBeCloseTo(1.103 - HALF, 8);
+    // no open given (older feeds): the level, as before
+    const c: PracticeAccount = { ...newAccount(1000), open: [pos()] };
+    tick(c, { EURUSD: q([[WED - 2 * M, 1.0985, 1.097, 1.0975]]) }, WED);
+    expect(c.closed[0]!.exit).toBe(1.099);
+  });
+  it('the minute still forming is checked again on the next tick', () => {
+    const a: PracticeAccount = { ...newAccount(1000), open: [pos()] };
+    tick(a, { EURUSD: q([[WED - 30_000, 1.1001, 1.0999, 1.1, 1.1]]) }, WED);
+    expect(a.open).toHaveLength(1);
+    expect(a.open[0]!.checkedT).toBe(WED - 10 * M);
+    // the same minute later dips through the stop
+    tick(a, { EURUSD: q([[WED - 30_000, 1.1001, 1.0985, 1.099, 1.1]]) }, WED + 20_000);
+    expect(a.open).toHaveLength(0);
+    expect(a.closed[0]!.reason).toBe('stop');
+  });
+});

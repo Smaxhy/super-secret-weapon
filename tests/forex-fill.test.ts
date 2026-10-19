@@ -63,3 +63,24 @@ describe('v17 Dukascopy gap fill (currency pairs)', () => {
     expect(calls).toBe(2);
   });
 });
+
+import { dkQuote } from '../src/forex/dukascopy';
+
+describe('v17 Dukascopy backup quotes', () => {
+  it('a currency pair gets bid / ask from the newest complete minute; metals never', async () => {
+    const now = Date.UTC(2026, 9, 14, 14, 5, 30);
+    const fetcher = async (_id: string, side: 'bid' | 'ask', from: Date, to: Date) => {
+      const rows: number[][] = [];
+      for (let t = Math.ceil(from.getTime() / 60_000) * 60_000; t < to.getTime(); t += 60_000) {
+        const p = 1.1 + (side === 'ask' ? 0.00006 : -0.00006);
+        rows.push([t, p, p + 0.0001, p - 0.0001, p, 3]);
+      }
+      return rows;
+    };
+    const q = (await dkQuote('GBPUSD', now, fetcher))!;
+    expect(q.ask - q.bid).toBeCloseTo(0.00012, 8);
+    expect(q.priceT).toBe(Date.UTC(2026, 9, 14, 14, 5)); // the 14:04 minute closed at 14:05; 14:05 is still forming
+    expect(q.bars[q.bars.length - 1]![0]).toBe(Date.UTC(2026, 9, 14, 14, 4));
+    expect(await dkQuote('XAUUSD', now, fetcher)).toBeNull();
+  });
+});

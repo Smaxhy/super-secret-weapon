@@ -8,6 +8,7 @@
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
 import { feeds } from './feeds';
+import { dkQuote } from './dukascopy';
 import { HEAT, maxRiskUnder, topCorrelated, type CorrBook } from './risk';
 import { oandaCandles, oandaPrices, oandaReady, loadOanda, type Granularity } from './oanda';
 import { INSTRUMENTS, instrument, type Bar, type Instrument } from './types';
@@ -79,11 +80,11 @@ export interface Quote {
   bid: number;
   ask: number;
   t: number;
-  /** recent 1-minute bars (t, h, l, c), oldest first */
-  bars: Array<[number, number, number, number]>;
+  /** recent 1-minute bars (t, h, l, c[, o]), oldest first — v17: the open (when the source gives it) fills gaps honestly */
+  bars: Array<[number, number, number, number, number?]>;
   dayChangePct: number | null;
-  /** where the price came from */
-  source: 'oanda' | 'yahoo';
+  /** where the price came from (v17: Dukascopy = the backup when Yahoo fails, currency pairs only) */
+  source: 'oanda' | 'yahoo' | 'dukascopy';
   barsAt?: number;
   /** broker time of the price (v17: Yahoo too — its market time) */
   priceT?: number;
@@ -432,14 +433,17 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
     }
     const inst = instrument(p.pair)!;
     const half = halves[p.pair] ?? (inst.spreadPips * inst.pip) / 2;
-    for (const [t, h, l, cl] of q.bars) {
+    for (const [t, h, l, cl, o] of q.bars) {
       if (t <= p.checkedT || t < p.openedAt - 60_000) continue;
       // exit side of the book: a long sells at the bid (mid − half), a short buys at the ask (mid + half)
       const worst = p.side === 1 ? l - half : h + half;
       const best = p.side === 1 ? h - half : l + half;
+      // v17: a minute that OPENS past the level fills at that open (a gap), not at the level
+      const openX = o !== undefined && Number.isFinite(o) ? o - p.side * half : null;
       if (p.stop !== null && (p.side === 1 ? worst <= p.stop : worst >= p.stop)) {
-        closePos(a, p, p.stop, mids, 'stop', now);
-        events.push(`${p.pair} stop hit`);
+        const gapped = openX !== null && (p.side === 1 ? openX < p.stop : openX > p.stop);
+        closePos(a, p, gapped ? openX : p.stop, mids, 'stop', now);
+        events.push(`${p.pair} stop hit${gapped ? ' (the price gapped past it: filled at the open)' : ''}`);
         break;
       }
       if (p.target !== null && (p.side === 1 ? best >= p.target : best <= p.target)) {
@@ -465,8 +469,9 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
           p.checkedT = t;
           continue;
         }
-        closePos(a, p, p.target, mids, 'target', now);
-        events.push(`${p.pair} target hit`);
+        const gappedT = openX !== null && (p.side === 1 ? openX > p.target : openX < p.target);
+        closePos(a, p, gappedT ? openX : p.target, mids, 'target', now);
+        events.push(`${p.pair} target hit${gappedT ? ' (gapped past it: filled at the open)' : ''}`);
         break;
       }
       // v14: take part off at +1R / move the stop to break-even (the lab trade's rules)
@@ -483,7 +488,8 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
         if (p.stop === null || (p.side === 1 ? p.entry > p.stop : p.entry < p.stop)) p.stop = p.entry;
         p.be = true;
       }
-      p.checkedT = t;
+      // v17: the minute still forming is checked again next time (its high / low can still grow)
+      if (t + 60_000 <= now) p.checkedT = t;
     }
   }
   const v = view(a, mids, halves);
@@ -504,7 +510,7 @@ async function fetchQuote(inst: Instrument): Promise<Quote | null> {
       const url = `https://${host}/v8/finance/chart/${encodeURIComponent(inst.yahoo)}?interval=1m&range=1d`;
       const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64)' }, signal: AbortSignal.timeout(10_000) });
       if (!res.ok) continue;
-      const j = (await res.json()) as { chart?: { result?: Array<{ meta?: { regularMarketPrice?: number; regularMarketTime?: number; chartPreviousClose?: number; exchangeDataDelayedBy?: number }; timestamp?: number[]; indicators?: { quote?: Array<{ high?: Array<number | null>; low?: Array<number | null>; close?: Array<number | null> }> } }> } };
+      const j = (await res.json()) as { chart?: { result?: Array<{ meta?: { regularMarketPrice?: number; regularMarketTime?: number; chartPreviousClose?: number; exchangeDataDelayedBy?: number }; timestamp?: number[]; indicators?: { quote?: Array<{ open?: Array<number | null>; high?: Array<number | null>; low?: Array<number | null>; close?: Array<number | null> }> } }> } };
       const r = j.chart?.result?.[0];
       const q = r?.indicators?.quote?.[0];
       const bars: Quote['bars'] = [];
@@ -512,7 +518,8 @@ async function fetchQuote(inst: Instrument): Promise<Quote | null> {
         const h = q?.high?.[k];
         const l = q?.low?.[k];
         const c = q?.close?.[k];
-        if (h != null && l != null && c != null && c > 0) bars.push([ts * 1000, h, l, c]);
+        const o = q?.open?.[k];
+        if (h != null && l != null && c != null && c > 0) bars.push(o != null && o > 0 ? [ts * 1000, h, l, c, o] : [ts * 1000, h, l, c]);
       });
       const mid = r?.meta?.regularMarketPrice ?? bars[bars.length - 1]?.[3];
       if (!mid || !(mid > 0)) continue;
@@ -688,11 +695,20 @@ export class Practice {
     if (c && Date.now() - c.t < maxAgeMs) return c;
     const inst = instrument(id);
     if (!inst) return null;
-    const q = feeds.allow('yahoo') ? await fetchQuote(inst) : null;
+    let q = feeds.allow('yahoo') ? await fetchQuote(inst) : null;
     if (q) {
       this.cache.set(id, q);
       feeds.ok('yahoo-quotes', { items: q.bars.length, asOf: q.priceT ?? null });
     } else if (feeds.allow('yahoo')) feeds.fail('yahoo-quotes', `no price for ${id}`);
+    // v17: Yahoo failed → Dukascopy's 1-minute candles for a currency pair (real bid / ask), before any stale cache
+    if (!q && inst.kind !== 'metal') {
+      const d = await dkQuote(inst.id).catch(() => null);
+      if (d) {
+        const mid = (d.bid + d.ask) / 2;
+        q = { id: inst.id, mid, bid: d.bid, ask: d.ask, t: Date.now(), bars: d.bars, dayChangePct: c?.dayChangePct ?? null, source: 'dukascopy', priceT: d.priceT };
+        this.cache.set(id, q);
+      }
+    }
     return q ?? (c ? { ...c, stale: true } : null);
   }
 
@@ -714,7 +730,7 @@ export class Practice {
             let barsAt = prev?.barsAt ?? 0;
             if (!bars) {
               const cs = await oandaCandles(s, p.id, 'M1', 180).catch(() => []);
-              bars = cs.map((c) => [c.t, c.h, c.l, c.c] as [number, number, number, number]);
+              bars = cs.map((c) => [c.t, c.h, c.l, c.c, c.o] as [number, number, number, number, number]);
               barsAt = Date.now();
             }
             const mid = (p.bid + p.ask) / 2;
