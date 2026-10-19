@@ -301,11 +301,11 @@ function MarketsCard({ plan }: { plan: BotPlan | null }) {
               {on && (
                 <div className="space-y-3 px-4 pb-4 sm:px-5">
                   <div>
-                    <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Which way it leans</div>
+                    <div className="mb-1 text-xs font-semibold text-muted">Which way it leans</div>
                     <p className="text-sm text-ink-2">{m.lean.side === 0 ? 'No side. ' : m.lean.side === 1 ? 'Buy. ' : 'Sell. '}{m.lean.why}.</p>
                   </div>
                   <div>
-                    <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Signals on the latest closes</div>
+                    <div className="mb-1 text-xs font-semibold text-muted">Signals on the latest closes</div>
                     {!m.signals.length ? (
                       <p className="text-sm text-ink-2">Nothing fired on the newest 1-minute, 15-minute, hourly or 4-hour candle. It checks again at the next close.</p>
                     ) : (
@@ -325,7 +325,7 @@ function MarketsCard({ plan }: { plan: BotPlan | null }) {
                   </div>
                   {!!m.blocks.length && (
                     <div>
-                      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">What can hold it back</div>
+                      <div className="mb-1 text-xs font-semibold text-muted">What can hold it back</div>
                       <ul className="space-y-1 text-sm text-ink-2">
                         {m.blocks.map((b, k) => (
                           <li key={k}>• {b}</li>

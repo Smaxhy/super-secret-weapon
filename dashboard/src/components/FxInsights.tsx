@@ -304,7 +304,7 @@ export function DeskCard({ d }: { d: DeskReport | null | undefined }) {
         <Row label="Costs and churn (unseen)" value={`${u.costPctYr}% a year`} sub={`turnover ${u.turnover}× a year · average gross leverage ${u.avgLeverage}× · daily-return skew ${u.skew}`} />
         <Row label="Diversification" value={`rules ×${d.fdm} · markets ×${d.idm}`} sub={`${d.rules.reduce((a, g) => a + g.allowed, 0)} of ${d.rules.reduce((a, g) => a + g.of, 0)} rule-market pairs pass the cost speed limit`} />
       </Rows>
-      <div className="mt-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">What it would hold today</div>
+      <div className="mt-3 text-xs font-semibold text-muted">What it would hold today</div>
       {held.length ? (
         <ul className="mt-1 divide-y divide-line">
           {held.map((m) => (
@@ -369,7 +369,7 @@ export function JudgeCard({ j }: { j: JudgeReport | null | undefined }) {
       )}
       {j.importance.length > 0 && (
         <div className="mt-3">
-          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">What it looks at most</div>
+          <div className="mb-1 text-xs font-semibold text-muted">What it looks at most</div>
           <div className="flex flex-wrap gap-1.5">
             {j.importance.map((x) => (
               <Badge key={x.feature} tone="neutral">{x.label} {x.share}%</Badge>
@@ -425,7 +425,7 @@ export function NewsStudyCard({ n }: { n: NewsStudy | null | undefined }) {
       </div>
       {more && n.recent.length > 0 && (
         <div className="mt-3">
-          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Latest shocks</div>
+          <div className="mb-1 text-xs font-semibold text-muted">Latest shocks</div>
           <Rows>
             {n.recent.map((x) => (
               <Row key={`${x.pair}${x.t}`} label={`${x.dir === 1 ? '▲' : '▼'} ${x.pair} · ${x.sizeAtr}× normal`} sub={`${ago(new Date(x.t).toISOString())}${x.event ? ` · ${x.event}` : ''}`} value={x.moves[1] === null ? <span className="text-xs text-muted">running</span> : <span className={tone(x.moves[1]!)}>{signed(x.moves[1]!, 2)} after 4 h</span>} />

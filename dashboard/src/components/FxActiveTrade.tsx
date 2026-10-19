@@ -220,7 +220,7 @@ function TradeView({ p, plan, onClose, read }: { p: ActivePos; plan: ActivePlan 
       {read && <div className="mt-4">{read}</div>}
       {!!plan?.lines.length && (
         <div className="mt-4">
-          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Every rule that can close the trade</div>
+          <div className="mb-1.5 text-xs font-semibold text-muted">Every rule that can close the trade</div>
           <ol className="space-y-1">
             {plan.lines.map((l, k) => (
               <li key={k} className={`flex gap-2 text-sm ${l.done ? 'text-muted' : 'text-ink-2'}`}>

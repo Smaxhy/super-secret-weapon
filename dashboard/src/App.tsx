@@ -58,7 +58,7 @@ const WS: Record<Ws, { label: string; icon: IconName; home: string; groups: Grou
     phone: ['/forex', '/forex/live', '/forex/strategies', '/forex/lab'],
     groups: [
       {
-        label: 'Forex',
+        label: 'Trading',
         items: [
           { to: '/forex', label: 'Auto-bot', icon: 'cpu', desc: 'The bot trades by itself: its trades, its plan, what it waits for' },
           { to: '/forex/live', label: 'Markets', icon: 'chart', desc: 'Every market, the bot\'s lines, signals and trades' },
@@ -78,7 +78,7 @@ const WS: Record<Ws, { label: string; icon: IconName; home: string; groups: Grou
     phone: ['/crypto', '/positions', '/history', '/performance'],
     groups: [
       {
-        label: 'Crypto',
+        label: 'Trading',
         items: [
           { to: '/crypto', label: 'Overview', icon: 'home', desc: 'Profit, open trades, latest activity' },
           { to: '/positions', label: 'Positions', icon: 'layers', desc: 'What it holds right now' },
@@ -111,7 +111,7 @@ const EXACT = new Set(['/forex', '/crypto']);
 function WorkspaceSwitch({ ws, compact = false }: { ws: Ws; compact?: boolean }) {
   const navigate = useNavigate();
   return (
-    <div className={`grid grid-cols-2 gap-1 rounded-xl bg-surface-2 p-1 ${compact ? 'text-xs' : 'text-sm'}`} role="tablist" aria-label="Workspace">
+    <div className={`grid grid-cols-2 gap-1 rounded-xl bg-surface-2 p-1 ${compact ? 'text-xs' : 'text-sm'}`} role="tablist" aria-label="Desk">
       {(['forex', 'crypto'] as Ws[]).map((k) => (
         <button
           key={k}
@@ -126,7 +126,7 @@ function WorkspaceSwitch({ ws, compact = false }: { ws: Ws; compact?: boolean })
             }
             navigate(WS[k].home);
           }}
-          className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 font-semibold transition-colors ${ws === k ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink'}`}
+          className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 font-semibold transition-colors ${ws === k ? 'bg-accent text-on-accent shadow-sm' : 'text-muted hover:text-ink'}`}
         >
           <Icon name={WS[k].icon} size={compact ? 14 : 16} />
           <span className={compact ? '' : 'hidden lg:inline'}>{WS[k].label}</span>
@@ -374,6 +374,10 @@ function Shell() {
   const mode = ov.data?.mode;
   const paused = ov.data?.paused || ov.data?.killSwitch;
   const ws = wsOf(pathname);
+  // v18.3: the desk's colour — every component reads the accent tokens, so the whole app recolours with the desk
+  useEffect(() => {
+    document.documentElement.setAttribute('data-ws', ws);
+  }, [ws]);
   // v17.8: is the forex bot in a trade (Forex workspace only; an error / older server → no pill)
   const fxSt = useApi<FxBotStatus>(ws === 'forex' ? '/api/forex/bot/status' : null, 15_000);
   const fxStatus = ws === 'forex' && !fxSt.error ? fxSt.data : null;
@@ -416,7 +420,7 @@ function Shell() {
         <nav className="flex flex-col gap-5" aria-label="Main">
           {GROUPS.map((g) => (
             <div key={g.label}>
-              <div className="mb-1.5 hidden px-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted lg:block">{g.label}</div>
+              <div className="mb-1.5 hidden px-3 text-xs font-semibold text-muted lg:block">{g.label}</div>
               <div className="mb-1.5 mx-auto h-px w-6 bg-line lg:hidden" aria-hidden="true" />
               <div className="flex flex-col gap-0.5">
                 {g.items.map((n) => (
@@ -448,7 +452,7 @@ function Shell() {
       </aside>
 
       {/* Phone top bar (fixed height so sticky tabs can sit right under it) */}
-      <header className="glass sticky top-0 z-20 h-[var(--hdr)] border-b border-line pt-[env(safe-area-inset-top)] md:hidden">
+      <header className="glass desk-band sticky top-0 z-20 h-[var(--hdr)] border-b border-line pt-[env(safe-area-inset-top)] md:hidden">
         <div className="flex h-14 items-center justify-between gap-2 px-4">
           <span className="flex min-w-0 items-center gap-2">
             <WorkspaceSwitch ws={ws} compact />
@@ -474,9 +478,12 @@ function Shell() {
 
       {/* Page column: desktop top bar, content, then the footer. Bottom padding keeps clear of the phone tab bar. */}
       <div className="flex min-w-0 flex-1 flex-col pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:min-h-screen md:pb-6">
-        <header className="glass sticky top-0 z-20 hidden h-16 items-center gap-4 border-b border-line px-6 md:flex">
+        <header className="glass desk-band sticky top-0 z-20 hidden h-16 items-center gap-4 border-b border-line px-6 md:flex">
           <div className="min-w-0 flex-1">
-            <div className="truncate text-lg font-bold leading-tight tracking-tight text-ink" aria-hidden="true">{meta.title}</div>
+            <div className="flex min-w-0 items-center gap-2" aria-hidden="true">
+              <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent-text"><Icon name={WS[ws].icon} size={12} />{WS[ws].label} desk</span>
+              <span className="truncate text-lg font-bold leading-tight tracking-tight text-ink">{meta.title}</span>
+            </div>
             <div className="hidden truncate text-xs text-muted lg:block">{meta.desc}</div>
           </div>
           <GlobalSearch />
@@ -567,7 +574,7 @@ function Shell() {
               if (!items.length) return null;
               return (
                 <div key={g.label} className="mb-4">
-                  <div className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">{g.label}</div>
+                  <div className="mb-1.5 px-1 text-xs font-semibold text-muted">{g.label}</div>
                   <div className="card divide-y divide-line overflow-hidden">
                     {items.map((n) => (
                       <NavLink key={n.to} to={n.to} className={({ isActive }) => `flex min-h-14 items-center gap-3 px-3.5 py-3 transition-colors duration-150 ${isActive ? 'bg-accent/8' : 'active:bg-surface-2'}`}>
@@ -585,7 +592,7 @@ function Shell() {
                 </div>
               );
             })}
-            <div className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">App</div>
+            <div className="mb-1.5 px-1 text-xs font-semibold text-muted">App</div>
             <div className="card divide-y divide-line overflow-hidden">
               <div className="flex min-h-14 items-center gap-3 px-3.5 py-3">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-surface-2 text-ink-2">

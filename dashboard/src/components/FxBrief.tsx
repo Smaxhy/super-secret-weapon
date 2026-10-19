@@ -42,7 +42,8 @@ export function FxBrief({ plan, riskMode, modes, equityUsd }: { plan: Plan | nul
       /* private mode */
     }
   }, [goal]);
-  const today = pnl?.periods.today;
+  // an older server (or an error page) answers without periods: the card still renders
+  const today = pnl?.periods?.today;
   const eq = equityUsd ?? pnl?.equityUsd ?? 1000;
   const done = today?.pnlUsd ?? 0;
   const pct = Math.max(0, Math.min(100, (done / goal) * 100));
@@ -57,7 +58,7 @@ export function FxBrief({ plan, riskMode, modes, equityUsd }: { plan: Plan | nul
     .slice(0, 5);
   const next = plan?.next.slice().sort((a, b) => a.at - b.at)[0];
   return (
-    <Card title="Today" subtitle={plan?.summary ?? 'Waiting for the bot…'}>
+    <Card title="Today" subtitle={plan?.summary ?? 'Its plan appears after the first look at the markets.'} className="hero-glow card-accent">
       <div className="space-y-4">
         {/* the goal */}
         <div>
@@ -86,12 +87,12 @@ export function FxBrief({ plan, riskMode, modes, equityUsd }: { plan: Plan | nul
               </>
             ) : 'A winning trade pays about the risk it took; losses scale the same way.'}
           </p>
-          {pnl && <p className="mt-1 text-xs text-muted">This week {usd(pnl.periods.week.pnlUsd)} over {pnl.periods.week.trades} trades · account ${Math.round(pnl.equityUsd)} from ${Math.round(pnl.startUsd)}.</p>}
+          {pnl?.periods?.week && <p className="mt-1 text-xs text-muted">This week {usd(pnl.periods.week.pnlUsd)} over {pnl.periods.week.trades} trades · account ${Math.round(pnl.equityUsd)} from ${Math.round(pnl.startUsd)}.</p>}
         </div>
 
         {/* what it thinks */}
         <div>
-          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Which way it leans right now</div>
+          <div className="mb-1 text-xs font-semibold text-muted">Which way it leans right now</div>
           {leanLong.length + leanShort.length === 0 ? (
             <p className="text-sm text-ink-2">No clear lean on any market — its checks disagree, so it only takes a trade when a strategy fires with the checks on its side.</p>
           ) : (
@@ -105,7 +106,7 @@ export function FxBrief({ plan, riskMode, modes, equityUsd }: { plan: Plan | nul
 
         {/* closest to a trade */}
         <div>
-          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Closest to a trade</div>
+          <div className="mb-1 text-xs font-semibold text-muted">Closest to a trade</div>
           {close.length === 0 ? (
             <p className="text-sm text-ink-2">Nothing is waiting on a check right now. {next ? `It looks again at ${clock(next.at)} (${next.tf} chart).` : ''}</p>
           ) : (
@@ -124,7 +125,7 @@ export function FxBrief({ plan, riskMode, modes, equityUsd }: { plan: Plan | nul
         {/* open trades in one line each */}
         {plan && plan.trades.length > 0 && (
           <div>
-            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">In trades</div>
+            <div className="mb-1 text-xs font-semibold text-muted">In trades</div>
             <ul className="space-y-1 text-sm">
               {plan.trades.map((t) => {
                 const nextLine = t.lines.find((l) => !l.done && (l.k === 'target' || l.k === 'stop' || l.k === 'lock' || l.k === 'trail'));

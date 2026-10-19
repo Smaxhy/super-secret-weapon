@@ -72,7 +72,7 @@ export function FxNews() {
         <div className="flex max-h-[28rem] flex-col gap-4 overflow-y-auto pr-1">
           {byDay.map(([day, list]) => (
             <div key={day}>
-              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted">{day}</div>
+              <div className="mb-1 text-xs font-semibold text-muted">{day}</div>
               <ul className="divide-y divide-line">
                 {list.map((e) => (
                   <li key={`${e.t}${e.ccy}${e.title}`} className={`flex items-center gap-3 py-2 ${e.t < now ? 'opacity-55' : ''}`}>

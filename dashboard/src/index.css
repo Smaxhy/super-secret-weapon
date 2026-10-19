@@ -5,103 +5,131 @@
  * from the same roles. Every colour in the app goes through these names (bg-surface, text-ink-2,
  * text-accent …); nothing in a component carries a hex value. Green / red are for P&L only.
  */
+/* v18.3 theme. Two trading desks on one cool graphite base: the Forex desk is teal, the Crypto desk is ember.
+   `data-ws` on <html> (set by the app shell) picks the desk's accent; light / dark come from the system or `data-theme`.
+   Every component reads these names, so a desk switch recolours the whole app at once. */
 :root {
   color-scheme: light;
-  --page: #f6f4f0;
+  --page: #f2f4f7;
   --surface: #ffffff;
-  --surface-2: #efece6;
-  --surface-3: #e6e2da;
-  --ink: #17140f;
-  --ink-2: #4a453e;
-  --muted: #6b655c;
-  --grid: #e5e1d9;
-  --axis: #cfcac1;
-  --border: rgba(23, 20, 15, 0.09);
-  --border-strong: rgba(23, 20, 15, 0.18);
-  --accent: #cf4a25;
-  --accent-text: #bd4320;
-  --on-accent: #ffffff;
-  --accent-soft: rgba(207, 74, 37, 0.1);
-  --series-1: #cf4a25;
-  --pos: #13803f;
-  --neg: #c62f35;
-  --up-text: #13803f;
-  --down-text: #c62f35;
-  --good: #13803f;
+  --surface-2: #eaedf2;
+  --surface-3: #dfe3ea;
+  --ink: #0f1419;
+  --ink-2: #3d4651;
+  --muted: #65707d;
+  --grid: #e3e7ed;
+  --axis: #c9d0d9;
+  --border: rgba(15, 20, 25, 0.09);
+  --border-strong: rgba(15, 20, 25, 0.18);
+  --pos: #158f49;
+  --neg: #d33a3a;
+  --up-text: #137f41;
+  --down-text: #c42f2f;
+  --good: #158f49;
   --warning: #9a6200;
-  --critical: #c62f35;
-  --card-shadow: 0 1px 2px rgba(23, 20, 15, 0.04), 0 8px 24px -12px rgba(23, 20, 15, 0.12);
-  --card-shadow-hover: 0 2px 4px rgba(23, 20, 15, 0.05), 0 14px 32px -12px rgba(23, 20, 15, 0.18);
+  --critical: #d33a3a;
+  --card-shadow: 0 1px 2px rgba(15, 20, 25, 0.04), 0 6px 20px -14px rgba(15, 20, 25, 0.14);
+  --card-shadow-hover: 0 2px 4px rgba(15, 20, 25, 0.05), 0 14px 32px -14px rgba(15, 20, 25, 0.2);
   --card-glow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  --hero-glow: rgba(207, 74, 37, 0.1);
-  --pnl-up-bg: 19, 128, 63;
-  --pnl-down-bg: 198, 47, 53;
+  --pnl-up-bg: 21, 143, 73;
+  --pnl-down-bg: 211, 58, 58;
+  /* desk accent (Forex by default) */
+  --accent: #0e7c86;
+  --accent-text: #0b6771;
+  --on-accent: #ffffff;
+  --accent-soft: rgba(14, 124, 134, 0.12);
+  --series-1: #0e7c86;
+  --hero-glow: rgba(14, 124, 134, 0.12);
+}
+:root[data-ws="crypto"] {
+  --accent: #d2611a;
+  --accent-text: #b25012;
+  --on-accent: #ffffff;
+  --accent-soft: rgba(210, 97, 26, 0.12);
+  --series-1: #d2611a;
+  --hero-glow: rgba(210, 97, 26, 0.12);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --page: #0e0d0c;
-    --surface: #171614;
-    --surface-2: #211f1c;
-    --surface-3: #2a2724;
-    --ink: #f5f3ef;
-    --ink-2: #c9c4bb;
-    --muted: #948f86;
-    --grid: #262320;
-    --axis: #332f2b;
+    --page: #0a0d12;
+    --surface: #121720;
+    --surface-2: #192029;
+    --surface-3: #212a35;
+    --ink: #edf1f6;
+    --ink-2: #c3cbd6;
+    --muted: #8a95a3;
+    --grid: #1e2630;
+    --axis: #2a3441;
     --border: rgba(255, 255, 255, 0.07);
     --border-strong: rgba(255, 255, 255, 0.14);
-    --accent: #f0683f;
-    --accent-text: #ff8a63;
-    --on-accent: #140c08;
-    --accent-soft: rgba(240, 104, 63, 0.14);
-    --series-1: #f0683f;
-    --pos: #3ecf85;
+    --pos: #36d399;
     --neg: #ff6b6b;
-    --up-text: #3ecf85;
+    --up-text: #36d399;
     --down-text: #ff6b6b;
-    --good: #3ecf85;
+    --good: #36d399;
     --warning: #f5b544;
     --critical: #ff6b6b;
     --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 30px -14px rgba(0, 0, 0, 0.7);
     --card-shadow-hover: 0 2px 4px rgba(0, 0, 0, 0.5), 0 18px 40px -14px rgba(0, 0, 0, 0.8);
     --card-glow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
-    --hero-glow: rgba(240, 104, 63, 0.16);
-    --pnl-up-bg: 62, 207, 133;
+    --pnl-up-bg: 54, 211, 153;
     --pnl-down-bg: 255, 107, 107;
+    --accent: #33c9c0;
+    --accent-text: #5ad9d1;
+    --on-accent: #06201f;
+    --accent-soft: rgba(51, 201, 192, 0.14);
+    --series-1: #33c9c0;
+    --hero-glow: rgba(51, 201, 192, 0.14);
+  }
+  :root:not([data-theme="light"])[data-ws="crypto"] {
+    --accent: #ff8a3d;
+    --accent-text: #ffa062;
+    --on-accent: #1a0d05;
+    --accent-soft: rgba(255, 138, 61, 0.14);
+    --series-1: #ff8a3d;
+    --hero-glow: rgba(255, 138, 61, 0.14);
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --page: #0e0d0c;
-  --surface: #171614;
-  --surface-2: #211f1c;
-  --surface-3: #2a2724;
-  --ink: #f5f3ef;
-  --ink-2: #c9c4bb;
-  --muted: #948f86;
-  --grid: #262320;
-  --axis: #332f2b;
+  --page: #0a0d12;
+  --surface: #121720;
+  --surface-2: #192029;
+  --surface-3: #212a35;
+  --ink: #edf1f6;
+  --ink-2: #c3cbd6;
+  --muted: #8a95a3;
+  --grid: #1e2630;
+  --axis: #2a3441;
   --border: rgba(255, 255, 255, 0.07);
   --border-strong: rgba(255, 255, 255, 0.14);
-  --accent: #f0683f;
-  --accent-text: #ff8a63;
-  --on-accent: #140c08;
-  --accent-soft: rgba(240, 104, 63, 0.14);
-  --series-1: #f0683f;
-  --pos: #3ecf85;
+  --pos: #36d399;
   --neg: #ff6b6b;
-  --up-text: #3ecf85;
+  --up-text: #36d399;
   --down-text: #ff6b6b;
-  --good: #3ecf85;
+  --good: #36d399;
   --warning: #f5b544;
   --critical: #ff6b6b;
   --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 30px -14px rgba(0, 0, 0, 0.7);
   --card-shadow-hover: 0 2px 4px rgba(0, 0, 0, 0.5), 0 18px 40px -14px rgba(0, 0, 0, 0.8);
   --card-glow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  --hero-glow: rgba(240, 104, 63, 0.16);
-  --pnl-up-bg: 62, 207, 133;
+  --pnl-up-bg: 54, 211, 153;
   --pnl-down-bg: 255, 107, 107;
+  --accent: #33c9c0;
+  --accent-text: #5ad9d1;
+  --on-accent: #06201f;
+  --accent-soft: rgba(51, 201, 192, 0.14);
+  --series-1: #33c9c0;
+  --hero-glow: rgba(51, 201, 192, 0.14);
+}
+:root[data-theme="dark"][data-ws="crypto"] {
+  --accent: #ff8a3d;
+  --accent-text: #ffa062;
+  --on-accent: #1a0d05;
+  --accent-soft: rgba(255, 138, 61, 0.14);
+  --series-1: #ff8a3d;
+  --hero-glow: rgba(255, 138, 61, 0.14);
 }
 
 /* Motion tokens. */
@@ -110,8 +138,8 @@
   --dur: 250ms;
   --dur-slow: 400ms;
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
-  --radius: 14px;
-  --radius-lg: 20px;
+  --radius: 12px;
+  --radius-lg: 18px;
 }
 
 @theme inline {
@@ -180,7 +208,7 @@ h3 {
   background: var(--surface);
   border: 1px solid var(--border);
   box-shadow: var(--card-shadow), var(--card-glow);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius);
   transition:
     box-shadow var(--dur) var(--ease),
     transform var(--dur) var(--ease),
@@ -202,6 +230,10 @@ h3 {
   background-image:
     radial-gradient(90% 70% at 0% 0%, var(--hero-glow), transparent 60%),
     radial-gradient(60% 50% at 100% 100%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 70%);
+}
+/* Desk band: the desk's colour as a hairline on the top bars (the one place the accent is always visible). */
+.desk-band {
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 /* Frosted bars (phone header / tab bar). */
 .glass {

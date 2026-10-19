@@ -118,7 +118,7 @@ export function CopyReplay() {
           )}
           <div className="grid gap-5 lg:grid-cols-2">
             <div>
-              <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">By kind</div>
+              <div className="mb-2 text-xs font-semibold text-muted">By kind</div>
               <Rows>
                 {r.byKind.map((k) => (
                   <Row key={k.kind} label={k.kind === 'proven' ? `Winners found on the tape (${k.wallets})` : `Your tracked wallets (${k.wallets})`} value={<span className={tone(k.totalSol)}>{signed(k.totalSol, 2)} SOL</span>} sub={`${k.n} copies · ${k.winPct}% won · avg ${signed(k.avgPct)}%`} />
@@ -129,7 +129,7 @@ export function CopyReplay() {
               </Rows>
             </div>
             <div>
-              <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">Day by day</div>
+              <div className="mb-2 text-xs font-semibold text-muted">Day by day</div>
               {!r.byDay.length ? (
                 <p className="text-sm text-ink-2">No copies closed.</p>
               ) : (
@@ -142,7 +142,7 @@ export function CopyReplay() {
             </div>
           </div>
           <div>
-            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">Wallets (best first)</div>
+            <div className="mb-2 text-xs font-semibold text-muted">Wallets (best first)</div>
             <div className="overflow-x-auto">
               <table className="tabular w-full min-w-[40rem] text-sm">
                 <thead>

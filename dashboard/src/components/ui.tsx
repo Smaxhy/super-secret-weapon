@@ -30,7 +30,7 @@ export function Stack({ children, className = '' }: { children: ReactNode; class
 
 /** Small uppercase label above a group of rows or stats. */
 export function SectionLabel({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div className={`mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted ${className}`}>{children}</div>;
+  return <div className={`mb-2 text-xs font-semibold text-muted ${className}`}>{children}</div>;
 }
 
 /** Section heading inside a page: title + one muted line + optional action on the right. Sticky on phones when asked. */

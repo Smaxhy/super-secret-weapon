@@ -7,8 +7,72 @@ import { useApi } from '../hooks/useApi';
 import { Card, Rows, Row, Badge } from './ui';
 import { ConvictionCard, DeskCard, EntriesCard, ExitsCard, FiltersCard, FinancingCard, HonestCard, JudgeCard, LockCard, NewsStudyCard, PortfolioCard, RiskCard, RollingCard, SniperCard, type ConvictionReport, type DeskReport, type EntrySummary, type ExitSummary, type FilterSummary, type FinancingSummary, type HonestReport, type JudgeReport, type Ledger, type LockSummary, type NewsStudy, type PortfolioReport, type RiskSummary, type RollReport, type SniperReport } from './FxInsights';
 
-export interface LabReport { honest?: HonestReport; judge?: JudgeReport | null; filters?: FilterSummary[]; lock?: LockSummary; exits?: ExitSummary[]; entries?: EntrySummary[]; financing?: FinancingSummary; news?: NewsStudy | null; rows: Array<{ id: string; name: string; verdict: 'edge' | 'maybe' | 'no' }> }
-interface BotData { desk?: DeskReport | null; rolling?: RollReport | null; chooser?: string; ledger?: Ledger; names?: Record<string, string>; sniper?: SniperReport | null; risk?: RiskSummary | null; portfolio?: PortfolioReport | null; judge?: JudgeReport | null; conviction?: Partial<Record<'hourly' | '15m' | '1m', ConvictionReport | null>> | null }
+export interface LabRow { id: string; name: string; family?: string; desc?: string; tf?: string; verdict: 'edge' | 'maybe' | 'no'; outSample?: { n: number; avgR: number } }
+export interface LabReport { honest?: HonestReport; judge?: JudgeReport | null; filters?: FilterSummary[]; lock?: LockSummary; exits?: ExitSummary[]; entries?: EntrySummary[]; financing?: FinancingSummary; news?: NewsStudy | null; rows: LabRow[] }
+const FAMILY: Record<string, { label: string; what: string }> = {
+  trend: { label: 'Trend following', what: 'Go with a move that is already under way: moving-average crosses and pullbacks, Supertrend, MACD, ADX, trendline and structure breaks, time-series momentum, currency momentum.' },
+  breakout: { label: 'Breakouts', what: 'Enter when price leaves a range: Donchian highs / lows, Bollinger squeeze, Keltner, inside bars, breakout-and-retest, volatility-forecast breaks, round-number breaks.' },
+  reversion: { label: 'Mean reversion', what: 'Bet on a snap-back: RSI dips, Connors RSI(2), Bollinger reversion, pivot bounces, Fibonacci 50–61.8% pullbacks, Turtle Soup false breaks, stochastic / Williams %R turns, stat-arb on linked crosses, round-number fades.' },
+  pattern: { label: 'Candle patterns', what: 'Engulfing and pin bars at an extreme, double bottoms / tops, momentum candles.' },
+  session: { label: 'Session timing', what: 'The clock as the edge: London and New York open breakouts, the Asian-range fade, the dollar into the London fix.' },
+  news: { label: 'News shocks', what: 'After a shock candle: follow the drift, or fade the shock that fails.' },
+  intermarket: { label: 'Linked markets', what: 'Oil → CAD, US yields → USD/JPY, stocks → yen crosses, the dollar → gold: trade the laggard when the leader has moved.' },
+  flow: { label: 'Flows & positioning', what: 'Month-end rebalancing, crowded CFTC positioning squeezes, overstretched 3-month runs.' },
+  control: { label: 'Yardstick', what: 'Random entries with the same costs. Anything that cannot beat this has no edge.' },
+};
+const FAMILY_ORDER = ['trend', 'breakout', 'reversion', 'pattern', 'session', 'news', 'intermarket', 'flow', 'control'];
+
+/** v18.3 playbook: every strategy the bot knows, grouped by what kind of edge it hunts, with its grade per chart. */
+function Playbook({ rows, chosen }: { rows: LabRow[]; chosen: Set<string> }) {
+  const byId = new Map<string, LabRow[]>();
+  for (const r of rows) byId.set(r.id, [...(byId.get(r.id) ?? []), r]);
+  const fams = new Map<string, Array<{ id: string; name: string; desc: string; charts: LabRow[] }>>();
+  for (const [id, list] of byId) {
+    const f = list[0]!.family ?? 'other';
+    fams.set(f, [...(fams.get(f) ?? []), { id, name: list[0]!.name, desc: list[0]!.desc ?? '', charts: list.sort((a, b) => ['1m', '15m', '1h', '4h'].indexOf(a.tf ?? '') - ['1m', '15m', '1h', '4h'].indexOf(b.tf ?? '')) }]);
+  }
+  const order = [...fams.keys()].sort((a, b) => (FAMILY_ORDER.indexOf(a) + 100) % 100 - (FAMILY_ORDER.indexOf(b) + 100) % 100);
+  const traded = rows.filter((r) => chosen.has(`${r.id}:${r.tf}`)).length;
+  return (
+    <Card title="The playbook: every setup it knows" subtitle={`${byId.size} strategies, each tested on 1-minute, 15-minute, hourly and 4-hour charts (${rows.length} strategy × chart rows). A chip per chart shows its grade on the unseen 30%: green Edge, blue Maybe, grey no edge; a ring means the bot trades it right now (${traded} rows). Tap a family to read what each setup looks for.`}>
+      <div className="space-y-2">
+        {order.map((f) => {
+          const list = fams.get(f)!;
+          const meta = FAMILY[f] ?? { label: f, what: '' };
+          const edges = list.flatMap((x) => x.charts).filter((c) => c.verdict !== 'no').length;
+          return (
+            <details key={f} className="group rounded-xl border border-line bg-surface-2/60 open:bg-surface-2/40">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-3 [&::-webkit-details-marker]:hidden">
+                <span className="min-w-0">
+                  <span className="block font-semibold text-ink">{meta.label} <span className="text-xs font-normal text-muted">· {list.length} {list.length === 1 ? 'setup' : 'setups'}{edges ? ` · ${edges} with an edge or maybe` : ''}</span></span>
+                  <span className="block text-xs text-muted">{meta.what}</span>
+                </span>
+                <span className="shrink-0 text-ink-2 transition-transform group-open:rotate-180">▾</span>
+              </summary>
+              <ul className="divide-y divide-line border-t border-line">
+                {list.map((x) => (
+                  <li key={x.id} className="px-3.5 py-2.5">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="font-medium text-ink">{x.name}</span>
+                      <span className="flex flex-wrap gap-1">
+                        {x.charts.map((c) => (
+                          <span key={c.tf} title={`${c.tf}: ${c.verdict === 'edge' ? 'Edge' : c.verdict === 'maybe' ? 'Maybe' : 'no edge'} on the unseen 30%${c.outSample ? ` · ${c.outSample.n} trades · ${c.outSample.avgR >= 0 ? '+' : ''}${c.outSample.avgR}R a trade` : ''}${chosen.has(`${c.id}:${c.tf}`) ? ' · the bot trades it' : ''}`} className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold ${c.verdict === 'edge' ? 'bg-good/15 text-up' : c.verdict === 'maybe' ? 'bg-accent/15 text-accent-text' : 'bg-surface-3 text-muted'} ${chosen.has(`${c.id}:${c.tf}`) ? 'ring-2 ring-accent/60' : ''}`}>{c.tf}</span>
+                        ))}
+                      </span>
+                    </div>
+                    {x.desc && <p className="mt-0.5 text-xs text-ink-2">{x.desc}</p>}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+interface BotData { chosen?: string[]; desk?: DeskReport | null; rolling?: RollReport | null; chooser?: string; ledger?: Ledger; names?: Record<string, string>; sniper?: SniperReport | null; risk?: RiskSummary | null; portfolio?: PortfolioReport | null; judge?: JudgeReport | null; conviction?: Partial<Record<'hourly' | '15m' | '1m', ConvictionReport | null>> | null }
 
 type State = 'on' | 'off' | 'test';
 const chip = (s: State, text: string) => <Badge tone={s === 'on' ? 'up' : s === 'off' ? 'neutral' : 'accent'}>{text}</Badge>;
@@ -46,6 +110,7 @@ export function FxLab({ r }: { r: LabReport }) {
           ))}
         </Rows>
       </Card>
+      <Playbook rows={r.rows} chosen={new Set(b?.chosen ?? [])} />
       <HonestCard h={r.honest} names={Object.fromEntries(r.rows.map((x) => [x.id, x.name]))} />
       <DeskCard d={b?.desk} />
       <EntriesCard e={r.entries} />

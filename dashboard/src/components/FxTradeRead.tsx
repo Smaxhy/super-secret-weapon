@@ -136,7 +136,7 @@ export function TradeReadPanel({ row, info, acct, onAsked }: { row: ReadRow; inf
     <div className="space-y-3">
       <section className="rounded-xl border border-line bg-surface-2/40 p-3">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Live read</span>
+          <span className="text-xs font-semibold text-muted">Live read</span>
           <Badge tone={READ_TONE[r.status]}>{r.label}</Badge>
           {r.thesisOk === false && <Badge tone="warn" title="The market no longer looks like the reason the trade was taken">reason weaker</Badge>}
           <span className="ml-auto text-[11px] text-muted">updates every 15 s</span>
@@ -187,7 +187,7 @@ function AiBox({ row, info, acct, onAsked }: { row: ReadRow; info: AiInfo | null
   return (
     <section className="rounded-xl border border-line p-3" style={{ background: 'color-mix(in srgb, var(--accent) 5%, var(--surface))' }}>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">AI read</span>
+        <span className="text-xs font-semibold text-muted">AI read</span>
         {a && <Badge tone={AI_LABEL[a.verdict].tone}>{AI_LABEL[a.verdict].text}</Badge>}
         {a && (
           <span className="text-[11px] text-muted" title={`confidence ${a.confidence} of 5 · ${a.model}`}>

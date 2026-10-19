@@ -66,7 +66,7 @@ export function LoopCard() {
       {data?.enabled && (
         <div className="grid gap-5 lg:grid-cols-2">
           <div className="min-w-0">
-            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">Now</div>
+            <div className="mb-2 text-xs font-semibold text-muted">Now</div>
             {cur ? (
               <div className="rounded-xl border border-line p-3">
                 <div className="flex min-w-0 items-start justify-between gap-2">
@@ -90,7 +90,7 @@ export function LoopCard() {
             )}
           </div>
           <div className="min-w-0">
-            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">Past experiments</div>
+            <div className="mb-2 text-xs font-semibold text-muted">Past experiments</div>
             {!data.history?.length ? (
               <p className="text-sm text-ink-2">None yet.</p>
             ) : (

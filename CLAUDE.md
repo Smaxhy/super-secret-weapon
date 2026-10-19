@@ -674,6 +674,23 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   and 0 evaluations for `CHECKER_STALL_MIN` 20 minutes in a row → WARN event `checker_stalled` + clean `shutdown`
   (Docker `unless-stopped` restarts it). Owner told to set `FX_LAB_WORKER=on` in the VPS .env (forex lab in its own
   process) — check `docker stats` after. Root cause not proven: heap pressure (forex lab in-process) is the suspect.
+- **v18.3 (Oct 19): look & feel** (owner: "revamp the entire app layout, give forex a different colour than crypto, much
+  more appealing, easy to navigate"; also "install these design skills"). Skills vendored into `.claude/skills/`
+  (frontend-design, Vercel web-design-guidelines / react-best-practices / composition-patterns / react-native-skills,
+  UI/UX Pro Max (`uipm-*`), Bencium UX designer + design audit, AccessLint audit/fix/scan/inspect/diff; the catalog
+  equivalents were offered to the owner's account). Theme (`dashboard/src/index.css`): the cream + terracotta base is
+  gone (the frontend-design skill lists it as the commonest generated-page tell) → cool graphite base, light + dark;
+  **desk colours** via `data-ws` on `<html>` (set in `Shell`): Forex teal (#0e7c86 / dark #33c9c0), Crypto ember
+  (#d2611a / dark #ff8a3d) — every `--accent*` token follows, so the whole app recolours with the desk; `.desk-band`
+  = a 2 px desk-coloured hairline under the top bars; the Forex | Crypto switch fills the active desk in its colour;
+  the desktop title row carries a "Forex desk" / "Crypto desk" chip; sidebar / More-sheet group labels are sentence
+  case (all tracked all-caps micro-labels across the dashboard were replaced by `text-xs font-semibold text-muted` —
+  12 files); card radius 12 px (hero 18). Forex → **Lab** got **"The playbook"** (`FxLab.tsx` `Playbook`): every
+  strategy grouped by family (trend / breakouts / mean reversion / candle patterns / session timing / news shocks /
+  linked markets / flows & positioning / yardstick) with its plain-words rule and a chip per chart (Edge / Maybe / no,
+  ring = the bot trades it now, from `/api/forex/bot` `chosen`). The Today card is the hero (`hero-glow card-accent`)
+  and survives a P&L report without `periods`. Verified by building the dashboard and screenshotting it with
+  Playwright (phone 390 px + desktop 1440 px, light + dark) against a stubbed API (scratchpad `shots/shoot.mjs`).
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

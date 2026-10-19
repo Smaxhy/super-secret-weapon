@@ -220,7 +220,7 @@ function MarketDetail({ m, r, onTrade }: { m: MarketNow; r: Report; onTrade: () 
       <Button onClick={onTrade}>Trade {m.label} yourself</Button>
       <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Bot's open paper trades</div>
+          <div className="mb-1 text-xs font-semibold text-muted">Bot's open paper trades</div>
           {!all.length ? <p className="text-sm text-ink-2">None on this market.</p> : (
             <Rows>
               {all.map((t) => (
@@ -230,7 +230,7 @@ function MarketDetail({ m, r, onTrade }: { m: MarketNow; r: Report; onTrade: () 
           )}
         </div>
         <div>
-          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">What it sees</div>
+          <div className="mb-1 text-xs font-semibold text-muted">What it sees</div>
           <Rows>
             {m.drawings.lines.map((l, k) => (
               <Row key={`l${k}`} label={`${l.kind === 'support' ? 'Rising support' : 'Falling resistance'} trendline`} sub={`${l.touches} touches · ${l.broken ? 'just broken' : 'holding'}`} value={l.pNow.toFixed(DIGITS(m.id))} />
@@ -340,7 +340,7 @@ function Detail({ x }: { x: RowT }) {
         <StatTile compact label="Unseen 30%" value={`${signed(x.outSample.avgR, 2)}R`} sub={`${x.outSample.n} · PF ${x.outSample.pf ?? '∞'}`} tone={x.outSample.avgR > 0 ? 'up' : 'down'} />
       </div>
       <div>
-        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">What a week looks like, by risk per trade</div>
+        <div className="mb-1 text-xs font-semibold text-muted">What a week looks like, by risk per trade</div>
         <div className="overflow-x-auto">
           <table className="tabular w-full min-w-[34rem] text-sm">
             <thead>
@@ -375,7 +375,7 @@ function Detail({ x }: { x: RowT }) {
       </div>
       {x.variants && x.variants.length > 1 && (
         <div>
-          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Checks tried (picked on the first 70% only)</div>
+          <div className="mb-1 text-xs font-semibold text-muted">Checks tried (picked on the first 70% only)</div>
           <div className="overflow-x-auto">
             <table className="tabular w-full min-w-[30rem] text-sm">
               <thead>
@@ -402,7 +402,7 @@ function Detail({ x }: { x: RowT }) {
       )}
       {x.exitVariants && x.exitVariants.length > 1 && (
         <div>
-          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Exits tried (with its check, picked on the first 70% only)</div>
+          <div className="mb-1 text-xs font-semibold text-muted">Exits tried (with its check, picked on the first 70% only)</div>
           <div className="overflow-x-auto">
             <table className="tabular w-full min-w-[30rem] text-sm">
               <thead>
@@ -432,7 +432,7 @@ function Detail({ x }: { x: RowT }) {
       )}
       {x.entryVariants && x.entryVariants.length > 1 && (
         <div>
-          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Ways in tried (same check and exit; graded only — the bot enters at the next open)</div>
+          <div className="mb-1 text-xs font-semibold text-muted">Ways in tried (same check and exit; graded only — the bot enters at the next open)</div>
           <div className="overflow-x-auto">
             <table className="tabular w-full min-w-[30rem] text-sm">
               <thead>
@@ -458,7 +458,7 @@ function Detail({ x }: { x: RowT }) {
         </div>
       )}
       <div>
-        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">By market</div>
+        <div className="mb-1 text-xs font-semibold text-muted">By market</div>
         <Rows>
           {x.pairs.map((p) => (
             <Row key={p.pair} label={p.pair} value={<span className={tone(p.totalR)}>{signed(p.totalR, 1)}R</span>} sub={p.n ? `${p.n} trades · ${p.winPct}% won · PF ${p.pf ?? '∞'}` : 'no trades'} />
@@ -544,7 +544,7 @@ function HeatmapBox({ m }: { m: MarketNow }) {
   const pos = r.positioning;
   return (
     <div className="rounded-xl border border-line p-3">
-      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">Heatmap: where orders likely sit</div>
+      <div className="mb-1 text-xs font-semibold text-muted">Heatmap: where orders likely sit</div>
       <p className="mb-2 text-xs text-muted">Big round numbers (stops cluster just beyond, take-profits at them), swing levels the price respected, yesterday's high / low and today's big option expiries (10:00 New York cut). Longer bar = more orders tend to sit there.</p>
       <div>{above.map(row)}</div>
       <div className="my-1 flex items-center gap-2 text-sm font-semibold text-ink"><span className="w-20 tabular">{m.price.toFixed(d)}</span><span className="h-px flex-1 bg-line-strong" /><span className="text-xs text-muted">price now</span></div>

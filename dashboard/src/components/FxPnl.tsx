@@ -77,7 +77,7 @@ export function FxPnl({ acct = 'bot', fallback = null }: { acct?: 'bot' | 'me'; 
         // wide screens: the balance line and the calendar side by side
         <div className="mt-5 grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
           <div className="min-w-0">
-            <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Balance after every close</div>
+            <div className="mb-1 text-xs font-semibold text-muted">Balance after every close</div>
             <EquityCurve d={d} />
           </div>
           <div className="min-w-0">
