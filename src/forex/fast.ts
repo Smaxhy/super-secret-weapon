@@ -27,7 +27,8 @@ import { stratFactorFromVerdict, volFactor } from './portfolio';
 import { marketClock } from './calendar';
 import { newSyncReport, type LabOpenTrade } from './practice';
 import { withEnd } from './mtf';
-import { bigChart, evaluateTf, makeSeries, paperSince, pickedOnInSample, prevPicks, signalIndex, slimTrade, toLabTrade, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
+import { applyHmm, bigChart, evaluateTf, makeSeries, paperSince, pickedOnInSample, prevPicks, signalIndex, slimTrade, toLabTrade, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
+import type { HmmModel } from './hmm';
 import { agreeCount, boostFor, gradeConviction, maxConfirmations, tierOf, type ConvictionReport, type ConvRow } from './conviction';
 
 const log = moduleLogger('forex-fast');
@@ -82,6 +83,8 @@ export interface FastReport {
   /** v17: per chart × market, how often each filter input was known on that chart's first 70% (the bars before its
    * `oosFrom` = the history the rows' filters were picked on); the live missing-data guard reads this (`liveCoverage`) */
   coverage?: Partial<Record<FastTf, Record<string, FilterCoverage>>>;
+  /** v18: per chart × market, the regime model fitted on that chart's first 70% (the live pass reads the newest candles with it) */
+  hmm?: Partial<Record<FastTf, Record<string, HmmModel>>>;
   note: string;
 }
 type FilterCoverage = ReturnType<typeof filterCoverage>;
@@ -356,6 +359,7 @@ export class FastLab {
     const spans = { '15m': { from: null, to: null, oosFrom: null, markets: 0 }, '1m': { from: null, to: null, oosFrom: null, markets: 0 } } as FastReport['spans'];
     const conviction: Partial<Record<FastTf, ConvictionReport>> = {};
     const coverage: NonNullable<FastReport['coverage']> = {};
+    const hmm: NonNullable<FastReport['hmm']> = {};
     for (const tf of FX_FAST.tfs) {
       let series: Series[] = [];
       let from = Infinity;
@@ -372,8 +376,6 @@ export class FastLab {
       }
       if (!series.length) continue;
       const oosFrom = from + 0.7 * (to - from);
-      // v17: what the live missing-data guard compares against (each market's bars before this chart's oosFrom)
-      coverage[tf] = Object.fromEntries(series.map((se) => [se.inst.id, testedCoverage(se, oosFrom)]));
       // v15.2: closed trades of the strategies picked on the first 70%, with how many market checks backed them
       const byPair = new Map(series.map((se) => [se.inst.id, se]));
       const conv: ConvRow[] = [];
@@ -386,6 +388,10 @@ export class FastLab {
         }
       });
       conviction[tf] = gradeConviction(conv, oosFrom, tf, false, { pHi: null, pTop: null });
+      // v17: what the live missing-data guard compares against (each market's bars before this chart's oosFrom);
+      // v18: after the test, so the regime model's reading counts among the inputs
+      coverage[tf] = Object.fromEntries(series.map((se) => [se.inst.id, testedCoverage(se, oosFrom)]));
+      hmm[tf] = Object.fromEntries(series.flatMap((se) => (se.hmm ? [[se.inst.id, se.hmm]] : [])));
       rows.push(...ev.rows);
       paperRows.push(...ev.paperRows);
       open.push(...ev.open);
@@ -408,6 +414,7 @@ export class FastLab {
       paper: { since, rows: paperRows, open: open.slice(0, 200).map(slimTrade), recent: recent.slice(0, 150).map(slimTrade) },
       conviction,
       coverage,
+      hmm,
       note: rows.length
         ? `${rows.length} strategy × chart combinations on the 15-minute (${days('15m')} days of history) and 1-minute (${days('1m')} days) charts, same spreads as everywhere. ${pass} pass on their unseen last 30%. Short histories: the paper results decide.`
         : 'Not enough 15-minute / 1-minute candles yet (the server keeps collecting them).',
@@ -459,6 +466,9 @@ export class FastLab {
         if (bars[bars.length - 1]!.t + 4 * TF_MIN[tf] * 60_000 >= now) pairsSeen.add(inst.id);
         const [b1, b2] = this.bigFor(tf, inst.id, book);
         const se = makeSeries(inst, tf, bars, book, b1, b2);
+        // v18: the regime model this chart's rows were tested with (fitted at the :31 test) reads the live window
+        const hm = this.report?.hmm?.[tf]?.[inst.id];
+        if (hm) applyHmm(se, hm);
         const last = bars.length - 1;
         newest = Math.max(newest, bars[last]!.t);
         const fired: FastFiring['byPair'][string] = [];

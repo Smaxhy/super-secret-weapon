@@ -19,21 +19,21 @@ import { FxTrade } from '../components/FxTrade';
 import { OandaCard } from '../components/OandaCard';
 import { PythCard } from '../components/PythCard';
 import { fitBars, MarketChart, type ChartDrawings } from '../components/MarketChart';
-import { EXIT_SHORT, ExitsCard, LockCard, FILTER_SHORT, FiltersCard, JudgeCard, MoodCard, NewsStudyCard, StrengthCard, TrendArrows, type ExitKind, type ExitSummary, type FilterKind, type FilterSummary, type JudgeReport, type LockSummary, type MoodNow, type NewsStudy, type PortfolioReport, type StrengthNow } from '../components/FxInsights';
+import { EXIT_SHORT, ExitsCard, HonestCard, LockCard, FILTER_SHORT, FiltersCard, JudgeCard, MoodCard, NewsStudyCard, StrengthCard, TrendArrows, type ExitKind, type ExitSummary, type FilterKind, type FilterSummary, type HonestReport, type JudgeReport, type LockSummary, type MoodNow, type NewsStudy, type PortfolioReport, type RowStat, type StrengthNow } from '../components/FxInsights';
 import { Badge, Button, Card, Chip, Drawer, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Sparkline, Stack, StatTile, useStored } from '../components/ui';
 
 interface RStats { n: number; winPct: number; avgR: number; medianR: number; pf: number | null; totalR: number; maxDdR: number }
 interface Risk { riskPct: number; finalX: number; avgWeekPct: number; medianWeekPct: number; greenWeeksPct: number; bigWeeksPct: number; bestWeekPct: number; worstWeekPct: number; maxDdPct: number; blown: boolean; medianLeverage: number; weeks: number }
 interface VariantRow { filter: FilterKind; inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number }
 interface ExitVariantRow extends Omit<VariantRow, 'filter'> { exit: ExitKind }
-interface RowT { id: string; name: string; family: string; desc: string; tf: string; filter?: FilterKind; variants?: VariantRow[]; exit?: ExitKind; exitVariants?: ExitVariantRow[]; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string; luck?: { pctl: number; twinsP90: number; twinPassPct: number } }
+interface RowT { id: string; name: string; family: string; desc: string; tf: string; filter?: FilterKind; variants?: VariantRow[]; exit?: ExitKind; exitVariants?: ExitVariantRow[]; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string; luck?: { pctl: number; twinsP90: number; twinPassPct: number }; stats?: RowStat }
 interface Trade { strategy: string; tf: string; pair: string; side: 1 | -1; entryT: number; exitT: number; entry: number; exit: number; r: number; reason: string; stop: number; stop0: number; target: number | null }
 interface MarketNow { id: string; label: string; price: number; t: number; change24hPct: number; closes: number[]; trend: 'up' | 'down' | 'flat'; rsi: number; atrPips: number; firing: Array<{ id: string; name: string; tf: string; side: 1 | -1; allowed?: boolean; why?: string | null }>; openPaper: number; bars: number[][]; drawings: ChartDrawings; mtf?: { h1: number; h4: number; d1: number }; strength?: { base: string; quote: string; baseScore: number | null; quoteScore: number | null; gap: number | null }; risk?: number; heat?: Heatmap }
 interface HeatLevel { price: number; kind: 'round' | 'half' | 'swing' | 'yesterday' | 'expiry'; label: string; weight: number; distAtr: number }
 interface Heatmap { levels: HeatLevel[]; read: { positioning: number | null; stretch?: number | null; carry: number | null; volF: number | null; hurst: number | null; long: number; short: number; of: number; why: string[] } }
 interface ExtFeeds { dukascopy: { at: number; ids: Record<string, { bars: number; firstT: number | null; lastT: number | null; error: string | null }> } | null; spreadProfiles: string[]; macro: { cot: Array<{ ccy: string; score: number; net: number; asOf: number }>; rates: Array<{ ccy: string; rate: number }>; errors: string[]; at: number | null }; historyFrom: number }
 interface PaperRow { id: string; name: string; tf: string; stats: RStats; risk1: Risk; open: number }
-interface Report { at: number; durationMs: number; feed: Array<{ id: string; role?: 'traded' | 'strength' | 'mood'; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; markets?: MarketNow[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string; strength?: StrengthNow; mood?: MoodNow; filters?: FilterSummary[]; exits?: ExitSummary[]; lock?: LockSummary; judge?: JudgeReport | null; portfolio?: PortfolioReport | null; news?: NewsStudy | null; extFeeds?: ExtFeeds }
+interface Report { at: number; durationMs: number; feed: Array<{ id: string; role?: 'traded' | 'strength' | 'mood'; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; markets?: MarketNow[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string; strength?: StrengthNow; mood?: MoodNow; filters?: FilterSummary[]; exits?: ExitSummary[]; lock?: LockSummary; judge?: JudgeReport | null; portfolio?: PortfolioReport | null; news?: NewsStudy | null; extFeeds?: ExtFeeds; honest?: HonestReport }
 interface FastFeed { id: string; tf: '15m' | '1m'; bars: number; firstT: number | null; lastT: number | null; source: 'oanda' | 'yahoo' | null; error: string | null }
 interface FastReport { at: number; durationMs: number; feed: FastFeed[]; spans: Record<'15m' | '1m', { from: number | null; to: number | null; oosFrom: number | null; markets: number }>; rows: RowT[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string }
 interface Data { running: boolean; last: Report | null; fast?: FastReport | null }
@@ -108,6 +108,7 @@ export function Forex() {
           )}
           {section === 'live' && <FxNews />}
           {section === 'live' && <Markets r={r} onTrade={(id) => { try { localStorage.setItem('fx.pair', id); } catch { /* ignore */ } navigate('/forex/practice'); }} />}
+          {section === 'strategies' && <HonestCard h={r.honest} names={Object.fromEntries(r.rows.map((x) => [x.id, x.name]))} />}
           {section === 'strategies' && <JudgeCard j={r.judge} />}
           {section === 'strategies' && <FiltersCard f={r.filters} />}
           {section === 'strategies' && <LockCard l={r.lock} />}
@@ -307,6 +308,7 @@ function Strategies({ r }: { r: Report }) {
                     {x.exit && x.exit !== 'designed' && <Badge tone="accent">{EXIT_SHORT[x.exit]}</Badge>}
                     <Badge tone={VERDICT[x.verdict].tone}>{VERDICT[x.verdict].label}</Badge>
                     {x.luck && <Badge tone={x.luck.pctl >= 90 ? 'up' : 'neutral'} title="where its unseen result falls among 20 copies with the same exits that fire at random times">beats {Math.round(x.luck.pctl / 5)} of 20 random</Badge>}
+                    {x.stats && <Badge tone={x.stats.dsr >= 0.95 ? 'up' : x.stats.dsr >= 0.5 ? 'neutral' : 'warn'} title={`deflated Sharpe: the chance its unseen edge is real given every row graded on the same data (Sharpe ${x.stats.sr} a trade vs ${x.stats.srStar} for the best no-edge row)`}>real {Math.round(x.stats.dsr * 100)}%</Badge>}
                   </div>
                   <div className="mt-0.5 truncate text-xs text-muted">
                     {x.all.n} trades · {x.all.winPct}% won · unseen {signed(x.outSample.avgR, 2)}R/trade · {x.tradesPerWeek}/week

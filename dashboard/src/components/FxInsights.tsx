@@ -8,7 +8,7 @@ import { Badge, Button, Card, Row, Rows, Sparkline, Stack, StatTile } from './ui
 
 export interface StrengthNow { at: number | null; ccys: Array<{ ccy: string; score: number; today: number; week: number }> }
 export interface MoodNow { at: number | null; score: number | null; label: 'risk-on' | 'risk-off' | 'calm'; inputs: Array<{ id: string; label: string; value: number | null; change: number | null; unit: '%' | 'bp' }>; note: string }
-export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'volf' | 'hurst' | 'crowd' | 'stretch' | 'all';
+export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'volf' | 'hurst' | 'crowd' | 'stretch' | 'hmm' | 'all';
 export interface FilterSummary { filter: FilterKind; label: string; chosenBy: number; compared: number; inDeltaR: number; outDeltaR: number; outBetterPct: number; keptPct: number; random: { inAvgR: number; outAvgR: number; outN: number } }
 interface StudyCell { n: number; avgAtr: number[]; contPct: number[] }
 export interface NewsStudy { horizons: number[]; shocks: number; overall: StudyCell; byHour: Array<{ key: string; label: string } & StudyCell>; byPair: Array<{ pair: string } & StudyCell>; byEvent: Array<{ key: string; label: string } & StudyCell>; recent: Array<{ pair: string; t: number; dir: 1 | -1; sizeAtr: number; moves: Array<number | null>; event: string | null }>; eventsKnown: number }
@@ -22,7 +22,7 @@ export interface ExitSummary { exit: ExitKind; label: string; chosenBy: number; 
 export interface JudgeReport { active: boolean; why: string; trainedOn: number; tested: number; auc: number | null; threshold: number | null; keepPct: number; allR: number; keptR: number; skippedR: number; allWinPct: number; keptWinPct: number; importance: Array<{ feature: string; label: string; share: number }>; fallback?: { active: boolean; why: string; auc: number | null; keepPct: number; keptR: number; allR: number } }
 export interface RiskSummary { exposure: Array<{ ccy: string; pct: number }>; capPct: number; ddPct: number; ddFactor: number; baseRiskPct: number; openRiskPct: number }
 
-export const FILTER_SHORT: Record<FilterKind | 'regime', string> = { none: 'no filter', strength: '+ strength', mtf: '+ bigger chart', mood: '+ mood', regime: '+ regime', volf: '+ vol forecast', hurst: '+ trend/chop', crowd: '+ not crowded', stretch: '+ not overstretched', all: '+ all 3 checks' };
+export const FILTER_SHORT: Record<FilterKind | 'regime', string> = { none: 'no filter', strength: '+ strength', mtf: '+ bigger chart', mood: '+ mood', regime: '+ regime', volf: '+ vol forecast', hurst: '+ trend/chop', crowd: '+ not crowded', stretch: '+ not overstretched', hmm: '+ regime model', all: '+ all 3 checks' };
 export const EXIT_SHORT: Record<ExitKind, string> = { designed: 'exits as designed', breakeven: 'break-even at +1R', scale: 'half off at +1R', tight: 'closer target', runner: 'runner exit', quick: 'quick exit', wide: 'bigger target', trail_tp: 'trailing take-profit', half_trail: 'half at target, rest trails', trail_sl: 'trailing stop-loss' };
 const signed = (x: number, dp = 1) => {
   const v = Number(x.toFixed(dp));
@@ -170,6 +170,42 @@ export function LockCard({ l }: { l: LockSummary | undefined }) {
         <Row label="Every strategy, unseen 30%" value={`${signed(l.outDeltaR, 2)}R a trade`} sub={`better on ${l.outBetterPct}% of them`} tone={l.outDeltaR > 0 ? 'up' : l.outDeltaR < 0 ? 'down' : undefined} />
       </Rows>
       <p className="mt-2 text-xs text-muted">More trades close in profit with the lock, but some winners get stopped out early in normal back-and-forth before reaching the target — the R a trade above is the net of both.</p>
+    </Card>
+  );
+}
+
+export interface RowStat { sr: number; srStar: number; psr0: number; dsr: number; minTrl: number | null; n: number }
+export interface HonestReport {
+  trials: number;
+  varSr: number;
+  expectedMaxSr: number;
+  downgraded: number;
+  pbo: { pbo: number; combos: number; blocks: number; trials: number; degradation: { slope: number; intercept: number }; pLossOos: number; logit: { p10: number; median: number; p90: number } } | null;
+  spa: { rcStat: number; pRc: number; spaStat: number; pSpa: number; best: number; bestMean: number; draws: number; blockLen: number; trials: number; periods: number; bestKey: string } | null;
+  benchmark: 'random' | 'zero';
+  weeks: number;
+  rowsInMatrix: number;
+  note: string;
+}
+
+/** v18: how much of the lab's selection is luck — the standard quant tests over every row (deflated Sharpe, PBO, SPA). */
+export function HonestCard({ h, names = {} }: { h: HonestReport | null | undefined; names?: Record<string, string> }) {
+  if (!h) return null;
+  const pboPct = h.pbo ? Math.round(h.pbo.pbo * 100) : null;
+  const pboTone = pboPct === null ? undefined : pboPct <= 30 ? 'up' : pboPct >= 50 ? 'down' : undefined;
+  const spaTone = h.spa ? (h.spa.pSpa < 0.05 ? 'up' : h.spa.pSpa > 0.2 ? 'down' : undefined) : undefined;
+  const bestName = h.spa ? `${names[h.spa.bestKey.split(':')[0] ?? ''] ?? h.spa.bestKey.split(':')[0]} · ${h.spa.bestKey.split(':')[1] ?? ''}` : '';
+  return (
+    <Card
+      title="How much of this is luck?"
+      subtitle="Hundreds of strategy × chart × filter × exit combinations are graded on the same unseen 30%, so some pass by chance. These are the standard tests quants use to tell a real edge from the best of many tries."
+    >
+      <Rows>
+        <Row label="Rows graded on the unseen 30%" value={`${h.trials}`} sub={`the best of that many no-edge rows would show a Sharpe of ${h.expectedMaxSr} per trade by luck · an Edge row must beat that (deflated Sharpe ≥ 50%)${h.downgraded ? ` · ${h.downgraded} Edge row${h.downgraded === 1 ? '' : 's'} downgraded to Maybe` : ''}`} />
+        <Row label="Probability of backtest overfitting" value={pboPct === null ? 'not enough history' : `${pboPct}%`} sub={h.pbo ? `${h.pbo.combos} half-and-half splits of ${h.weeks} weeks (${h.pbo.blocks} blocks) over ${h.rowsInMatrix} rows · the in-sample winner lost money out of sample in ${Math.round(h.pbo.pLossOos * 100)}% of them · ≤ 30% is healthy, ~50% means the picks are noise` : 'needs 64+ weeks and 2+ rows'} tone={pboTone} />
+        <Row label={`Best row vs ${h.benchmark === 'random' ? 'random entries' : 'zero'}, every row counted`} value={h.spa ? `SPA p ${h.spa.pSpa}` : 'not enough data'} sub={h.spa ? `${bestName} · Reality Check p ${h.spa.pRc} · ${h.spa.draws} bootstrap draws · under 0.05 = its lead is not explained by trying ${h.spa.trials} rows` : undefined} tone={spaTone} />
+      </Rows>
+      <p className="mt-2 text-xs text-muted">Deflated Sharpe: Bailey &amp; López de Prado (2014). PBO: CSCV (Bailey, Borwein, López de Prado &amp; Zhu 2017). SPA: Hansen (2005), Reality Check: White (2000). Each row's "real N%" badge is its deflated Sharpe.</p>
     </Card>
   );
 }

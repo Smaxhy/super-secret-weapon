@@ -35,6 +35,8 @@ import { drawingsFor, type Drawings } from './drawings';
 import { INSTRUMENTS, MOOD_SYMBOLS, STRENGTH_PAIRS, TF_MIN, type Bar, type Instrument, type Signal, type Timeframe, type Trade } from './types';
 import { buildStrength, gapSeries, scoreAt, strengthNow, type StrengthBook, type StrengthNow } from './strength';
 import { buildStretch, crowdPxSeries, type StretchBook } from './stretch';
+import { filterHmm, hmmRegime, hmmReturns, type HmmModel } from './hmm';
+import { dsrDowngrade, honestStats, type HonestReport, type RowStat, type StatInput } from './honest';
 import { alignTrend, decisionTimes, toDaily, trendSeries, withEnd, type SpanBar } from './mtf';
 import { buildMood, moodNow, moodSeries, riskOfLong, type MoodBook, type MoodNow } from './mood';
 import { FILTERS, FILTER_LABEL, allowFor, blockReason, chooseFilter, chooseVariant, filterCoverage, missingInput, preferVariant, type FilterEnv, type FilterKind } from './filters';
@@ -109,6 +111,8 @@ export interface Row {
   luck?: { pctl: number; twinsP90: number; twinPassPct: number };
   /** v17.11: the same filter + exit WITHOUT the owner's profit lock (what the lock changed) */
   noLock?: { inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number };
+  /** v18: the deflated Sharpe of its unseen trades (honest.ts) — P(the edge is real) given every row graded on them */
+  stats?: RowStat;
 }
 
 /** v17.11: what the owner's profit lock changed across the strategies (each on its own filter + exit) */
@@ -273,6 +277,8 @@ export interface FxReport {
   extFeeds?: { dukascopy: DkMeta | null; spreadProfiles: string[]; macro: ReturnType<typeof macroNow>; historyFrom: number };
   /** v17: how up to date each market's hourly prices are (stale ones get no new bot trades) */
   dataAge?: DataAge[];
+  /** v18: how much of the lab's selection is luck (deflated Sharpe trials, PBO, Reality Check / SPA) */
+  honest?: HonestReport;
 }
 
 export const FX_REPORT = 'fx:report';
@@ -576,6 +582,44 @@ export interface Series {
   tf: Timeframe;
   ctx: Ctx;
   env: FilterEnv;
+  /** v18: the regime model fitted on this series' first 70% (null = none; undefined = not attached yet) */
+  hmm?: HmmModel | null;
+}
+
+/**
+ * v18: fit the hidden-Markov regime model on the bars BEFORE `oosFrom` only and read every bar causally
+ * (`env.hmmHi` / `env.hmmLo`). Idempotent. Returns the model (null when the fit window is too short).
+ */
+export function attachHmm(se: Series, oosFrom: number): HmmModel | null {
+  if (se.hmm !== undefined) return se.hmm;
+  const bars = se.ctx.bars;
+  let fitBars = bars.findIndex((b) => b.t >= oosFrom);
+  if (fitBars < 0) fitBars = bars.length;
+  const reg = hmmRegime(se.ctx.close, fitBars);
+  se.hmm = reg ? reg.model : null;
+  if (reg) {
+    se.env.hmmHi = reg.pHigh;
+    se.env.hmmLo = reg.pLow;
+  }
+  return se.hmm;
+}
+
+/** v18: read a (live) series with a model fitted elsewhere (the fast lab's stored model for that chart × market). */
+export function applyHmm(se: Series, model: HmmModel): void {
+  const r = hmmReturns(se.ctx.close);
+  const post = filterHmm(model, r.slice(1));
+  const n = se.ctx.close.length;
+  const hi = new Float64Array(n);
+  const lo = new Float64Array(n);
+  hi[0] = NaN;
+  lo[0] = NaN;
+  for (let i = 1; i < n; i++) {
+    hi[i] = post[model.hi]![i - 1]!;
+    lo[i] = post[model.lo]![i - 1]!;
+  }
+  se.env.hmmHi = hi;
+  se.env.hmmLo = lo;
+  se.hmm = model;
 }
 
 /** v15: the hourly market read (strength, mood, cross-market moves), shared with the 15m / 1m lab. */
@@ -669,6 +713,11 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
   const open: Trade[] = [];
   const recent: Trade[] = [];
   type Bucket = { trades: Trade[]; perPair: Row['pairs'] };
+  // v18: the regime model per series (fitted on its first 70% only) for the 'hmm' filter
+  for (const se of seriesTf) {
+    attachHmm(se, o.oosFrom);
+    await yieldNow();
+  }
   for (const s of STRATEGIES) {
     if (!runsOn(s, tf)) continue;
     const style = styleOf(s);
@@ -1347,8 +1396,11 @@ export class ForexLab {
     const openExtra = new Map<string, { total: number; yes: string[]; of: number }>();
     const seriesOf = new Map(series.map((se) => [`${se.inst.id}:${se.tf}`, se]));
     const weeks = Math.max(1, (to - from) / (7 * 86_400_000));
+    /** v18: every row's closed trades (final variant) for the honest statistics */
+    const statInputs: StatInput[] = [];
     for (const tf of FX_CONFIG.timeframes) {
       const ev = await evaluateTf(series.filter((se) => se.tf === tf), tf, { oosFrom, since, weeks, prev: prevChosen }, (x) => {
+        statInputs.push({ key: x.key, isRandom: x.s.id === 'random', done: x.done });
         if (x.s.id === 'random') return;
         // the judge's view of every trade: its context at the signal bar (and the strategy's last 10 results before it)
         const byExitT = [...x.done].sort((a, b) => a.exitT - b.exitT);
@@ -1428,6 +1480,27 @@ export class ForexLab {
     //    Heavy (≈ 0.4–2.5 s a row), so it runs on weekends only; the stored result is applied every hour while the row
     //    still trades the same filter + exit ──
     await this.applyLuck(rows, series, oosFrom);
+    // ── v18 honest statistics: deflated Sharpe per row (Edge needs ≥ 50%), PBO + Reality Check / SPA overall ──
+    let honest: HonestReport | undefined;
+    try {
+      const h = honestStats(statInputs, { from, to, oosFrom });
+      let downgraded = 0;
+      for (const r of rows) {
+        const st = h.rows.get(`${r.id}:${r.tf}`);
+        if (st) r.stats = st;
+        const d = dsrDowngrade(r.verdict, st, h.report.trials);
+        if (d.why) {
+          r.verdict = d.verdict;
+          r.why = d.why;
+          downgraded++;
+        }
+      }
+      honest = { ...h.report, downgraded };
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'honest statistics failed');
+    }
+    statInputs.length = 0;
+    await yieldNow();
     const filters = summarizeFilters(rows);
     const exits = summarizeExits(rows);
     const lockSummary = summarizeLock(rows, DEFAULT_SIM.profitLock);
@@ -1678,6 +1751,7 @@ export class ForexLab {
       news,
       conviction,
       sniper,
+      ...(honest ? { honest } : {}),
       dataAge: Object.values(this.dataAge),
       extFeeds: await (async () => {
         let dk: DkMeta | null = null;

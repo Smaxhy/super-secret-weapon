@@ -12,19 +12,23 @@
  *              been snapping back (≤ 0.48).
  *  - crowd:    (v16) no long when hedge funds are already near their most-long on the pair (CFTC positioning ≥ 1.2 of ±2),
  *              no short when near their most-short — the crowded side is where the squeeze comes from.
+ *  - hmm:      (v18) a hidden-Markov regime model on the series' own returns (hmm.ts), fitted on the first 70% only
+ *              and read causally: nothing new while the wild (news / crisis) state is likely, fades only with real
+ *              weight on the quiet state, trend rules not in a dead-quiet market.
  *  - all:      strength + bigger chart + mood.
  * Missing strength / mood data (a feed down) never blocks. The bigger-chart check needs a clear trend, so it also
  * holds back trades in the first weeks of history while the 4h / daily averages warm up.
  */
 import type { RStats } from './engine';
+import { hmmBlockReason } from './hmm';
 import { MOOD_MIN } from './mood';
 import { STRETCH } from './stretch';
 import type { Style } from './strategies';
 import type { Timeframe } from './types';
 
-export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'volf' | 'hurst' | 'crowd' | 'stretch' | 'all';
-export const FILTERS: FilterKind[] = ['none', 'strength', 'mtf', 'mood', 'regime', 'volf', 'hurst', 'crowd', 'stretch', 'all'];
-export const FILTER_LABEL: Record<FilterKind, string> = { none: 'no filter', strength: 'strong vs weak currency', mtf: 'bigger chart agrees', mood: 'market mood', regime: 'right market regime', volf: 'volatility forecast fits', hurst: 'trend / chop measure fits', crowd: 'not on the crowded side', stretch: 'not overstretched (price)', all: 'strength + bigger chart + mood' };
+export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'volf' | 'hurst' | 'crowd' | 'stretch' | 'hmm' | 'all';
+export const FILTERS: FilterKind[] = ['none', 'strength', 'mtf', 'mood', 'regime', 'volf', 'hurst', 'crowd', 'stretch', 'hmm', 'all'];
+export const FILTER_LABEL: Record<FilterKind, string> = { none: 'no filter', strength: 'strong vs weak currency', mtf: 'bigger chart agrees', mood: 'market mood', regime: 'right market regime', volf: 'volatility forecast fits', hurst: 'trend / chop measure fits', crowd: 'not on the crowded side', stretch: 'not overstretched (price)', hmm: 'regime model (hidden states) fits', all: 'strength + bigger chart + mood' };
 /** v16 thresholds */
 export const VOLF_UP = 1;
 export const VOLF_CALM = 1.05;
@@ -59,6 +63,9 @@ export interface FilterEnv {
   cot?: Float64Array;
   /** v17: price stretch of the pair, base − quote, −2 … +2 (a positioning stand-in from prices only; NaN = unknown) */
   crowdPx?: Float64Array;
+  /** v18: hidden-Markov regime model (hmm.ts), read causally: P(wild state) and P(quiet state) per bar (NaN = unknown) */
+  hmmHi?: Float64Array;
+  hmmLo?: Float64Array;
 }
 
 const passStrength = (e: FilterEnv, i: number, side: 1 | -1) => {
@@ -113,6 +120,7 @@ export function blockReason(kind: FilterKind, e: FilterEnv, i: number, side: 1 |
   if (kind === 'hurst') return passHurst(e, i, style) ? null : style === 'trend' ? 'moves have been snapping back, not continuing' : 'moves have been continuing, not snapping back';
   if (kind === 'crowd') return passCrowd(e, i, side) ? null : `hedge funds are already crowded ${side === 1 ? 'long' : 'short'} on it`;
   if (kind === 'stretch') return passStretch(e, i, side) ? null : `it has already run ${side === 1 ? 'up' : 'down'} unusually hard (price stretch)`;
+  if (kind === 'hmm') return hmmBlockReason(e.hmmHi?.[i], e.hmmLo?.[i], style);
   if ((kind === 'strength' || kind === 'all') && !passStrength(e, i, side)) return 'the currency it buys is not the stronger one';
   if ((kind === 'mtf' || kind === 'all') && !passMtf(e, i, side)) return 'the bigger chart does not agree';
   if ((kind === 'mood' || kind === 'all') && !passMood(e, i, side)) return 'the market mood is against it';
@@ -129,12 +137,13 @@ const FILTER_INPUTS: Partial<Record<FilterKind, Array<[keyof FilterEnv, string]>
   hurst: [['hurst', 'continue / snap-back reading']],
   crowd: [['cot', 'CFTC positioning']],
   stretch: [['crowdPx', 'price stretch']],
+  hmm: [['hmmHi', 'regime model']],
 };
 
 /** Share of the first `upTo` bars where each filter input is known (pure). */
 export function filterCoverage(e: FilterEnv, upTo: number): Partial<Record<keyof FilterEnv, number>> {
   const out: Partial<Record<keyof FilterEnv, number>> = {};
-  for (const k of ['gap', 'mood', 'er', 'volF', 'hurst', 'cot', 'crowdPx'] as const) {
+  for (const k of ['gap', 'mood', 'er', 'volF', 'hurst', 'cot', 'crowdPx', 'hmmHi'] as const) {
     const a = e[k] as Float64Array | undefined;
     if (!a) continue;
     const n = Math.min(upTo, a.length);
