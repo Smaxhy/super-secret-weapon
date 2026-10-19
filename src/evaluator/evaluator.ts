@@ -31,6 +31,7 @@ import type { ShadowKind, ShadowTrades } from '../learner/shadow-trades';
 import type { OutcomeTracker } from '../learner/outcome-tracker';
 import type { Brain } from '../learner/brain';
 import { exploreMargin, noteEvaluation, noteSignal, noteSkip } from '../lib/entry-blockers';
+import { HourWindow, thinOnly } from './thin-probe';
 import { Worker, type Job } from 'bullmq';
 import type { Redis } from 'ioredis';
 import type { Prisma } from '@prisma/client';
@@ -102,6 +103,8 @@ export class Evaluator {
   /** v18.10: `jobs` = checkpoints processed; the early exits say where a coin stopped before it was scored
    * (`evaluated`): no Token row yet (DB write behind), no live view (forgotten), its safety check not back yet. */
   readonly stats = { evaluated: 0, buys: 0, rejects: 0, walletLookups: 0, feeSamples: 0, jobs: 0, alreadyDone: 0, noToken: 0, noView: 0, waitSafety: 0, safetyAsked: 0 };
+  /** v18.11: thin-coin learning probes taken this hour */
+  private thinProbes: HourWindow | null = null;
   private readonly fees: FeeEstimator;
   private readonly social: SocialAnalyzer;
   /** Live per-trade crowd log (set in index.ts). */
@@ -731,6 +734,21 @@ export class Evaluator {
       decision = 'BUY';
       reasons = [`learning trade: score ${result.score.toFixed(1)} vs bar ${threshold.toFixed(0)} (within ${exploreMargin(ex)}) — bought at ${ex.sizeMultiplier}× size`];
     }
+    // v18.11 thin-coin probe (data-collector mode): only the early / small-coin rules failed → a minimum-size learning
+    // trade, a few an hour, so the bot has trades to learn from while every safety / rug / owner rule still holds.
+    let thinProbe = false;
+    const thin = ex.thinCoin ?? DEFAULT_CONFIG.explore.thinCoin;
+    if (decision === 'SKIP' && ex.enabled && thin?.enabled && thin.maxPerHour > 0 && ex.strategies.includes(STRATEGY.name) && !token.safetyHardFail && thinOnly(ruleFails) && result.score >= threshold - exploreMargin(ex)) {
+      if (!this.thinProbes || this.thinProbes.max !== thin.maxPerHour) this.thinProbes = new HourWindow(thin.maxPerHour);
+      const win = this.thinProbes;
+      if (win.take(Date.now())) {
+        explore = true;
+        thinProbe = true;
+        decision = 'BUY';
+        reasons = [`learning probe: early coin (${ruleFails.join(', ')}) — score ${result.score.toFixed(1)} vs bar ${threshold.toFixed(0)}, minimum size, ${win.count(Date.now())} of ${thin.maxPerHour} this hour`];
+        ruleFails = [];
+      }
+    }
     // Edge gate (v11.3): a strategy whose record since it went live says it loses after costs doesn't buy — except
     // every Nth refused signal, bought at the minimum size, so its record keeps updating and it can earn its way back.
     // After the learning-trade step on purpose: learning trades are the data the gate judges by.
@@ -1007,7 +1025,7 @@ export class Evaluator {
       const asCfg = cfg.adaptiveStop ?? DEFAULT_ADAPTIVE_STOP;
       const asf = adaptiveStopMultiplier({ entryQualityVerdict: eq.verdict, rugCheckScore: rc.score ?? null, score: result.score, threshold }, asCfg)
         * mcAgeStopMultiplier(market.raw.marketCapUsd ?? null, market.raw.ageSec != null ? market.raw.ageSec / 60 : null, asCfg);
-      const res = await this.trader.tryEnter({ probe: edgeProbe,
+      const res = await this.trader.tryEnter({ probe: edgeProbe || thinProbe,
         mint,
         symbol: token.symbol,
         strategy: STRATEGY.name,

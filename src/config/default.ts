@@ -833,6 +833,11 @@ export const DEFAULT_CONFIG = {
     droughtMinutes: 45,
     droughtScoreMargin: 10,
     strategies: ['CURVE_SNIPE', 'SOON', 'MIGRATION_MOMENTUM', 'RUNNER'] as StrategyName[],
+    /** v18.11 data-collector mode: a coin that fails ONLY the early / small-coin rules (holders, active wallets,
+     * liquidity, volume, fees) may still be bought as a learning probe at the minimum size, a few an hour, when the
+     * score is within the learning margin and nothing else is wrong (safety, rug / bundle / dumper / deployer guards
+     * and the owner's filters keep their full force). 0 = off. */
+    thinCoin: { enabled: true as boolean, maxPerHour: 8 },
   },
 
   /**

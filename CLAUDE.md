@@ -769,6 +769,16 @@ coins / scoring). Scanner → Bot health → "Bot process" card → **Coin check
 warning only (a restart loop fixes nothing). FIRST thing to read when crypto is quiet: that verdict line.
 tests/checker-watch.test.ts.
 
+## v18.11 thin-coin learning probes (Oct 19, owner's Bot health paste: 739 coins scored / h, 0 signals, last buy 9 h)
+The checker is healthy again (739 / h vs 52 in 7 h). New pair / Soon fail only "holders < N", "only N active wallets",
+"liquidity N SOL < M" — size / age rules, not safety. `src/evaluator/thin-probe.ts` (`THIN_RULE`, `thinOnly`, `HourWindow`)
++ `explore.thinCoin` {enabled true, maxPerHour 8}: in the evaluator, after the normal learning-trade step, a coin whose
+ONLY failed rules are thin ones (holders / active wallets / liquidity / volume / fees), no safety hard fail, score within
+the learning margin, strategy in `explore.strategies` → BUY as a learning probe (`explore` + `probe` → minimum size,
+counts toward the learning caps, edge gate skipped, Sniper refuses it as any learning trade), ≤ 8 an hour (sliding).
+Rug / bundle / dumper / deployer / owner filters / momentum / pressure / chart rules keep their full force; the trader's
+rug screen, bundle guard and vamp guard still run. Reason text "learning probe: early coin (…)". tests/thin-probe.test.ts.
+
 ## v15.4 crypto reset (Oct 18 night, owner's explicit request — overrides the VERDICT's "no more tweaks" for this one)
 Owner: "copy only the consistent wallets; reset the crypto strategies, trade smarter and faster; track
 5aLY85pyxiuX3fd4RgM3Yc1e3MAL6b7UgaZz6MS3JUfG (trustworthy); only SOON and migrated coins; stick to what worked somewhat
