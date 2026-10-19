@@ -376,7 +376,7 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     ages per market 1h / 15m / 1m, calendar blind, lab error) → Setup card **Data feeds** (`components/FxFeeds.tsx`).
     `src/forex/freshness.ts`: `lagBars` (bars missing on the market clock; metals' CME halt hour skipped), `dataAgeOf`,
     `staleReason` → a market ≥ 2 candles behind (1m: 3) gets no NEW bot trades (hourly lab `this.dataAge`, fast lab per
-    chart + `FRESH.bookMaxAgeMs` 150 min on the hourly read). Yahoo: 10 s timeout, the hourly refresh is a pool of 3 with
+    chart + `FRESH.bookMaxAgeMs` 150 min on the hourly read). Yahoo: 10 s timeout, the hourly refresh is a pool of 2 with
     a 120 s budget (`refreshAll`; was 27 serial calls → up to ~18 min when Yahoo hung). Macro: `retryHours` 2 after a
     failure (was 12), BIS errors only cleared when THIS attempt got rates, `cotOkAt` / `ratesOkAt`, age limits in history
     AND live (`cotMaxAgeDays` 17, `rateMaxAgeDays` 100 → NaN; cotSeries cache key includes it). Calendar: ok / fail +

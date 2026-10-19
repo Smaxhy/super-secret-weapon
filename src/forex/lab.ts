@@ -642,9 +642,9 @@ export function runNoteText(r: Omit<RunNote, 'note'>): string {
   return `${sig}${act ? ` · ${act}` : ''}${r.holding ? ` · holding ${r.holding}` : ''}`;
 }
 
-/** v17: the hourly refresh — at most 3 Yahoo calls at once, 400 ms apart, and no new call after `budgetMs` (a series left
+/** v17: the hourly refresh — at most 2 Yahoo calls at once, 500 ms apart, and no new call after `budgetMs` (a series left
  * out keeps its stored bars; the freshness check then stops new trades on it if it falls behind). */
-export const REFRESH = { concurrency: 3, gapMs: 400, budgetMs: 120_000 };
+export const REFRESH = { concurrency: 2, gapMs: 500, budgetMs: 120_000 };
 export async function refreshAll(redis: Redis, cfg = REFRESH): Promise<FeedStatus[]> {
   const jobs: Array<() => Promise<FeedStatus>> = [
     ...INSTRUMENTS.map((inst) => async () => ({ ...(await refreshInstrument(redis, inst)), role: 'traded' as const })),
