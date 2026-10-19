@@ -7,6 +7,7 @@ import { FxFeeds } from '../components/FxFeeds';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { FxBot } from '../components/FxBot';
+import { FxLab } from '../components/FxLab';
 import { FxNews, MarketClockBar } from '../components/FxNews';
 import { useApi } from '../hooks/useApi';
 import { useWidth } from '../hooks/useWidth';
@@ -19,7 +20,7 @@ import { FxTrade } from '../components/FxTrade';
 import { OandaCard } from '../components/OandaCard';
 import { PythCard } from '../components/PythCard';
 import { fitBars, MarketChart, type ChartDrawings } from '../components/MarketChart';
-import { ENTRY_SHORT, EntriesCard, EXIT_SHORT, ExitsCard, FinancingCard, HonestCard, LockCard, FILTER_SHORT, FiltersCard, JudgeCard, MoodCard, NewsStudyCard, StrengthCard, TrendArrows, type EntryKind, type EntrySummary, type ExitKind, type ExitSummary, type FilterKind, type FilterSummary, type FinancingSummary, type HonestReport, type JudgeReport, type LockSummary, type MoodNow, type NewsStudy, type PortfolioReport, type RowStat, type StrengthNow } from '../components/FxInsights';
+import { ENTRY_SHORT, EXIT_SHORT, FILTER_SHORT, MoodCard, StrengthCard, TrendArrows, type EntryKind, type EntrySummary, type ExitKind, type ExitSummary, type FilterKind, type FilterSummary, type FinancingSummary, type HonestReport, type JudgeReport, type LockSummary, type MoodNow, type NewsStudy, type PortfolioReport, type RowStat, type StrengthNow } from '../components/FxInsights';
 import { Badge, Button, Card, Chip, Drawer, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Sparkline, Stack, StatTile, useStored } from '../components/ui';
 
 interface RStats { n: number; winPct: number; avgR: number; medianR: number; pf: number | null; totalR: number; maxDdR: number }
@@ -43,7 +44,7 @@ const signed = (x: number, dp = 1) => `${x >= 0 ? '+' : ''}${x.toFixed(dp)}`;
 const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink-2');
 const day = (t: number | null) => (t ? new Date(t).toISOString().slice(0, 10) : '—');
 const VERDICT: Record<RowT['verdict'], { label: string; tone: 'up' | 'warn' | 'neutral' }> = { edge: { label: 'Edge', tone: 'up' }, maybe: { label: 'Maybe', tone: 'warn' }, no: { label: 'No edge', tone: 'neutral' } };
-type Section = 'live' | 'practice' | 'bot' | 'strategies' | 'paper' | 'setup';
+type Section = 'live' | 'practice' | 'bot' | 'strategies' | 'paper' | 'setup' | 'lab';
 const TITLES: Record<Section, { title: string; sub: string }> = {
   live: { title: 'Markets', sub: "Every market the bot watches: its trendlines, levels, signals and open trades." },
   practice: { title: 'Trade by hand', sub: 'Optional: your own $1,000 practice account. The auto-bot trades without you.' },
@@ -51,11 +52,12 @@ const TITLES: Record<Section, { title: string; sub: string }> = {
   strategies: { title: 'Strategies', sub: 'Every strategy tested on each chart with real spreads; the last 30% of each history kept unseen.' },
   paper: { title: 'Paper results', sub: 'Every strategy traded live on paper since the lab started: the real test.' },
   setup: { title: 'Setup', sub: 'Price feed, markets and the road to real money.' },
+  lab: { title: 'Lab', sub: 'Every test the bot runs on itself: what is live, what is still proving itself, and the numbers.' },
 };
 
 export function Forex() {
   const params = useParams();
-  const section = ((['live', 'practice', 'strategies', 'paper', 'setup'] as const).find((x) => x === params.section) ?? 'bot') as Section;
+  const section = ((['live', 'practice', 'strategies', 'paper', 'setup', 'lab'] as const).find((x) => x === params.section) ?? 'bot') as Section;
   const navigate = useNavigate();
   const { data, error, reload } = useApi<Data>('/api/forex', 60_000);
   const [busy, setBusy] = useState(false);
@@ -78,7 +80,7 @@ export function Forex() {
   const fast = data?.fast ?? null;
   // v15: the 15-minute / 1-minute lab's rows and paper trades sit next to the hourly ones
   const r = useMemo<Report | null>(() => (r0 ? mergeFast(r0, fast) : null), [r0, fast]);
-  const labNeeded = section === 'live' || section === 'strategies' || section === 'paper';
+  const labNeeded = section === 'live' || section === 'strategies' || section === 'paper' || section === 'lab';
   return (
     <>
       <PageHeader
@@ -109,15 +111,8 @@ export function Forex() {
           )}
           {section === 'live' && <FxNews />}
           {section === 'live' && <Markets r={r} onTrade={(id) => { try { localStorage.setItem('fx.pair', id); } catch { /* ignore */ } navigate('/forex/practice'); }} />}
-          {section === 'strategies' && <HonestCard h={r.honest} names={Object.fromEntries(r.rows.map((x) => [x.id, x.name]))} />}
-          {section === 'strategies' && <JudgeCard j={r.judge} />}
-          {section === 'strategies' && <FiltersCard f={r.filters} />}
-          {section === 'strategies' && <LockCard l={r.lock} />}
-          {section === 'strategies' && <ExitsCard e={r.exits} />}
-          {section === 'strategies' && <EntriesCard e={r.entries} />}
-          {section === 'strategies' && <FinancingCard f={r.financing} />}
           {section === 'strategies' && <Strategies r={r} />}
-          {section === 'strategies' && <NewsStudyCard n={r.news} />}
+          {section === 'lab' && <FxLab r={r} />}
           {section === 'paper' && <Paper r={r} />}
         </Stack>
       )}

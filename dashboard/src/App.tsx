@@ -55,7 +55,7 @@ const WS: Record<Ws, { label: string; icon: IconName; home: string; groups: Grou
     label: 'Forex',
     icon: 'globe',
     home: '/forex',
-    phone: ['/forex', '/forex/live', '/forex/strategies', '/forex/paper'],
+    phone: ['/forex', '/forex/live', '/forex/strategies', '/forex/lab'],
     groups: [
       {
         label: 'Forex',
@@ -63,6 +63,7 @@ const WS: Record<Ws, { label: string; icon: IconName; home: string; groups: Grou
           { to: '/forex', label: 'Auto-bot', icon: 'cpu', desc: 'The bot trades by itself: its trades, its plan, what it waits for' },
           { to: '/forex/live', label: 'Markets', icon: 'chart', desc: 'Every market, the bot\'s lines, signals and trades' },
           { to: '/forex/strategies', label: 'Strategies', icon: 'flask', desc: 'Every strategy tested on 1m, 15m, 1h and 4h charts' },
+          { to: '/forex/lab', label: 'Lab', icon: 'sparkles', desc: 'Every test it runs on itself: what is live, what is still proving itself' },
           { to: '/forex/paper', label: 'Paper results', icon: 'clock', desc: 'Every strategy traded live since the start' },
           { to: '/forex/practice', label: 'Trade by hand', icon: 'bolt', desc: 'Optional: your own $1k practice account' },
           { to: '/forex/setup', label: 'Setup', icon: 'plug', desc: 'Price feed, markets, going live' },
@@ -100,7 +101,9 @@ const WS: Record<Ws, { label: string; icon: IconName; home: string; groups: Grou
   },
 };
 const wsOf = (path: string): Ws => (path.startsWith('/forex') ? 'forex' : 'crypto');
-const groupsOf = (ws: Ws): Group[] => [...WS[ws].groups, SYSTEM];
+/** v18.2: the Scanner page is the CRYPTO bot's health — say so in the Forex workspace (its feeds live under Setup). */
+const SYSTEM_FX: Group = { label: 'System', items: [{ to: '/scanner', label: 'Crypto scanner', icon: 'radar', desc: 'The crypto bot\'s health (forex feeds: Setup)' }, SYSTEM.items[1]!] };
+const groupsOf = (ws: Ws): Group[] => [...WS[ws].groups, ws === 'forex' ? SYSTEM_FX : SYSTEM];
 const NAV = [...WS.forex.groups, ...WS.crypto.groups, SYSTEM].flatMap((g) => g.items);
 const EXACT = new Set(['/forex', '/crypto']);
 
