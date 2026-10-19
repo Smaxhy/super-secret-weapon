@@ -71,6 +71,13 @@ export function extraVotes(c: Ctx, e: FilterEnv, i: number, side: 1 | -1, style:
   if (fin(pos)) {
     of++;
     if (side * pos < 0.5) yes.push(side * pos <= -1 ? 'hedge funds positioned the other way (squeeze fuel)' : 'hedge funds not crowded on this side');
+  } else {
+    // v17: no CFTC reading → the price-only stand-in casts the same vote (never both, so the idea isn't counted twice)
+    const st = e.crowdPx?.[i];
+    if (fin(st)) {
+      of++;
+      if (side * st < 0.5) yes.push(side * st <= -1 ? 'it ran hard the other way (snap-back fuel)' : 'not overstretched on this side (price)');
+    }
   }
   const step = roundStep(c.pair);
   const a = c.atr14[i]!;

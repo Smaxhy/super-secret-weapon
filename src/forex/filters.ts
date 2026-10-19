@@ -18,12 +18,13 @@
  */
 import type { RStats } from './engine';
 import { MOOD_MIN } from './mood';
+import { STRETCH } from './stretch';
 import type { Style } from './strategies';
 import type { Timeframe } from './types';
 
-export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'volf' | 'hurst' | 'crowd' | 'all';
-export const FILTERS: FilterKind[] = ['none', 'strength', 'mtf', 'mood', 'regime', 'volf', 'hurst', 'crowd', 'all'];
-export const FILTER_LABEL: Record<FilterKind, string> = { none: 'no filter', strength: 'strong vs weak currency', mtf: 'bigger chart agrees', mood: 'market mood', regime: 'right market regime', volf: 'volatility forecast fits', hurst: 'trend / chop measure fits', crowd: 'not on the crowded side', all: 'strength + bigger chart + mood' };
+export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'volf' | 'hurst' | 'crowd' | 'stretch' | 'all';
+export const FILTERS: FilterKind[] = ['none', 'strength', 'mtf', 'mood', 'regime', 'volf', 'hurst', 'crowd', 'stretch', 'all'];
+export const FILTER_LABEL: Record<FilterKind, string> = { none: 'no filter', strength: 'strong vs weak currency', mtf: 'bigger chart agrees', mood: 'market mood', regime: 'right market regime', volf: 'volatility forecast fits', hurst: 'trend / chop measure fits', crowd: 'not on the crowded side', stretch: 'not overstretched (price)', all: 'strength + bigger chart + mood' };
 /** v16 thresholds */
 export const VOLF_UP = 1;
 export const VOLF_CALM = 1.05;
@@ -56,6 +57,8 @@ export interface FilterEnv {
   hurst?: Float64Array;
   carry?: Float64Array;
   cot?: Float64Array;
+  /** v17: price stretch of the pair, base − quote, −2 … +2 (a positioning stand-in from prices only; NaN = unknown) */
+  crowdPx?: Float64Array;
 }
 
 const passStrength = (e: FilterEnv, i: number, side: 1 | -1) => {
@@ -96,6 +99,12 @@ export const passCrowd = (e: FilterEnv, i: number, side: 1 | -1) => {
   return !fin(c) || side * c < CROWD_MAX;
 };
 
+/** v17: no buying a pair whose base has run up far harder than its quote (and the mirror) — price-only crowding */
+export const passStretch = (e: FilterEnv, i: number, side: 1 | -1) => {
+  const c = e.crowdPx?.[i];
+  return !fin(c) || side * c < STRETCH.crowdMax;
+};
+
 /** Why a filter would block this entry (null = allowed). Pure. */
 export function blockReason(kind: FilterKind, e: FilterEnv, i: number, side: 1 | -1, style: Style = 'neutral'): string | null {
   if (kind === 'none') return null;
@@ -103,6 +112,7 @@ export function blockReason(kind: FilterKind, e: FilterEnv, i: number, side: 1 |
   if (kind === 'volf') return passVolF(e, i, style) ? null : style === 'revert' ? 'moves are expected to get bigger' : 'moves are expected to calm down';
   if (kind === 'hurst') return passHurst(e, i, style) ? null : style === 'trend' ? 'moves have been snapping back, not continuing' : 'moves have been continuing, not snapping back';
   if (kind === 'crowd') return passCrowd(e, i, side) ? null : `hedge funds are already crowded ${side === 1 ? 'long' : 'short'} on it`;
+  if (kind === 'stretch') return passStretch(e, i, side) ? null : `it has already run ${side === 1 ? 'up' : 'down'} unusually hard (price stretch)`;
   if ((kind === 'strength' || kind === 'all') && !passStrength(e, i, side)) return 'the currency it buys is not the stronger one';
   if ((kind === 'mtf' || kind === 'all') && !passMtf(e, i, side)) return 'the bigger chart does not agree';
   if ((kind === 'mood' || kind === 'all') && !passMood(e, i, side)) return 'the market mood is against it';
@@ -118,12 +128,13 @@ const FILTER_INPUTS: Partial<Record<FilterKind, Array<[keyof FilterEnv, string]>
   volf: [['volF', 'volatility forecast']],
   hurst: [['hurst', 'continue / snap-back reading']],
   crowd: [['cot', 'CFTC positioning']],
+  stretch: [['crowdPx', 'price stretch']],
 };
 
 /** Share of the first `upTo` bars where each filter input is known (pure). */
 export function filterCoverage(e: FilterEnv, upTo: number): Partial<Record<keyof FilterEnv, number>> {
   const out: Partial<Record<keyof FilterEnv, number>> = {};
-  for (const k of ['gap', 'mood', 'er', 'volF', 'hurst', 'cot'] as const) {
+  for (const k of ['gap', 'mood', 'er', 'volF', 'hurst', 'cot', 'crowdPx'] as const) {
     const a = e[k] as Float64Array | undefined;
     if (!a) continue;
     const n = Math.min(upTo, a.length);

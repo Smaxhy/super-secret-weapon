@@ -451,6 +451,14 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     price GAPPED past fills at that open, not the level; the minute still forming is re-checked next tick (`checkedT`
     only moves past complete minutes). Yahoo price fails → currency pairs take Dukascopy's newest complete 1-minute
     candle (`dkQuote`, real bid / ask, cached 30 s, breaker, feed `dk-quotes`, `Quote.source` 'dukascopy'); metals never.
+  - **Price stretch** (`src/forex/stretch.ts`, no outside feed): per currency the 63-day return in normal-move units
+    (averaged over its pairs, ≥ 3 pairs), ranked within its own last ~2 years (520 days, ≥ 120 ranked) → −1…+1; a
+    pair = base − quote (−2…+2, the CFTC score's scale; metals none; > 4 days old → none). `MarketBook.stretch`
+    (`buildStretch(strengthInput)`), `ctx.ext.crowdPx` / `FilterEnv.crowdPx` via `makeSeries` (both labs). Uses:
+    filter `stretch` (no long ≥ +1.2, no short ≤ −1.2; 10 filter variants now), strategy `stretch_squeeze` (copy of
+    `cot_squeeze` on it, ±1.5, slow), a sniper vote ONLY when the CFTC reading is missing (never both), heatmap read
+    `stretch`. It follows price, so it can't see positions that differ from price (what CFTC adds). Causal (a bar only
+    sees days that ended by its close). tests/forex-stretch.test.ts.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

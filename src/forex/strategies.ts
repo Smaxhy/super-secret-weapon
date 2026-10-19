@@ -3,6 +3,7 @@
  * Signal; the engine fills it at the NEXT bar's open. Every rule is mirrored long / short. `random` is the
  * yardstick: a strategy has to beat random entries with the same exits to mean anything.
  */
+import { STRETCH } from './stretch';
 import type { Ctx } from './ta';
 import type { Signal } from './types';
 
@@ -1041,6 +1042,25 @@ export const STRATEGIES: Strategy[] = [
       const maxBars = Math.round((14 * 1440) / c.barMin);
       if (pos <= -1.5 && now > 0 && prev <= 0) return atrSig(c, i, 1, 3, null, { trailAtr: 4, maxBars });
       if (pos >= 1.5 && now < 0 && prev >= 0) return atrSig(c, i, -1, 3, null, { trailAtr: 4, maxBars });
+      return null;
+    },
+  },
+  {
+    id: 'stretch_squeeze',
+    name: 'Overstretched run turns',
+    family: 'flow',
+    style: 'neutral',
+    slow: true,
+    desc: 'No outside data: when a pair has run further down over 3 months than almost ever in its last 2 years (price stretch ≤ −1.5 of ±2) and the 5-day trend turns up, the snap-back tends to run (and the mirror after a record run up); 3 ATR stop, 4 ATR trail, out after about 2 weeks.',
+    signal(c, i) {
+      const pos = c.ext?.crowdPx?.[i];
+      const n = Math.max(2, Math.round((120 * 60) / c.barMin));
+      if (pos === undefined || !Number.isFinite(pos) || i < n + 1) return null;
+      const now = c.close[i]! - c.close[i - n]!;
+      const prev = c.close[i - 1]! - c.close[i - 1 - n]!;
+      const maxBars = Math.round((14 * 1440) / c.barMin);
+      if (pos <= -STRETCH.squeezeAt && now > 0 && prev <= 0) return atrSig(c, i, 1, 3, null, { trailAtr: 4, maxBars });
+      if (pos >= STRETCH.squeezeAt && now < 0 && prev >= 0) return atrSig(c, i, -1, 3, null, { trailAtr: 4, maxBars });
       return null;
     },
   },

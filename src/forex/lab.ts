@@ -34,6 +34,7 @@ import { buildCtx, to4h, type Ctx } from './ta';
 import { drawingsFor, type Drawings } from './drawings';
 import { INSTRUMENTS, MOOD_SYMBOLS, STRENGTH_PAIRS, TF_MIN, type Bar, type Instrument, type Signal, type Timeframe, type Trade } from './types';
 import { buildStrength, gapSeries, scoreAt, strengthNow, type StrengthBook, type StrengthNow } from './strength';
+import { buildStretch, crowdPxSeries, type StretchBook } from './stretch';
 import { alignTrend, decisionTimes, toDaily, trendSeries, withEnd, type SpanBar } from './mtf';
 import { buildMood, moodNow, moodSeries, riskOfLong, type MoodBook, type MoodNow } from './mood';
 import { FILTERS, FILTER_LABEL, allowFor, blockReason, chooseFilter, chooseVariant, filterCoverage, missingInput, preferVariant, type FilterEnv, type FilterKind } from './filters';
@@ -509,6 +510,8 @@ export interface MarketBook {
   h1: Map<string, Bar[]>;
   /** v16: CFTC positioning + policy rates (null until the first fetch) */
   macro?: MacroData | null;
+  /** v17: price stretch per currency (no outside feed) */
+  stretch?: StretchBook | null;
 }
 
 /** A bigger chart's finished bars and its trend. */
@@ -536,9 +539,10 @@ export function makeSeries(inst: Instrument, tf: Timeframe, bars: Bar[], book: M
   const ctx = buildCtx(bars, barMin, inst.id);
   env.er = Float64Array.from(ctx.er20);
   const pr = pairRanks(book.strength, book.ranks, inst.id, bars, barMin);
-  ctx.ext = { gap: env.gap, rankBase: pr.base, rankQuote: pr.quote, zOil: alignAt(book.zOil, bars, barMin), zYield: alignAt(book.zYield, bars, barMin), zStocks: alignAt(book.zStocks, bars, barMin), zDollar: alignAt(book.zDollar, bars, barMin), spxMtd: alignAt(book.spxMtd, bars, barMin), carry: carrySeries(book.macro ?? null, inst.id, bars, barMin), cot: cotSeries(book.macro ?? null, inst.id, bars, barMin) };
+  ctx.ext = { gap: env.gap, rankBase: pr.base, rankQuote: pr.quote, zOil: alignAt(book.zOil, bars, barMin), zYield: alignAt(book.zYield, bars, barMin), zStocks: alignAt(book.zStocks, bars, barMin), zDollar: alignAt(book.zDollar, bars, barMin), spxMtd: alignAt(book.spxMtd, bars, barMin), carry: carrySeries(book.macro ?? null, inst.id, bars, barMin), cot: cotSeries(book.macro ?? null, inst.id, bars, barMin), crowdPx: crowdPxSeries(book.stretch, inst.id, bars, barMin) };
   env.carry = ctx.ext.carry;
   env.cot = ctx.ext.cot;
+  env.crowdPx = ctx.ext.crowdPx;
   if (ctx.quant) {
     env.volF = ctx.quant.volF;
     env.hurst = ctx.quant.hurst;
@@ -1118,6 +1122,8 @@ export class ForexLab {
       spxMtd: moodInput.SPX ? mtdSeries(moodInput.SPX) : null,
       h1: h1ById,
       macro: await loadMacro(this.redis),
+      // v17: price stretch (how far each currency has run vs its own last 2 years) — the no-feed positioning stand-in
+      stretch: buildStretch(strengthInput),
     };
     this.book = book;
     // v17: how the markets move together (EWMA correlations of hourly returns, a snapshot each 22:00 UTC) for the heat cap

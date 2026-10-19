@@ -198,6 +198,8 @@ export interface CtxExt {
   carry?: Float64Array;
   /** v16: CFTC positioning of the pair, base − quote, −2 (crowd very short) … +2 (very long) (NaN = unknown) */
   cot?: Float64Array;
+  /** v17: price stretch (positioning stand-in from prices only), same scale (NaN = unknown) */
+  crowdPx?: Float64Array;
 }
 
 /** Everything a strategy may read at bar i, computed once per series. */

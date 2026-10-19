@@ -8,7 +8,7 @@ import { Badge, Button, Card, Row, Rows, Sparkline, Stack, StatTile } from './ui
 
 export interface StrengthNow { at: number | null; ccys: Array<{ ccy: string; score: number; today: number; week: number }> }
 export interface MoodNow { at: number | null; score: number | null; label: 'risk-on' | 'risk-off' | 'calm'; inputs: Array<{ id: string; label: string; value: number | null; change: number | null; unit: '%' | 'bp' }>; note: string }
-export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'volf' | 'hurst' | 'crowd' | 'all';
+export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'volf' | 'hurst' | 'crowd' | 'stretch' | 'all';
 export interface FilterSummary { filter: FilterKind; label: string; chosenBy: number; compared: number; inDeltaR: number; outDeltaR: number; outBetterPct: number; keptPct: number; random: { inAvgR: number; outAvgR: number; outN: number } }
 interface StudyCell { n: number; avgAtr: number[]; contPct: number[] }
 export interface NewsStudy { horizons: number[]; shocks: number; overall: StudyCell; byHour: Array<{ key: string; label: string } & StudyCell>; byPair: Array<{ pair: string } & StudyCell>; byEvent: Array<{ key: string; label: string } & StudyCell>; recent: Array<{ pair: string; t: number; dir: 1 | -1; sizeAtr: number; moves: Array<number | null>; event: string | null }>; eventsKnown: number }
@@ -22,7 +22,7 @@ export interface ExitSummary { exit: ExitKind; label: string; chosenBy: number; 
 export interface JudgeReport { active: boolean; why: string; trainedOn: number; tested: number; auc: number | null; threshold: number | null; keepPct: number; allR: number; keptR: number; skippedR: number; allWinPct: number; keptWinPct: number; importance: Array<{ feature: string; label: string; share: number }> }
 export interface RiskSummary { exposure: Array<{ ccy: string; pct: number }>; capPct: number; ddPct: number; ddFactor: number; baseRiskPct: number; openRiskPct: number }
 
-export const FILTER_SHORT: Record<FilterKind | 'regime', string> = { none: 'no filter', strength: '+ strength', mtf: '+ bigger chart', mood: '+ mood', regime: '+ regime', volf: '+ vol forecast', hurst: '+ trend/chop', crowd: '+ not crowded', all: '+ all 3 checks' };
+export const FILTER_SHORT: Record<FilterKind | 'regime', string> = { none: 'no filter', strength: '+ strength', mtf: '+ bigger chart', mood: '+ mood', regime: '+ regime', volf: '+ vol forecast', hurst: '+ trend/chop', crowd: '+ not crowded', stretch: '+ not overstretched', all: '+ all 3 checks' };
 export const EXIT_SHORT: Record<ExitKind, string> = { designed: 'exits as designed', breakeven: 'break-even at +1R', scale: 'half off at +1R', tight: 'closer target', runner: 'runner exit', quick: 'quick exit', wide: 'bigger target', trail_tp: 'trailing take-profit', half_trail: 'half at target, rest trails', trail_sl: 'trailing stop-loss' };
 const signed = (x: number, dp = 1) => {
   const v = Number(x.toFixed(dp));
@@ -443,7 +443,7 @@ export function SniperCard({ s }: { s: SniperReport | null | undefined }) {
   return (
     <Card
       title="Sniper: one big bet when everything agrees"
-      subtitle="Every trade gets a vote from each independent check at the candle close: stronger currency, bigger charts, market mood, momentum on 1 / 5 / 20 days, carry (interest-rate gap), the volatility forecast, the trend / chop measure, hedge-fund positioning (CFTC), room to the next round number, and the signal judge. A vote level is picked on the first 70% of the history; the sniper only turns on if those trades also made 0.3R+ each (profit factor 1.5+) on the 30% it never saw. Then such a trade risks the sniper size, one at a time."
+      subtitle="Every trade gets a vote from each independent check at the candle close: stronger currency, bigger charts, market mood, momentum on 1 / 5 / 20 days, carry (interest-rate gap), the volatility forecast, the trend / chop measure, hedge-fund positioning (CFTC — or, when that report is missing, how far the pair has run vs its last 2 years), room to the next round number, and the signal judge. A vote level is picked on the first 70% of the history; the sniper only turns on if those trades also made 0.3R+ each (profit factor 1.5+) on the 30% it never saw. Then such a trade risks the sniper size, one at a time."
     >
       {!s ? (
         <p className="text-sm text-ink-2">Graded with the next hourly update.</p>

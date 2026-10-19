@@ -28,6 +28,8 @@ export interface HeatLevel {
 export interface HeatRead {
   /** CFTC positioning of the pair, −2 (hedge funds very short) … +2 (very long); null = no data */
   positioning: number | null;
+  /** v17: price stretch of the pair (3-month run vs its own last 2 years, base − quote), −2 … +2; null = too little history */
+  stretch: number | null;
   /** policy rate of the base − the quote, %; null = no rates feed */
   carry: number | null;
   /** volatility forecast ratio (> 1 bigger moves expected) */
@@ -91,6 +93,7 @@ export function heatmapFor(c: Ctx, e: FilterEnv, dr: Drawings, expiries: readonl
     levels,
     read: {
       positioning: fin(e.cot?.[i]),
+      stretch: fin(e.crowdPx?.[i]),
       carry: fin(e.carry?.[i]),
       volF: fin(e.volF?.[i]),
       hurst: fin(e.hurst?.[i]),
