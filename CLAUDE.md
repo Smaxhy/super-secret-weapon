@@ -617,6 +617,20 @@ and improve it". Told plainly: nothing measured so far has an edge, this stays p
 - 5aLY… added once (`track-5aLY`) as TrackedWallet kind COPY, weight 1.5 (trusted KOL signal now; copied once the
   copy test finds it consistent). `OWNER_TRUSTED_COPY` in config/kol-wallets.ts.
 
+## v17.15 crypto = data collector, everything on (Oct 19, owner's explicit request — overrides v15.4's focus + the VERDICT's "no tweaks" for this one)
+Owner: "for crypto lower things even more, I want it to gather a lot of data; I want everything on in case it does better
+over time". Told plainly: still paper; nothing measured so far has an edge; this buys data, not profit. Migration v57
+(create): all six strategies on (allocation MIGRATION .25 / SOON .2 / CURVE_SNIPE .15 / RUNNER .15 / COPY .15 / SWING .1),
+30 positions, per-strategy caps 8 / 6 / 6 / 5 / 4 / 4, size 0.2 SOL; score bar 45, safety 45; OFF: edge gate, chart buy
+rules + dip waits, dip-only, quiet hours, Sniper mode (it refuses nearly every buy); chase caps 30% / 1 min, 50% / 3 min;
+learning trades on every strategy but copies (margin 20, 12 open, 60 an hour, drought 20 min → margin 20); copies from
+every tracked COPY wallet on every coin (`copy.onlyConsistent` / `focusStages` false); ON again: TA lab, tournament,
+outcome replays 120/min with exit variants S / R / W, shadow, brain, timing, self-loop, coach + calibration, AI coach +
+meme reader (their daily budgets $0.5 / $0.25 still cap them; need ANTHROPIC_API_KEY), live-path dry run (skipped past the
+RPC soft budget). Untouched: hard safety fails, rug / bundle / vamp guards, owner filters, usage budgets. One-time
+`v17.15-crypto-data` (coach + `_strategySince` reset) and `v17.15-paper-room` (paper balance < 20 SOL → topped up to 25 SOL,
+counted as capital). If the dashboard / forex lab slows: `FX_LAB_WORKER=on` in the VPS .env (see v17.2).
+
 ## FREEZE ENDED (Oct 17 2026 — owner: "the trades are too bad, upgrade everything, make it profitable")
 The Oct 15 freeze below is over; v11 (below, "Current state") is the new setup. Judge it on Performance → Mistakes
 after 200–300 trades, same rule as before: switch losers OFF, don't tweak.

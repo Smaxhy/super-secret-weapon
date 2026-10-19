@@ -101,7 +101,7 @@ import { GrpcListener } from './scanner/grpc-listener';
 import { effectiveFeed, loadFeedSettings, setActiveFeed } from './lib/feed-settings';
 import { PumpFunListener, type ListenerStats } from './scanner/pumpfun-listener';
 import { recordEvent } from './lib/bot-events';
-import { resetPaperStats } from './api/paper-reset';
+import { addPaperFunds, resetPaperStats } from './api/paper-reset';
 import { PumpPortalListener } from './scanner/pumpportal-listener';
 import { WhaleTracker } from './scanner/whale-tracker';
 import { startSpikeWatcher } from './scanner/spike-watcher';
@@ -155,6 +155,12 @@ async function main(): Promise<void> {
     await TradeCoach.reset(redis);
     await markStrategySince();
   });
+  // v17.15 (owner: "lower things even more, gather a lot of data, everything on" — config migration v57): every strategy
+  // starts a fresh record, and the coach's old lessons (which raised the bar on the strategies that were off) start over
+  await oneTimeUpgrade('v17.15-crypto-data', async () => {
+    await TradeCoach.reset(redis);
+    await markStrategySince();
+  });
   // v15.4 (owner): track 5aLY… as a trusted COPY wallet (copied only once the copy test finds it consistent).
   await oneTimeUpgrade('track-5aLY', async () => {
     const { OWNER_TRUSTED_COPY } = await import('./config/kol-wallets');
@@ -181,6 +187,13 @@ async function main(): Promise<void> {
 
   // Execution: PAPER (with the live dry run) unless every live gate passes — see executor/executor.ts.
   const { executor, reconciler: liveReconciler } = await createExecutor(liveState, redis);
+  // v17.15: up to 30 open crypto paper trades need room — a paper balance under 20 SOL is topped up to 25 SOL once (a
+  // top-up counts as capital, not profit; nothing is reset)
+  await oneTimeUpgrade('v17.15-paper-room', async () => {
+    if (executor.mode !== 'PAPER') return;
+    const bal = await executor.getBalanceSol();
+    if (Number.isFinite(bal) && bal < 20) await addPaperFunds(Math.round((25 - bal) * 100) / 100);
+  });
   const trader = new Trader(executor);
   const sellManager = new SellManager(executor, liveState, redis);
   sellManager.start();

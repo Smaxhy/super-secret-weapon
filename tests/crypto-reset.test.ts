@@ -32,3 +32,33 @@ describe('crypto reset (v15.4)', () => {
     expect(isValidPubkey(OWNER_TRUSTED_COPY)).toBe(true);
   });
 });
+
+describe('crypto data collector (v17.15)', () => {
+  it('migration v57: every strategy on, lower bars, more learning trades, every learner on; guards untouched', async () => {
+    const { DEFAULT_CONFIG } = await import('../src/config/default');
+    const m = MIGRATIONS.find((x) => x.version === 57)!;
+    expect(m.create).toBe(true);
+    const get = (sec: string, path: string[]) => m.set.find(([s, p]) => s === sec && p.join('.') === path.join('.'))?.[2];
+    for (const s of ['MIGRATION_MOMENTUM', 'SOON', 'CURVE_SNIPE', 'RUNNER', 'SWING', 'SMART_MONEY_COPY']) {
+      expect(get('trading', ['enabledStrategies', s])).toBe(true);
+      expect(get('trading', ['allocation', s])).toBeGreaterThan(0);
+    }
+    const alloc = m.set.filter(([s, p]) => s === 'trading' && p[0] === 'allocation').reduce((a, [, , v]) => a + (v as number), 0);
+    expect(alloc).toBeCloseTo(1, 6);
+    expect(get('entry', ['minCombinedScore'])).toBeLessThan(DEFAULT_CONFIG.entry.minCombinedScore);
+    expect(get('sniper', ['enabled'])).toBe(false);
+    for (const [sec, path] of [['ta', ['labEnabled']], ['tournament', ['enabled']], ['aiCoach', ['enabled']], ['meme', ['enabled']], ['live', ['dryRun', 'enabled']], ['brain', ['enabled']]] as Array<[string, string[]]>) expect(get(sec, path)).toBe(true);
+    // never loosens the hard guards or the paid-credit budgets
+    expect(m.set.some(([s]) => s === 'antiRug' || s === 'ownerFilters' || s === 'usage' || s === 'vamp')).toBe(false);
+    // every path it writes exists in the defaults (no typo creates a dead setting)
+    for (const [sec, path] of m.set) {
+      let node: unknown = (DEFAULT_CONFIG as unknown as Record<string, unknown>)[sec];
+      for (const k of path) {
+        expect(node, `${sec}.${path.join('.')}`).toBeTypeOf('object');
+        node = (node as Record<string, unknown>)[k];
+      }
+      if (!(sec === 'trading' && path[0] === 'maxOpenByStrategy')) expect(node, `${sec}.${path.join('.')}`).not.toBeUndefined();
+    }
+    expect(Math.max(...MIGRATIONS.map((x) => x.version))).toBe(57);
+  });
+});
