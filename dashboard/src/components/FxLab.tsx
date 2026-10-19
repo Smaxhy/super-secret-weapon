@@ -4,7 +4,7 @@
  * cards. Display only: everything here is already computed by the hourly lab (/api/forex) and the bot (/api/forex/bot).
  */
 import { useApi } from '../hooks/useApi';
-import { Card, Rows, Row, Badge } from './ui';
+import { Card, Badge } from './ui';
 import { ConvictionCard, DeskCard, EntriesCard, ExitsCard, FiltersCard, FinancingCard, HonestCard, JudgeCard, LockCard, NewsStudyCard, PortfolioCard, RiskCard, RollingCard, SniperCard, type ConvictionReport, type DeskReport, type EntrySummary, type ExitSummary, type FilterSummary, type FinancingSummary, type HonestReport, type JudgeReport, type Ledger, type LockSummary, type NewsStudy, type PortfolioReport, type RiskSummary, type RollReport, type SniperReport } from './FxInsights';
 
 export interface LabRow { id: string; name: string; family?: string; desc?: string; tf?: string; verdict: 'edge' | 'maybe' | 'no'; outSample?: { n: number; avgR: number } }
@@ -104,11 +104,18 @@ export function FxLab({ r }: { r: LabReport }) {
   return (
     <>
       <Card title="What the bot tests on itself" subtitle="Every idea runs as an exam first. Green = used live. Blue = graded only, waiting to prove itself on data it never trained on. Nothing switches itself on without passing.">
-        <Rows>
+        <ul className="divide-y divide-line">
           {items.map((it) => (
-            <Row key={it.name} label={<span className="flex flex-wrap items-center gap-2">{it.name} {chip(it.state, it.state === 'on' ? 'live' : it.state === 'off' ? 'off' : 'testing')}</span>} sub={it.what} value={<span className="text-xs text-ink-2">{it.status}</span>} />
+            <li key={it.name} className="py-3 first:pt-0 last:pb-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-ink">{it.name}</span>
+                {chip(it.state, it.state === 'on' ? 'live' : it.state === 'off' ? 'off' : 'testing')}
+              </div>
+              <p className="mt-0.5 text-sm text-ink-2">{it.what}</p>
+              {it.status && <p className="tabular mt-1 break-words text-xs text-muted">{it.status}</p>}
+            </li>
           ))}
-        </Rows>
+        </ul>
       </Card>
       <Playbook rows={r.rows} chosen={new Set(b?.chosen ?? [])} />
       <HonestCard h={r.honest} names={Object.fromEntries(r.rows.map((x) => [x.id, x.name]))} />
