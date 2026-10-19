@@ -8,7 +8,7 @@ import { MarketChart, type ChartDrawings } from './MarketChart';
 import { Badge, Button, Card, Chip, NumberInput, Row, Rows, Stack, StatTile, useStored } from './ui';
 
 interface Quote { id: string; mid: number; bid: number; ask: number; t: number; dayChangePct: number | null; source: 'oanda' | 'yahoo'; tradeable?: boolean }
-interface Pos { id: string; pair: string; side: 1 | -1; units: number; entry: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; px: number; pnlUsd: number; pnlPct: number }
+interface Pos { id: string; pair: string; side: 1 | -1; units: number; entry: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; px: number; pnlUsd: number; pnlPct: number; closePending?: { reason: string; at: number } | null }
 interface Closed { id: string; pair: string; side: 1 | -1; entry: number; exit: number; leverage: number; marginUsd: number; pnlUsd: number; reason: string; closedAt: number }
 interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[] }
 interface Data { account: Acct | null; quotes: Record<string, Quote> }
@@ -67,7 +67,12 @@ export function FxTrade() {
     }
   };
   const close = async (id: string) => {
-    await api('/api/forex/practice/close', { method: 'POST', body: JSON.stringify({ id }) }).catch((e: Error) => setMsg({ ok: false, text: e.message }));
+    const r = await api<{ ok: boolean; error?: string }>('/api/forex/practice/close', { method: 'POST', body: JSON.stringify({ id }) }).catch((e: Error) => {
+      setMsg({ ok: false, text: e.message });
+      return null;
+    });
+    // v17: no live price right now → it closes at the first real one (never a made-up price)
+    if (r?.ok && r.error) setMsg({ ok: true, text: r.error });
     await reload();
   };
   const reset = async () => {
@@ -165,6 +170,7 @@ export function FxTrade() {
                     <Badge tone={x.side === 1 ? 'up' : 'down'}>{x.side === 1 ? 'Buy' : 'Sell'}</Badge>
                     <span className="font-medium text-ink">{x.pair}</span>
                     <span className="text-xs text-muted">{x.leverage}× · {usd(x.marginUsd)}</span>
+                    {x.closePending && <Badge tone="warn">closing at the next price</Badge>}
                   </div>
                   <div className="mt-0.5 text-xs text-muted">
                     {x.entry.toFixed(dp(x.pair))} → {x.px.toFixed(dp(x.pair))}

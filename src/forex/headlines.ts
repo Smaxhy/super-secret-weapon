@@ -6,6 +6,7 @@
  */
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
+import { feeds } from './feeds';
 
 const log = moduleLogger('forex-news');
 const KEY = 'fx:news';
@@ -160,14 +161,23 @@ export class ForexHeadlines {
 
   private async refresh(): Promise<void> {
     const fresh: Headline[] = [];
+    const errs: string[] = [];
     for (const url of FEEDS) {
       try {
         const res = await fetch(url, { headers: { accept: 'application/rss+xml, application/xml, text/xml', 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64)' }, signal: AbortSignal.timeout(15_000) });
-        if (res.ok) fresh.push(...parseRss(await res.text(), new URL(url).hostname.replace('www.', '')));
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const got = parseRss(await res.text(), new URL(url).hostname.replace('www.', ''));
+        // v17: a page that parses to nothing means the feed moved — say so instead of going quiet for good
+        if (!got.length) throw new Error('parsed 0 items (feed moved?)');
+        fresh.push(...got);
       } catch (err) {
+        errs.push(`${new URL(url).hostname}: ${(err as Error).message}`);
         log.warn({ url, err: (err as Error).message }, 'headline feed failed');
       }
     }
+    if (errs.length && !fresh.length) feeds.fail('headlines', errs.join('; '));
+    else if (fresh.length) feeds.ok('headlines', { items: fresh.length, asOf: Math.max(...fresh.map((h) => h.t)) });
+    if (errs.length && fresh.length) log.warn({ errs }, 'some headline feeds failed');
     if (!fresh.length) return;
     const seen = new Set<string>();
     this.items = [...fresh, ...this.items]

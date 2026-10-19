@@ -13,6 +13,8 @@
  */
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
+import { feeds } from './feeds';
+import { dataAgeOf, FRESH, staleReason, type DataAge } from './freshness';
 import { fetchYahooBars, loadFastBars, mergeBars, saveFastBars, trimBars } from './data';
 import { loadOanda, oandaCandles, oandaReady } from './oanda';
 import { signalsFor, simulate, WARMUP } from './engine';
@@ -176,6 +178,8 @@ export class FastLab {
   chosen: string[] = [];
   /** open trades of those strategies per chart (`strategy:tf:pair` → entry time), for the plan */
   labOpen: Partial<Record<FastTf, Record<string, number>>> = {};
+  /** v17: data age of every market per fast chart (set at each live check) */
+  dataAge: Partial<Record<FastTf, Record<string, DataAge>>> = {};
   constructor(
     private readonly redis: Redis,
     private readonly lab: ForexLab,
@@ -281,7 +285,9 @@ export class FastLab {
         this.bars.set(k, merged);
         if (got.bars.length) this.dirty.add(k);
         this.feed.set(k, { id: inst.id, tf, bars: merged.length, firstT: merged[0]?.t ?? null, lastT: merged[merged.length - 1]?.t ?? null, source: got.source, error: null });
+        feeds.ok(got.source === 'oanda' ? 'oanda' : 'yahoo-fast', { items: got.bars.length, asOf: merged[merged.length - 1]?.t ?? null });
       } catch (err) {
+        if (!/^yahoo paused/.test((err as Error).message)) feeds.fail(this.oandaOn ? 'oanda' : 'yahoo-fast', err);
         const prev = this.feed.get(k);
         this.feed.set(k, { id: inst.id, tf, bars: have.length, firstT: have[0]?.t ?? null, lastT: lastT || null, source: prev?.source ?? null, error: (err as Error).message });
       }
@@ -416,8 +422,11 @@ export class FastLab {
       let newest = 0;
       /** v17: markets this pass really looked at (enough candles, the newest one recent) — a held trade on any other market is kept, not closed */
       const pairsSeen = new Set<string>();
+      /** v17: how far behind each market's candles are (a lagging market gets no new trades) */
+      const ages: Record<string, DataAge> = {};
       for (const inst of INSTRUMENTS) {
         const all = this.series(tf, inst.id);
+        ages[inst.id] = dataAgeOf(inst.id, tf, all, now, TF_MIN[tf] * MIN);
         if (all.length < WARMUP + 60) continue;
         const bars = all.slice(-FX_FAST.liveBars);
         if (bars[bars.length - 1]!.t + 4 * TF_MIN[tf] * 60_000 >= now) pairsSeen.add(inst.id);
@@ -458,8 +467,12 @@ export class FastLab {
       // no test report yet (or it has no rows for this chart): never manage trades without the lab's view of them
       if (!practice || !rowsTf.length) return;
       const sync = newSyncReport();
+      this.dataAge[tf] = ages;
+      // v17: the bigger charts, strength and mood all come from the hourly read — too old, no new fast trades at all
+      const bookAge = now - book.at;
+      const bookWait = bookAge > FRESH.bookMaxAgeMs ? `the hourly market read (bigger charts, strength, mood) is ${Math.round(bookAge / 3_600_000)} h old: no new ${tf} trades` : null;
       const ev = await practice
-        .syncBot(labOpen, (pair) => this.lab.calendar?.blockFor(pair) ?? this.lab.headlines?.blockFor(pair) ?? null, this.lab.atr1h, { scope: [tf], report: sync, pairsSeen })
+        .syncBot(labOpen, (pair) => bookWait ?? staleReason(ages[pair], now) ?? this.lab.calendar?.blockFor(pair) ?? this.lab.headlines?.blockFor(pair) ?? null, this.lab.atr1h, { scope: [tf], report: sync, pairsSeen })
         .catch((err: Error) => [`bot sync (${tf}) failed: ${err.message}`]);
       this.lab.lastSync[tf] = sync;
       this.lab.logBot(ev);

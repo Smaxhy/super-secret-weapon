@@ -12,6 +12,7 @@ import { moduleLogger } from '../lib/logger';
 import { INSTRUMENTS, STRENGTH_PAIRS, instrument, type Bar } from './types';
 import { profileFrom, setSpreadProfile } from './spreads';
 import { marketClock } from './calendar';
+import { feeds } from './feeds';
 
 const log = moduleLogger('forex-dukascopy');
 const DAY = 86_400_000;
@@ -208,6 +209,10 @@ export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: 
     if (error) log.warn({ id, err: error }, 'dukascopy refresh failed');
   }
   await redis.set(DK_META, JSON.stringify(meta)).catch(() => undefined);
+  const errs = Object.entries(meta.ids).filter(([, v]) => v.error);
+  const newest = Math.max(0, ...Object.values(meta.ids).map((v) => v.lastT ?? 0)) || null;
+  if (errs.length < Object.keys(meta.ids).length) feeds.ok('dk-history', { items: Object.keys(meta.ids).length - errs.length, asOf: newest });
+  else feeds.fail('dk-history', errs[0]?.[1].error ?? 'every market failed');
   const profiles = await installSpreadProfiles(redis, now);
   log.info({ markets: Object.keys(meta.ids).length, profiles }, 'dukascopy history refreshed');
   return meta;

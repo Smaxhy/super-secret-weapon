@@ -7,6 +7,7 @@
  */
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
+import { feeds } from './feeds';
 
 const log = moduleLogger('forex-calendar');
 const KEY = 'fx:cal';
@@ -50,6 +51,21 @@ export function newsBlock(pair: string, now: number, events: readonly CalEvent[]
     if ((e.impact === 'High' || speech) && Math.abs(e.t - now) <= windowMin * 60_000) return `${e.ccy} ${speech ? 'speech' : 'news'}: ${e.title}`;
     if (e.impact === 'Holiday' && day(e.t) === day(now)) return `${e.ccy} bank holiday: ${e.title}`;
   }
+  return null;
+}
+
+/**
+ * v17: while the news calendar is unavailable (its newest event is in the past, or it hasn't loaded for 8 days), a
+ * dollar pair or metal waits out the usual US release windows: 08:25–08:50 and 09:55–10:15 New York on weekdays
+ * (NFP, CPI, retail sales, ISM, confidence…). Other currencies' release times vary too much to guess. Pure.
+ */
+export function blindNewsBlock(pair: string, now: number): string | null {
+  if (!currenciesOf(pair).includes('USD')) return null;
+  const d = new Date(now + nyOffsetMs(now));
+  const dow = d.getUTCDay();
+  if (dow === 0 || dow === 6) return null;
+  const m = d.getUTCHours() * 60 + d.getUTCMinutes();
+  if ((m >= 8 * 60 + 25 && m <= 8 * 60 + 50) || (m >= 9 * 60 + 55 && m <= 10 * 60 + 15)) return 'news calendar unavailable: waiting out the usual US release time';
   return null;
 }
 
@@ -165,15 +181,22 @@ export class ForexCalendar {
   private async refresh(): Promise<void> {
     if (Date.now() - this.fetchedAt < 55 * 60_000 && this.events.length) return;
     const all: CalEvent[] = [];
+    const errs: string[] = [];
     for (const url of URLS) {
       try {
         const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64)' }, signal: AbortSignal.timeout(15_000) });
         if (res.ok) all.push(...parseCalendar(await res.json()));
+        else errs.push(`HTTP ${res.status}`);
       } catch (err) {
+        errs.push((err as Error).message);
         log.warn({ url, err: (err as Error).message }, 'calendar fetch failed');
       }
     }
-    if (!all.length) return;
+    if (!all.length) {
+      feeds.fail('calendar', errs.join('; ') || 'no events');
+      return;
+    }
+    feeds.ok('calendar', { items: all.length, asOf: Math.max(...all.map((e) => e.t)) });
     const seen = new Set<string>();
     this.events = all.filter((e) => {
       const k = `${e.t}:${e.ccy}:${e.title}`;
@@ -195,8 +218,13 @@ export class ForexCalendar {
   get(): { at: number; events: CalEvent[] } {
     return { at: this.fetchedAt, events: this.events };
   }
+  /** v17: the calendar can't be trusted (nothing ahead of now, or no good load for 8 days). */
+  blind(now = Date.now()): boolean {
+    const last = this.events.length ? this.events[this.events.length - 1]!.t : 0;
+    return last < now || now - this.fetchedAt > 8 * 86_400_000;
+  }
   blockFor(pair: string, now = Date.now()): string | null {
-    return newsBlock(pair, now, this.events);
+    return newsBlock(pair, now, this.events) ?? (this.blind(now) ? blindNewsBlock(pair, now) : null);
   }
   /** v15: what's coming up for a pair (the bot's plan). */
   upcoming(pair: string, now = Date.now(), hours = 6): CalEvent[] {

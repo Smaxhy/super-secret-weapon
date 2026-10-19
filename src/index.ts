@@ -62,6 +62,7 @@ import { DipWatcher } from './executor/dip-watcher';
 import { StrategyLab } from './learner/strategy-lab';
 import { Tournament } from './learner/tournament';
 import { ForexLab } from './forex/lab';
+import { feeds as fxFeeds } from './forex/feeds';
 import { FastLab } from './forex/fast';
 import { Practice } from './forex/practice';
 import { ForexCalendar } from './forex/calendar';
@@ -376,6 +377,8 @@ async function main(): Promise<void> {
   tournament.start();
   // v12 forex lab: hourly candles, every forex strategy backtested + paper traded (no real orders).
   const forex = new ForexLab(redis);
+  // v17: what every free data feed did last time (feed health survives restarts)
+  await fxFeeds.load(redis);
   forex.start();
   const practice = new Practice(redis);
   practice.start();
@@ -864,6 +867,7 @@ async function main(): Promise<void> {
       forex.stop();
       fastFx.stop();
       practice.stop();
+      await fxFeeds.persist(redis, true).catch(() => undefined);
       fxCalendar.stop();
       fxNews.stop();
       shadow.stop();

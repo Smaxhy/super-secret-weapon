@@ -3,6 +3,7 @@
  * 1-minute, 15-minute, hourly and 4-hour candles (in-sample / unseen split, real spreads) and paper traded live from
  * the day the lab started. No real orders.
  */
+import { FxFeeds } from '../components/FxFeeds';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { FxBot } from '../components/FxBot';
@@ -89,7 +90,7 @@ export function Forex() {
       {(section === 'live' || section === 'practice' || section === 'bot') && <div className="mb-4"><MarketClockBar /></div>}
       {section === 'practice' && <FxTrade />}
       {section === 'bot' && <FxBot />}
-      {section === 'setup' && <Stack><OandaCard />{r && <Setup r={r} fast={fast} />}</Stack>}
+      {section === 'setup' && <Stack><FxFeeds /><OandaCard />{r && <Setup r={r} fast={fast} />}</Stack>}
       {labNeeded && !data && !error && <Loading kind="tiles" />}
       {labNeeded && data && !r && <Empty icon={<Icon name="globe" size={20} />}>{running ? 'First run: downloading 2 years of candles for 12 markets. About a minute.' : 'Not run yet. It starts by itself a minute after the bot starts, or press Update now.'}</Empty>}
       {labNeeded && r && (

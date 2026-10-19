@@ -5,6 +5,7 @@
  */
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
+import { feeds } from './feeds';
 import type { Bar, Instrument } from './types';
 
 const log = moduleLogger('forex-data');
@@ -40,12 +41,17 @@ export function mergeBars(a: readonly Bar[], b: readonly Bar[]): Bar[] {
   return [...m.values()].sort((x, y) => x.t - y.t);
 }
 
+/** v17: one Yahoo request may take this long (was 20 s: a hung Yahoo stalled the hourly run for ~18 min) */
+export const YAHOO_TIMEOUT_MS = 10_000;
+
 async function fetchYahoo(symbol: string, range: string): Promise<unknown> {
+  // v17: while Yahoo's breaker is open (3+ failures in a row) don't wait on it at all
+  if (!feeds.allow('yahoo')) throw new Error('yahoo paused (it kept failing; retrying in a few minutes)');
   let last: Error | null = null;
   for (const host of ['query1.finance.yahoo.com', 'query2.finance.yahoo.com']) {
     try {
       const url = `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?interval=60m&range=${range}&includePrePost=false`;
-      const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64)' }, signal: AbortSignal.timeout(20_000) });
+      const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64)' }, signal: AbortSignal.timeout(YAHOO_TIMEOUT_MS) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.json();
     } catch (err) {
@@ -77,6 +83,8 @@ export interface FeedStatus {
   firstT: number | null;
   lastT: number | null;
   error: string | null;
+  /** v17: new bars this refresh added */
+  fresh?: number;
 }
 
 /** Refresh one series: a full 730-day pull when we hold little, else the last 7 days merged in. */
@@ -87,8 +95,12 @@ export async function refreshSeries(redis: Redis, id: string, yahoo: string, now
     const fresh = parseYahoo(await fetchYahoo(yahoo, full ? '730d' : '7d'), now);
     const merged = mergeBars(have, fresh).filter((b) => b.t >= now - 740 * 86_400_000);
     if (merged.length) await saveBars(redis, id, merged);
-    return { id, bars: merged.length, firstT: merged[0]?.t ?? null, lastT: merged[merged.length - 1]?.t ?? null, error: null };
+    const prevLast = have[have.length - 1]?.t ?? 0;
+    feeds.ok('yahoo-1h', { items: fresh.length, asOf: merged[merged.length - 1]?.t ?? null });
+    return { id, bars: merged.length, firstT: merged[0]?.t ?? null, lastT: merged[merged.length - 1]?.t ?? null, error: null, fresh: merged.filter((b) => b.t > prevLast).length };
   } catch (err) {
+    // a call skipped by the open breaker is not another failure (the backoff would grow inside one run)
+    if (!/^yahoo paused/.test((err as Error).message)) feeds.fail('yahoo-1h', err);
     log.warn({ id, err: (err as Error).message }, 'forex data refresh failed');
     return { id, bars: have.length, firstT: have[0]?.t ?? null, lastT: have[have.length - 1]?.t ?? null, error: (err as Error).message };
   }
@@ -123,13 +135,14 @@ export async function saveFastBars(redis: Redis, tf: '15m' | '1m', id: string, b
  * 15-minute bars for the last 60 days and 1-minute bars for the last ~30 days, at most 7 days per 1-minute request.
  */
 export async function fetchYahooBars(symbol: string, interval: '1m' | '15m', q: { range: string } | { from: number; to: number }, now = Date.now()): Promise<Bar[]> {
+  if (!feeds.allow('yahoo')) throw new Error('yahoo paused (it kept failing; retrying in a few minutes)');
   const barMs = interval === '1m' ? 60_000 : 15 * 60_000;
   const span = 'range' in q ? `range=${q.range}` : `period1=${Math.floor(q.from / 1000)}&period2=${Math.ceil(q.to / 1000)}`;
   let last: Error | null = null;
   for (const host of ['query1.finance.yahoo.com', 'query2.finance.yahoo.com']) {
     try {
       const url = `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&${span}&includePrePost=false`;
-      const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64)' }, signal: AbortSignal.timeout(15_000) });
+      const res = await fetch(url, { headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64)' }, signal: AbortSignal.timeout(YAHOO_TIMEOUT_MS) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return parseYahoo(await res.json(), now, barMs);
     } catch (err) {

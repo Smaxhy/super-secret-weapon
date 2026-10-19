@@ -19,7 +19,8 @@ import { copyReplayStatus, startCopyReplay } from '../learner/copy-replay-runner
 import { cohortTestRunning, lastCohortTest, runCohortTest } from '../learner/cohort-test';
 import { marketClock } from '../forex/calendar';
 import { loadOanda, maskToken, oandaReady, saveOanda, testOanda } from '../forex/oanda';
-import { RISK_MODES, isRiskMode, pnlUsd, riskSummary } from '../forex/practice';
+import { feedHealth, feeds as fxFeeds } from '../forex/feeds';
+import { RISK_MODES, isRiskMode, ledgerSummary, pnlUsd, riskSummary } from '../forex/practice';
 import { buildPlan } from '../forex/plan';
 import { STRATEGIES } from '../forex/strategies';
 import { moneyMap } from '../learner/money-map';
@@ -185,8 +186,12 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
           : null;
       return {
         plan,
-        account: snap?.account ?? null,
+        account: snap ? { ...snap.account, ledger: undefined } : null,
         risk: snap ? riskSummary(snap.account, mids, snap.account.equityUsd) : null,
+        // v17: what the bot itself made per strategy:chart, in R (its own trades only — never rewritten)
+        ledger: snap ? ledgerSummary(snap.account) : {},
+        // v17: the last hourly lab run's error (null after a good run)
+        labError: deps.forex?.lastError ?? null,
         portfolio: parse(portfolioRaw, null as unknown),
         judge: parse(judgeRaw, null as unknown),
         // v15.2: bigger size when more sure — hourly charts + the 15m / 1m charts
@@ -245,6 +250,21 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       const now = Date.now();
       const heads = (deps.fxNews?.get() ?? []).slice(0, 80);
       return { at: c.at, clock: marketClock(now), headlines: heads, events: c.events.filter((e) => e.t >= now - 12 * 3_600_000 && e.t <= now + 8 * 86_400_000 && e.impact !== 'Non-Economic') };
+    });
+    // v17: every free data feed's health + how up to date each market's prices are (1h + 15m + 1m)
+    secured.get('/api/forex/feeds', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      const now = Date.now();
+      const clock = marketClock(now);
+      const ages = [...Object.values(deps.forex?.dataAge ?? {}), ...Object.values(deps.fastFx?.dataAge ?? {}).flatMap((m) => Object.values(m ?? {}))];
+      return {
+        at: now,
+        open: clock.open,
+        feeds: feedHealth(fxFeeds.snapshot(), { now, open: clock.open, oanda: oandaReady(await loadOanda()), paused: (p) => fxFeeds.pausedUntil(p) }),
+        dataAge: ages,
+        calendarBlind: deps.fxCalendar?.blind(now) ?? null,
+        labError: deps.forex?.lastError ?? null,
+      };
     });
     // OANDA demo token = a free DATA feed only (no trading through it); masked on read.
     secured.get('/api/forex/oanda', async () => {

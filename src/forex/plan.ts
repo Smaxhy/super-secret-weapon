@@ -73,7 +73,7 @@ export interface PlanMarket {
 }
 
 export interface PlanLine {
-  k: 'size' | 'stop' | 'target' | 'trail' | 'be' | 'scale' | 'time' | 'rule' | 'weekend';
+  k: 'size' | 'stop' | 'target' | 'trail' | 'be' | 'scale' | 'time' | 'rule' | 'weekend' | 'closing';
   text: string;
   done?: boolean;
 }
@@ -184,6 +184,8 @@ export function tradeLines(p: PracticePosition & { px: number }, now: number, pn
   const tf = p.tf ?? (tfOfRef(p.ref) || '1h');
   const word = TF_WORD[tf] ?? tf;
   const cv = p.conviction;
+  // v17: its exit already fired, but there was no live price to close at
+  if (p.closePending) out.push({ k: 'closing', text: `Closing: ${p.closePending.reason === 'manual' ? 'you closed it' : p.closePending.reason === 'signal' ? "its strategy's exit fired" : 'weekend close'} while there was no live price — it closes at the first real price (never at a made-up one).` });
   if (p.sniper) {
     out.push({ k: 'size', text: `SNIPER trade: ${p.sniper.votes} of ${p.sniper.of} independent checks agreed (a level that proved itself on unseen history), so it risks ${p.riskPct ?? '?'}% of the account at ${p.leverage}× — the one big bet it allows at a time.` });
   } else if (cv) {

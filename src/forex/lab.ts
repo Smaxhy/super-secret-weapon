@@ -12,6 +12,8 @@
  * `fx:portfolio`. Nothing here places a real order.
  */
 import type Redis from 'ioredis';
+import { dataAgeOf, staleReason, type DataAge } from './freshness';
+import { feeds } from './feeds';
 import { moduleLogger } from '../lib/logger';
 import { refreshInstrument, refreshSeries, loadBars, type FeedStatus } from './data';
 import { DK_META, installSpreadProfiles, loadDk, refreshDukascopy, stitchHistory, type DkMeta } from './dukascopy';
@@ -208,6 +210,8 @@ export interface FxReport {
   sniper?: SniperReport | null;
   /** v16: extra data feeds (Dukascopy history + spreads, CFTC positioning, policy rates) */
   extFeeds?: { dukascopy: DkMeta | null; spreadProfiles: string[]; macro: ReturnType<typeof macroNow>; historyFrom: number };
+  /** v17: how up to date each market's hourly prices are (stale ones get no new bot trades) */
+  dataAge?: DataAge[];
 }
 
 export const FX_REPORT = 'fx:report';
@@ -322,7 +326,9 @@ export async function paperSince(redis: Pick<Redis, 'get' | 'set'>, key: string,
   const raw = await redis.get(key);
   const v = Number(raw);
   if (raw !== null && Number.isFinite(v) && v > 0) return v;
-  await redis.set(key, String(now), 'NX');
+  // missing → set only if still missing; present but unreadable → repaired (else the paper test stays empty for good)
+  if (raw === null) await redis.set(key, String(now), 'NX');
+  else await redis.set(key, String(now));
   const again = Number(await redis.get(key));
   return Number.isFinite(again) && again > 0 ? again : now;
 }
@@ -382,6 +388,7 @@ export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: 
     pair: t.pair,
     side: t.side,
     entryT: t.entryT,
+    entry: t.entry,
     stop: t.stop,
     target: t.target,
     chosen: o.chosen,
@@ -635,6 +642,34 @@ export function runNoteText(r: Omit<RunNote, 'note'>): string {
   return `${sig}${act ? ` · ${act}` : ''}${r.holding ? ` · holding ${r.holding}` : ''}`;
 }
 
+/** v17: the hourly refresh — at most 3 Yahoo calls at once, 400 ms apart, and no new call after `budgetMs` (a series left
+ * out keeps its stored bars; the freshness check then stops new trades on it if it falls behind). */
+export const REFRESH = { concurrency: 3, gapMs: 400, budgetMs: 120_000 };
+export async function refreshAll(redis: Redis, cfg = REFRESH): Promise<FeedStatus[]> {
+  const jobs: Array<() => Promise<FeedStatus>> = [
+    ...INSTRUMENTS.map((inst) => async () => ({ ...(await refreshInstrument(redis, inst)), role: 'traded' as const })),
+    ...STRENGTH_PAIRS.map((p) => async () => ({ ...(await refreshSeries(redis, p.id, p.yahoo)), role: 'strength' as const })),
+    ...MOOD_SYMBOLS.map((m) => async () => ({ ...(await refreshSeries(redis, `mood:${m.id}`, m.yahoo, Date.now(), 800)), id: m.id, role: 'mood' as const })),
+  ];
+  const ids = [...INSTRUMENTS.map((i) => ({ id: i.id, role: 'traded' as const })), ...STRENGTH_PAIRS.map((p) => ({ id: p.id, role: 'strength' as const })), ...MOOD_SYMBOLS.map((m) => ({ id: m.id, role: 'mood' as const }))];
+  const out: Array<FeedStatus | undefined> = new Array(jobs.length);
+  const t0 = Date.now();
+  let next = 0;
+  const worker = async () => {
+    while (next < jobs.length) {
+      const k = next++;
+      if (Date.now() - t0 > cfg.budgetMs) {
+        out[k] = { id: ids[k]!.id, role: ids[k]!.role, bars: 0, firstT: null, lastT: null, error: 'skipped: the refresh ran out of time (Yahoo slow)' };
+        continue;
+      }
+      out[k] = await jobs[k]!().catch((err: Error) => ({ id: ids[k]!.id, role: ids[k]!.role, bars: 0, firstT: null, lastT: null, error: err.message }));
+      if (cfg.gapMs > 0) await new Promise((r) => setTimeout(r, cfg.gapMs));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, cfg.concurrency) }, worker));
+  return out.filter((x): x is FeedStatus => !!x);
+}
+
 export class ForexLab {
   private timer: NodeJS.Timeout | null = null;
   private dkTimer: NodeJS.Timeout | null = null;
@@ -749,21 +784,26 @@ export class ForexLab {
     this.running = this.doRun(refresh)
       .then((r) => {
         this.lastError = null;
+        feeds.ok('lab', { items: r?.rows.length ?? 0, asOf: r?.at ?? null });
         return r;
       })
       .catch((err: Error) => {
         // v17: a failed hourly run is logged and shown (it used to vanish)
         this.lastError = { t: Date.now(), msg: err?.message ?? String(err) };
+        feeds.fail('lab', err);
         log.error({ err: this.lastError.msg }, 'forex lab run failed');
         throw err;
       })
       .finally(() => {
         this.running = null;
+        void feeds.persist(this.redis, true);
       });
     return this.running;
   }
   /** v17: the last run's error (null after a good run) */
   lastError: { t: number; msg: string } | null = null;
+  /** v17: data age of every traded market's hourly prices (set each run) */
+  dataAge: Record<string, DataAge> = {};
 
   /** The bot's per strategy:chart record: losers (12+ trades, net loss) are dropped, winners sized a bit up. */
   async botRecord(): Promise<{ dropped: string[]; proven: Set<string> }> {
@@ -776,20 +816,7 @@ export class ForexLab {
   private async doRun(refresh: boolean): Promise<FxReport | null> {
     const t0 = Date.now();
     const feed: FeedStatus[] = [];
-    if (refresh) {
-      for (const inst of INSTRUMENTS) {
-        feed.push({ ...(await refreshInstrument(this.redis, inst)), role: 'traded' });
-        await new Promise((r) => setTimeout(r, 700));
-      }
-      for (const p of STRENGTH_PAIRS) {
-        feed.push({ ...(await refreshSeries(this.redis, p.id, p.yahoo)), role: 'strength' });
-        await new Promise((r) => setTimeout(r, 700));
-      }
-      for (const m of MOOD_SYMBOLS) {
-        feed.push({ ...(await refreshSeries(this.redis, `mood:${m.id}`, m.yahoo, Date.now(), 800)), id: m.id, role: 'mood' });
-        await new Promise((r) => setTimeout(r, 700));
-      }
-    }
+    if (refresh) feed.push(...(await refreshAll(this.redis)));
     const since = await paperSince(this.redis, FX_PAPER_SINCE, Date.now());
 
     // ── market read: strength (traded FX + crosses), mood ──
@@ -797,6 +824,8 @@ export class ForexLab {
     // v16: Dukascopy's older bars in front of Yahoo's (FX only, when the seam lines up) → years more history to test on
     const nowT = Date.now();
     for (const inst of INSTRUMENTS) h1ById.set(inst.id, stitchHistory(inst.id, await loadBars(this.redis, inst.id), await loadDk(this.redis, inst.id), nowT));
+    // v17: how many hourly candles behind each market is (a lagging feed → no new bot trades on that market)
+    this.dataAge = Object.fromEntries(INSTRUMENTS.map((inst) => [inst.id, dataAgeOf(inst.id, '1h', h1ById.get(inst.id) ?? [], nowT, HOUR)]));
     const strengthInput: Record<string, Bar[]> = {};
     for (const inst of INSTRUMENTS) if (inst.kind === 'fx') strengthInput[inst.id] = h1ById.get(inst.id)!;
     for (const p of STRENGTH_PAIRS) {
@@ -1150,6 +1179,7 @@ export class ForexLab {
       news,
       conviction,
       sniper,
+      dataAge: Object.values(this.dataAge),
       extFeeds: await (async () => {
         let dk: DkMeta | null = null;
         try {
@@ -1191,7 +1221,7 @@ export class ForexLab {
               })(),
             });
           }),
-          (pair) => this.calendar?.blockFor(pair) ?? this.headlines?.blockFor(pair) ?? null,
+          (pair) => staleReason(this.dataAge[pair], Date.now()) ?? this.calendar?.blockFor(pair) ?? this.headlines?.blockFor(pair) ?? null,
           this.atr1h,
           // v17: a held trade on a market with no fresh hourly candles this run is kept (the lab couldn't see it end)
           { scope: FX_CONFIG.timeframes, report: sync, pairsSeen: new Set(series.filter((se) => se.tf === '1h' && se.ctx.bars.length && se.ctx.bars[se.ctx.bars.length - 1]!.t + 4 * 3_600_000 >= Date.now()).map((se) => se.inst.id)) },

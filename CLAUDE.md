@@ -340,6 +340,51 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     short). Dashboard: market drawer "Heatmap", Auto-bot "Sniper" card + honest-test sniper row, Setup "Extra data".
   - Report `extFeeds` {dukascopy meta, spread profiles, macro now, history start}. Synthetic e2e: 14 markets × 9k bars ≈
     13 s per hourly run in the sandbox (3 years real ≈ 2×). tests/forex-v16.test.ts (20). Verified on SYNTHETIC data only.
+- **v17 (Oct 19): data you can trust, a bot that can't be fooled by a dead feed, and its own R ledger** (owner: "make it
+  work without the crazy APIs, make it learn, another level"; designed by a 4-spec design + critic workflow, saved at
+  `/tmp/claude-0/v17design.json` in the session that built it; build order = the critic's).
+  - **v17.0 data correctness** (one re-pick event — expect filter / exit / verdict picks to shift once after deploy):
+    Dukascopy `volumes: true` (the library's flat filter needs the volume column — before, every weekend / holiday hour
+    was stored as a flat filler candle in front of Yahoo's history), weekend hours + the forming bar dropped, stored rows
+    cleaned on load (`cleanDk`), 45 s timeout per request (`withTimeout`). **Purge** at the 70/30 boundary: the first
+    70% only holds trades FINISHED before it (`statsOf` exitT < oosFrom; `JudgeRow` / `ConvRow` / `SniperRow` carry
+    `exitT`, `doneBefore`; the judge's inner train/valid split is purged too); out-of-sample = entered after it. Judge
+    `prior` = the strategy's record so far (mean R of its trades finished before this one opened, NaN under 5) instead of
+    its whole first-70% average (that held the trade's own result). `paperSince` (lab.ts): a Redis error throws (no more
+    "forward test restarted"), missing → SET NX, garbage → repaired. `Practice.load` throws on a Redis error / bad JSON
+    (it used to return a fresh $1,000 account the next save wrote over the real one); `checkOpen` checks each account in
+    its own try. NY clock by arithmetic (`nyOffsetMs`, verified vs Intl 2015–2030; Intl cost ~50 µs a call).
+  - **Bot-account safety**: no close is ever booked at a made-up price — no live price → `PracticePosition.closePending`
+    {reason manual / signal / weekend}, closed by `tick` at the first real price (a pending close at the Friday flatten
+    finishes as its own reason, never resumed; a pending weekend close becomes a resume item); weekend flatten uses the
+    last price seen; no margin call while a market has no quote. `Quote.stale` (cached fallback), Yahoo `priceT` =
+    `regularMarketTime`, `delayMs` = `exchangeDataDelayedBy` (COMEX metals ~10 min: hourly / 4h trades may use it via
+    `feedDelayOk`, 1m / 15m never); `quoteAge`; `BOT.quoteAgeMsByTf` (1m 2 / 15m 5 / 1h + 4h 10 min) for new trades.
+    `syncBot(…, { pairsSeen })`: a held trade on a market the lab had no fresh candles for is KEPT (logged once).
+    Stale prices never close anything (`pxNow`). New opens skip when the price is past the target or moved >
+    `BOT.maxEntryDriftR` 0.3R its way since the lab's fill (`LabOpenTrade.entry`). A weekend re-open that fails on a
+    price hiccup is retried (4-day limit). Lab run errors logged + `ForexLab.lastError` (`/api/forex/bot` `labError`).
+  - **v17.1 bot R ledger** (practice.ts): `riskUsd0` = USD lost at the stop measured on the real fill in `openIn` (a
+    resumed weekend leg keeps the original); `recordTrade(…, { ref, riskUsd0, why })` → `PracticeAccount.ledger`
+    per `strategy:tf` [closedAt, usd, R, ref, why] (60 / 120 days; why 0 stop 1 target 2 signal 3 stop-out 4 weekend
+    5 manual). `ledgerRows` / `ledgerSummary` / `Practice.botLedger()`; `/api/forex/bot` `ledger`. Trades opened before
+    v17 have no R (null) and are ignored by learners. This is the only never-rewritten record of what the bot did.
+  - **v17.3 feed health** (`src/forex/feeds.ts`): `feeds` singleton FeedBook (Redis HASH `fx:feeds`, loaded in index.ts,
+    saved after each lab run / at stop): per feed okAt / fails / error / items / asOf; per-provider breaker (3 fails in a
+    row → pause 2 / 4 / 8 / 16 / 30 min, a success closes it). Reporters: Yahoo hourly (`refreshSeries`), fast candles,
+    quotes, OANDA, Dukascopy, CFTC, BIS, calendar, headlines, both labs. `feedHealth` → GET `/api/forex/feeds` (+ data
+    ages per market 1h / 15m / 1m, calendar blind, lab error) → Setup card **Data feeds** (`components/FxFeeds.tsx`).
+    `src/forex/freshness.ts`: `lagBars` (bars missing on the market clock; metals' CME halt hour skipped), `dataAgeOf`,
+    `staleReason` → a market ≥ 2 candles behind (1m: 3) gets no NEW bot trades (hourly lab `this.dataAge`, fast lab per
+    chart + `FRESH.bookMaxAgeMs` 150 min on the hourly read). Yahoo: 10 s timeout, the hourly refresh is a pool of 3 with
+    a 120 s budget (`refreshAll`; was 27 serial calls → up to ~18 min when Yahoo hung). Macro: `retryHours` 2 after a
+    failure (was 12), BIS errors only cleared when THIS attempt got rates, `cotOkAt` / `ratesOkAt`, age limits in history
+    AND live (`cotMaxAgeDays` 17, `rateMaxAgeDays` 100 → NaN; cotSeries cache key includes it). Calendar: ok / fail +
+    `blind()` (newest event in the past or no good load for 8 days) → dollar pairs / metals wait out 08:25–08:50 and
+    09:55–10:15 New York on weekdays (`blindNewsBlock`). Headlines: HTTP errors and 0-item pages count as failures.
+    tests/forex-v17.test.ts. Still to build (v17 plan): offload the lab into a forked child (flag off first), Dukascopy
+    tail refresh / gap fill for FX, missing-input waits with coverage, rolling weekly picker vs random pickers, correlated
+    heat cap, luck meter, restricted learner on the R ledger, judge quant features.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
