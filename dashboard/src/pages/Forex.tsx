@@ -298,8 +298,10 @@ function Strategies({ r }: { r: Report }) {
             <li key={`${x.id}:${x.tf}`}>
               <button type="button" onClick={() => setOpen(x)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface-2/60 sm:px-5">
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate font-medium text-ink">{x.name}</span>
+                  {/* badges wrap under the name on a phone (they used to squeeze the name to one letter and run into
+                      the numbers on the right) */}
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="min-w-0 max-w-full truncate font-medium text-ink">{x.name}</span>
                     <Badge tone="neutral">{x.tf}</Badge>
                     {x.filter && x.filter !== 'none' && <Badge tone="accent">{FILTER_SHORT[x.filter]}</Badge>}
                     {x.exit && x.exit !== 'designed' && <Badge tone="accent">{EXIT_SHORT[x.exit]}</Badge>}
