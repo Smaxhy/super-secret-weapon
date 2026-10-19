@@ -325,6 +325,20 @@ export async function installSpreadProfiles(redis: Redis, now = Date.now()): Pro
  * when the store reaches back, or after `DK.backfillTries` back-fills in a row brought nothing older (kept while the
  * store still starts there). Until then a short store is reported as an error and retried every refresh.
  */
+/** v18.6: can this server reach Dukascopy's data host at all? dukascopy-node answers a blocked / throttled host with an
+ * EMPTY result and no error (so the Setup card said "0 bars · 0 failed" for a day). One tiny request first: any HTTP
+ * answer = reachable; a network error / timeout = the reason, in words. */
+export async function probeDukascopy(timeoutMs = 10_000): Promise<string | null> {
+  try {
+    const res = await fetch('https://datafeed.dukascopy.com/datafeed/EURUSD/2024/00/02/00h_ticks.bi5', { method: 'GET', signal: AbortSignal.timeout(timeoutMs), headers: { 'user-agent': 'Mozilla/5.0' } });
+    if (res.status >= 500) return `datafeed.dukascopy.com answered HTTP ${res.status}`;
+    if (res.status === 403 || res.status === 429) return `datafeed.dukascopy.com refused this server (HTTP ${res.status}: blocked or throttled)`;
+    return null;
+  } catch (err) {
+    return `can't reach datafeed.dukascopy.com: ${(err as Error).name === 'TimeoutError' ? `no answer in ${Math.round(timeoutMs / 1000)} s` : (err as Error).message}`;
+  }
+}
+
 export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: Fetch = fetchDk): Promise<DkMeta> {
   let prev: DkMeta | null = null;
   try {
@@ -335,6 +349,15 @@ export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: 
   if (prev && now - prev.at < DK.refreshHours * 3_600_000) {
     await installSpreadProfiles(redis, now);
     return prev;
+  }
+  // v18.6: the real fetcher only — a host we can't reach is reported as the reason instead of 22 silent empty answers
+  if (fetcher === fetchDk) {
+    const why = await probeDukascopy();
+    if (why) {
+      feeds.fail('dk-history', why);
+      log.warn({ why }, 'dukascopy unreachable — history refresh skipped');
+      return prev ?? { at: 0, ids: {} };
+    }
   }
   const meta: DkMeta = { at: now, ids: {} };
   const ids = [...INSTRUMENTS.map((i) => i.id), ...STRENGTH_PAIRS.map((p) => p.id)];
@@ -393,6 +416,8 @@ export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: 
     let full = bars.length > 0 && bars[0]!.t <= histFrom + slack;
     let tries = 0;
     let note: string | undefined;
+    // v18.6: nothing stored and nothing came back without an error = the library swallowed a refusal
+    if (!bars.length && !error) error = 'empty answer from Dukascopy (blocked, throttled or the feed moved) — will retry';
     if (!full && have.length && backTo === null) {
       full = true; // fullKept
       tries = was?.tries ?? 0;

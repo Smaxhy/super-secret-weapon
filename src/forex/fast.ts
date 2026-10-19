@@ -337,9 +337,19 @@ export class FastLab {
   /** The hourly test of every strategy on the 15m and 1m charts. */
   evaluate(now = Date.now()): Promise<FastReport | null> {
     if (this.evaluating) return this.evaluating;
-    this.evaluating = this.doEvaluate(now).finally(() => {
-      this.evaluating = null;
-    });
+    this.evaluating = this.doEvaluate(now)
+      .then((r) => {
+        // v18.6: the Setup card's "15m / 1m test run" row (it never reported before: showed "never")
+        if (r) feeds.ok('fast-lab', { items: r.rows.length, asOf: r.at });
+        return r;
+      })
+      .catch((err: unknown) => {
+        feeds.fail('fast-lab', err instanceof Error ? err : new Error(String(err)));
+        throw err;
+      })
+      .finally(() => {
+        this.evaluating = null;
+      });
     return this.evaluating;
   }
 

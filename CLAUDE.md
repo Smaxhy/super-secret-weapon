@@ -715,6 +715,15 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
   `inlineRuns` 6 in the main process); every heavy failure is written to the bot log ("hourly test skipped: …"). The
   Today card shows a red line with `labError` (from `/api/forex/bot`) whenever the last run failed. If the VPS log shows
   the child OOM at 1300 MB too, switch the worker off (`FX_LAB_WORKER=off`) and let it run inline. tests updated.
+- **v18.6 (Oct 19): feed-page truth** (owner's Setup → Data feeds: Dukascopy "0 bars · 0 failed · 0/22 markets, never",
+  "15m / 1m test run: never" while its card said "last test 14 min ago"). VPS log (`FX_LAB_WORKER=on`): the hourly run
+  works in the child (116 s, child heap 253 MB, parent 517 MB; `edges: 0` on real data = the honest statistics
+  downgraded every Edge row → the bot trades Maybe rows + botAlways only). Fixes: `probeDukascopy` (one tiny request to
+  datafeed.dukascopy.com before a history refresh; a network error / 403 / 429 / 5xx is reported as the feed's error in
+  words — dukascopy-node answers a blocked host with an EMPTY result and no error) and an empty answer for an empty
+  store is recorded as an error (retried every 6 h); the fast lab reports `fast-lab` ok / fail. Lab page phone layouts:
+  the three summary tables are stacked blocks on a phone (`SummaryList`), financing card without a truncating tile,
+  two-line desk holdings; the Lab self-test list is stacked rows.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
