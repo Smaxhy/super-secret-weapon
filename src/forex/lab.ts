@@ -12,6 +12,9 @@
  * `fx:portfolio`. Nothing here places a real order.
  */
 import type Redis from 'ioredis';
+import { buildCorrBook, gradeHeat, HEAT, roundedMatrix, type HeatGrade } from './risk';
+import { luckDowngrade, luckFor } from './luck';
+import { learnFromLedger, type LearnKey } from './learner';
 import { gradeRolling, randomPickerNull, ROLL, rollRow, rollWeeks, type NullStats, type RollReport, type RollRow, type RollTrade } from './rolling';
 import { dataAgeOf, staleReason, type DataAge } from './freshness';
 import { feeds } from './feeds';
@@ -20,11 +23,11 @@ import { refreshInstrument, refreshSeries, loadBars, type FeedStatus } from './d
 import { DK_META, installSpreadProfiles, loadDk, refreshDukascopy, stitchHistory, type DkMeta } from './dukascopy';
 import { hasSpreadProfile } from './spreads';
 import { carrySeries, cotSeries, loadMacro, macroNow, refreshMacro, type MacroData } from './macro';
-import { RISK_MODES, newSyncReport, type LabOpenTrade, type Practice, type SyncReport } from './practice';
-import type { ForexCalendar } from './calendar';
+import { RISK_MODES, newSyncReport, type HeatLive, type LabOpenTrade, type Practice, type SyncReport } from './practice';
+import { marketClock, type ForexCalendar } from './calendar';
 import type { ForexHeadlines } from './headlines';
 import { equityCurve, rStats, signalsFor, simulate, type RiskResult, type RStats } from './engine';
-import { STRATEGIES, runsOn, styleOf, type Family, type Strategy, type Style } from './strategies';
+import { STRATEGIES, runsOn, strategyById, styleOf, type Family, type Strategy, type Style } from './strategies';
 import { buildCtx, to4h, type Ctx } from './ta';
 import { drawingsFor, type Drawings } from './drawings';
 import { INSTRUMENTS, MOOD_SYMBOLS, STRENGTH_PAIRS, TF_MIN, type Bar, type Instrument, type Signal, type Timeframe, type Trade } from './types';
@@ -99,6 +102,8 @@ export interface Row {
   /** edge / maybe / no */
   verdict: 'edge' | 'maybe' | 'no';
   why: string;
+  /** v17 luck meter: where its unseen R falls among 20 random-timing copies (weekend job; same filter + exit only) */
+  luck?: { pctl: number; twinsP90: number; twinPassPct: number };
 }
 
 export interface PaperRow {
@@ -184,6 +189,9 @@ export interface PortfolioReport {
   sniped?: PortfolioResult | null;
   /** v15.2: the upgraded bot at 1% with bigger size + leverage on the 'sure' trades (null = conviction not proven) */
   convicted?: PortfolioResult | null;
+  /** v17: the upgraded bot at 1% with the correlated-risk cap, and whether that earned its place */
+  heated?: PortfolioResult | null;
+  heatWhy?: string;
   note: string;
 }
 
@@ -234,6 +242,17 @@ export const FX_ROLL_PICKS = 'fx:roll:picks';
 export const FX_ROLL_NULL = 'fx:roll:null';
 /** v17: point-in-time history of the bot's chosen list */
 export const FX_CHOSEN_HIST = 'fx:chosen:hist';
+/** v17: the luck meter's last weekend run */
+export const FX_LUCK = 'fx:luck';
+export interface LuckStore {
+  at: number;
+  oosFrom: number;
+  rows: Record<string, { variant: string; twins: number[]; twinsP90: number; pctl: number; twinPassPct: number }>;
+}
+/** v17: the correlated-risk cap's grade + the latest correlations (for the dashboard) */
+export const FX_HEAT = 'fx:heat';
+/** v17: the restricted learner's states */
+export const FX_LEARN = 'fx:learn';
 export interface RollPicksState {
   week: number;
   keys: string[];
@@ -714,6 +733,12 @@ export class ForexLab {
   start(): void {
     // keep the bot's decision log and check timeline across restarts
     void this.redis
+      .get(FX_LEARN)
+      .then((raw) => {
+        if (raw && !Object.keys(this.learned).length) this.learned = (JSON.parse(raw) as { keys: Record<string, LearnKey> }).keys ?? {};
+      })
+      .catch(() => undefined);
+    void this.redis
       .mget('fx:bot:log', FX_BOT_RUNS, 'fx:bot:chosen')
       .then(([raw, runs, chosen]) => {
         if (raw && !this.botLog.length) this.botLog = (JSON.parse(raw) as Array<{ t: number; e: string }>).slice(0, 100);
@@ -819,6 +844,48 @@ export class ForexLab {
   dataAge: Record<string, DataAge> = {};
   /** v17: who decides the list — the rolling picker (once proven) or the unseen-30% verdicts */
   chooser: 'rolling' | 'verdict' = 'verdict';
+  /** v17: the correlated-risk cap for the live bot (null until the first run) */
+  heatNow: HeatLive | null = null;
+
+  /** v17 luck meter: recompute on weekends when stale, then downgrade Edge / Maybe rows that random timing matches. */
+  private async applyLuck(rows: Row[], series: readonly Series[], oosFrom: number, now = Date.now()): Promise<void> {
+    let store: LuckStore | null = null;
+    try {
+      store = JSON.parse((await this.redis.get(FX_LUCK)) ?? 'null') as LuckStore | null;
+    } catch {
+      store = null;
+    }
+    const stale = !store || now - store.at > 6 * 86_400_000 || Math.abs(store.oosFrom - oosFrom) > 14 * 86_400_000;
+    if (stale && !marketClock(now).open) {
+      const t0 = Date.now();
+      const out: LuckStore = { at: now, oosFrom, rows: {} };
+      for (const tf of FX_CONFIG.timeframes) {
+        const rnd = rows.find((r) => r.id === 'random' && r.tf === tf);
+        const ss = series.filter((se) => se.tf === tf);
+        for (const r of rows) {
+          if (r.tf !== tf || r.id === 'random' || r.verdict === 'no') continue;
+          const s = strategyById(r.id);
+          if (!s) continue;
+          const l = await luckFor(s, ss, { filter: r.filter, exit: r.exit, oosFrom, realOutAvgR: r.outSample.avgR, randomAvgR: rnd ? rnd.all.avgR : null, verdict: verdictFor }).catch(() => null);
+          if (l) out.rows[`${r.id}:${tf}`] = { variant: `${r.filter}|${r.exit}`, twins: l.twins.map((x) => Math.round(x * 1000) / 1000), twinsP90: Math.round(l.twinsP90 * 1000) / 1000, pctl: l.pctl, twinPassPct: l.twinPassPct };
+        }
+      }
+      store = out;
+      await this.redis.set(FX_LUCK, JSON.stringify(out)).catch(() => undefined);
+      log.info({ rows: Object.keys(out.rows).length, ms: Date.now() - t0 }, 'forex luck meter done');
+    }
+    if (!store) return;
+    for (const r of rows) {
+      const l = store.rows[`${r.id}:${r.tf}`];
+      if (!l || l.variant !== `${r.filter}|${r.exit}`) continue;
+      r.luck = { pctl: l.pctl, twinsP90: l.twinsP90, twinPassPct: l.twinPassPct };
+      const d = luckDowngrade(r.verdict, r.outSample.avgR, l);
+      if (d.why) {
+        r.verdict = d.verdict;
+        r.why = d.why;
+      }
+    }
+  }
 
   /** v17: append the chosen list to `fx:chosen:hist` when it changed (500 changes kept) — what the bot could trade, when. */
   private async noteChosen(chosen: ReadonlySet<string>): Promise<void> {
@@ -835,13 +902,42 @@ export class ForexLab {
   }
   private chosenSig = '';
 
-  /** The bot's per strategy:chart record: losers (12+ trades, net loss) are dropped, winners sized a bit up. */
-  async botRecord(): Promise<{ dropped: string[]; proven: Set<string> }> {
+  /**
+   * The bot's per strategy:chart record: losers (12+ trades, net loss) are dropped, winners sized a bit up. v17: plus the
+   * restricted learner on the R ledger — it can switch a key off or halve it, never switch on or size up.
+   */
+  async botRecord(): Promise<{ dropped: string[]; proven: Set<string>; down: Record<string, number>; learned: Record<string, LearnKey> }> {
     const res = this.practice ? await this.practice.botResults().catch(() => ({} as Record<string, { n: number; pnlUsd: number }>)) : {};
     const dropped = Object.entries(res).filter(([, v]) => v.n >= 12 && v.pnlUsd < 0).map(([k]) => k);
     const proven = new Set(Object.entries(res).filter(([, v]) => v.n >= 12 && v.pnlUsd > 0).map(([k]) => k));
-    return { dropped, proven };
+    const down: Record<string, number> = {};
+    let learned: Record<string, LearnKey> = this.learned;
+    if (this.practice) {
+      const practice = this.practice;
+      const rows = await Promise.resolve()
+        .then(() => practice.botLedger())
+        .catch(() => null);
+      if (rows) {
+        learned = learnFromLedger(rows, Date.now(), this.learned);
+        const sig = JSON.stringify(Object.entries(learned).map(([k, v]) => [k, v.state]));
+        if (sig !== this.learnSig) {
+          this.learnSig = sig;
+          for (const [k, v] of Object.entries(learned)) if (v.state !== (this.learned[k]?.state ?? 'on')) this.logBot([`learner: ${k} → ${v.why}`]);
+          void this.redis.set(FX_LEARN, JSON.stringify({ at: Date.now(), keys: learned })).catch(() => undefined);
+        }
+        this.learned = learned;
+      }
+    }
+    for (const [k, v] of Object.entries(learned)) {
+      if (v.state === 'off' && !dropped.includes(k)) dropped.push(k);
+      if (v.state === 'down') down[k] = v.sizeF;
+      if (v.state !== 'on') proven.delete(k);
+    }
+    return { dropped, proven, down, learned };
   }
+  /** v17: the restricted learner's last view per strategy:chart (loaded from `fx:learn` at start) */
+  learned: Record<string, LearnKey> = {};
+  private learnSig = '';
 
   private async doRun(refresh: boolean): Promise<FxReport | null> {
     const t0 = Date.now();
@@ -889,6 +985,8 @@ export class ForexLab {
       macro: await loadMacro(this.redis),
     };
     this.book = book;
+    // v17: how the markets move together (EWMA correlations of hourly returns, a snapshot each 22:00 UTC) for the heat cap
+    const corr = buildCorrBook(h1ById, INSTRUMENTS.map((i) => i.id));
     await yieldNow();
 
     // ── series + their filter readings ──
@@ -1031,6 +1129,10 @@ export class ForexLab {
       open.push(...ev.open);
       recent.push(...ev.recent);
     }
+    // ── v17 luck meter: an Edge / Maybe row must beat 90% of 20 copies that keep its exits but fire at random times.
+    //    Heavy (≈ 0.4–2.5 s a row), so it runs on weekends only; the stored result is applied every hour while the row
+    //    still trades the same filter + exit ──
+    await this.applyLuck(rows, series, oosFrom);
     const filters = summarizeFilters(rows);
     const exits = summarizeExits(rows);
     await this.redis.set(FX_FILTERS_CHOSEN, JSON.stringify(Object.fromEntries(rows.map((r) => [`${r.id}:${r.tf}`, { f: r.filter, e: r.exit }])))).catch(() => undefined);
@@ -1070,6 +1172,8 @@ export class ForexLab {
 
     // ── whole-bot backtest on the unseen weeks ──
     let portfolio: PortfolioReport | null = null;
+    let heated: PortfolioResult | null = null;
+    let heatGrade: HeatGrade = { active: false, why: 'not graded yet' };
     if (poolNew.length || poolOld.length) {
       const base = { maxOpen: SIZING.maxOpen, leverage: SIZING.leverage, marginShare: SIZING.marginShare, from: oosFrom, to };
       // v15.6: a level that matches a bot risk mode is tested with that mode's leverage and caps (what the bot would do)
@@ -1099,6 +1203,10 @@ export class ForexLab {
             { ...base, ...upgraded, label: 'bigger size when sure', baseRiskPct: 1 },
           )
         : null;
+      // v17: the same bot with the correlated-risk cap (trades that move together count as one bet)
+      const plain1 = levels.find((l) => l.baseRiskPct === 1) ?? null;
+      heated = simulatePortfolio(poolNew, { ...base, ...upgraded, label: 'with the correlated-risk cap', baseRiskPct: 1, heat: { capPct: RISK_MODES.normal.heatCapPct, book: corr, minScale: HEAT.minScale } });
+      heatGrade = gradeHeat(heated, plain1);
       // v16: the same bot with the sniper trades (K+ votes) at the sniper size (only when proven)
       const sniped =
         sniper.active && sniper.k !== null
@@ -1124,11 +1232,16 @@ export class ForexLab {
         walkForward: wf,
         convicted,
         sniped,
+        heated,
+        heatWhy: heatGrade.why,
         note: `Strategies, their checks and their exits were picked on the first 70% of the history only; this is what the whole bot would have done on the last 30%, which it never saw: real spreads, max ${SIZING.maxOpen} trades at once (${SIZING.maxPerStrategy} per strategy), ${SIZING.leverage}× margin, the currency limit and the sizing rules.`,
       };
       await this.redis.set(FX_PORTFOLIO, JSON.stringify(portfolio)).catch(() => undefined);
     }
     wfPool.length = 0;
+    // v17: the correlated-risk cap the live bot uses (the latest correlations; on only once graded above)
+    this.heatNow = { active: heatGrade.active, book: { idx: corr.idx }, m: corr.now };
+    await this.redis.set(FX_HEAT, JSON.stringify({ at: Date.now(), active: heatGrade.active, why: heatGrade.why, matrix: roundedMatrix(corr) })).catch(() => undefined);
     await yieldNow();
 
     // ── v17 rolling picker: re-picks the rows every week from their last 26 weeks; graded on the unseen weeks vs random pickers ──
@@ -1147,7 +1260,9 @@ export class ForexLab {
       }
       if (!nul && w1 - w0 + 1 >= ROLL.minGradedWeeks) {
         // the random pickers: recomputed about once a week (when the graded weeks move)
+        const tn = Date.now();
         nul = await randomPickerNull(rollRows, rollOos, w0, w1, sim, ROLL.nullDraws, ROLL.seed, yieldNow);
+        log.info({ ms: Date.now() - tn, draws: ROLL.nullDraws }, 'forex random pickers built');
         await this.redis.set(FX_ROLL_NULL, JSON.stringify({ key: nullKey, nul })).catch(() => undefined);
       }
       const prevPicks = JSON.parse((await this.redis.get(FX_ROLL_PICKS).catch(() => null)) ?? 'null') as RollPicksState | null;
@@ -1282,7 +1397,7 @@ export class ForexLab {
           open.map((t) => {
             const row = rowOf.get(`${t.strategy}:${t.tf}`);
             const pk = rollLive ? pickOf.get(`${t.strategy}:${t.tf}`) : undefined;
-            const sizeF = (pk ? pk.sizeF : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1);
+            const sizeF = (pk ? pk.sizeF : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1);
             const x = judgeX.get(tradeKey(t));
             const p = judgeModel && x ? judgeProb(judgeModel, x) : null;
             const judgeOk = !judge?.active || !judgeModel || p === null || p >= judgeModel.threshold;
@@ -1305,7 +1420,7 @@ export class ForexLab {
           (pair) => staleReason(this.dataAge[pair], Date.now()) ?? this.calendar?.blockFor(pair) ?? this.headlines?.blockFor(pair) ?? null,
           this.atr1h,
           // v17: a held trade on a market with no fresh hourly candles this run is kept (the lab couldn't see it end)
-          { scope: FX_CONFIG.timeframes, report: sync, pairsSeen: new Set(series.filter((se) => se.tf === '1h' && se.ctx.bars.length && se.ctx.bars[se.ctx.bars.length - 1]!.t + 4 * 3_600_000 >= Date.now()).map((se) => se.inst.id)) },
+          { scope: FX_CONFIG.timeframes, report: sync, heat: this.heatNow, pairsSeen: new Set(series.filter((se) => se.tf === '1h' && se.ctx.bars.length && se.ctx.bars[se.ctx.bars.length - 1]!.t + 4 * 3_600_000 >= Date.now()).map((se) => se.inst.id)) },
         )
         .catch((err: Error) => [`bot sync failed: ${err.message}`]);
       this.lastSync['1h'] = sync;

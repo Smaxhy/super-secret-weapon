@@ -382,9 +382,38 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
     AND live (`cotMaxAgeDays` 17, `rateMaxAgeDays` 100 → NaN; cotSeries cache key includes it). Calendar: ok / fail +
     `blind()` (newest event in the past or no good load for 8 days) → dollar pairs / metals wait out 08:25–08:50 and
     09:55–10:15 New York on weekdays (`blindNewsBlock`). Headlines: HTTP errors and 0-item pages count as failures.
-    tests/forex-v17.test.ts. Still to build (v17 plan): offload the lab into a forked child (flag off first), Dukascopy
-    tail refresh / gap fill for FX, missing-input waits with coverage, rolling weekly picker vs random pickers, correlated
-    heat cap, luck meter, restricted learner on the R ledger, judge quant features.
+    tests/forex-v17.test.ts.
+  - **v17.4 learning** (all graded on unseen weeks before it touches anything live):
+    - **Rolling picker** (`src/forex/rolling.ts`): each week (weeks start Sunday 00:00 UTC, `weekOf` / `weekStart` in
+      portfolio.ts) keeps the strategy × chart rows whose trades CLOSED in the last 26 weeks made money (`shrunkR` = ΣR ÷
+      (n + 20) ≥ 0.03, n ≥ 12, PF ≥ 1.1) + `botAlways`; sizes from that record. Graded on the unseen weeks after a 1-week
+      gap, traded together like the bot (`gradeRolling`), vs the list picked once and vs 100 random pickers
+      (`randomPickerNull`, cached weekly in `fx:roll:null`); `rollingVerdict`: on with 26+ weeks, money made, PF ≥ 1.1,
+      beats 80% of random, drop ≤ 1.25× the static one; stays on while > 0 and beats 60%. Once on, the LIVE chooser is
+      its list (`ForexLab.chooser` 'rolling'; else the unseen-30% verdicts). The week keeps its list (`fx:roll:picks`).
+      `fx:roll` report; `fx:chosen:hist` = point-in-time history of the chosen list (500 changes). Auto-bot card "What
+      it learned this week" (+ the bot's own R record). Hourly 15m / 1m charts don't use it (history too short).
+    - **Luck meter** (`src/forex/luck.ts`): an Edge / Maybe row is compared with 20 twins that keep its exact stops /
+      targets / exits / filter / costs but fire at random times (signals circularly shifted, never a whole number of
+      days, stops / targets rebuilt in ATRs); a row whose unseen avg R ≤ the twins' 90th percentile becomes 'no'
+      (`luckDowngrade`). Heavy (0.4–2.5 s a row) → weekends only (`applyLuck`, `fx:luck`, recomputed when > 6 days old
+      or the 70/30 line moved 14+ days), applied every hour while the row keeps the same filter + exit. Rows carry
+      `luck` {pctl, twinsP90, twinPassPct}; Strategies badge "beats N of 20 random". The rolling picker never reads it.
+    - **Correlated-risk cap** (`src/forex/risk.ts`): EWMA correlations of hourly returns (half-life 240 h, ρ = 0 under
+      200 joint returns, snapshot each 22:00 UTC, `corrAt` = what the bot knew then); heat = √(r'Cr) of signed stop-
+      risks; `maxRiskUnder` = room left. Honest test row "with the correlated-risk cap" (`simulatePortfolio` `heat`,
+      cap = `RiskLimits.heatCapPct` 3 / 9 / 15%, a trade cut below 40% is skipped); `gradeHeat`: on only if the plain
+      bot's biggest drop ≥ 5% and the cap cut it 15%+ without costing > 5% return per unit of drop. Live (`syncBot`
+      `heat`, `ForexLab.heatNow`, both labs) only while on; sniper trades stay outside it. `fx:heat` (grade + ρ matrix).
+    - **Restricted learner** (`src/forex/learner.ts`): reads ONLY the bot's R ledger; per strategy:tf a skeptical mean
+      (as if 8 more break-even trades; R capped ±3; manual closes / unknown R / > 120 days ignored) and P(real mean > 0):
+      off below 20% (10+ trades), half size below 40% (6+), back only above 50%. It can never switch on or size up.
+      Wired in `ForexLab.botRecord()` → `dropped` + `down` (sizes in both labs) + no ×1.15 "proven" while not on;
+      state changes go to the bot log; `fx:learn`.
+    - Synthetic e2e (14 markets × 12.4k bars): weekday hourly run ≈ 37 s (first run of a week builds the random
+      pickers), Saturday run with the luck meter ≈ 52 s. tests: forex-rolling, forex-luck, forex-risk, forex-learner,
+      forex-v17b. Still to build: offload the lab into a forked child (flag off first), Dukascopy tail refresh / gap
+      fill for FX, missing-input waits with coverage, judge quant features.
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

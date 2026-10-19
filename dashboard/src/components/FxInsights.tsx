@@ -17,7 +17,7 @@ export type ExitKind = 'designed' | 'breakeven' | 'scale' | 'tight' | 'runner' |
 export interface WalkForward { from: number; to: number; lookbackMonths: number; result: PortfolioResult; months: Array<{ month: string; picked: number; trades: number }> }
 export interface TierStats { tier: 'sure' | 'verySure'; label: string; from: number; mult: number; lev: number; inN: number; inAvgR: number; outN: number; outAvgR: number; active: boolean }
 export interface ConvictionReport { scope: string; judge: boolean; all: { inN: number; inAvgR: number; outN: number; outAvgR: number }; tiers: TierStats[]; active: boolean; why: string }
-export interface PortfolioReport { from: number; to: number; picked: Array<{ id: string; name: string; tf: string; filter: FilterKind; exit?: ExitKind; inAvgR: number; inN: number; unseenN: number }>; oldPicked: number; levels: PortfolioResult[]; old: PortfolioResult; judged?: PortfolioResult | null; walkForward?: WalkForward | null; convicted?: PortfolioResult | null; sniped?: PortfolioResult | null; note: string }
+export interface PortfolioReport { from: number; to: number; picked: Array<{ id: string; name: string; tf: string; filter: FilterKind; exit?: ExitKind; inAvgR: number; inN: number; unseenN: number }>; oldPicked: number; levels: PortfolioResult[]; old: PortfolioResult; judged?: PortfolioResult | null; walkForward?: WalkForward | null; convicted?: PortfolioResult | null; sniped?: PortfolioResult | null; heated?: PortfolioResult | null; heatWhy?: string; note: string }
 export interface ExitSummary { exit: ExitKind; label: string; chosenBy: number; compared: number; inDeltaR: number; outDeltaR: number; outBetterPct: number }
 export interface JudgeReport { active: boolean; why: string; trainedOn: number; tested: number; auc: number | null; threshold: number | null; keepPct: number; allR: number; keptR: number; skippedR: number; allWinPct: number; keptWinPct: number; importance: Array<{ feature: string; label: string; share: number }> }
 export interface RiskSummary { exposure: Array<{ ccy: string; pct: number }>; capPct: number; ddPct: number; ddFactor: number; baseRiskPct: number; openRiskPct: number }
@@ -268,9 +268,9 @@ export function PortfolioCard({ p, judgeOn }: { p: PortfolioReport | null | unde
               </tr>
             </thead>
             <tbody>
-              {[...p.levels, ...(p.judged ? [p.judged] : []), ...(p.convicted ? [p.convicted] : []), ...(p.sniped ? [p.sniped] : []), o].map((k) => (
+              {[...p.levels, ...(p.judged ? [p.judged] : []), ...(p.convicted ? [p.convicted] : []), ...(p.sniped ? [p.sniped] : []), ...(p.heated ? [p.heated] : []), o].map((k) => (
                 <tr key={k.label} className={`border-t border-line ${k === o ? 'text-muted' : ''}`}>
-                  <td className="py-1.5 text-ink">{k === o ? 'Before the upgrade (1%)' : k === p.judged ? `With the signal judge (1%${judgeOn ? '' : ', judge not on yet'})` : k === p.convicted ? 'Bigger size when sure (1%, sure 1.5×, very sure 2×)' : k === p.sniped ? `With the sniper (1%, ${k.label.replace(/^sniper \(|\)$/g, '')})` : k.label.includes('(') ? k.label.replace(' risk', '') : `${k.baseRiskPct}%`}</td>
+                  <td className="py-1.5 text-ink">{k === o ? 'Before the upgrade (1%)' : k === p.judged ? `With the signal judge (1%${judgeOn ? '' : ', judge not on yet'})` : k === p.convicted ? 'Bigger size when sure (1%, sure 1.5×, very sure 2×)' : k === p.sniped ? `With the sniper (1%, ${k.label.replace(/^sniper \(|\)$/g, '')})` : k === p.heated ? `Correlated-risk cap (1%${p.heatWhy?.startsWith('on') ? ', on' : ', not on'})` : k.label.includes('(') ? k.label.replace(' risk', '') : `${k.baseRiskPct}%`}</td>
                   <td className={`py-1.5 text-right ${tone(k.avgWeekPct)}`}>{signed(k.avgWeekPct)}%</td>
                   <td className={`py-1.5 text-right ${tone(k.medianWeekPct)}`}>{signed(k.medianWeekPct)}%</td>
                   <td className="py-1.5 text-right">{k.greenWeeksPct}%</td>

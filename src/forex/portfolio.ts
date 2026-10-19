@@ -9,6 +9,7 @@
  * Pure.
  */
 import { legsOf } from './types';
+import { corrAt, maxRiskUnder, type CorrBook } from './risk';
 
 export const SIZING = {
   baseRiskPct: 1,
@@ -99,13 +100,15 @@ export interface PortfolioOpts {
   seed?: number;
   /** v17: false skips the Monte Carlo (cheap null runs) */
   mc?: boolean;
+  /** v17: correlated-risk cap — a new trade is cut to what fits under `capPct` of combined risk, skipped under `minScale` */
+  heat?: { capPct: number; book: CorrBook; minScale: number };
 }
 
 export interface PortfolioResult {
   label: string;
   baseRiskPct: number;
   trades: number;
-  skipped: { full: number; ccy: number; margin: number; strategy: number };
+  skipped: { full: number; ccy: number; margin: number; strategy: number; heat?: number };
   finalX: number;
   totalPct: number;
   weeks: number;
@@ -206,7 +209,7 @@ export function simulatePortfolio(trades: readonly PTrade[], o: PortfolioOpts): 
   ev.sort((a, b) => a.t - b.t || b.kind - a.kind || (o.prioritise && a.kind === 0 ? (b.tr.prio ?? 0) - (a.tr.prio ?? 0) : 0));
   const open = new Map<PTrade, { riskAbs: number; marginAbs: number }>();
   const perStrategy = new Map<string, number>();
-  const skipped = { full: 0, ccy: 0, margin: 0, strategy: 0 };
+  const skipped: PortfolioResult['skipped'] = { full: 0, ccy: 0, margin: 0, strategy: 0, ...(o.heat ? { heat: 0 } : {}) };
   let eq = 1;
   let peak = 1;
   let dd = 0;
@@ -239,6 +242,17 @@ export function simulatePortfolio(trades: readonly PTrade[], o: PortfolioOpts): 
         if (exposureBlock(exp, tr.pair, tr.side, riskPct, o.ccyCapPct)) {
           skipped.ccy++;
           continue;
+        }
+      }
+      if (o.heat && !tr.sniper) {
+        const pos = [...open].filter(([t]) => !t.sniper).map(([t, p]) => ({ pair: t.pair, side: t.side, riskPct: (p.riskAbs / eq) * 100 }));
+        const room = maxRiskUnder(pos, { pair: tr.pair, side: tr.side }, o.heat.capPct, o.heat.book, corrAt(o.heat.book, tr.entryT));
+        if (room < riskPct) {
+          if (room < o.heat.minScale * riskPct) {
+            skipped.heat = (skipped.heat ?? 0) + 1;
+            continue;
+          }
+          riskPct = room;
         }
       }
       // margin: notional = risk ÷ stop distance; a trade may use at most `marginShare` of the free margin

@@ -452,7 +452,7 @@ export class FastLab {
           for (const t of simulate(inst, tf, se.ctx, s.id, sigs, allowFor(row.filter ?? 'none', se.env, styleOf(s)))) {
             if (t.reason !== 'open') continue;
             openKeys[`${t.strategy}:${tf}:${t.pair}`] = t.entryT;
-            const sizeF = stratFactorFromVerdict(row.verdict) * volFactor(t.volRatio) * (rec.proven.has(`${s.id}:${tf}`) ? 1.15 : 1);
+            const sizeF = stratFactorFromVerdict(row.verdict) * volFactor(t.volRatio) * (rec.proven.has(`${s.id}:${tf}`) ? 1.15 : 1) * (rec.down[`${s.id}:${tf}`] ?? 1);
             // v15.2: how many market checks back it, and the size that earns (only once proven on this chart)
             const si = signalIndex(se.ctx.bars, t.entryT, se.ctx.barMin);
             const conf = si >= 0 ? agreeCount(se.env, si, t.side) : 0;
@@ -472,7 +472,7 @@ export class FastLab {
       const bookAge = now - book.at;
       const bookWait = bookAge > FRESH.bookMaxAgeMs ? `the hourly market read (bigger charts, strength, mood) is ${Math.round(bookAge / 3_600_000)} h old: no new ${tf} trades` : null;
       const ev = await practice
-        .syncBot(labOpen, (pair) => bookWait ?? staleReason(ages[pair], now) ?? this.lab.calendar?.blockFor(pair) ?? this.lab.headlines?.blockFor(pair) ?? null, this.lab.atr1h, { scope: [tf], report: sync, pairsSeen })
+        .syncBot(labOpen, (pair) => bookWait ?? staleReason(ages[pair], now) ?? this.lab.calendar?.blockFor(pair) ?? this.lab.headlines?.blockFor(pair) ?? null, this.lab.atr1h, { scope: [tf], report: sync, pairsSeen, heat: this.lab.heatNow })
         .catch((err: Error) => [`bot sync (${tf}) failed: ${err.message}`]);
       this.lab.lastSync[tf] = sync;
       this.lab.logBot(ev);

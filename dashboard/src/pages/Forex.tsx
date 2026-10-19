@@ -22,7 +22,7 @@ interface RStats { n: number; winPct: number; avgR: number; medianR: number; pf:
 interface Risk { riskPct: number; finalX: number; avgWeekPct: number; medianWeekPct: number; greenWeeksPct: number; bigWeeksPct: number; bestWeekPct: number; worstWeekPct: number; maxDdPct: number; blown: boolean; medianLeverage: number; weeks: number }
 interface VariantRow { filter: FilterKind; inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number }
 interface ExitVariantRow extends Omit<VariantRow, 'filter'> { exit: ExitKind }
-interface RowT { id: string; name: string; family: string; desc: string; tf: string; filter?: FilterKind; variants?: VariantRow[]; exit?: ExitKind; exitVariants?: ExitVariantRow[]; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string }
+interface RowT { id: string; name: string; family: string; desc: string; tf: string; filter?: FilterKind; variants?: VariantRow[]; exit?: ExitKind; exitVariants?: ExitVariantRow[]; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string; luck?: { pctl: number; twinsP90: number; twinPassPct: number } }
 interface Trade { strategy: string; tf: string; pair: string; side: 1 | -1; entryT: number; exitT: number; entry: number; exit: number; r: number; reason: string; stop: number; stop0: number; target: number | null }
 interface MarketNow { id: string; label: string; price: number; t: number; change24hPct: number; closes: number[]; trend: 'up' | 'down' | 'flat'; rsi: number; atrPips: number; firing: Array<{ id: string; name: string; tf: string; side: 1 | -1; allowed?: boolean; why?: string | null }>; openPaper: number; bars: number[][]; drawings: ChartDrawings; mtf?: { h1: number; h4: number; d1: number }; strength?: { base: string; quote: string; baseScore: number | null; quoteScore: number | null; gap: number | null }; risk?: number; heat?: Heatmap }
 interface HeatLevel { price: number; kind: 'round' | 'half' | 'swing' | 'yesterday' | 'expiry'; label: string; weight: number; distAtr: number }
@@ -296,6 +296,7 @@ function Strategies({ r }: { r: Report }) {
                     {x.filter && x.filter !== 'none' && <Badge tone="accent">{FILTER_SHORT[x.filter]}</Badge>}
                     {x.exit && x.exit !== 'designed' && <Badge tone="accent">{EXIT_SHORT[x.exit]}</Badge>}
                     <Badge tone={VERDICT[x.verdict].tone}>{VERDICT[x.verdict].label}</Badge>
+                    {x.luck && <Badge tone={x.luck.pctl >= 90 ? 'up' : 'neutral'} title="where its unseen result falls among 20 copies with the same exits that fire at random times">beats {Math.round(x.luck.pctl / 5)} of 20 random</Badge>}
                   </div>
                   <div className="mt-0.5 truncate text-xs text-muted">
                     {x.all.n} trades · {x.all.winPct}% won · unseen {signed(x.outSample.avgR, 2)}R/trade · {x.tradesPerWeek}/week

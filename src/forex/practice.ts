@@ -8,6 +8,7 @@
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
 import { feeds } from './feeds';
+import { HEAT, maxRiskUnder, topCorrelated, type CorrBook } from './risk';
 import { oandaCandles, oandaPrices, oandaReady, loadOanda, type Granularity } from './oanda';
 import { INSTRUMENTS, instrument, type Bar, type Instrument } from './types';
 import { marketClock } from './calendar';
@@ -55,11 +56,13 @@ export interface RiskLimits {
   convMaxRiskPct: number;
   /** most open trades per fast chart */
   maxOpenByTf: Record<string, number>;
+  /** v17: most combined stop-risk of trades that move together (√ r'Cr), % of equity — used once the honest test proves it */
+  heatCapPct: number;
 }
 export const RISK_MODES: Record<RiskMode, RiskLimits> = {
-  normal: { label: 'Normal', riskPct: 1, leverage: 30, maxOpen: 8, ccyCapPct: 2.2, maxPerStrategy: 3, convMaxRiskPct: 2, maxOpenByTf: { '1m': 2, '15m': 3 } },
-  aggressive: { label: 'Aggressive', riskPct: 3, leverage: 100, maxOpen: 12, ccyCapPct: 6.6, maxPerStrategy: 4, convMaxRiskPct: 5, maxOpenByTf: { '1m': 3, '15m': 5 } },
-  max: { label: 'Max', riskPct: 5, leverage: 200, maxOpen: 15, ccyCapPct: 11, maxPerStrategy: 5, convMaxRiskPct: 8, maxOpenByTf: { '1m': 4, '15m': 6 } },
+  normal: { label: 'Normal', riskPct: 1, leverage: 30, maxOpen: 8, ccyCapPct: 2.2, maxPerStrategy: 3, convMaxRiskPct: 2, maxOpenByTf: { '1m': 2, '15m': 3 }, heatCapPct: 3 },
+  aggressive: { label: 'Aggressive', riskPct: 3, leverage: 100, maxOpen: 12, ccyCapPct: 6.6, maxPerStrategy: 4, convMaxRiskPct: 5, maxOpenByTf: { '1m': 3, '15m': 5 }, heatCapPct: 9 },
+  max: { label: 'Max', riskPct: 5, leverage: 200, maxOpen: 15, ccyCapPct: 11, maxPerStrategy: 5, convMaxRiskPct: 8, maxOpenByTf: { '1m': 4, '15m': 6 }, heatCapPct: 15 },
 };
 export const isRiskMode = (m: unknown): m is RiskMode => m === 'normal' || m === 'aggressive' || m === 'max';
 export const limitsFor = (m: RiskMode | undefined): RiskLimits => RISK_MODES[m ?? 'normal'] ?? RISK_MODES.normal;
@@ -527,6 +530,13 @@ async function fetchQuote(inst: Instrument): Promise<Quote | null> {
   return null;
 }
 
+/** v17: the correlated-risk cap as the bot uses it live (the latest correlations; `active` once the honest test proved it). */
+export interface HeatLive {
+  active: boolean;
+  book: Pick<CorrBook, 'idx'>;
+  m: Float32Array | null;
+}
+
 /** A lab paper trade as the bot sees it (v14: + the judge's score and the trade's exit rules). */
 export interface LabOpenTrade {
   ref: string;
@@ -890,7 +900,7 @@ export class Practice {
    * the charts this call manages (the hourly lab passes 1h + 4h, the fast lab 15m or 1m), so one never closes the
    * other's trades; `report` collects what it saw for the bot's plan.
    */
-  async syncBot(labOpen: LabOpenTrade[], blockFor: (pair: string) => string | null = () => null, atr1h: Record<string, number> = {}, opts: { scope?: readonly string[]; report?: SyncReport; pairsSeen?: ReadonlySet<string> } = {}): Promise<string[]> {
+  async syncBot(labOpen: LabOpenTrade[], blockFor: (pair: string) => string | null = () => null, atr1h: Record<string, number> = {}, opts: { scope?: readonly string[]; report?: SyncReport; pairsSeen?: ReadonlySet<string>; heat?: HeatLive | null } = {}): Promise<string[]> {
     const inScope = (ref: string | undefined) => !opts.scope || opts.scope.includes(tfOfRef(ref));
     const rep = opts.report;
     return this.serial(async () => {
@@ -1124,7 +1134,25 @@ export class Practice {
         const snipe = t.sniper?.on && !a.open.some((p) => p.sniper) ? t.sniper : null;
         // v15.6: the risk mode scales the base risk, leverage and every cap together
         const lev = snipe ? Math.max(SNIPER.leverage, L.leverage) : Math.max(conv?.lev ?? 0, L.leverage);
-        const riskPct = snipe ? Math.max(SNIPER.riskPct, L.riskPct) * ddF : clampRisk(L.riskPct, L.riskPct * (t.sizeF ?? 1) * ddF * (conv?.mult ?? 1), conv ? L.convMaxRiskPct / L.riskPct : undefined);
+        let riskPct = snipe ? Math.max(SNIPER.riskPct, L.riskPct) * ddF : clampRisk(L.riskPct, L.riskPct * (t.sizeF ?? 1) * ddF * (conv?.mult ?? 1), conv ? L.convMaxRiskPct / L.riskPct : undefined);
+        // v17: trades that move together count as one bet — smaller, or skipped, when the combined risk is full (only
+        // once the honest test showed the cap cuts the drawdown; sniper trades stay outside it, as with the currency cap)
+        let heatNote = '';
+        if (opts.heat?.active && !snipe && v.equityUsd > 0) {
+          const pos = a.open.filter((p) => !p.sniper).map((p) => ({ pair: p.pair, side: p.side, riskPct: (positionRiskUsd(p, mids) / v.equityUsd) * 100 }));
+          const room = maxRiskUnder(pos, { pair: t.pair, side: t.side }, L.heatCapPct, opts.heat.book, opts.heat.m);
+          if (room < riskPct) {
+            const tc = topCorrelated(pos, { pair: t.pair, side: t.side }, opts.heat.book, opts.heat.m);
+            const withWhat = tc ? `it moves with your open ${tc.pair} trade (ρ ${tc.rho})` : 'open trades that move together';
+            if (room < HEAT.minScale * riskPct) {
+              note(`${t.ref}:heat`, `skipped ${t.pair} (${t.strategy}): correlated risk is full — ${withWhat}`);
+              skip(t, `correlated risk is full — ${withWhat}`);
+              continue;
+            }
+            heatNote = ` (smaller: ${withWhat})`;
+            riskPct = room;
+          }
+        }
         const exp = currencyExposure(a.open, mids, v.equityUsd);
         const over = snipe ? null : exposureBlock(exp, t.pair, t.side, riskPct, L.ccyCapPct);
         if (over) {
@@ -1142,7 +1170,7 @@ export class Practice {
         const actual = Math.round(((margin * lev * (dist / entry)) / v.equityUsd) * 10_000) / 100;
         const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}), maxQuoteAgeMs: BOT.quoteAgeMsByTf[tf] ?? 10 * 60_000, feedDelayOk: tf === '1h' || tf === '4h' });
         const sure = snipe ? ` — SNIPER: ${snipe.votes} of ${snipe.of} checks agree, risking ${actual}% at ${lev}×` : conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
-        events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${sure}${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}` : `skipped ${t.pair}: ${r.error}`);
+        events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${sure}${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}${heatNote}` : `skipped ${t.pair}: ${r.error}`);
         if (r.ok) {
           perStrategy.set(sk, (perStrategy.get(sk) ?? 0) + 1);
           perTf.set(tf, (perTf.get(tf) ?? 0) + 1);
