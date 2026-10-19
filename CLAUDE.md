@@ -436,7 +436,17 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
       chance passes 50% (no off ↔ half flapping), `fx:learn` loaded before the first `botRecord`; luck: shift ≥ 16 weeks
       (`LUCK.minWeeks`; clears the longest look-back + hold) and a stored result older than 14 days / from another
       70/30 line is not applied.
-    - Still to build: offload the lab into a forked child (flag off first) — the hourly run grows (≈ 37 s synthetic).
+  - **v17.2 offload** (OFF by default — `FX_LAB_WORKER=on` in the VPS .env switches it on): `ForexLab.run` = `computeRun`
+    (everything but the bot) + `syncFrom` (the bot account, always in the main process). With the flag on,
+    `lab-runner.ts` `forkLabRun` forks `dist/forex/lab-worker.js` (`--max-old-space-size=900`, `serialization:
+    'advanced'`, `NODE_OPTIONS` cleared, 15-min timeout) once per hourly run: the child loads feeds / spread profiles /
+    cached calendar + headlines (`loadCached`), reads the bot's record read-only, runs `computeRun`, and hands back the
+    `RunOutput` + `WorkerState` (markets, mood, ATRs, chosen list, chooser, data ages, learner, heat ρ, MarketBook for
+    the fast lab, bot-log lines it collected) + its feed reports (`feeds.merge`). Could not START → this hour runs
+    inline; started then failed / timed out / OOM → the hour is skipped (`lastError`), never inline. Verified on a local
+    Redis: identical rows / verdicts / chosen list inline vs worker, parent heap 38 MB. The "forex lab run done" log
+    line now carries heapMb / rssMb — read it on the VPS (`docker compose logs bot | grep "forex lab run done"`)
+    before switching the worker on (the bot container's cap is 2 GB: main heap + 900 MB child must fit).
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 

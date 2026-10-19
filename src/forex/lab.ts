@@ -18,7 +18,8 @@ import { learnFromLedger, type LearnKey } from './learner';
 import { gradeRolling, nullKey, randomPickerNull, ROLL, rollRow, rollWeeks, type NullStats, type RollReport, type RollRow, type RollTrade } from './rolling';
 import { FILL, fillFromDk, type FillResult } from './fill';
 import { dataAgeOf, staleReason, type DataAge } from './freshness';
-import { feeds } from './feeds';
+import { feeds, type FeedId, type FeedState } from './feeds';
+import { forkLabRun, labWorkerOn } from './lab-runner';
 import { moduleLogger } from '../lib/logger';
 import { refreshInstrument, refreshSeries, loadBars, type FeedStatus } from './data';
 import { DK_META, refreshDkTail, installSpreadProfiles, loadDk, refreshDukascopy, stitchHistory, type DkMeta } from './dukascopy';
@@ -237,6 +238,44 @@ export const FX_BOT_RUNS = 'fx:bot:runs';
 export const FX_CONVICTION = 'fx:conviction';
 /** v16: sniper grade */
 export const FX_SNIPER = 'fx:sniper';
+
+/** v17.2: what the child process carries over from the parent's last run. */
+export interface WorkerInput {
+  learned: Record<string, LearnKey>;
+  learnSig: string;
+  chosenSig: string;
+  heatActive: boolean | null;
+}
+/** v17.2: what the live bot (parent) needs after a run in the child. */
+export interface WorkerState {
+  marketsNow: MarketNow[];
+  moodNow: MoodNow | null;
+  atr1h: Record<string, number>;
+  labOpen: Record<string, number>;
+  chosen: string[];
+  chooser: 'rolling' | 'verdict';
+  dataAge: Record<string, DataAge>;
+  dropped: string[];
+  learned: Record<string, LearnKey>;
+  learnSig: string;
+  chosenSig: string;
+  heat: { active: boolean; idx: Record<string, number>; m: number[] | null } | null;
+  book: MarketBook | null;
+  logs: string[];
+}
+export type WorkerResult = { ok: true; out: RunOutput | null; state: WorkerState; feeds: Partial<Record<FeedId, FeedState>> } | { ok: false; error: string };
+
+/** v17.2: what one hourly run hands to the bot sync (in worker mode: what the child hands to the parent). */
+export interface RunOutput {
+  report: FxReport;
+  botTrades: LabOpenTrade[];
+  pairsSeen: string[];
+  chosen: string[];
+  dropped: string[];
+  firing: { signals: number; chosen: number };
+  /** nothing to sync (no candles yet) */
+  noSync?: boolean;
+}
 /** v17: the rolling picker's report, this week's list (+ last week's, + on / off), the random pickers (cached weekly) */
 export const FX_ROLL = 'fx:roll';
 export const FX_ROLL_PICKS = 'fx:roll:picks';
@@ -794,6 +833,10 @@ export class ForexLab {
   /** v15: add bot decisions to the log (newest first, 100 kept). */
   logBot(events: readonly string[], now = Date.now()): void {
     if (!events.length) return;
+    if (this.collectLog) {
+      this.collectLog.push(...events);
+      return;
+    }
     for (const e of events) this.botLog.unshift({ t: now, e });
     this.botLog = this.botLog.slice(0, 100);
     void this.redis.set('fx:bot:log', JSON.stringify(this.botLog)).catch(() => undefined);
@@ -821,9 +864,76 @@ export class ForexLab {
     }
   }
 
+  /** v17.2: the run in a child process; inline only when the child could not even start. */
+  private async runInWorker(refresh: boolean): Promise<RunOutput | null> {
+    const t0 = Date.now();
+    const r = await forkLabRun(refresh, { learned: this.learned, learnSig: this.learnSig, chosenSig: this.chosenSig, heatActive: this.heatNow?.active ?? null });
+    if (r.kind === 'spawn') {
+      log.warn({ err: r.error }, 'forex lab worker could not start — running this hour inline');
+      return this.computeRun(refresh);
+    }
+    if (r.kind === 'failed') throw new Error(`lab worker: ${r.error}`);
+    this.importState(r.res.state);
+    feeds.merge(r.res.feeds);
+    log.info({ ms: Date.now() - t0, heapMb: Math.round(process.memoryUsage().heapUsed / 1e6) }, 'forex lab run done in the worker');
+    return r.res.out;
+  }
+
+  /** v17.2 (child): carry over the parent's learner / chosen-list / heat state. */
+  importWorkerInput(x: WorkerInput): void {
+    this.learned = x.learned;
+    this.learnSig = x.learnSig;
+    this.chosenSig = x.chosenSig;
+    if (x.heatActive !== null) this.heatNow = { active: x.heatActive, book: { idx: {} }, m: null };
+    this.collectLog = [];
+  }
+  /** v17.2 (child): the state the parent's live bot needs. */
+  exportState(): WorkerState {
+    return {
+      marketsNow: this.marketsNow,
+      moodNow: this.moodNow,
+      atr1h: this.atr1h,
+      labOpen: this.labOpen,
+      chosen: this.chosen,
+      chooser: this.chooser,
+      dataAge: this.dataAge,
+      dropped: this.dropped,
+      learned: this.learned,
+      learnSig: this.learnSig,
+      chosenSig: this.chosenSig,
+      heat: this.heatNow ? { active: this.heatNow.active, idx: this.heatNow.book.idx, m: this.heatNow.m ? Array.from(this.heatNow.m) : null } : null,
+      book: this.book,
+      logs: this.collectLog ?? [],
+    };
+  }
+  /** v17.2 (parent): take the child's state. */
+  importState(s: WorkerState): void {
+    this.marketsNow = s.marketsNow;
+    this.moodNow = s.moodNow;
+    this.atr1h = s.atr1h;
+    this.labOpen = s.labOpen;
+    this.chosen = s.chosen;
+    this.chooser = s.chooser;
+    this.dataAge = s.dataAge;
+    this.dropped = s.dropped;
+    this.learned = s.learned;
+    this.learnSig = s.learnSig;
+    this.chosenSig = s.chosenSig;
+    if (s.heat) this.heatNow = { active: s.heat.active, book: { idx: s.heat.idx }, m: s.heat.m ? Float32Array.from(s.heat.m) : null };
+    if (s.book) this.book = s.book;
+    this.logBot(s.logs);
+  }
+  /** v17.2: in the child, bot-log lines are collected for the parent instead of written */
+  private collectLog: string[] | null = null;
+
   run(refresh = true): Promise<FxReport | null> {
     if (this.running) return this.running;
-    this.running = this.doRun(refresh)
+    this.running = (labWorkerOn() ? this.runInWorker(refresh) : this.computeRun(refresh))
+      .then(async (out) => {
+        // the bot account always follows in this process (never in the child)
+        if (out && !out.noSync) await this.syncFrom(out);
+        return out?.report ?? null;
+      })
       .then((r) => {
         this.lastError = null;
         feeds.ok('lab', { items: r?.rows.length ?? 0, asOf: r?.at ?? null });
@@ -905,7 +1015,7 @@ export class ForexLab {
       // a history line is not worth failing the run for
     }
   }
-  private chosenSig = '';
+  chosenSig = '';
 
   /**
    * The bot's per strategy:chart record: losers (12+ trades, net loss) are dropped, winners sized a bit up. v17: plus the
@@ -945,9 +1055,10 @@ export class ForexLab {
   /** v17: the restricted learner's last view per strategy:chart (loaded from `fx:learn` at start) */
   learned: Record<string, LearnKey> = {};
   private learnLoaded: Promise<unknown> = Promise.resolve();
-  private learnSig = '';
+  learnSig = '';
 
-  private async doRun(refresh: boolean): Promise<FxReport | null> {
+  /** v17.2: everything of an hourly run except the bot sync (runs inline, or in a child process — `lab-worker.ts`). */
+  async computeRun(refresh: boolean): Promise<RunOutput | null> {
     const t0 = Date.now();
     const feed: FeedStatus[] = [];
     if (refresh) feed.push(...(await refreshAll(this.redis)));
@@ -1042,7 +1153,7 @@ export class ForexLab {
     if (!series.length) {
       const empty: FxReport = { at: Date.now(), durationMs: Date.now() - t0, feed, from: null, to: null, oosFrom: null, rows: [], markets: [], paper: { since, rows: [], open: [], recent: [] }, note: 'No forex candles yet. The server pulls them from Yahoo Finance; check the feed errors above.', strength: strengthNow(strength), mood: moodNow(mood) };
       await this.redis.set(FX_REPORT, JSON.stringify(empty)).catch(() => undefined);
-      return empty;
+      return { report: empty, botTrades: [], pairsSeen: [], chosen: [], dropped: [], firing: { signals: 0, chosen: 0 }, noSync: true };
     }
     const oosFrom = from + (1 - FX_CONFIG.oosFraction) * (to - from);
     const prevChosen: Record<string, { f?: FilterKind; e?: ExitKind }> = {};
@@ -1417,65 +1528,78 @@ export class ForexLab {
     this.marketsNow = markets;
     this.moodNow = report.mood ?? null;
     this.labOpen = Object.fromEntries(open.filter((t) => chosen.has(`${t.strategy}:${t.tf}`)).map((t) => [`${t.strategy}:${t.tf}:${t.pair}`, t.entryT]));
-    if (this.practice) {
-      const rowOf = new Map(chosenRows.map((x) => [`${x.id}:${x.tf}`, x]));
-      // v17: how often each filter input was known on the first 70% of each series (for `missingInput`)
-      const covCache = new Map<Series, ReturnType<typeof filterCoverage>>();
-      const coverageOf = (se: Series) => {
-        let c = covCache.get(se);
-        if (!c) {
-          const upTo = se.ctx.bars.findIndex((b) => b.t >= oosFrom);
-          c = se.env ? filterCoverage(se.env, upTo < 0 ? se.ctx.bars.length : upTo) : {};
-          covCache.set(se, c);
-        }
-        return c;
-      };
-      const sync = newSyncReport();
-      const ev = await this.practice
-        .syncBot(
-          open.map((t) => {
-            const row = rowOf.get(`${t.strategy}:${t.tf}`);
-            const sizeF = (rollLive ? rollSizes[`${t.strategy}:${t.tf}`] ?? 0.6 : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1);
-            const x = judgeX.get(tradeKey(t));
-            const jv = judgeModel && x ? judgeView(judgeModel, x) : null;
-            const p = jv?.p ?? null;
-            // v17: an active judge that can't score a signal (a reading it relies on is missing now) → the trade waits
-            const judgeOk = !judge?.active || !judgeModel || !jv || (jv.p !== null && jv.p >= judgeModel.threshold);
-            const conf = confirmations(openAgree.get(tradeKey(t)) ?? 0, p, cuts);
-            const b = boostFor(tierOf(conf, hasJudge), conviction);
-            // v17: the row's filter has no data at the signal bar right now (it had in the tested history) → wait
-            const se = seriesOf.get(`${t.pair}:${t.tf}`);
-            const si = se ? signalIndex(se.ctx.bars, t.entryT, se.ctx.barMin) : -1;
-            const dataWait = se && si >= 0 && row ? missingInput(row.filter, se.env, si, coverageOf(se)) : null;
-            return toLabTrade(t, {
-              chosen: chosen.has(`${t.strategy}:${t.tf}`),
-              sizeF,
-              prio: row ? row.all.avgR : -1,
-              dataWait,
-              judge: !jv ? null : { p: p === null ? 0 : Math.round(p * 100) / 100, ok: judgeOk, need: judgeModel ? Math.round(judgeModel.threshold * 100) / 100 : null, ...(jv.missing ? { missing: jv.missing } : {}) },
-              conviction: { tier: b.tier, conf, of: maxConfirmations(t.tf, hasJudge), mult: b.mult, lev: b.lev },
-              sniper: (() => {
-                const ex = openExtra.get(tradeKey(t));
-                if (!ex) return null;
-                const votes = conf + ex.total;
-                return { votes, of: maxConfirmations(t.tf, hasJudge) + ex.of, k: sniper.k, on: sniper.active && sniper.k !== null && votes >= sniper.k, yes: ex.yes };
-              })(),
-            });
-          }),
-          (pair) => staleReason(this.dataAge[pair], Date.now()) ?? this.calendar?.blockFor(pair) ?? this.headlines?.blockFor(pair) ?? null,
-          this.atr1h,
-          // v17: a held trade on a market with no fresh hourly candles this run is kept (the lab couldn't see it end)
-          { scope: FX_CONFIG.timeframes, report: sync, heat: this.heatNow, pairsSeen: new Set(series.filter((se) => se.tf === '1h' && se.ctx.bars.length && se.ctx.bars[se.ctx.bars.length - 1]!.t + 4 * 3_600_000 >= Date.now()).map((se) => se.inst.id)) },
-        )
-        .catch((err: Error) => [`bot sync failed: ${err.message}`]);
-      this.lastSync['1h'] = sync;
-      this.logBot(ev);
-      const firing = markets.flatMap((m) => m.firing);
-      this.noteRun({ t: Date.now(), tf: '1h', signals: firing.length, chosen: firing.filter((f) => f.chosen && f.allowed).length, opened: sync.opened, skipped: sync.skipped.length, waits: sync.waits.length, holding: sync.heldOpen + sync.opened });
-      await this.redis.set('fx:bot:chosen', JSON.stringify([...chosen])).catch(() => undefined);
-      await this.redis.set('fx:bot:dropped', JSON.stringify(rec.dropped)).catch(() => undefined);
-    }
-    log.info({ rows: rows.length, edges, filtered, ms: report.durationMs }, 'forex lab run done');
-    return report;
+    const rowOf = new Map(chosenRows.map((x) => [`${x.id}:${x.tf}`, x]));
+    // v17: how often each filter input was known on the first 70% of each series (for `missingInput`)
+    const covCache = new Map<Series, ReturnType<typeof filterCoverage>>();
+    const coverageOf = (se: Series) => {
+      let c = covCache.get(se);
+      if (!c) {
+        const upTo = se.ctx.bars.findIndex((b) => b.t >= oosFrom);
+        c = se.env ? filterCoverage(se.env, upTo < 0 ? se.ctx.bars.length : upTo) : {};
+        covCache.set(se, c);
+      }
+      return c;
+    };
+    // what the bot account is handed (built here so a child process can hand it to the parent: v17.2)
+    const botTrades: LabOpenTrade[] = open.map((t) => {
+      const row = rowOf.get(`${t.strategy}:${t.tf}`);
+      const sizeF = (rollLive ? rollSizes[`${t.strategy}:${t.tf}`] ?? 0.6 : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1);
+      const x = judgeX.get(tradeKey(t));
+      const jv = judgeModel && x ? judgeView(judgeModel, x) : null;
+      const p = jv?.p ?? null;
+      // v17: an active judge that can't score a signal (a reading it relies on is missing now) → the trade waits
+      const judgeOk = !judge?.active || !judgeModel || !jv || (jv.p !== null && jv.p >= judgeModel.threshold);
+      const conf = confirmations(openAgree.get(tradeKey(t)) ?? 0, p, cuts);
+      const b = boostFor(tierOf(conf, hasJudge), conviction);
+      // v17: the row's filter has no data at the signal bar right now (it had in the tested history) → wait
+      const se = seriesOf.get(`${t.pair}:${t.tf}`);
+      const si = se ? signalIndex(se.ctx.bars, t.entryT, se.ctx.barMin) : -1;
+      const dataWait = se && si >= 0 && row ? missingInput(row.filter, se.env, si, coverageOf(se)) : null;
+      return toLabTrade(t, {
+        chosen: chosen.has(`${t.strategy}:${t.tf}`),
+        sizeF,
+        prio: row ? row.all.avgR : -1,
+        dataWait,
+        judge: !jv ? null : { p: p === null ? 0 : Math.round(p * 100) / 100, ok: judgeOk, need: judgeModel ? Math.round(judgeModel.threshold * 100) / 100 : null, ...(jv.missing ? { missing: jv.missing } : {}) },
+        conviction: { tier: b.tier, conf, of: maxConfirmations(t.tf, hasJudge), mult: b.mult, lev: b.lev },
+        sniper: (() => {
+          const ex = openExtra.get(tradeKey(t));
+          if (!ex) return null;
+          const votes = conf + ex.total;
+          return { votes, of: maxConfirmations(t.tf, hasJudge) + ex.of, k: sniper.k, on: sniper.active && sniper.k !== null && votes >= sniper.k, yes: ex.yes };
+        })(),
+      });
+    });
+    const firing = markets.flatMap((m) => m.firing);
+    const out: RunOutput = {
+      report,
+      botTrades,
+      pairsSeen: series.filter((se) => se.tf === '1h' && se.ctx.bars.length && se.ctx.bars[se.ctx.bars.length - 1]!.t + 4 * 3_600_000 >= Date.now()).map((se) => se.inst.id),
+      chosen: [...chosen],
+      dropped: rec.dropped,
+      firing: { signals: firing.length, chosen: firing.filter((f) => f.chosen && f.allowed).length },
+    };
+    log.info({ rows: rows.length, edges, filtered, ms: report.durationMs, heapMb: Math.round(process.memoryUsage().heapUsed / 1e6), rssMb: Math.round(process.memoryUsage().rss / 1e6), worker: !!this.collectLog }, 'forex lab run done');
+    return out;
+  }
+
+  /** The bot account follows the run: opens / manages / closes its trades (always in this process). */
+  async syncFrom(out: RunOutput): Promise<void> {
+    if (!this.practice) return;
+    const sync = newSyncReport();
+    const ev = await this.practice
+      .syncBot(
+        out.botTrades,
+        (pair) => staleReason(this.dataAge[pair], Date.now()) ?? this.calendar?.blockFor(pair) ?? this.headlines?.blockFor(pair) ?? null,
+        this.atr1h,
+        // v17: a held trade on a market with no fresh hourly candles this run is kept (the lab couldn't see it end)
+        { scope: FX_CONFIG.timeframes, report: sync, heat: this.heatNow, pairsSeen: new Set(out.pairsSeen) },
+      )
+      .catch((err: Error) => [`bot sync failed: ${err.message}`]);
+    this.lastSync['1h'] = sync;
+    this.logBot(ev);
+    this.noteRun({ t: Date.now(), tf: '1h', signals: out.firing.signals, chosen: out.firing.chosen, opened: sync.opened, skipped: sync.skipped.length, waits: sync.waits.length, holding: sync.heldOpen + sync.opened });
+    await this.redis.set('fx:bot:chosen', JSON.stringify(out.chosen)).catch(() => undefined);
+    await this.redis.set('fx:bot:dropped', JSON.stringify(out.dropped)).catch(() => undefined);
   }
 }

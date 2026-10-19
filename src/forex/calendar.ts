@@ -177,6 +177,19 @@ export class ForexCalendar {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
   }
+  /** v17.2: the stored calendar + history only (no fetch, no timer) — for the lab's child process. */
+  async loadCached(): Promise<void> {
+    try {
+      const j = JSON.parse((await this.redis.get(KEY)) ?? 'null') as { at: number; events: CalEvent[] } | null;
+      if (j) {
+        this.events = j.events;
+        this.fetchedAt = j.at;
+      }
+      this.hist = JSON.parse((await this.redis.get(HIST_KEY)) ?? '[]') as CalEvent[];
+    } catch {
+      // a bad cache just means no news study this run
+    }
+  }
 
   private async refresh(): Promise<void> {
     if (Date.now() - this.fetchedAt < 55 * 60_000 && this.events.length) return;

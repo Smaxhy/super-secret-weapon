@@ -158,6 +158,14 @@ export class ForexHeadlines {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
   }
+  /** v17.2: the stored headlines only (no fetch, no timer) — for the lab's child process. */
+  async loadCached(): Promise<void> {
+    try {
+      this.items = JSON.parse((await this.redis.get(KEY)) ?? '[]') as Headline[];
+    } catch {
+      this.items = [];
+    }
+  }
 
   private async refresh(): Promise<void> {
     const fresh: Headline[] = [];

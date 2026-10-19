@@ -91,6 +91,17 @@ export class FeedBook {
     const u = this.breaker.get(p)?.until ?? 0;
     return u > this.clock() ? u : null;
   }
+  /** v17.2: take a child process's newer feed reports (per feed, the later attempt wins). */
+  merge(snap: Partial<Record<FeedId, FeedState>>): void {
+    for (const [k, v] of Object.entries(snap) as Array<[FeedId, FeedState]>) {
+      if (!(k in FEED_INFO) || !v) continue;
+      const mine = this.states.get(k);
+      if (!mine || (v.tryAt ?? 0) > (mine.tryAt ?? 0)) {
+        this.states.set(k, { ...empty(), ...v });
+        this.dirty = true;
+      }
+    }
+  }
   snapshot(): Partial<Record<FeedId, FeedState>> {
     return Object.fromEntries(this.states) as Partial<Record<FeedId, FeedState>>;
   }

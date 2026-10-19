@@ -174,3 +174,39 @@ describe('v17 missing filter inputs (live guard)', () => {
     expect(missingInput('none', e, 99, cov)).toBeNull();
   });
 });
+
+import { serialize, deserialize } from 'node:v8';
+import { labWorkerOn } from '../src/forex/lab-runner';
+
+describe('v17.2 the hourly run in a child process', () => {
+  it('the state the live bot needs survives the trip between processes (Maps, typed arrays)', () => {
+    const child = new ForexLab(asRedis(new R()));
+    child.importWorkerInput({ learned: { 'a:1h': { n: 12, meanR: -0.3, pPos: 0.1, state: 'off', sizeF: 0, why: 'x' } }, learnSig: 's', chosenSig: 'c', heatActive: true });
+    child.marketsNow = [];
+    child.chosen = ['tsmom:1h'];
+    child.dataAge = { EURUSD: { id: 'EURUSD', tf: '1h', lastT: 1, lagBars: 0, status: 'fresh' } };
+    child.heatNow = { active: true, book: { idx: { EURUSD: 0, GBPUSD: 1 } }, m: new Float32Array([1, 0.8, 0.8, 1]) };
+    child.book = { at: 5, strength: { times: new Float64Array([1, 2]) } as never, mood: {} as never, ranks: { EURUSD: new Float64Array([0.5]) }, zOil: null, zYield: null, zStocks: null, zDollar: null, spxMtd: null, h1: new Map([['EURUSD', [{ t: 1, o: 1, h: 1, l: 1, c: 1 }]]]) };
+    child.logBot(['learner: a:1h → off']);
+    const st = deserialize(serialize(child.exportState())) as ReturnType<ForexLab['exportState']>;
+    expect(st.logs).toEqual(['learner: a:1h → off']);
+    const parent = new ForexLab(asRedis(new R()));
+    parent.importState(st);
+    expect(parent.chosen).toEqual(['tsmom:1h']);
+    expect(parent.learned['a:1h']!.state).toBe('off');
+    expect(parent.heatNow!.m).toBeInstanceOf(Float32Array);
+    expect(parent.heatNow!.m![1]).toBeCloseTo(0.8, 5);
+    expect(parent.book!.h1).toBeInstanceOf(Map);
+    expect(parent.book!.h1.get('EURUSD')![0]!.c).toBe(1);
+    expect(parent.book!.ranks.EURUSD).toBeInstanceOf(Float64Array);
+  });
+  it('is off unless FX_LAB_WORKER=on', () => {
+    const prev = process.env.FX_LAB_WORKER;
+    delete process.env.FX_LAB_WORKER;
+    expect(labWorkerOn()).toBe(false);
+    process.env.FX_LAB_WORKER = 'on';
+    expect(labWorkerOn()).toBe(true);
+    if (prev === undefined) delete process.env.FX_LAB_WORKER;
+    else process.env.FX_LAB_WORKER = prev;
+  });
+});
