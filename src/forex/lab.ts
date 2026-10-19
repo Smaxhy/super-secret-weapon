@@ -12,6 +12,7 @@
  * `fx:portfolio`. Nothing here places a real order.
  */
 import type Redis from 'ioredis';
+import { gradeRolling, randomPickerNull, ROLL, rollRow, rollWeeks, type NullStats, type RollReport, type RollRow, type RollTrade } from './rolling';
 import { dataAgeOf, staleReason, type DataAge } from './freshness';
 import { feeds } from './feeds';
 import { moduleLogger } from '../lib/logger';
@@ -31,7 +32,7 @@ import { buildStrength, gapSeries, scoreAt, strengthNow, type StrengthBook, type
 import { alignTrend, decisionTimes, toDaily, trendSeries, withEnd, type SpanBar } from './mtf';
 import { buildMood, moodNow, moodSeries, riskOfLong, type MoodBook, type MoodNow } from './mood';
 import { FILTERS, FILTER_LABEL, allowFor, blockReason, chooseFilter, chooseVariant, preferVariant, type FilterEnv, type FilterKind } from './filters';
-import { SIZING, simulatePortfolio, stratFactorFromStats, stratFactorFromVerdict, volFactor, walkForward, type PortfolioResult, type PTrade, type WalkForward, type WTrade } from './portfolio';
+import { SIZING, simulatePortfolio, stratFactorFromStats, stratFactorFromVerdict, volFactor, walkForward, weekOf, type PortfolioResult, type PTrade, type WalkForward, type WTrade } from './portfolio';
 import { newsStudy, type NewsStudy } from './news-study';
 import { EXITS, EXIT_LABEL, OWNER_EXITS, applyExit, type ExitKind } from './exits';
 import { judgeFeatures, judgeProb, trainJudge, type JudgeModel, type JudgeReport, type JudgeRow } from './judge';
@@ -227,6 +228,18 @@ export const FX_BOT_RUNS = 'fx:bot:runs';
 export const FX_CONVICTION = 'fx:conviction';
 /** v16: sniper grade */
 export const FX_SNIPER = 'fx:sniper';
+/** v17: the rolling picker's report, this week's list (+ last week's, + on / off), the random pickers (cached weekly) */
+export const FX_ROLL = 'fx:roll';
+export const FX_ROLL_PICKS = 'fx:roll:picks';
+export const FX_ROLL_NULL = 'fx:roll:null';
+/** v17: point-in-time history of the bot's chosen list */
+export const FX_CHOSEN_HIST = 'fx:chosen:hist';
+export interface RollPicksState {
+  week: number;
+  keys: string[];
+  active: boolean;
+  prevKeys: string[] | null;
+}
 
 const yieldNow = () => new Promise((r) => setImmediate(r));
 const HOUR = 3_600_000;
@@ -804,6 +817,23 @@ export class ForexLab {
   lastError: { t: number; msg: string } | null = null;
   /** v17: data age of every traded market's hourly prices (set each run) */
   dataAge: Record<string, DataAge> = {};
+  /** v17: who decides the list — the rolling picker (once proven) or the unseen-30% verdicts */
+  chooser: 'rolling' | 'verdict' = 'verdict';
+
+  /** v17: append the chosen list to `fx:chosen:hist` when it changed (500 changes kept) — what the bot could trade, when. */
+  private async noteChosen(chosen: ReadonlySet<string>): Promise<void> {
+    const keys = [...chosen].sort();
+    const sig = keys.join(',');
+    if (sig === this.chosenSig) return;
+    this.chosenSig = sig;
+    try {
+      await this.redis.lpush(FX_CHOSEN_HIST, JSON.stringify({ t: Date.now(), chooser: this.chooser, keys }));
+      await this.redis.ltrim(FX_CHOSEN_HIST, 0, 499);
+    } catch {
+      // a history line is not worth failing the run for
+    }
+  }
+  private chosenSig = '';
 
   /** The bot's per strategy:chart record: losers (12+ trades, net loss) are dropped, winners sized a bit up. */
   async botRecord(): Promise<{ dropped: string[]; proven: Set<string> }> {
@@ -905,6 +935,9 @@ export class ForexLab {
     const open: Trade[] = [];
     const recent: Trade[] = [];
     /** unseen trades of the strategies the whole-bot test picks (new = with filters + exits, old = raw) */
+    /** v17 rolling picker: every row's closed trades, and its unseen ones (after the 1-week gap) for the weekly re-pick test */
+    const rollRows: RollRow[] = [];
+    const rollOos = new Map<string, RollTrade[]>();
     const poolNew: PTrade[] = [];
     const poolOld: PTrade[] = [];
     const pickedNew: PortfolioReport['picked'] = [];
@@ -974,6 +1007,12 @@ export class ForexLab {
         }
         // walk-forward pool: the raw rules
         for (const t of x.raw) if (t.reason !== 'open') wfPool.push({ pair: t.pair, side: t.side, entryT: t.entryT, exitT: t.exitT, r: t.r, stopPct: t.stopPct, strategy: t.strategy, tf: t.tf, sizeF: 1, key: x.key, vf: volFactor(t.volRatio) });
+        // v17 rolling picker: the row as it is traded (chosen filter + exit)
+        rollRows.push(rollRow(x.key, x.done, always));
+        rollOos.set(
+          x.key,
+          x.done.filter((t) => t.entryT >= oosFrom + ROLL.embargoDays * 86_400_000).map((t) => ({ pair: t.pair, side: t.side, entryT: t.entryT, ...(t.keyT !== undefined ? { keyT: t.keyT } : {}), exitT: t.exitT, r: t.r, stopPct: t.stopPct, strategy: t.strategy, tf: t.tf, sizeF: 1, vf: volFactor(t.volRatio) })),
+        );
         // whole-bot test: picked on the first 70% only, traded on the unseen 30%
         if (picked) {
           const sf = stratFactorFromStats(x.ch.inSample.avgR, x.ch.inSample.pf);
@@ -1092,12 +1131,53 @@ export class ForexLab {
     wfPool.length = 0;
     await yieldNow();
 
-    // ── what the bot trades: Edge / Maybe on unseen data + the published four, minus what lost in its own account ──
+    // ── v17 rolling picker: re-picks the rows every week from their last 26 weeks; graded on the unseen weeks vs random pickers ──
+    let rolling: RollReport | null = null;
+    let rollKeys: string[] | null = null;
+    try {
+      const sim = { maxOpen: SIZING.maxOpen, leverage: SIZING.leverage, marginShare: SIZING.marginShare, baseRiskPct: 1, maxPerStrategy: SIZING.maxPerStrategy, prioritise: true, ccyCapPct: SIZING.ccyCapPct, ddSizing: true, flatSizing: false };
+      const { w0, w1 } = rollWeeks(oosFrom, to);
+      const nullKey = `${w0}:${w1}:${rollRows.length}`;
+      let nul: NullStats | null = null;
+      try {
+        const c = JSON.parse((await this.redis.get(FX_ROLL_NULL)) ?? 'null') as { key: string; nul: NullStats } | null;
+        if (c?.key === nullKey) nul = c.nul;
+      } catch {
+        nul = null;
+      }
+      if (!nul && w1 - w0 + 1 >= ROLL.minGradedWeeks) {
+        // the random pickers: recomputed about once a week (when the graded weeks move)
+        nul = await randomPickerNull(rollRows, rollOos, w0, w1, sim, ROLL.nullDraws, ROLL.seed, yieldNow);
+        await this.redis.set(FX_ROLL_NULL, JSON.stringify({ key: nullKey, nul })).catch(() => undefined);
+      }
+      const prevPicks = JSON.parse((await this.redis.get(FX_ROLL_PICKS).catch(() => null)) ?? 'null') as RollPicksState | null;
+      const nowW = weekOf(Date.now());
+      rolling = gradeRolling(rollRows, rollOos, { oosFrom, to, now: Date.now(), sim, staticPool: poolNew, nul, wasActive: !!prevPicks?.active, prevKeys: prevPicks ? (prevPicks.week === nowW ? prevPicks.prevKeys : prevPicks.keys) : null });
+      // the same week keeps its list (a mid-week filter / exit change doesn't flip it); a new week re-picks
+      const have = new Set(rollRows.map((r) => r.key));
+      rollKeys = prevPicks && prevPicks.week === nowW ? prevPicks.keys.filter((k) => have.has(k)) : rolling.thisWeek.picks.map((p) => p.key);
+      const st: RollPicksState = { week: nowW, keys: rollKeys, active: rolling.active, prevKeys: prevPicks && prevPicks.week === nowW ? prevPicks.prevKeys : prevPicks?.keys ?? null };
+      await this.redis.set(FX_ROLL_PICKS, JSON.stringify(st)).catch(() => undefined);
+      await this.redis.set(FX_ROLL, JSON.stringify(rolling)).catch(() => undefined);
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'rolling picker failed');
+    }
+    rollRows.length = 0;
+    rollOos.clear();
+    await yieldNow();
+
+    // ── what the bot trades: the rolling picker's list once it proved itself, else Edge / Maybe on unseen data + the
+    //    published four; minus what lost in its own account ──
     const rec = await this.botRecord();
     this.dropped = rec.dropped;
-    const chosenRows = rows.filter((x) => (x.verdict !== 'no' || FX_CONFIG.botAlways.includes(x.id)) && x.id !== 'random' && !rec.dropped.includes(`${x.id}:${x.tf}`));
+    const rollLive = rolling?.active && rollKeys ? new Set(rollKeys) : null;
+    const pickOf = new Map((rolling?.thisWeek.picks ?? []).map((p) => [p.key, p]));
+    const chosenRows = rows.filter((x) => x.id !== 'random' && !rec.dropped.includes(`${x.id}:${x.tf}`) && (rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || FX_CONFIG.botAlways.includes(x.id)));
     const chosen = new Set(chosenRows.map((x) => `${x.id}:${x.tf}`));
     this.chosen = [...chosen];
+    this.chooser = rollLive ? 'rolling' : 'verdict';
+    // v17: a point-in-time record of what the bot was allowed to trade (only when the list changes)
+    await this.noteChosen(chosen);
 
     // ── live market view ──
     const gNow = strength.times.length - 1;
@@ -1201,7 +1281,8 @@ export class ForexLab {
         .syncBot(
           open.map((t) => {
             const row = rowOf.get(`${t.strategy}:${t.tf}`);
-            const sizeF = (row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1);
+            const pk = rollLive ? pickOf.get(`${t.strategy}:${t.tf}`) : undefined;
+            const sizeF = (pk ? pk.sizeF : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1);
             const x = judgeX.get(tradeKey(t));
             const p = judgeModel && x ? judgeProb(judgeModel, x) : null;
             const judgeOk = !judge?.active || !judgeModel || p === null || p >= judgeModel.threshold;

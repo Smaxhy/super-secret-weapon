@@ -489,3 +489,84 @@ export function SniperCard({ s }: { s: SniperReport | null | undefined }) {
     </Card>
   );
 }
+
+// ── v17: the rolling picker ("learns every week") and the bot's own R ledger ──
+
+export interface RollPick { key: string; n: number; avgR: number; shrunkR: number; pf: number | null; sizeF: number; always: boolean }
+export interface RollResult { totalPct: number; maxDdPct: number; trades: number; avgMonthPct: number; worstMonthPct: number; greenWeeksPct: number }
+export interface RollReport {
+  active: boolean;
+  why: string;
+  weeksGraded: number;
+  from: number;
+  to: number;
+  result: RollResult | null;
+  pfR: number | null;
+  staticSame: RollResult | null;
+  null: { draws: number; p50: number; p80: number; p95: number; beatPct?: number } | null;
+  thisWeek: { week: number; picks: RollPick[]; added: string[]; rested: string[] };
+  byWeek: Array<{ week: string; picked: number; trades: number }>;
+}
+export type Ledger = Record<string, { n: number; totalR: number; avgR: number; wins: number }>;
+
+const keyName = (k: string, names: Record<string, string>) => {
+  const [id, tf] = k.split(':');
+  return `${names[id!] ?? id} (${tf})`;
+};
+
+export function RollingCard({ r, chooser, ledger, names = {} }: { r: RollReport | null | undefined; chooser?: string; ledger?: Ledger; names?: Record<string, string> }) {
+  const [all, setAll] = useState(false);
+  const picks = r?.thisWeek.picks ?? [];
+  const led = Object.entries(ledger ?? {}).sort((a, b) => b[1].totalR - a[1].totalR);
+  return (
+    <Card
+      title="What it learned this week"
+      subtitle="Every Sunday the bot re-picks which strategies to trade from their last 26 weeks only (a strategy needs 12+ finished trades that made money, shrunk toward zero when there are few, profit factor 1.1+; the always-on four stay). This rule is graded on the weeks it never saw, against 100 pickers that choose the same number of strategies at random. It takes over the bot's list only when it beats 80% of them and makes money."
+    >
+      {!r ? (
+        <p className="text-sm text-ink-2">Graded with the next hourly update.</p>
+      ) : (
+        <Stack>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={r.active ? 'up' : 'neutral'}>{r.active ? 'On: it picks the bot\'s list' : 'Off: the bot uses the tested list'}</Badge>
+            {chooser && <span className="text-xs text-muted">deciding now: {chooser === 'rolling' ? 'the weekly re-pick' : 'the unseen-30% ratings'}</span>}
+          </div>
+          <p className="text-sm text-ink-2">{r.why}</p>
+          {r.result && (
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <StatTile compact label="Learns every week" value={`${signed(r.result.totalPct)}%`} sub={`${r.weeksGraded} unseen weeks · drop ${r.result.maxDdPct}%`} tone={r.result.totalPct > 0 ? 'up' : 'down'} />
+              {r.staticSame && <StatTile compact label="Picked once" value={`${signed(r.staticSame.totalPct)}%`} sub={`same weeks · drop ${r.staticSame.maxDdPct}%`} />}
+              {r.null && <StatTile compact label="Random pickers" value={`${signed(r.null.p50)}%`} sub={`median · best 20% ≥ ${signed(r.null.p80)}%`} />}
+              {r.null?.beatPct !== undefined && <StatTile compact label="Beat random" value={`${r.null.beatPct}%`} sub="needs 80% to go live" tone={r.null.beatPct >= 80 ? 'up' : undefined} />}
+            </div>
+          )}
+          <div>
+            <div className="text-sm font-medium text-ink">This week: {picks.length} strateg{picks.length === 1 ? 'y' : 'ies'}</div>
+            {(r.thisWeek.added.length > 0 || r.thisWeek.rested.length > 0) && (
+              <p className="text-xs text-muted">
+                {r.thisWeek.added.length > 0 && `new: ${r.thisWeek.added.map((k) => keyName(k, names)).join(', ')}. `}
+                {r.thisWeek.rested.length > 0 && `resting: ${r.thisWeek.rested.map((k) => keyName(k, names)).join(', ')}.`}
+              </p>
+            )}
+            <Rows>
+              {(all ? picks : picks.slice(0, 8)).map((p) => (
+                <Row key={p.key} label={<>{keyName(p.key, names)} {p.always && <Badge tone="neutral">always on</Badge>}</>} sub={`${p.n} trades in 26 weeks · profit factor ${p.pf ?? '—'} · size ×${p.sizeF}`} value={<span className={tone(p.avgR)}>{signed(p.avgR, 2)}R</span>} />
+              ))}
+            </Rows>
+            {picks.length > 8 && <Button size="sm" variant="ghost" onClick={() => setAll(!all)}>{all ? 'Show fewer' : `Show all ${picks.length}`}</Button>}
+          </div>
+          {led.length > 0 && (
+            <div>
+              <div className="text-sm font-medium text-ink">The bot's own record (R per trade, its real trades)</div>
+              <Rows>
+                {led.slice(0, 10).map(([k, v]) => (
+                  <Row key={k} label={keyName(k, names)} sub={`${v.n} trades · ${Math.round((v.wins / v.n) * 100)}% won`} value={<span className={tone(v.totalR)}>{signed(v.totalR, 1)}R</span>} />
+                ))}
+              </Rows>
+            </div>
+          )}
+        </Stack>
+      )}
+    </Card>
+  );
+}
