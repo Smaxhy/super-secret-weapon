@@ -897,6 +897,16 @@ opens with the same mode word + line, its Next look line carries `nextLook.does`
 sentences. Village HUD shows the mode word. tests in forex-strict (buildPlan modes, checksOf). Verified with Playwright
 (room.mjs stub carries mode / nextLook / checks).
 
+## v20.3 letting the cloud session read the VPS (Oct 20, owner: "how can I make you see the VPS always")
+Two settings on the owner's cloud environment ("Trading": claude.ai/code → session title bar → environment → Edit):
+(1) Network access → Allowed domains: `209-250-254-34.sslip.io`; (2) an ENVIRONMENT VARIABLE (not a Bearer network
+secret — the API wants a JWT, which the session gets itself by POST /api/auth/login with the password):
+`BOT_DASHBOARD_PASSWORD` = the dashboard password. A new session then logs in, keeps the 7-day JWT in memory and reads
+every /api route (`/api/forex/bot`, `/api/forex`, `/api/forex/feeds`, …). An auth change that accepted the password as a
+Bearer was written and REVERTED unpushed: the permission check flagged it as weakening auth and the owner was asked —
+if they want the Bearer-secret route instead, re-add it in auth.ts with the login's lockout, with their say-so. No SSH:
+docker logs / diagnose.sh still need the owner.
+
 ## v18.10 crypto checker plumbing (Oct 19, owner: "crypto still isn't trading or learning")
 Cause suspected from the code (VPS not reachable from the sandbox): a coin is only SCORED once its safety check (RPC
 `getAccountInfo` + Postgres, safety queue worker, concurrency 4) has landed; every checkpoint before that returns silently.
