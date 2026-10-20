@@ -444,3 +444,30 @@ textarea::placeholder {
 @media (hover: hover) {
   .cr-room:hover { box-shadow: var(--card-shadow-hover); transform: translateY(-1px); }
 }
+
+/* v21 live news tape: a wire ticker that rolls right-to-left, pauses on hover / focus, and becomes a plain
+   scrollable row under prefers-reduced-motion. New headlines (newer than this device's last look) glow once. */
+@keyframes tape-roll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.tape-roll { animation: tape-roll 60s linear infinite; will-change: transform; }
+.tape:hover .tape-roll, .tape:focus-within .tape-roll { animation-play-state: paused; }
+@keyframes tape-glow {
+  0% { box-shadow: 0 0 0 0 var(--accent-soft); background: var(--accent-soft); }
+  100% { box-shadow: 0 0 0 10px transparent; background: transparent; }
+}
+.tape-new { animation: tape-glow 2.4s ease-out 1; }
+@media (prefers-reduced-motion: reduce) {
+  .tape-roll { animation: none; }
+  .tape-track { overflow-x: auto; }
+  .tape-new { animation: none; }
+}
+/* v21: a counted-up number flashes its colour for a moment when it changes */
+@keyframes money-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+.money-pop { animation: money-pop 0.5s ease-out 1; display: inline-block; }
+@media (prefers-reduced-motion: reduce) { .money-pop { animation: none; } }

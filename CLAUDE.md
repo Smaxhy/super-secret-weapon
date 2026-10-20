@@ -897,6 +897,30 @@ opens with the same mode word + line, its Next look line carries `nextLook.does`
 sentences. Village HUD shows the mode word. tests in forex-strict (buildPlan modes, checksOf). Verified with Playwright
 (room.mjs stub carries mode / nextLook / checks).
 
+## v21 the dashboard, easier + a live news feed (Oct 20, owner: "upgrade the dashboard a lot more, easier and much more
+accessible, a live news feed, fun not a mess")
+- **Nav** (App.tsx `WS.forex`): phone bar **Home · Trades · News · Markets · More**; sidebar groups "Every day" (Home =
+  control room, Trades = /forex/bot, News = /forex/news, Markets) and "Deeper" (Lab, Strategies, Paper results, The
+  village, Trade by hand, Setup). Page titles in plain words (Forex.tsx `TITLES`).
+- **Live news tape** (`components/NewsTape.tsx`, CSS `tape-*` in index.css): a wire ticker of the newest headlines from
+  `/api/forex/calendar` (re-read every 60 s; the bot reads ForexLive + FXStreet every 5 min) rolling right-to-left, a
+  front chip = the next High-impact event / holiday counting down (`nextBig`, `inWords`; red left edge inside 45 min),
+  currency tags in one colour per currency (`CcyTag`), big headlines with a red dot, headlines newer than this device's
+  last look glow once (localStorage `fx.news.seenAt`). Pauses on hover / focus; prefers-reduced-motion = a plain
+  scrollable row; `aria-hidden` roll + an `sr-only` static list for screen readers. On the Home (phone: above the hub;
+  desktop: above the grid) and the Markets page (replaces the big news card there).
+- **News desk** (`/forex/news`, `components/FxNewsPage.tsx`): hero "Next big one" with a countdown + what it does to the
+  bot ("no new trades on GBP pairs from … to …"), "The bot right now" = currencies paused for news (`pausedNow`: mirrors
+  calendar.ts newsBlock ±30 min High / Medium speeches, headlineBlock 30 min, holidays all day), the live feed with
+  currency chips (+ counts last 24 h) and "Big only", grouped Last hour / Earlier today / Yesterday / Older, and "This
+  week" as a timeline in the viewer's clock (impact dots, countdown badges inside the hour, forecast / last).
+- **Home**: state word `text-3xl` + `aria-live="polite"`, label "Your forex bot, right now"; P&L tiles roll to their new
+  value (`hooks/useCountUp.ts`, `MoneyTile`, `.money-pop`; off under reduced motion); phone room chips 44 px tall and
+  ordered P&L · Trader · News desk · Scout first; links Trades / News desk / All markets.
+- Playwright harness `scratchpad/shots/v21.mjs` (`serviceWorkers: 'block'` — the PWA service worker had been swallowing
+  the stubbed API calls after the first navigation, which made the News page look empty; room.mjs / village.mjs fixed
+  the same way). Verified phone 390 px + desktop 1440 px, light + dark.
+
 ## v20.6 Pyth: the key is accepted, the stream is refused → poll (Oct 20, owner: "Pyth is fixed now")
 VPS read 12:05 UTC (version 5177c8c): the dashboard key is saved (`pyth.dourolabs.app`), `/v2/price_feeds` answers 200
 with it (12 pairs planned), but `/v2/updates/price/stream` answers **HTTP 403** (109 fails) → no tick ever arrived.

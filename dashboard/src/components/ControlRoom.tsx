@@ -15,6 +15,8 @@ import { useWidth } from '../hooks/useWidth';
 import { liveOf, livePnl, useFxLive, type FxLive } from '../hooks/useFxLive';
 import type { Overview } from '../lib/types';
 import { fitBars, MarketChart, type ChartDrawings, type ChartTrade } from './MarketChart';
+import { NewsTape } from './NewsTape';
+import { useCountUp } from '../hooks/useCountUp';
 import { Icon, type IconName } from './Icon';
 import { Badge, Button } from './ui';
 import { ReadTrack, useTradeReads } from './FxTradeRead';
@@ -273,10 +275,11 @@ export function ControlRoom() {
       )}
       {phone ? (
         <div className="space-y-3">
+          <NewsTape compact />
           <HubView x={x} />
           <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Rooms">
-            {(['pnl', ...keys.filter((k) => k !== 'pnl')] as RoomKey[]).map((k) => (
-              <button key={k} type="button" role="tab" aria-selected={roomTab === k} onClick={() => setRoomTab(k)} className={`flex min-h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors ${roomTab === k ? 'bg-accent text-on-accent' : 'bg-surface-2 text-ink-2'}`}>
+            {(['pnl', 'trader', 'news', 'scout', ...keys.filter((k) => !['pnl', 'trader', 'news', 'scout'].includes(k))] as RoomKey[]).map((k) => (
+              <button key={k} type="button" role="tab" aria-selected={roomTab === k} onClick={() => setRoomTab(k)} className={`flex min-h-11 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-sm font-medium transition-colors ${roomTab === k ? 'bg-accent text-on-accent' : 'bg-surface-2 text-ink-2'}`}>
                 <Icon name={ROOMS[k].icon} size={14} />{ROOMS[k].name}
               </button>
             ))}
@@ -287,6 +290,8 @@ export function ControlRoom() {
           })()}
         </div>
       ) : (
+      <div className="relative z-10 space-y-4">
+      <NewsTape />
       <div className="relative z-10 grid gap-4 lg:grid-cols-12 lg:grid-rows-[auto_auto_auto_auto] lg:gap-5">
         {/* ── the hub: the bot in the middle with its big screen ── */}
         <div ref={hubRef} className="order-first lg:order-none lg:col-span-6 lg:col-start-4 lg:row-span-2 lg:row-start-1">
@@ -300,6 +305,7 @@ export function ControlRoom() {
             </Room>
           );
         })}
+      </div>
       </div>
       )}
     </div>
@@ -331,8 +337,8 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
           <span className={`absolute right-1 top-1 h-3 w-3 rounded-full ${open ? 'cr-blink bg-good' : 'bg-muted'}`} aria-hidden="true" />
         </div>
         <div className="min-w-0 flex-1 text-center sm:text-left">
-          <div className="text-xs font-semibold text-muted">Forex bot · control room</div>
-          <div className={`text-2xl font-semibold tracking-tight ${state.tone}`}>{state.word}</div>
+          <div className="text-xs font-semibold text-muted">Your forex bot, right now</div>
+          <div className={`text-3xl font-semibold tracking-tight ${state.tone}`} aria-live="polite">{state.word}</div>
           <p className="mt-1 text-sm text-ink-2">{d?.plan?.mode?.line ?? d?.plan?.summary ?? (error ? `Couldn't reach the bot: ${error}` : d?.planError ? `No plan right now: ${d.planError}` : 'Waiting for its first look since the restart.')}</p>
           {d?.plan?.nextLook && <p className="mt-1 text-xs text-muted"><span className="font-semibold text-ink-2">At the next look ({clock(d.plan.nextLook.at)}, {d.plan.nextLook.tf}):</span> {d.plan.nextLook.does}</p>}
         </div>
@@ -361,11 +367,7 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
       {pnl?.periods && (
         <div className="mt-4 grid grid-cols-4 gap-1.5 sm:gap-2">
           {([['Today', pnl.periods.today], ['Week', pnl.periods.week], ['Month', pnl.periods.month], ['All time', pnl.periods.all]] as const).map(([label, p]) => (
-            <div key={label} className="rounded-lg bg-surface-2 px-2 py-1.5 text-center">
-              <div className="text-[11px] text-muted">{label}</div>
-              <div className={`tabular text-sm font-semibold sm:text-base ${tone(p.pnlUsd)}`}>{usd(p.pnlUsd)}</div>
-              <div className="truncate text-[10px] text-muted">{p.trades ? `${p.trades} trade${p.trades === 1 ? '' : 's'} · ${p.trades ? Math.round((p.wins / p.trades) * 100) : 0}% won` : 'no trades'}</div>
-            </div>
+            <MoneyTile key={label} label={label} usd={p.pnlUsd} trades={p.trades} wins={p.wins} />
           ))}
         </div>
       )}
@@ -426,12 +428,33 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
         </div>
       </div>
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
-        <Link to="/forex/bot" className="text-accent-text hover:underline">Full Auto-bot page</Link>
+        <Link to="/forex/bot" className="text-accent-text hover:underline">Trades</Link>
+        <Link to="/forex/news" className="text-accent-text hover:underline">News desk</Link>
         <Link to="/forex/live" className="text-accent-text hover:underline">All markets</Link>
         <Link to="/forex/lab" className="text-accent-text hover:underline">Lab</Link>
         <Link to="/forex/village" className="text-accent-text hover:underline">The village</Link>
         <span>{Object.keys(names).length ? `${d?.chosen.length ?? 0} strategy × chart combinations live` : ''}</span>
       </div>
+    </div>
+  );
+}
+
+/** v21: a P&L tile whose number rolls to its new value and pops when it changes */
+function MoneyTile({ label, usd: v, trades, wins }: { label: string; usd: number; trades: number; wins: number }) {
+  const shown = useCountUp(v);
+  const [pop, setPop] = useState(0);
+  const prev = useRef(v);
+  useEffect(() => {
+    if (prev.current !== v) {
+      prev.current = v;
+      setPop((n) => n + 1);
+    }
+  }, [v]);
+  return (
+    <div className="rounded-xl bg-surface-2 px-2 py-2 text-center">
+      <div className="text-[11px] text-muted">{label}</div>
+      <div key={pop} className={`tabular text-base font-semibold sm:text-lg ${tone(v)} ${pop ? 'money-pop' : ''}`}>{usd(Math.round(shown * 100) / 100)}</div>
+      <div className="truncate text-[10px] text-muted">{trades ? `${trades} trade${trades === 1 ? '' : 's'} · ${Math.round((wins / trades) * 100)}% won` : 'no trades'}</div>
     </div>
   );
 }
