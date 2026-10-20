@@ -113,6 +113,17 @@ export const FX_CONFIG = {
   /** v24 (owner: "crypto more hardworking"): the COIN bot also trades the 15-minute chart (24/7 markets, no session
    * timing to wait for; still only strategies that cleared the quality bar on that chart) */
   botFastChartsCrypto: true,
+  /** v25 (owner: "put ICT trades live"): the forex bot trades these on every chart they run on even though the lab's exam
+   * says 'no' (Oct 20 real data: best fvg_entry 4h +0.11R / PF 1.37 on 29 unseen trades, judas_swing 1h −0.15R). They
+   * trade at the 'no' size (0.6× the risk mode's base, `stratFactorFromVerdict`) with every other guard on (judge, market
+   * checks, losing-market record, news, caps); the learner still drops one that loses in the bot's own account. Empty the
+   * list to put them back behind the exam. Forex only (the session rules never run on a coin). */
+  ownerLive: ['judas_swing', 'ny_q3', 'amd_daily', 'fvg_entry', 'mss_sweep'] as string[],
+  /** v25 (owner: "don't use Fibonacci alone, it clearly didn't work yet"): these strategies only trade when another
+   * strategy (any, tested or not; never the random yardstick) has a signal the SAME way on the SAME market within
+   * `confluenceBars` candles of its chart; alone → the trade waits (shadow book kind 'solo'). */
+  needsConfluence: ['fib_pullback'] as string[],
+  confluenceBars: 2,
   /** walk-forward: re-pick every month from the trades closed in the previous N months */
   walkForward: { lookbackMonths: 6, minN: 15, minAvgR: 0.05, minPf: 1.15 },
   /** owner (v15 "more pips", v15.1 "a trailing SL for safety"): use a trailing stop-loss, else a trailing take-profit,
@@ -664,7 +675,19 @@ export function slimTrade(t: Trade): Trade {
 export const tradeKey = (t: { strategy: string; tf: string; pair: string; entryT: number; keyT?: number }) => `${t.strategy}:${t.tf}:${t.pair}:${t.keyT ?? t.entryT}`;
 
 /** A lab trade as the bot account takes it (v15: with its trailing take-profit and the exit rules still in force). */
-export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction']; sniper?: LabOpenTrade['sniper']; dataWait?: string | null; order?: LabOpenTrade['order']; agree?: LabOpenTrade['agree']; marketRec?: LabOpenTrade['marketRec'] }): LabOpenTrade {
+/**
+ * v25: a strategy in `FX_CONFIG.needsConfluence` (Fibonacci) only trades next to a second setup: another strategy's
+ * open lab trade the same way on the same market whose entry is within `confluenceBars` candles of this one's.
+ * Returns the wait text when it stands alone, else null. Pure.
+ */
+export function soloWait(t: Pick<Trade, 'strategy' | 'pair' | 'side' | 'entryT'>, others: ReadonlyArray<Pick<Trade, 'strategy' | 'pair' | 'side' | 'entryT'>>, barMin: number): string | null {
+  if (!FX_CONFIG.needsConfluence.includes(t.strategy)) return null;
+  const span = FX_CONFIG.confluenceBars * barMin * 60_000;
+  const mate = others.find((o) => o.strategy !== t.strategy && o.strategy !== 'random' && o.pair === t.pair && o.side === t.side && Math.abs(o.entryT - t.entryT) <= span);
+  return mate ? null : `${t.strategy} alone — waits for a second setup the same way on this market`;
+}
+
+export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction']; sniper?: LabOpenTrade['sniper']; dataWait?: string | null; soloWait?: string | null; order?: LabOpenTrade['order']; agree?: LabOpenTrade['agree']; marketRec?: LabOpenTrade['marketRec'] }): LabOpenTrade {
   return {
     ...(o.order ? { order: o.order } : {}),
     ...(o.agree ? { agree: o.agree } : {}),
@@ -677,6 +700,7 @@ export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: 
     entryT: t.entryT,
     entry: t.entry,
     ...(o.dataWait ? { dataWait: o.dataWait } : {}),
+    ...(o.soloWait ? { soloWait: o.soloWait } : {}),
     stop: t.stop,
     target: t.target,
     chosen: o.chosen,
@@ -1859,7 +1883,8 @@ export class ForexLab {
     const alwaysOff = new Set((rolling?.thisWeek.paused ?? []).map((p) => p.key));
     const mode = FX_CONFIG.strict.mode;
     const strict = mode !== 'off';
-    const chosenRows = rows.filter((x) => x.id !== 'random' && !(this.universe === 'crypto' && NOT_FOR_CRYPTO.has(x.id)) && !rec.dropped.includes(`${x.id}:${x.tf}`) && (mode === 'edge' ? x.verdict === 'edge' : mode === 'quality' ? !!x.quality?.ok : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`))));
+    const ownerLive = this.universe === 'fx' ? new Set(FX_CONFIG.ownerLive) : new Set<string>();
+    const chosenRows = rows.filter((x) => x.id !== 'random' && !(this.universe === 'crypto' && NOT_FOR_CRYPTO.has(x.id)) && !rec.dropped.includes(`${x.id}:${x.tf}`) && (ownerLive.has(x.id) || mode === 'edge' ? x.verdict === 'edge' : mode === 'quality' ? !!x.quality?.ok : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`))));
     // v20.1 strict mode: say once per hour-of-change why the list is empty (the owner reads the Decisions log)
     if (strict && !chosenRows.length && this.chosen.length) this.logBot([mode === 'edge' ? 'strict mode: no strategy has passed the unseen exam right now — the bot waits (nothing is traded until one earns Edge)' : 'strict mode: no strategy clears the quality bar right now — the bot waits']);
     for (const p of rolling?.thisWeek.paused ?? []) {
@@ -2039,6 +2064,7 @@ export class ForexLab {
       })();
       return toLabTrade(t, {
         order,
+        soloWait: soloWait(t, open, TF_MIN[t.tf as Timeframe] ?? 60),
         agree,
         marketRec,
         chosen: chosen.has(`${t.strategy}:${t.tf}`),

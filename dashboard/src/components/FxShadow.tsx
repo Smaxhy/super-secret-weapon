@@ -21,6 +21,7 @@ export interface ShadowSummary {
 const KIND: Record<string, string> = {
   agree: 'Market checks did not agree',
   market_rec: 'No winning record on that market',
+  solo: 'Fibonacci alone (no second setup)',
   judge_no: 'The signal judge said no',
   judge_missing: "The signal judge couldn't score it",
   cooldown: 'Cooling off after a trade there',

@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v25 owner's rules: ICT live, Fibonacci never alone (Oct 20 ~20:45 UTC, owner: "don't use Fibonacci alone, it clearly
+didn't work yet, put ICT trades live")
+- `FX_CONFIG.ownerLive` ['judas_swing', 'ny_q3', 'amd_daily', 'fvg_entry', 'mss_sweep'] (lab.ts): on the FOREX desk these join
+  the chosen list whatever their verdict (hourly chooser `ownerLive.has(x.id) ||`, fast `chosenOf(…, ownerLive)`); a 'no'
+  row trades at 0.6× base risk (`stratFactorFromVerdict`); judge / market checks / losing-market record / news / caps still
+  apply; the learner can still drop one. On real data all five were 'no' (best fvg_entry:4h +0.11R / PF 1.37 on 29 unseen;
+  judas_swing 1h −0.15R / PF 0.72) — told to the owner. 15m: only the three session rules (`botFastStrategies`).
+- `FX_CONFIG.needsConfluence` ['fib_pullback'] + `confluenceBars` 2: `soloWait(t, others, barMin)` (lab.ts, pure) → a fib
+  trade waits unless another strategy (not random) has an open lab trade / a signal on the newest close the same way on the
+  same market within 2 candles; `LabOpenTrade.soloWait` → syncBot wait (desk trades exempt), why.ts kind 'solo', shadow
+  label. Both labs (hourly: all rows' open paper trades; fast: open trades + `fired`). The USDJPY fib trade opened at 20:03
+  was left running. tests in forex-ict (4); forex-v15 fast-chart expectation allows the ICT session rules.
 ## v24.3 coin list cleanup (Oct 20, VPS read 20:21 UTC)
 The coin bot's chosen list carried local_hours:1h / fix_flow:1h (botAlways rows kept with 0 coin trades — they never fire on a
 coin, `NOT_FOR_CRYPTO`); the coin lab's chooser now drops every NOT_FOR_CRYPTO id. VPS 20:21: forex 10 chosen, 1 open (USDJPY

@@ -824,6 +824,8 @@ export interface LabOpenTrade {
   entry?: number;
   /** v17: a check it was tested with has no data right now (feed down) — the trade waits */
   dataWait?: string | null;
+  /** v25: a Fibonacci-style signal with no second setup beside it — the trade waits */
+  soloWait?: string | null;
   stop: number;
   target: number | null;
   chosen: boolean;
@@ -1575,6 +1577,11 @@ export class Practice {
         if (t.dataWait) {
           note(`${t.ref}:data`, `waiting on ${t.pair} (${t.strategy}): ${t.dataWait}`);
           skip(t, t.dataWait, true);
+          continue;
+        }
+        if (t.soloWait && !t.desk) {
+          note(`${t.ref}:solo`, `waiting on ${t.pair} (${t.strategy}): ${t.soloWait}`);
+          skip(t, t.soloWait, true);
           continue;
         }
         if (t.agree && t.agree.need > 0 && t.agree.n < Math.min(t.agree.need, t.agree.of) && !t.desk) {

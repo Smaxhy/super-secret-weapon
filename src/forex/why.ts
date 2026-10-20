@@ -19,6 +19,7 @@ export type ReasonKind =
   | 'judge_no'
   | 'agree'
   | 'market_rec'
+  | 'solo'
   | 'check_data'
   | 'stale_feed'
   | 'clock'
@@ -39,6 +40,7 @@ const LABEL: Record<ReasonKind, string> = {
   judge_no: 'the signal judge scored the setup too low',
   agree: 'too few market checks (strength, bigger charts, mood) stood behind the setup',
   market_rec: 'the strategy has no winning tested record on that market',
+  solo: 'a Fibonacci signal came alone (it needs a second setup the same way)',
   check_data: 'a check the strategy was tested with had no data (feed missing)',
   stale_feed: 'the price feed was lagging (candles behind) — no new trades on that market',
   clock: 'the market clock (closed, rollover, weekly open / close)',
@@ -60,6 +62,7 @@ export function classify(why: string): ReasonKind {
   if (w.includes('signal judge') && w.includes('missing')) return 'judge_missing';
   if (w.includes('market checks agree')) return 'agree';
   if (w.includes('record on this market')) return 'market_rec';
+  if (w.includes('waits for a second setup')) return 'solo';
   if (w.includes('signal judge')) return 'judge_no';
   if (w.includes('check has no data') || w.includes('feed missing')) return 'check_data';
   if (w.includes('candles behind') || w.includes('price data for') || w.includes('feed is lagging') || w.includes('no fresh')) return 'stale_feed';
@@ -199,6 +202,7 @@ const HINT: Partial<Record<ReasonKind, string>> = {
   judge_no: 'Working as designed: the judge only lets the better-looking setups through.',
   agree: 'Working as designed (strict mode): a trade needs at least 1 of the market checks (strength, 4-hour trend, daily trend, mood) on its side. The shadow book on the Trades page shows what the held-back ones did.',
   market_rec: 'Working as designed: a strategy stays off a market where its own tested record there is a losing one (12+ trades, profit factor under 0.9).',
+  solo: 'Working as designed (your rule): Fibonacci only trades next to another setup the same way on that market.',
   caps: 'Working as designed: raise the risk mode (Risk desk) for more slots.',
   news: 'Working as designed: it skips the half hour around high-impact news.',
   late: 'The lab filled a bar earlier than the bot saw the price; nothing to fix unless it repeats on every signal.',

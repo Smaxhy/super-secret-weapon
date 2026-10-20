@@ -226,3 +226,43 @@ describe('wiring', () => {
     expect(sigs.find((s) => s.name === 'RSI2')!.verdict).toMatch(/lab only/);
   });
 });
+
+describe('v25 owner rules: ICT live, Fibonacci never alone', () => {
+  it('ICT rows are chosen on the fast chart even with a "no" verdict; other "no" rows are not', async () => {
+    const { chosenOf } = await import('../src/forex/fast');
+    const { FX_CONFIG } = await import('../src/forex/lab');
+    const rows = [
+      { id: 'judas_swing', tf: '15m', verdict: 'no' as const },
+      { id: 'pin_bar', tf: '15m', verdict: 'no' as const },
+      { id: 'ny_q3', tf: '15m', verdict: 'no' as const },
+    ];
+    expect(chosenOf(rows, [], FX_CONFIG.ownerLive)).toEqual(['judas_swing:15m', 'ny_q3:15m']);
+    expect(chosenOf(rows, ['ny_q3:15m'], FX_CONFIG.ownerLive)).toEqual(['judas_swing:15m']); // the learner can still drop one
+    expect(chosenOf(rows, [])).toEqual([]);
+  });
+
+  it('the hourly chooser lets the owner list in on the forex desk only', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../src/forex/lab.ts', import.meta.url), 'utf8');
+    expect(src).toMatch(/this\.universe === 'fx' \? new Set\(FX_CONFIG\.ownerLive\)/);
+    expect(src).toMatch(/ownerLive\.has\(x\.id\) \|\| mode === 'edge'/);
+  });
+
+  it('fib_pullback waits alone and trades next to a second setup the same way', async () => {
+    const { soloWait } = await import('../src/forex/lab');
+    const H = 3_600_000;
+    const fib = { strategy: 'fib_pullback', pair: 'USDJPY', side: 1 as const, entryT: 100 * H };
+    expect(soloWait(fib, [fib], 60)).toMatch(/alone/);
+    expect(soloWait(fib, [{ strategy: 'pin_bar', pair: 'USDJPY', side: -1, entryT: 100 * H }], 60)).toMatch(/alone/); // other way
+    expect(soloWait(fib, [{ strategy: 'pin_bar', pair: 'EURUSD', side: 1, entryT: 100 * H }], 60)).toMatch(/alone/); // other market
+    expect(soloWait(fib, [{ strategy: 'random', pair: 'USDJPY', side: 1, entryT: 100 * H }], 60)).toMatch(/alone/); // yardstick
+    expect(soloWait(fib, [{ strategy: 'pin_bar', pair: 'USDJPY', side: 1, entryT: 95 * H }], 60)).toMatch(/alone/); // too long ago
+    expect(soloWait(fib, [{ strategy: 'pin_bar', pair: 'USDJPY', side: 1, entryT: 98 * H }], 60)).toBeNull();
+    expect(soloWait({ ...fib, strategy: 'pin_bar' }, [], 60)).toBeNull(); // only listed strategies
+  });
+
+  it('the wait is its own reason in the why / shadow buckets', async () => {
+    const { classify } = await import('../src/forex/why');
+    expect(classify('fib_pullback alone — waits for a second setup the same way on this market')).toBe('solo');
+  });
+});

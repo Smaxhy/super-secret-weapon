@@ -424,7 +424,8 @@ describe('15-minute and 1-minute lab (v15)', () => {
     const call = sync.mock.calls[0] as unknown as [LabOpenTrade[], unknown, unknown, { scope: string[] }];
     expect(call[3].scope).toEqual(['15m']);
     // v18.7: fast-chart trades are handed over as lab-only (chosen false) unless the bot is switched on for them
-    expect(call[0].every((t) => t.tf === '15m' && !t.chosen)).toBe(true);
+    // (v25: the owner's ICT session rules are the exception — they trade the 15m chart past the exam)
+    expect(call[0].every((t) => t.tf === '15m' && (!t.chosen || FX_CONFIG.botFastStrategies.includes(t.strategy)))).toBe(true);
     FX_CONFIG.botFastCharts = true;
     try {
       await fast.decide('15m', WED);
