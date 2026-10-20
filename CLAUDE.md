@@ -897,6 +897,15 @@ opens with the same mode word + line, its Next look line carries `nextLook.does`
 sentences. Village HUD shows the mode word. tests in forex-strict (buildPlan modes, checksOf). Verified with Playwright
 (room.mjs stub carries mode / nextLook / checks).
 
+## v20.5 Dukascopy probe hit a dead host (Oct 20, owner: "get me the correct site for Dukascopy")
+The v18.6 `probeDukascopy` tested `datafeed.dukascopy.com/datafeed/…bi5` — the OLD endpoint, retired — while the pinned
+dukascopy-node 1.50.0 downloads from **`https://jetta.dukascopy.com/v1/candles/hour/<INSTRUMENT>/BID/<year>/<month>`**
+(its `DATA_API_ROOT`; the subdomain is built from char codes in the dist). So the probe failed on every VPS ("no answer
+in 10 s") and the whole history refresh was skipped for a week → 2 years of Yahoo history instead of 3+. Now the probe
+hits `DK_PROBE_URL` on `DK_HOST` (dukascopy.ts). If the Setup card still shows an error after this deploy, the VPS really
+can't reach `jetta.dukascopy.com` (test: `curl -sS -m 10 -o /dev/null -w "%{http_code}\n" "https://jetta.dukascopy.com/v1/candles/hour/EURUSD/BID/2024/1"`
+→ 200 = fine, 403 = Dukascopy blocks the Vultr IP, 000 = network). The sandbox can reach neither host (proxy).
+
 ## v20.4 quality mode — the bot trades again, on a bar it can actually clear (Oct 20, owner: "make the bot trade
 again but good, accurate setups, not a random chase")
 Live read of the VPS (11:07 UTC, through the Trading-env check session): 93 rows, **0 Edge**, 10 Maybe, 83 no — the

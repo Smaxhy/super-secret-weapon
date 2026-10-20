@@ -328,14 +328,20 @@ export async function installSpreadProfiles(redis: Redis, now = Date.now()): Pro
 /** v18.6: can this server reach Dukascopy's data host at all? dukascopy-node answers a blocked / throttled host with an
  * EMPTY result and no error (so the Setup card said "0 bars · 0 failed" for a day). One tiny request first: any HTTP
  * answer = reachable; a network error / timeout = the reason, in words. */
+/** v20.5: the host dukascopy-node 1.50.0 really downloads from (its `DATA_API_ROOT`, the subdomain is obfuscated in the
+ * build): `https://jetta.dukascopy.com/v1/candles/hour/<INSTRUMENT>/BID/<year>/<month>`. The old
+ * `datafeed.dukascopy.com/datafeed/…bi5` host the v18.6 probe tested is retired, so the probe failed on every VPS and
+ * the whole refresh was skipped — "can't reach datafeed.dukascopy.com: no answer in 10 s" for a week. */
+export const DK_HOST = 'jetta.dukascopy.com';
+export const DK_PROBE_URL = `https://${DK_HOST}/v1/candles/hour/EURUSD/BID/2024/1`;
 export async function probeDukascopy(timeoutMs = 10_000): Promise<string | null> {
   try {
-    const res = await fetch('https://datafeed.dukascopy.com/datafeed/EURUSD/2024/00/02/00h_ticks.bi5', { method: 'GET', signal: AbortSignal.timeout(timeoutMs), headers: { 'user-agent': 'Mozilla/5.0' } });
-    if (res.status >= 500) return `datafeed.dukascopy.com answered HTTP ${res.status}`;
-    if (res.status === 403 || res.status === 429) return `datafeed.dukascopy.com refused this server (HTTP ${res.status}: blocked or throttled)`;
+    const res = await fetch(DK_PROBE_URL, { method: 'GET', signal: AbortSignal.timeout(timeoutMs), headers: { 'user-agent': 'Mozilla/5.0' } });
+    if (res.status >= 500) return `${DK_HOST} answered HTTP ${res.status}`;
+    if (res.status === 403 || res.status === 429) return `${DK_HOST} refused this server (HTTP ${res.status}: blocked or throttled)`;
     return null;
   } catch (err) {
-    return `can't reach datafeed.dukascopy.com: ${(err as Error).name === 'TimeoutError' ? `no answer in ${Math.round(timeoutMs / 1000)} s` : (err as Error).message}`;
+    return `can't reach ${DK_HOST}: ${(err as Error).name === 'TimeoutError' ? `no answer in ${Math.round(timeoutMs / 1000)} s` : (err as Error).message}`;
   }
 }
 
