@@ -5,6 +5,7 @@
  * wider than its median hour that hour is (never cheaper than the typical retail spread). Without a profile the old
  * rule applies (rollover ×3). Either way the first bar after the weekend costs ×4.
  */
+import { isCrypto } from './types';
 const HOUR = 3_600_000;
 
 /** measured spread in pips per UTC hour (0–23), per market */
@@ -26,6 +27,7 @@ const median = (xs: readonly number[]) => {
 
 /** How many typical retail spreads a bar opening at `t` costs (1 … 6). Pure apart from the installed profiles. */
 export function spreadMultAt(id: string, t: number, prevT: number | null): number {
+  if (isCrypto(id)) return 1; // v22: 24/7, no rollover hour, no weekend gap
   if (prevT !== null && t - prevT > 30 * HOUR) return 4;
   const h = new Date(t).getUTCHours();
   const p = profiles.get(id);

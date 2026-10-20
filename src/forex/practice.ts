@@ -12,8 +12,8 @@ import { feeds } from './feeds';
 import { dkQuote } from './dukascopy';
 import { HEAT, maxRiskUnder, topCorrelated, type CorrBook } from './risk';
 import { oandaCandles, oandaPrices, oandaReady, loadOanda, type Granularity } from './oanda';
-import { INSTRUMENTS, TF_MIN, instrument, type Bar, type Instrument, type Timeframe } from './types';
-import { marketClock } from './calendar';
+import { CRYPTO, INSTRUMENTS, TF_MIN, instrument, isCrypto, type Bar, type Instrument, type Timeframe } from './types';
+import { clockFor, marketClock } from './calendar';
 import { priceShock } from './headlines';
 import { spreadMultAt } from './spreads';
 import { SIZING, addExposure, clampRisk, ddFactor, exposureBlock, type Exposure } from './portfolio';
@@ -293,9 +293,9 @@ export function usdPer(ccy: string, mids: Record<string, number>): number | null
 const baseOf = (i: Instrument) => (i.kind === 'metal' ? i.id.slice(0, 3) : i.id.slice(0, 3));
 const quoteOf = (i: Instrument) => i.id.slice(3, 6);
 
-/** Units of base for a USD notional. Metals: 1 unit = 1 oz priced in USD. Pure. */
+/** Units of base for a USD notional. Metals: 1 unit = 1 oz priced in USD; coins (v22): 1 unit = 1 coin in USD. Pure. */
 export function unitsFor(inst: Instrument, notionalUsd: number, mids: Record<string, number>): number | null {
-  if (inst.kind === 'metal') return notionalUsd / mids[inst.id]!;
+  if (inst.kind !== 'fx') return notionalUsd / mids[inst.id]!;
   const b = usdPer(baseOf(inst), mids);
   return b ? notionalUsd / b : null;
 }
@@ -304,7 +304,7 @@ export function unitsFor(inst: Instrument, notionalUsd: number, mids: Record<str
 export function pnlUsd(p: Pick<PracticePosition, 'pair' | 'side' | 'units' | 'entry'>, px: number, mids: Record<string, number>): number {
   const inst = instrument(p.pair)!;
   const inQuote = p.side * p.units * (px - p.entry);
-  if (inst.kind === 'metal') return inQuote;
+  if (inst.kind !== 'fx') return inQuote;
   const q = usdPer(quoteOf(inst), { ...mids, [inst.id]: px });
   return q ? inQuote * q : 0;
 }
@@ -1024,7 +1024,7 @@ export class Practice {
     if (!inst) return null;
     // v17.9: a live streamed price first for currency pairs (seconds old; synthetic spread like Yahoo's). Metals never:
     // the lab tests them on COMEX futures (Pyth's are spot, Yahoo's streamed futures are delayed).
-    if (inst.kind === 'fx') {
+    if (inst.kind !== 'metal') {
       const lp = this.live.get(id);
       if (lp) {
         const now = Date.now();
@@ -1199,7 +1199,7 @@ export class Practice {
     for (const p of a.open) s.add(p.pair);
     for (const id of [...s]) {
       const i = instrument(id);
-      if (!i || i.kind === 'metal') continue;
+      if (!i || i.kind !== 'fx') continue;
       for (const ccy of [i.id.slice(0, 3), i.id.slice(3, 6)]) {
         if (ccy === 'USD') continue;
         if (instrument(`${ccy}USD`)) s.add(`${ccy}USD`);
@@ -1221,14 +1221,17 @@ export class Practice {
     const mv = { moved: false };
     const ev = tick(a, q, Date.now(), mv, this.carryFor);
     // v18.4: nothing rests over the weekend
-    if (acct === 'bot' && marketClock(Date.now()).flattenNow && a.orders?.length) {
-      ev.push(`cancelled ${a.orders.length} limit order${a.orders.length > 1 ? 's' : ''} for the weekend`);
-      a.orders = [];
+    // v22: coins have no weekend — only currency / metal orders and positions are flattened
+    if (acct === 'bot' && marketClock(Date.now()).flattenNow && a.orders?.some((o) => !isCrypto(o.pair))) {
+      const n = a.orders.filter((o) => !isCrypto(o.pair)).length;
+      ev.push(`cancelled ${n} limit order${n > 1 ? 's' : ''} for the weekend`);
+      a.orders = a.orders.filter((o) => isCrypto(o.pair));
     }
-    if (acct === 'bot' && marketClock(Date.now()).flattenNow && a.open.length) {
+    if (acct === 'bot' && marketClock(Date.now()).flattenNow && a.open.some((p) => !isCrypto(p.pair))) {
       const mids: Record<string, number> = {};
       for (const x of Object.values(q)) mids[x.id] = x.mid;
       for (const p of [...a.open]) {
+        if (isCrypto(p.pair)) continue; // v22: a coin position rides through the weekend
         // v17: at the live price, else the last price this process saw (never the entry price); none at all → it
         // closes at the first price that arrives
         const qq = q[p.pair] ?? this.cache.get(p.pair);
@@ -1464,6 +1467,8 @@ export class Practice {
         noted.add(key);
       };
       const canOpen = clock.open && !clock.noNewTrades && !clock.rollover && clock.sinceOpenMin >= 120;
+      /** v22: a coin market is always open — its candidates never wait on the forex clock */
+      const canOpenFor = (pair: string) => canOpen || isCrypto(pair);
       // v14: trades paused for the weekend come back once Monday's market has settled, if the lab still holds them
       if (a.resume?.length) {
         const keep: ResumeItem[] = [];
@@ -1487,7 +1492,7 @@ export class Practice {
             done();
             continue;
           }
-          if (!canOpen) {
+          if (!canOpenFor(r.pair)) {
             keep.push(r);
             continue;
           }
@@ -1596,13 +1601,14 @@ export class Practice {
           continue;
         }
         const qs = q[t.pair];
-        const why = clock.noNewTrades
-          ? clock.open
+        const ck = clockFor(t.pair, Date.now()); // v22: a coin market has no weekly close, rollover or Monday warm-up
+        const why = ck.noNewTrades
+          ? ck.open
             ? 'weekly close is near'
             : 'market closed'
-          : clock.rollover
+          : ck.rollover
             ? 'daily rollover (20:45–23:15 UTC): spreads are wide'
-            : clock.sinceOpenMin < 120
+            : ck.sinceOpenMin < 120
               ? 'the week just opened: spreads are still wide'
               : blockFor(t.pair) ?? (qs && priceShock(qs.bars, atr1h[t.pair] ?? 0) ? 'price shock: unusually big move in the last 15 min' : null);
         if (why) {
@@ -1649,7 +1655,7 @@ export class Practice {
         // less than the mode's own size, still smaller after a drawdown
         const snipe = t.sniper?.on && !a.open.some((p) => p.sniper) ? t.sniper : null;
         // v15.6: the risk mode scales the base risk, leverage and every cap together
-        const lev = snipe ? Math.max(SNIPER.leverage, L.leverage) : Math.max(conv?.lev ?? 0, L.leverage);
+        const lev = Math.min(isCrypto(t.pair) ? CRYPTO.maxLeverage : Infinity, snipe ? Math.max(SNIPER.leverage, L.leverage) : Math.max(conv?.lev ?? 0, L.leverage)); // v22: coins capped
         let riskPct = snipe ? Math.max(SNIPER.riskPct, L.riskPct) * ddF : clampRisk(L.riskPct, L.riskPct * (t.sizeF ?? 1) * ddF * (conv?.mult ?? 1), conv ? L.convMaxRiskPct / L.riskPct : undefined);
         const exp = currencyExposure(a.open, mids, v.equityUsd);
         const over = snipe ? null : exposureBlock(exp, t.pair, t.side, riskPct, L.ccyCapPct);

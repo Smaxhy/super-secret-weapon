@@ -934,6 +934,35 @@ vault door (its tag sat on the Risk keeper's) to `TREASURER_HOME` by the observa
 roster "By the observatory"). Help card = three lines (incl. the dot legend). Verified with Playwright (`shots/village.mjs`)
 at 390 / 1440 px, light + dark, incl. opening a watcher's screen.
 
+## v22 crypto majors inside the forex engine (Oct 20, owner: "do it — a forex AND a crypto base, strategies, news, free tools")
+The forex engine is a candle engine; it now also trades **BTC/USD, ETH/USD, SOL/USD** (`INSTRUMENTS` kind `'crypto'`, Yahoo
+spot `BTC-USD` etc., 24/7; spreads 25 / 15 / 6 pips = a typical perp taker cost). Same lab, same 70/30 exam, same quality
+bar, same bot account — the memecoin bot is a different product and untouched. What changed for a coin, all tested:
+- **Clock**: `clockFor(pair, t)` (calendar.ts) = the forex clock for currencies / metals, `CRYPTO_CLOCK` (always open, no
+  weekly close / rollover / Monday warm-up) for a coin. Used by `syncBot` (wait reasons + `canOpenFor`), the weekend
+  flatten (coin positions / orders ride through), freshness (`lagBars` / `dataAgeOf` expect a coin candle every hour of
+  the week), the fast lab (`decide` runs on the weekend; forex markets skipped per market), plan.ts (per-market blocks;
+  mode is never 'closed' while coins exist — forex closed → `nextLook.does` says "Forex is closed… reads the coin
+  markets only"), the Yahoo stream watchdog. The engine's weekend pause is gap-based, so a coin series (no gaps) is
+  untouched; `spreadMultAt` → 1 (no rollover / weekend widening); financing: unknown carry = 0 (perp funding ignored).
+- **Rules**: `NOT_FOR_CRYPTO` (strategies.ts; `runsOn(s, tf, pair)`, enforced inside `signalsFor` + both live passes):
+  session rules, local_hours, fix_flow, month_end_flow, weekend_gap, nr7_break, carry_trend, cot_squeeze,
+  stretch_squeeze, ccy_momentum, stat_arb, mom_blend, the intermarket four, turtle_soup never run on a coin (~25 rules
+  do). `roundStep` BTC $1000 / ETH $100 / SOL $10. Strength meter: fx pairs only (a coin's strength check is '·', so
+  `agree.of` is effectively 3 on 1h). Mood: `RISK_CLASS` BTC / ETH / SOL +1 (risk-on). News: headlines tag BTC / ETH /
+  SOL (named coin, or generic crypto / Coinbase / Binance / stablecoin / ETF words → all three); `newsBlock` → USD High
+  events still pause a coin, USD bank holidays don't; `currenciesOf(coin)` = ['USD', base].
+- **Account**: `unitsFor` / `pnlUsd` treat `kind !== 'fx'` as USD-priced (1 unit = 1 coin); live Yahoo-stream prices for
+  coins too (`kind !== 'metal'`; Pyth stays fx-only); leverage capped at `CRYPTO.maxLeverage` 20 whatever the risk mode
+  (max mode = 5% risk at 20×); the currency cap counts BTC / ETH / SOL as their own currency. Dukascopy / DK fill /
+  stitch: fx only. Desk (forecast.ts): coins priced in USD like metals. TradingView symbol `COINBASE:<id>`.
+- Candles: Yahoo's 60m chart gives 730 days for the coins (free, no key) — enough for the 70/30 exam; a free exchange
+  history (Binance / Coinbase) is the later upgrade if the lab wants more. Expect the first hourly run after deploy to
+  grade ~25 strategies × 2 charts × 3 coins; nothing trades a coin until a row clears the quality bar on it (strict
+  mode unchanged, 2-checks rule included). tests/forex-crypto.test.ts (9); forex-v15 / v16 expectations updated
+  (decide runs on weekends for coins; Dukascopy ids exclude coins). 1,322 tests. Verified on SYNTHETIC candles only —
+  read Markets / Strategies on the VPS after the first run.
+
 ## v21.2 Dukascopy never got a bar: the HTTP 202 warm-up (Oct 20, owner ran the probe from PowerShell: "HTTP 202", empty body)
 `jetta.dukascopy.com/v1/candles/hour/<INSTR>/BID/<y>/<m>` answers **202 Accepted with an empty body** on the first request
 for a month it hasn't cached ("preparing the file") and serves the data on a later request. dukascopy-node 1.50.0 counts

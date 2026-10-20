@@ -5,13 +5,13 @@
  * checks, including the ones where nothing fired. Pure: built from the latest lab reports, the bot account and the
  * clock.
  */
-import type { MarketClock } from './calendar';
+import { clockFor, type MarketClock } from './calendar';
 import type { FastFiring } from './fast';
 import type { MarketNow, RunNote } from './lab';
 import type { MoodNow } from './mood';
 import type { PracticePosition, ResumeItem, SyncReport } from './practice';
 import { tfOfRef } from './practice';
-import { INSTRUMENTS, TF_MIN, instrument, type Timeframe } from './types';
+import { INSTRUMENTS, TF_MIN, instrument, isCrypto, type Timeframe } from './types';
 import { STRENGTH_MIN } from './filters';
 
 const MIN = 60_000;
@@ -321,11 +321,12 @@ export function buildPlan(x: PlanInputs): BotPlan {
     });
     signals.sort((a, b) => TF_ORDER.indexOf(a.tf) - TF_ORDER.indexOf(b.tf));
     const blocks: string[] = [];
-    if (!x.clock.open) blocks.push('market closed for the weekend');
+    const ck = isCrypto(inst.id) ? clockFor(inst.id, now) : x.clock; // v22: a coin market is open all week
+    if (!ck.open) blocks.push('market closed for the weekend');
     else {
-      if (x.clock.noNewTrades) blocks.push('no new trades: the weekly close is near');
-      if (x.clock.rollover) blocks.push('daily rollover (20:45–23:15 UTC): spreads are wide, no new trades');
-      if (x.clock.sinceOpenMin >= 0 && x.clock.sinceOpenMin < 120) blocks.push('the week just opened: no new trades for the first 2 hours');
+      if (ck.noNewTrades) blocks.push('no new trades: the weekly close is near');
+      if (ck.rollover) blocks.push('daily rollover (20:45–23:15 UTC): spreads are wide, no new trades');
+      if (ck.sinceOpenMin >= 0 && ck.sinceOpenMin < 120) blocks.push('the week just opened: no new trades for the first 2 hours');
       const b = x.blockNow(inst.id);
       if (b) blocks.push(`no new trades right now: ${b}`);
     }
@@ -354,7 +355,7 @@ export function buildPlan(x: PlanInputs): BotPlan {
       status = 'waiting';
       const w = wanted[0]!;
       headline = `Wants to ${w.side === 1 ? 'buy' : 'sell'} (${w.name}, ${w.tf}): ${w.verdict}.`;
-    } else if (blocks.length && (!x.clock.open || blocks.some((b) => b.startsWith('no new trades')))) {
+    } else if (blocks.length && (!ck.open || blocks.some((b) => b.startsWith('no new trades')))) {
       status = 'blocked';
       headline = blocks[0]!.charAt(0).toUpperCase() + blocks[0]!.slice(1) + '.';
     } else {
@@ -372,7 +373,7 @@ export function buildPlan(x: PlanInputs): BotPlan {
     const checksWord = (side: 1 | -1) => `${side === 1 ? upCount : downCount} of ${checks.length} checks ${side === 1 ? 'up' : 'down'}`;
     let plan: string;
     if (status === 'trading') plan = headline;
-    else if (!x.clock.open) plan = 'Market closed: nothing to do until it opens.';
+    else if (!ck.open) plan = 'Market closed: nothing to do until it opens.';
     else if (!nChosen) plan = `Nothing to wait for: no strategy ${x.strict?.mode === 'quality' ? 'clears the quality bar' : 'has passed the unseen exam'} yet, so it will not trade here until one does.`;
     else if (status === 'waiting') {
       const w = wanted[0]!;
@@ -402,13 +403,14 @@ export function buildPlan(x: PlanInputs): BotPlan {
   const nTrading = Object.values(trading).reduce((a, b) => a + b, 0);
   const pnl = x.positions.reduce((s, p) => s + p.pnlUsd, 0);
   const soon = next.filter((n) => trading[n.tf]).sort((a, b) => a.at - b.at)[0] ?? next[1]!;
-  const summary = !x.clock.open
+  const coins = INSTRUMENTS.filter((i) => i.kind === 'crypto').length;
+  const summary = !x.clock.open && !coins
     ? `Market closed for the weekend (opens again in ${Math.round(x.clock.minutesToChange / 60)} h). ${x.resume.length ? `${x.resume.length} trade${x.resume.length > 1 ? 's' : ''} paused, re-opened after Monday's open if still running.` : 'Nothing to do until then.'}`
     : `${x.positions.length ? `In ${x.positions.length} trade${x.positions.length > 1 ? 's' : ''} (${usd(pnl)} open)` : 'No trade open'} · ${nTrading ? `${nTrading} tested setup${nTrading === 1 ? '' : 's'} (strategy × chart) on ${openCharts.join(', ')}` : 'no strategy has passed its test yet'} across ${INSTRUMENTS.length} markets · next check ${hhmm(soon.at)} UTC (${soon.tf}).`;
   // v20.2: the state in one word, and what the next look does
   const waitingMkts = markets.filter((mk) => mk.status === 'waiting');
   const need = x.strict?.minAgree ?? 0;
-  const mode: PlanMode = !x.clock.open
+  const mode: PlanMode = !x.clock.open && !coins
     ? { kind: 'closed', word: 'Market closed', line: `Forex opens again in ${Math.round(x.clock.minutesToChange / 60)} h. ${x.resume.length ? `${x.resume.length} paused trade${x.resume.length > 1 ? 's' : ''} re-open after Monday's open if still running.` : 'Nothing to do until then.'}` }
     : x.positions.length
       ? { kind: 'trading', word: `In ${x.positions.length} trade${x.positions.length > 1 ? '' : ''}${x.positions.length > 1 ? 's' : ''}`, line: `${usd(pnl)} open. It manages the stop and target every second and looks for new setups at every candle close.` }
@@ -420,8 +422,10 @@ export function buildPlan(x: PlanInputs): BotPlan {
   const nextLook = {
     tf: soon.tf,
     at: soon.at,
-    does: !x.clock.open
+    does: !x.clock.open && !coins
       ? 'Nothing until the market opens.'
+      : !x.clock.open
+        ? `Forex is closed for the weekend (opens again in ${Math.round(x.clock.minutesToChange / 60)} h); it reads the ${TF_WORD[soon.tf] ?? soon.tf} candles of the ${coins} coin market${coins > 1 ? 's' : ''} only.`
       : !nTrading
         ? `Re-reads every ${TF_WORD[soon.tf] ?? soon.tf} candle on ${INSTRUMENTS.length} markets; with no proven strategy it opens nothing, but the hourly re-grade may promote one.`
         : `Reads the ${TF_WORD[soon.tf] ?? soon.tf} candle that just closed on ${INSTRUMENTS.length} markets: did any of the ${trading[soon.tf] ?? nTrading} proven ${soon.tf} setup${(trading[soon.tf] ?? nTrading) === 1 ? '' : 's'} fire? If one did${need ? `, ${need}+ checks agree` : ''}, no news or rollover blocks it and the caps allow, it opens at market with that strategy's stop and target.`,

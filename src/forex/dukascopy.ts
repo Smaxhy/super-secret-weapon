@@ -241,7 +241,7 @@ async function saveMerged(redis: Redis, id: string, bars: readonly DkBar[], now:
  * Dukascopy close before Yahoo's first bar is within `DK.maxSeamGap` of Yahoo's first open). Pure.
  */
 export function stitchHistory(id: string, yahoo: readonly Bar[], dk: readonly DkBar[], now: number, days = DK.historyDays): Bar[] {
-  if (!yahoo.length || !dk.length || instrument(id)?.kind === 'metal') return [...yahoo];
+  if (!yahoo.length || !dk.length || instrument(id)?.kind !== 'fx') return [...yahoo];
   const first = yahoo[0]!.t;
   const older = dk.filter((b) => b.t < first && b.t >= now - days * DAY);
   if (!older.length) return [...yahoo];
@@ -377,7 +377,7 @@ export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: 
     }
   }
   const meta: DkMeta = { at: now, ids: {} };
-  const ids = [...INSTRUMENTS.map((i) => i.id), ...STRENGTH_PAIRS.map((p) => p.id)];
+  const ids = [...INSTRUMENTS.filter((i) => i.kind !== 'crypto').map((i) => i.id), ...STRENGTH_PAIRS.map((p) => p.id)];
   const histFrom = now - DK.historyDays * DAY;
   const slack = DK.slackDays * DAY;
   for (const id of ids) {

@@ -24,7 +24,7 @@ import { INSTRUMENTS, TF_MIN, type Bar, type Instrument, type Trade } from './ty
 import { allowFor, blockReason, filterCoverage, missingInput } from './filters';
 import { applyExit } from './exits';
 import { stratFactorFromVerdict, volFactor } from './portfolio';
-import { marketClock } from './calendar';
+import { clockFor, marketClock } from './calendar';
 import { newSyncReport, type LabOpenTrade } from './practice';
 import { withEnd } from './mtf';
 import { FX_CONFIG, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, pickedOnInSample, prevPicks, signalIndex, slimTrade, toLabTrade, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
@@ -448,7 +448,7 @@ export class FastLab {
    */
   async decide(tf: FastTf, now = Date.now()): Promise<void> {
     const book = this.lab.book;
-    if (!book || this.deciding.has(tf) || !marketClock(now).open) return;
+    if (!book || this.deciding.has(tf)) return; // v22: coins trade on the weekend too — each market checks its own clock
     this.deciding.add(tf);
     try {
       await this.refresh(tf, now);
@@ -473,7 +473,7 @@ export class FastLab {
       for (const inst of INSTRUMENTS) {
         const all = this.series(tf, inst.id);
         ages[inst.id] = dataAgeOf(inst.id, tf, all, now, TF_MIN[tf] * MIN);
-        if (all.length < WARMUP + 60) continue;
+        if (all.length < WARMUP + 60 || !clockFor(inst.id, now).open) continue;
         const bars = all.slice(-FX_FAST.liveBars[tf]);
         if (bars[bars.length - 1]!.t + 4 * TF_MIN[tf] * 60_000 >= now) pairsSeen.add(inst.id);
         const [b1, b2] = this.bigFor(tf, inst.id, book);
@@ -485,7 +485,7 @@ export class FastLab {
         newest = Math.max(newest, bars[last]!.t);
         const fired: FastFiring['byPair'][string] = [];
         for (const s of STRATEGIES) {
-          if (s.id === 'random' || !runsOn(s, tf)) continue;
+          if (s.id === 'random' || !runsOn(s, tf, inst.id)) continue;
           const sig = s.signal(se.ctx, last);
           if (!sig) continue;
           const row = rowsTf.find((r) => r.id === s.id);

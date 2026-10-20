@@ -14,7 +14,7 @@ import { buildPlan, leanOf, nextChecks, tradeLines, type PlanInputs } from '../s
 import { marketClock } from '../src/forex/calendar';
 import { buildStrength } from '../src/forex/strength';
 import { buildMood } from '../src/forex/mood';
-import { INSTRUMENTS, type Bar, type Signal } from '../src/forex/types';
+import { INSTRUMENTS, type Bar, type Signal, isCrypto } from '../src/forex/types';
 import type { RStats } from '../src/forex/engine';
 
 const H = 3_600_000;
@@ -434,9 +434,11 @@ describe('15-minute and 1-minute lab (v15)', () => {
       FX_CONFIG.botFastCharts = false;
     }
     expect(lab.runs[0]!.tf).toBe('15m');
-    // weekends: nothing to check
+    // weekends: the forex markets are skipped (v22: the decide pass still runs for the coins, which never close)
     await fast.decide('1m', Date.UTC(2026, 9, 17, 12));
-    expect(sync).toHaveBeenCalledTimes(2);
+    expect(sync).toHaveBeenCalledTimes(3);
+    const call3 = sync.mock.calls[2] as unknown as [LabOpenTrade[]];
+    expect(call3[0].every((t) => isCrypto(t.pair))).toBe(true);
   }, 60_000);
 });
 
@@ -516,7 +518,12 @@ describe("the bot's plan (v15)", () => {
 
   it('weekends and news blocks', () => {
     const sat = Date.UTC(2026, 9, 17, 12);
-    expect(buildPlan(base({ now: sat, clock: marketClock(sat) })).summary).toMatch(/Market closed/);
+    // v22: the coins trade through the weekend, so the plan is never "closed" — the forex markets are
+    const wk = buildPlan(base({ now: sat, clock: marketClock(sat) }));
+    expect(wk.mode.kind).not.toBe('closed');
+    expect(wk.nextLook.does).toMatch(/Forex is closed for the weekend/);
+    expect(wk.markets.find((m) => m.id === 'EURUSD')!.blocks.join(' ')).toMatch(/market closed/);
+    expect(wk.markets.find((m) => m.id === 'BTCUSD')!.blocks.join(' ')).not.toMatch(/market closed/);
     const p = buildPlan(base({ upcoming: (pair) => (pair === 'EURUSD' ? [{ t: WED + 20 * M, ccy: 'USD', title: 'CPI', impact: 'High' }] : []), blockNow: (pair) => (pair === 'EURUSD' ? 'USD news: CPI' : null) }));
     const eur = p.markets.find((m) => m.id === 'EURUSD')!;
     expect(eur.status).toBe('blocked');

@@ -160,7 +160,7 @@ export class YahooLive {
   lastTickAt = 0;
 
   constructor(private readonly makeSocket: SocketFactory = realSocket, private readonly clock: () => number = Date.now, insts: readonly Instrument[] = INSTRUMENTS) {
-    for (const i of insts) if (i.kind === 'fx') this.bySymbol.set(i.yahoo.toUpperCase(), i);
+    for (const i of insts) if (i.kind !== 'metal') this.bySymbol.set(i.yahoo.toUpperCase(), i);
   }
 
   get pairs(): string[] {
@@ -174,7 +174,7 @@ export class YahooLive {
     const resub = setInterval(() => this.subscribe(), YL.resubscribeMs);
     const dog = setInterval(() => {
       const now = this.clock();
-      if (this.sock && marketClock(now).open && now - Math.max(this.lastMsgAt, this.connectedAt) > YL.watchdogMs) {
+      if (this.sock && (marketClock(now).open || [...this.bySymbol.values()].some((i) => i.kind === 'crypto')) && now - Math.max(this.lastMsgAt, this.connectedAt) > YL.watchdogMs) {
         log.warn('yahoo live stream silent — reconnecting');
         this.drop('silent while forex is open');
       }

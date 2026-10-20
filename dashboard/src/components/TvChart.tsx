@@ -5,7 +5,7 @@
  */
 import { useEffect, useRef } from 'react';
 
-export const tvSymbol = (id: string) => (id === 'XAUUSD' ? 'OANDA:XAUUSD' : id === 'XAGUSD' ? 'OANDA:XAGUSD' : `OANDA:${id}`);
+export const tvSymbol = (id: string) => (id === 'XAUUSD' ? 'OANDA:XAUUSD' : id === 'XAGUSD' ? 'OANDA:XAGUSD' : ['BTCUSD', 'ETHUSD', 'SOLUSD'].includes(id) ? `COINBASE:${id}` : `OANDA:${id}`);
 
 export function TvChart({ pair, interval = '5', height = 460, compact = false }: { pair: string; interval?: string; height?: number; compact?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);

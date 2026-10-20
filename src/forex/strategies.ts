@@ -5,7 +5,7 @@
  */
 import { STRETCH } from './stretch';
 import type { Ctx } from './ta';
-import type { Signal } from './types';
+import { isCrypto, type Signal } from './types';
 
 /**
  * v13: a "shock" candle = what a big news release looks like on an hourly chart: range ≥ 2.2× the normal hourly range
@@ -119,6 +119,9 @@ export const STAT_ARB_PAIRS = ['EURGBP', 'AUDNZD', 'EURCHF'];
 export function roundStep(pair: string): number {
   if (pair === 'XAUUSD') return 10;
   if (pair === 'XAGUSD') return 0.5;
+  if (pair === 'BTCUSD') return 1000;
+  if (pair === 'ETHUSD') return 100;
+  if (pair === 'SOLUSD') return 10;
   return pair.endsWith('JPY') ? 1 : 0.01;
 }
 
@@ -1083,7 +1086,11 @@ export const STRATEGIES: Strategy[] = [
 export const strategyById = (id: string) => STRATEGIES.find((s) => s.id === id) ?? null;
 
 /** v15: does a strategy run on this chart? Session rules need hourly bars; multi-day rules skip 15m / 1m. Pure. */
-export function runsOn(s: Pick<Strategy, 'onlyHourly' | 'slow'>, tf: string): boolean {
+/** v22: rules built on the forex week, its sessions, central-bank rates, the CFTC report or currency baskets have no
+ * meaning on a coin that trades 24/7 against the dollar — they never run there. */
+export const NOT_FOR_CRYPTO = new Set(['london_breakout', 'ny_open', 'prev_day_hl', 'asian_fade', 'local_hours', 'fix_flow', 'month_end_flow', 'weekend_gap', 'nr7_break', 'carry_trend', 'cot_squeeze', 'stretch_squeeze', 'ccy_momentum', 'stat_arb', 'mom_blend', 'oil_cad', 'yield_jpy', 'stocks_jpy', 'dollar_gold', 'turtle_soup']);
+export function runsOn(s: Pick<Strategy, 'onlyHourly' | 'slow' | 'id'>, tf: string, pair?: string): boolean {
+  if (pair && isCrypto(pair) && NOT_FOR_CRYPTO.has(s.id)) return false;
   if (s.onlyHourly) return tf === '1h';
   if (s.slow) return tf === '1h' || tf === '4h';
   return true;

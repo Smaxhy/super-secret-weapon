@@ -3,7 +3,7 @@
  * exist by now (weekend / holiday hours and the metals' daily halt don't count). A stale market gets no NEW bot trades
  * (open ones keep their stops and targets). Pure.
  */
-import { marketClock, nyOffsetMs } from './calendar';
+import { clockFor, nyOffsetMs } from './calendar';
 import type { Bar } from './types';
 
 export const FRESH = {
@@ -29,7 +29,7 @@ export function lagBars(id: string, lastT: number | null, now: number, barMs: nu
   let n = 0;
   const metal = id.startsWith('XA');
   for (let t = want; t > lastT && n < cap; t -= barMs) {
-    if (!marketClock(t + barMs / 2).open) continue;
+    if (!clockFor(id, t + barMs / 2).open) continue;
     if (metal && barMs <= 3_600_000 && metalHalt(t)) continue;
     n++;
   }
@@ -51,7 +51,7 @@ export interface DataAge {
 export function dataAgeOf(id: string, tf: string, bars: readonly Bar[], now: number, barMs: number): DataAge {
   const lastT = bars.length ? bars[bars.length - 1]!.t : null;
   const lag = lagBars(id, lastT, now, barMs);
-  const status: DataAge['status'] = lastT === null ? 'none' : lag >= (FRESH.lagStale[tf] ?? 2) ? 'stale' : !marketClock(now).open ? 'closed' : 'fresh';
+  const status: DataAge['status'] = lastT === null ? 'none' : lag >= (FRESH.lagStale[tf] ?? 2) ? 'stale' : !clockFor(id, now).open ? 'closed' : 'fresh';
   return { id, tf, lastT, lagBars: lag, status };
 }
 

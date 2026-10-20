@@ -614,7 +614,7 @@ export function runDesk(inp: DeskInput): DeskReport {
         const fillPx = d > 0 ? p.m.fill[d - 1]! : NaN;
         // the leg from yesterday's close (or the fill, if the position changed) to today's close
         const base = fin(fillPx) && p.lastFill === d - 1 ? fillPx : cPrev;
-        const q = inp.usdPer(p.m.inst.kind === 'metal' ? 'USD' : p.m.inst.id.slice(3, 6), d) ?? 0;
+        const q = inp.usdPer(p.m.inst.kind !== 'fx' ? 'USD' : p.m.inst.id.slice(3, 6), d) ?? 0;
         if (fin(c) && fin(base)) pnl += u * (c - base) * q;
         // v18: overnight financing for the nights since the last close — the carry its way minus the broker markup
         // (financing.ts), like every other test; unknown rate = none
@@ -642,7 +642,7 @@ export function runDesk(inp: DeskInput): DeskReport {
         const c = p.m.close[d]!;
         const v = p.vol[d]!;
         const fc = forecastOf(p, d);
-        const q = inp.usdPer(p.m.inst.kind === 'metal' ? 'USD' : p.m.inst.id.slice(3, 6), d);
+        const q = inp.usdPer(p.m.inst.kind !== 'fx' ? 'USD' : p.m.inst.id.slice(3, 6), d);
         if (!fin(c) || !fin(v) || v <= 0 || !q) {
           targets[k] = units[k]!; // no data: hold
           continue;
@@ -669,7 +669,7 @@ export function runDesk(inp: DeskInput): DeskReport {
         if (next === held) continue;
         const fillPx = p.m.fill[d]!;
         if (!fin(fillPx)) continue; // no bar to fill on: hold until there is one
-        const q = inp.usdPer(p.m.inst.kind === 'metal' ? 'USD' : p.m.inst.id.slice(3, 6), d) ?? 0;
+        const q = inp.usdPer(p.m.inst.kind !== 'fx' ? 'USD' : p.m.inst.id.slice(3, 6), d) ?? 0;
         const c = p.m.close[d]!;
         // the leg from the close to the fill for the units held, then the cost of the change
         const legPnl = fin(c) ? held * (fillPx - c) * q : 0;
@@ -685,7 +685,7 @@ export function runDesk(inp: DeskInput): DeskReport {
       if (d === n - 1 && wantRules) {
         now = preps.map((p, k) => {
           const c = p.m.close[d]!;
-          const q = inp.usdPer(p.m.inst.kind === 'metal' ? 'USD' : p.m.inst.id.slice(3, 6), d) ?? 0;
+          const q = inp.usdPer(p.m.inst.kind !== 'fx' ? 'USD' : p.m.inst.id.slice(3, 6), d) ?? 0;
           const v = p.vol[d]!;
           const fc = p.combined[d]!;
           const rules: Record<string, number> = {};

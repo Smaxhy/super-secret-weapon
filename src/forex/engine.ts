@@ -11,6 +11,7 @@ import { lockedStop, lockPlan, PROFIT_LOCK, type LockPlan } from './profit-lock'
 import type { Ctx } from './ta';
 import type { Strategy } from './strategies';
 import type { Instrument, Signal, Timeframe, Trade } from './types';
+import { runsOn } from './strategies';
 
 export const WARMUP = 210;
 
@@ -18,6 +19,7 @@ export const WARMUP = 210;
 export function signalsFor(c: Ctx, s: Strategy): Array<Signal | null> {
   const n = c.bars.length;
   const out: Array<Signal | null> = new Array(n).fill(null);
+  if (c.pair && !runsOn(s, c.barMin === 240 ? '4h' : c.barMin === 15 ? '15m' : c.barMin === 1 ? '1m' : '1h', c.pair)) return out; // v22: forex-only rules give no signal on a coin
   // v15: the last closed bar too — its signal is a trade the live bot takes right now (see `simulate`)
   for (let i = WARMUP; i < n; i++) out[i] = s.signal(c, i);
   return out;

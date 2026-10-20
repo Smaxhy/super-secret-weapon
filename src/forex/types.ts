@@ -18,7 +18,8 @@ export interface Instrument {
   pip: number;
   /** typical retail spread in pips (round trip cost = 1 spread) */
   spreadPips: number;
-  kind: 'fx' | 'metal';
+  /** v22: 'crypto' = a coin against USD (24/7, no central bank, no weekend, no rollover) */
+  kind: 'fx' | 'metal' | 'crypto';
 }
 
 export const INSTRUMENTS: Instrument[] = [
@@ -37,7 +38,16 @@ export const INSTRUMENTS: Instrument[] = [
   { id: 'EURCHF', label: 'EUR/CHF', yahoo: 'EURCHF=X', pip: 0.0001, spreadPips: 1.8, kind: 'fx' },
   { id: 'XAUUSD', label: 'Gold', yahoo: 'GC=F', pip: 0.01, spreadPips: 30, kind: 'metal' },
   { id: 'XAGUSD', label: 'Silver', yahoo: 'SI=F', pip: 0.001, spreadPips: 30, kind: 'metal' },
+  // v22: crypto majors against the dollar (Yahoo spot candles, 24/7). Spreads = a typical perp / exchange taker cost.
+  { id: 'BTCUSD', label: 'BTC/USD', yahoo: 'BTC-USD', pip: 1, spreadPips: 25, kind: 'crypto' },
+  { id: 'ETHUSD', label: 'ETH/USD', yahoo: 'ETH-USD', pip: 0.1, spreadPips: 15, kind: 'crypto' },
+  { id: 'SOLUSD', label: 'SOL/USD', yahoo: 'SOL-USD', pip: 0.01, spreadPips: 6, kind: 'crypto' },
 ];
+
+/** v22: a crypto market (always open, priced in USD, 1 unit = 1 coin). */
+export const isCrypto = (id: string) => INSTRUMENTS.some((i) => i.id === id && i.kind === 'crypto');
+/** v22: crypto limits — coins move 3–5× what a currency pair does, so leverage is capped whatever the risk mode */
+export const CRYPTO = { maxLeverage: 20 };
 
 export const instrument = (id: string) => INSTRUMENTS.find((x) => x.id === id) ?? null;
 
