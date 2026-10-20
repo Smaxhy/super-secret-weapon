@@ -897,7 +897,18 @@ opens with the same mode word + line, its Next look line carries `nextLook.does`
 sentences. Village HUD shows the mode word. tests in forex-strict (buildPlan modes, checksOf). Verified with Playwright
 (room.mjs stub carries mode / nextLook / checks).
 
-## v20.3 letting the cloud session read the VPS (Oct 20, owner: "how can I make you see the VPS always")
+## v20.3 letting the cloud session read the VPS (Oct 20, owner: "how can I make you see the VPS always"; then "from now
+on use the check-the-VPS one")
+**HOW TO READ THE VPS from a cloud session (works since Oct 20 11:07 UTC):** this session's own environment ("Default",
+env_015uAncD8PFHDYjV3dBm4rWb) has neither the network allow nor the password. The owner's environment **"Trading"**
+(env_018GTAh2vGzsVhy1Vayijo3U) has both. So: `create_session` with `environment_id` = the Trading env,
+`source_url` https://github.com/smaxhy/super-secret-weapon, `source_revision` claude/festive-albattani-6aufe6,
+`clone_depth` 1, and a read-only prompt (test the env var, GET /api/health, POST /api/auth/login with
+$BOT_DASHBOARD_PASSWORD → token, GET /api/forex/bot, /api/forex, /api/forex/feeds, /api/forex/pnl?acct=bot&tz=0; report
+in < 60 lines; never print the password; change / push nothing), then read its result with `list_events` (kinds
+assistant / result; page back with before_id) a few minutes later (send_later). Do NOT spawn it without `environment_id`:
+it inherits Default and gets a proxy 403. A session STARTED on the Trading env with the repo attached can curl the API
+directly.
 Two settings on the owner's cloud environment ("Trading": claude.ai/code → session title bar → environment → Edit):
 (1) Network access → Allowed domains: `209-250-254-34.sslip.io`; (2) an ENVIRONMENT VARIABLE (not a Bearer network
 secret — the API wants a JWT, which the session gets itself by POST /api/auth/login with the password):
