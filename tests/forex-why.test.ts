@@ -19,6 +19,24 @@ const base = (): WhyInput => ({
 const run = (t: number, signals: number, chosen: number, opened = 0, skipped = 0, waits = 0) => ({ t, tf: '1h', signals, chosen, opened, skipped, waits, holding: 0, note: '' });
 
 describe('why no trades (v19.4)', () => {
+  it('explains resting orders that never filled (the owner\'s Oct 20 morning)', () => {
+    const r = whyNoTrades({
+      ...base(),
+      runs: [run(now - 1 * H, 60, 2, 0, 0, 0), run(now - 2 * H, 40, 1)],
+      log: [
+        { t: now - 11 * 60_000, e: 'placed a pullback order to buy XAUUSD (news_fade, 1h) at 4150.01, good until 10:00 UTC, risking 5%' },
+        { t: now - 15 * H, e: 'placed a pullback order to sell EURJPY (fib_pullback, 1h) at 177.829, good until 18:00 UTC, risking 5%' },
+        { t: now - 20 * H, e: 'GBPUSD (ema_cross): its limit order expired unfilled' },
+        { t: now - 21 * H, e: 'placed a pullback order to buy GBPUSD (ema_cross, 1h) at 1.33, good until 12:00 UTC, risking 5%' },
+      ],
+      ordersNow: 2,
+    });
+    expect(r.orders).toEqual({ placed: 3, filled: 0, expired: 1, cancelled: 0 });
+    expect(r.verdict).toMatch(/3 tradeable signals in 24 h became 3 resting orders .*0 filled, 1 expired unfilled, 0 cancelled, 2 still waiting/);
+    expect(r.hint).toMatch(/pullback/);
+    expect(r.quiet).toBe(true);
+  });
+
   it('classifies the bot log wording into reason buckets', () => {
     expect(classify('waiting on EURUSD (ema_cross): it just closed a trade here — cooling off 120 min')).toBe('cooldown');
     expect(classify('skipped GBPUSD (tsmom): the signal judge gives it a 31% chance (needs 45%)')).toBe('judge_no');

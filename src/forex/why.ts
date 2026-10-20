@@ -26,6 +26,7 @@ export type ReasonKind =
   | 'ccy_cap'
   | 'heat'
   | 'margin'
+  | 'resting'
   | 'other';
 
 const LABEL: Record<ReasonKind, string> = {
@@ -43,6 +44,7 @@ const LABEL: Record<ReasonKind, string> = {
   ccy_cap: 'too much of the account already rode on that currency',
   heat: 'correlated risk was full',
   margin: 'not enough free margin',
+  resting: 'it placed a resting pullback / limit order instead of buying at market (the entry lab found that pays better) — it only becomes a trade if the price comes back to it before the order expires',
   other: 'another check',
 };
 
@@ -84,6 +86,8 @@ export interface WhyInput {
 
 export interface WhyReport {
   at: number;
+  /** resting orders in the window: placed / filled / expired unfilled / cancelled */
+  orders: { placed: number; filled: number; expired: number; cancelled: number };
   /** hours since the bot last opened a trade or order (null = never) */
   hoursSinceOpen: number | null;
   openNow: number;
@@ -119,9 +123,17 @@ export function whyNoTrades(x: WhyInput): WhyReport {
     if (c) c.n += 1;
     else counts.set(kind, { n: 1, example });
   };
+  let placed = 0;
+  let expired = 0;
+  let cancelled = 0;
+  let filled = 0;
   for (const l of x.log) {
     if (l.t < since) continue;
     const e = l.e;
+    if (/^placed a (pullback|limit) order/.test(e)) { placed += 1; add('resting', e); continue; }
+    if (/limit order expired unfilled/.test(e)) { expired += 1; continue; }
+    if (/^cancelled .*limit order/.test(e)) { cancelled += 1; continue; }
+    if (/^filled (long|short) /.test(e)) { filled += 1; continue; }
     if (!/^(waiting on|waited on|skipped) /.test(e)) continue;
     add(classify(e), e);
   }
@@ -158,6 +170,9 @@ export function whyNoTrades(x: WhyInput): WhyReport {
   } else if (window.chosen === 0) {
     verdict = `${head} ${window.signals} signal${window.signals === 1 ? '' : 's'} fired in ${hours} h, but none came from the ${chosenN} strateg${chosenN === 1 ? 'y' : 'ies'} the bot trades.`;
     hint = 'The firing rules have no proven edge, so it lets them pass. More strategies qualify as the paper record grows (Lab → the playbook).';
+  } else if (window.opened === 0 && placed > 0) {
+    verdict = `${head} ${window.chosen} tradeable signal${window.chosen === 1 ? '' : 's'} in ${hours} h became ${placed} resting order${placed === 1 ? '' : 's'} (pullback / limit entries), not market buys: ${filled} filled, ${expired} expired unfilled, ${cancelled} cancelled, ${x.ordersNow} still waiting.`;
+    hint = 'The entry lab picked "wait for a pullback" for these strategies because it paid more per signal in the past — the cost is signals that never come back. Lab → "Does entry timing help?" shows the trade-off; the strategy row badge shows its way in.';
   } else {
     const top = reasons.find((r) => r.kind !== 'not_chosen');
     if (top) {
@@ -168,7 +183,7 @@ export function whyNoTrades(x: WhyInput): WhyReport {
     }
   }
   if (staleMarkets.length && !verdict.includes('stale')) verdict += ` Price feed lagging on ${staleMarkets.length} market${staleMarkets.length === 1 ? '' : 's'} (${staleMarkets.slice(0, 4).join(', ')}${staleMarkets.length > 4 ? '…' : ''}).`;
-  return { at: x.now, hoursSinceOpen, openNow: x.openNow, ordersNow: x.ordersNow, marketOpen: x.clock.open, window, reasons, staleMarkets, verdict, hint, quiet };
+  return { at: x.now, orders: { placed, filled, expired, cancelled }, hoursSinceOpen, openNow: x.openNow, ordersNow: x.ordersNow, marketOpen: x.clock.open, window, reasons, staleMarkets, verdict, hint, quiet };
 }
 
 const HINT: Partial<Record<ReasonKind, string>> = {

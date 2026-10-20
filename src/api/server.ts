@@ -203,7 +203,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       try {
         if (fx && snap) {
           const acct = snap.account;
-          const opened = [...acct.positions.map((p) => p.openedAt), ...(acct.orders ?? []).map((o) => o.placedAt), ...acct.closed.map((c) => (c as { openedAt?: number }).openedAt ?? c.closedAt)].filter((t): t is number => typeof t === 'number');
+          const opened = [...acct.positions.map((p) => p.openedAt), ...acct.closed.map((c) => (c as { openedAt?: number }).openedAt ?? c.closedAt)].filter((t): t is number => typeof t === 'number');
           why = whyNoTrades({
             now,
             runs: fx.runs,
