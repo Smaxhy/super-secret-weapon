@@ -897,6 +897,17 @@ opens with the same mode word + line, its Next look line carries `nextLook.does`
 sentences. Village HUD shows the mode word. tests in forex-strict (buildPlan modes, checksOf). Verified with Playwright
 (room.mjs stub carries mode / nextLook / checks).
 
+## v20.6 Pyth: the key is accepted, the stream is refused → poll (Oct 20, owner: "Pyth is fixed now")
+VPS read 12:05 UTC (version 5177c8c): the dashboard key is saved (`pyth.dourolabs.app`), `/v2/price_feeds` answers 200
+with it (12 pairs planned), but `/v2/updates/price/stream` answers **HTTP 403** (109 fails) → no tick ever arrived.
+Pyth's docs (search extracts; docs.pyth.network is DNS-blocked from the sandbox) give the same URL + `Authorization:
+Bearer` we send, so the 403 is the plan / gateway refusing SSE for this key, not a wrong request. pyth.ts: a stream
+refused with `PYTH.pollOn` [403, 404, 405, 426] → `mode` 'poll': GET `/v2/updates/price/latest?ids[]=…&parsed=true`
+every `pollMs` 1.2 s (Hermes limit 10 requests / 10 s per IP), applied like a stream event, feed 'pyth-live' ok; the
+stream is tried again after `streamRetryMs` 30 min; `streamError` text; `/api/forex/pyth` → `mode`, `streamError`;
+PythCard badge "live (polling every second)". Other stream errors keep the old back-off. tests/forex-pyth (+1).
+If the poll ALSO answers 403, the key has no Hermes data rights at all (Pyth Terminal → the key's plan).
+
 ## v20.5 Dukascopy probe hit a dead host (Oct 20, owner: "get me the correct site for Dukascopy")
 The v18.6 `probeDukascopy` tested `datafeed.dukascopy.com/datafeed/…bi5` — the OLD endpoint, retired — while the pinned
 dukascopy-node 1.50.0 downloads from **`https://jetta.dukascopy.com/v1/candles/hour/<INSTRUMENT>/BID/<year>/<month>`**

@@ -136,6 +136,30 @@ describe('v17.9 PythLive stream', () => {
     expect(live.get('EURUSD')).toBeNull();
   });
 
+  it('v20.6: a stream refused with 403 falls back to polling the latest prices once a second', async () => {
+    const T = 1_760_000_000;
+    let now = T * 1000 + 500;
+    const urls: string[] = [];
+    let polls = 0;
+    const fetcher = vi.fn(async (url: string) => {
+      urls.push(url);
+      if (url.includes('/v2/price_feeds')) return { ok: true, status: 200, json: async () => METAS, body: null };
+      if (url.includes('/v2/updates/price/stream')) return { ok: false, status: 403, json: async () => ({}), body: null };
+      polls++;
+      return { ok: true, status: 200, json: async () => ({ parsed: [{ id: 'aa', price: { price: String(110000 + polls), conf: '5', expo: -5, publish_time: T + polls }, ema_price: { price: '110000', conf: '5', expo: -5, publish_time: T + polls }, metadata: {} }] }), body: null };
+    });
+    const live = new PythLive(fetcher as never, () => now);
+    live.start();
+    await vi.waitFor(() => expect(live.updates).toBeGreaterThanOrEqual(1));
+    expect(live.mode).toBe('poll');
+    expect(live.streamError).toMatch(/HTTP 403/);
+    expect(urls.some((u) => u.includes('/v2/updates/price/latest?') && u.includes('ids[]=aa') && u.includes('parsed=true'))).toBe(true);
+    now += 1_000;
+    expect(live.get('EURUSD')!.px).toBeCloseTo(1.10001, 8);
+    expect(feeds.get('pyth-live').okAt).not.toBeNull();
+    live.stop();
+  });
+
   it('an error event or a failed feed list counts as a failure and is retried', async () => {
     const before = feeds.get('pyth-live').fails;
     const fetcher = vi.fn(async (url: string) => {

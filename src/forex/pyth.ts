@@ -34,6 +34,12 @@ export const PYTH = {
   resolveEveryMs: 24 * 3_600_000,
   /** 1-minute candles kept per pair */
   keepBars: 180,
+  /** v20.6: the stream endpoint refused with one of these (the key works for the feed list, so the plan / gateway does not
+   * allow SSE) → poll `/v2/updates/price/latest` instead, every `pollMs` (Hermes allows 10 requests per 10 s per IP),
+   * and try the stream again after `streamRetryMs` */
+  pollOn: [403, 404, 405, 426],
+  pollMs: 1_200,
+  streamRetryMs: 30 * 60_000,
 };
 
 /** the key in use + where it worked: the dashboard's (DB) first, else the VPS .env's */
@@ -254,6 +260,11 @@ export class PythLive {
   updates = 0;
   /** when the last price arrived (ms, this process's clock) */
   lastTickAt = 0;
+  /** v20.6: 'stream' = SSE, 'poll' = one request a second (the stream endpoint refused the key) */
+  mode: 'stream' | 'poll' = 'stream';
+  private pollUntil = 0;
+  /** the last stream refusal, for the feed card */
+  streamError: string | null = null;
 
   constructor(private readonly fetcher: Fetch = fetch as unknown as Fetch, private readonly clock: () => number = Date.now) {}
 
@@ -370,10 +381,24 @@ export class PythLive {
       try {
         if (!this.pairs.length || this.clock() - this.resolvedAt > PYTH.resolveEveryMs) await this.resolve();
         if (!live()) break;
+        if (this.mode === 'poll' && this.clock() < this.pollUntil) {
+          await this.poll(live);
+          continue;
+        }
+        this.mode = 'stream';
         await this.stream();
         this.fails = 0;
       } catch (err) {
         if (!live()) break;
+        // v20.6: the stream endpoint is refused for this key → poll the latest prices instead (no back-off: the key works)
+        const code = /^stream HTTP (\d+)$/.exec((err as Error).message)?.[1];
+        if (code && PYTH.pollOn.includes(Number(code))) {
+          this.mode = 'poll';
+          this.pollUntil = this.clock() + PYTH.streamRetryMs;
+          this.streamError = `stream refused (HTTP ${code}) — polling the latest prices every ${PYTH.pollMs / 1000} s instead`;
+          log.warn({ code }, 'pyth stream refused — polling instead');
+          continue;
+        }
         this.fails++;
         feeds.fail('pyth-live', err);
         log.warn({ err: (err as Error).message, fails: this.fails }, 'pyth stream failed');
@@ -381,6 +406,32 @@ export class PythLive {
       if (!live()) break;
       const wait = PYTH.backoffMs[Math.min(PYTH.backoffMs.length - 1, Math.max(0, this.fails - 1))]!;
       await new Promise((r) => setTimeout(r, this.fails ? wait : 1_000));
+    }
+  }
+
+  /** v20.6: one GET a second of every feed's latest price, applied like a stream event; returns when `pollUntil` passes
+   * (the stream is then tried again) or the loop ends; throws on an HTTP error (the normal back-off applies) */
+  private async poll(live: () => boolean): Promise<void> {
+    const ids = [...this.byFeed.keys()];
+    const qs = ids.map((id) => `ids[]=${id}`).join('&');
+    let got = false;
+    let n = 0;
+    while (live() && this.clock() < this.pollUntil) {
+      const t0 = this.clock();
+      const res = await this.fetcher(`${conf.base}/v2/updates/price/latest?${qs}&parsed=true&ignore_invalid_price_ids=true`, { signal: AbortSignal.timeout(10_000), headers: { accept: 'application/json', ...auth() } });
+      if (!res.ok) throw new Error(`poll HTTP ${res.status}`);
+      const j = await res.json();
+      this.lastByteAt = this.clock();
+      const before = this.updates;
+      this.apply(JSON.stringify(j));
+      this.fails = 0;
+      n++;
+      if (this.updates > before && (!got || n % 60 === 0)) {
+        got = true;
+        feeds.ok('pyth-live', { items: this.pairs.length, asOf: this.clock() });
+      }
+      const wait = PYTH.pollMs - (this.clock() - t0);
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     }
   }
 

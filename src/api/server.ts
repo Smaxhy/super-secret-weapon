@@ -377,7 +377,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     // v17.12: the Pyth API key, pasted on the dashboard: tested on Pyth first, kept in this server's DB, shown masked
     secured.get('/api/forex/pyth', async () => {
       const c = pythConf();
-      return { connected: !!c.key, source: c.source, key: maskToken(c.key || null), host: c.key ? new URL(c.base).host : null, flowing: pythLive.flowing(), lastTickAt: pythLive.lastTickAt || null, pairs: pythLive.pairs.length };
+      return { connected: !!c.key, source: c.source, key: maskToken(c.key || null), host: c.key ? new URL(c.base).host : null, flowing: pythLive.flowing(), lastTickAt: pythLive.lastTickAt || null, pairs: pythLive.pairs.length, mode: pythLive.mode, streamError: pythLive.streamError };
     });
     secured.put<{ Body: { key?: string; clear?: boolean } }>('/api/forex/pyth', async (req, reply) => {
       const b = req.body ?? {};
