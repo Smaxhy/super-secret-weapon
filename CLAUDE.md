@@ -788,6 +788,17 @@ P&Ls anymore")
 calendar read is guarded (`clock?.`, `events ?? []`) so a calendar without a clock can't blank the page. Village: the
 **Treasurer** villager (teal, outside the vault) carries today / week P&L and opens the P&L room.
 
+## v19.3 the village, readable (Oct 20, owner: "make the city more accessible and readable, it's a tad confusing")
+Village.tsx: every worker wears an always-on **name tag in its cloak colour** and a white **"doing now" bubble** above
+it whenever it is busy, within 2.5 tiles of you or hovered (apprentices only when near / hovered); building labels
+11 px bold on a darker plate; the operator is tagged "You"; the worker you can talk to gets an amber ring under its
+feet. `saysFor(data)` (module-level) is the one source of every worker's one-liner for the map AND the new
+**Roster** under the map ("Who is working right now": sprite avatar via `spriteUrl` (the sprite drawn once to a tiny
+canvas → data URL), name, building, live line, busy dot, tap → the same screen; apprentices as chips) — the
+accessible, no-walking twin of the canvas. **Help card** "How the village works" (first visit, localStorage
+`village.help`; "?" button on the map and "How it works" link re-open it). `prefers-reduced-motion`: villagers and
+apprentices stay put (the operator still walks). Verified with Playwright at 390 / 1440 px, light + dark.
+
 ## v19.1 the village (Oct 19, owner: "turn this all into a game: an open world where villagers work for us, medieval pixel
 style; click the guy trading forex and see the full trade with all explanations; a cool environment to learn in")
 `dashboard/src/components/Village.tsx`, route `/forex/village` (Forex menu "The village"; link from the control room).

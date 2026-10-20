@@ -303,8 +303,41 @@ function drawPerson(c: Ctx, m: Mover, time: number, highlight: boolean) {
   if (p.hatKind === 'crown') { rect(c, 5, -1, 6, 2, p.hat); rect(c, 5, -3, 1, 2, p.hat); rect(c, 7, -3, 2, 2, p.hat); rect(c, 10, -3, 1, 2, p.hat); rect(c, 8, -1, 1, 1, '#ef4444'); }
   if (p.hatKind === 'helmet') { rect(c, 4, -1, 8, 3, p.hat); rect(c, 7, -2, 2, 1, p.hat); if (m.kind === 'crypto') rect(c, 7, -1, 2, 1, '#fff7ae'); }
   if (p.hatKind === 'band') { rect(c, 5, 0, 6, 1, p.hat); }
-  if (highlight) { c.strokeStyle = '#fde68a'; c.lineWidth = 1; c.strokeRect(3.5, -4.5, 10, 20); }
+  if (highlight) { rect(c, 2, 13, 12, 1, '#fde68a'); rect(c, 1, 14, 14, 2, '#fde68a'); rect(c, 2, 16, 12, 1, '#fde68a'); rect(c, 4, 14, 8, 2, 'rgba(0,0,0,0.25)'); }
   c.restore();
+}
+
+/** every worker's one-liner + whether it is busy, from the shared data (the map and the roster read the same) */
+function saysFor(X: CRData): Record<RoomKey, { bubble: string; busy: boolean }> {
+  return {
+    scout: { bubble: X.closest.length ? `${X.closest.length} setup${X.closest.length === 1 ? '' : 's'} close` : `${X.markets.length} markets`, busy: X.closest.length > 0 },
+    analyst: { bubble: X.fm ? `${X.fm.id.length === 6 ? `${X.fm.id.slice(0, 3)}/${X.fm.id.slice(3)}` : X.fm.id} ${X.fm.trend === 'up' ? '▲' : X.fm.trend === 'down' ? '▼' : '→'}` : 'no chart yet', busy: !!X.fpos.length },
+    trader: { bubble: X.positions.length ? `${X.positions.length} open ${usd(X.livePnlAll)}` : X.orders.length ? `${X.orders.length} order${X.orders.length === 1 ? '' : 's'} waiting` : 'no trade yet', busy: X.positions.length > 0 },
+    risk: { bubble: `${X.d?.riskMode ?? 'normal'} mode`, busy: false },
+    decisions: { bubble: X.d?.log?.[0]?.e.slice(0, 28) ?? 'nothing yet', busy: false },
+    historian: { bubble: `${X.d?.chosen.length ?? 0} at work`, busy: false },
+    news: { bubble: X.cal.data?.clock?.noNewTrades ? 'no new trades!' : (X.cal.data?.events ?? []).some((e) => e.t > X.now && e.t - X.now < 30 * 60_000 && e.impact === 'High') ? 'news in 30 min!' : 'quiet', busy: !!X.cal.data?.clock?.noNewTrades },
+    crypto: { bubble: `${X.sys.data?.trading?.lastHour?.evaluated ?? 0} coins / h`, busy: (X.sys.data?.trading?.lastHour?.evaluated ?? 0) > 0 },
+    pnl: { bubble: X.pnl.data?.periods?.today && X.pnl.data.periods.week ? `today ${usd(X.pnl.data.periods.today.pnlUsd)} · week ${usd(X.pnl.data.periods.week.pnlUsd)}` : 'counting…', busy: false },
+  };
+}
+
+/** a worker's sprite as a small image for the roster (drawn once per kind) */
+const spriteCache = new Map<string, string>();
+function spriteUrl(kind: Mover['kind']): string {
+  const hit = spriteCache.get(kind);
+  if (hit) return hit;
+  if (typeof document === 'undefined') return '';
+  const cv = document.createElement('canvas');
+  cv.width = 48; cv.height = 66;
+  const c = cv.getContext('2d');
+  if (!c) return '';
+  c.imageSmoothingEnabled = false;
+  c.scale(3, 3);
+  drawPerson(c, { id: kind, kind, label: '', tx: 0, ty: 0, px: 0, py: 6, path: [], facing: 1, speed: 0, idleUntil: 0, home: { x: 0, y: 0 }, wander: 0 }, 0, false);
+  const url = cv.toDataURL();
+  spriteCache.set(kind, url);
+  return url;
 }
 
 // ───────────────────────────── the page ─────────────────────────────
@@ -327,6 +360,10 @@ export function Village() {
   panelRef.current = panel;
   const [prompt, setPrompt] = useState<string | null>(null);
   const [hover, setHover] = useState<string | null>(null);
+  const [help, setHelp] = useState<boolean>(() => {
+    try { return localStorage.getItem('village.help') !== 'seen'; } catch { return true; }
+  });
+  const closeHelp = () => { setHelp(false); try { localStorage.setItem('village.help', 'seen'); } catch { /* private mode */ } };
   const held = useRef<Set<string>>(new Set());
   const phone = wrapW > 0 && wrapW < 640;
   const scale = wrapW >= 1000 ? 2 : wrapW >= 720 ? 1.5 : 2;
@@ -409,6 +446,7 @@ export function Village() {
       statNight = night;
     };
 
+    const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
     let raf = 0;
     let last = performance.now();
     const r2 = rng(3);
@@ -430,22 +468,12 @@ export function Village() {
       }
       stepMover(p, dt);
 
-      const says: Partial<Record<RoomKey, { bubble: string; busy: boolean }>> = {
-        scout: { bubble: X.closest.length ? `${X.closest.length} setup${X.closest.length === 1 ? '' : 's'} close` : `${X.markets.length} markets`, busy: X.closest.length > 0 },
-        analyst: { bubble: X.fm ? `${X.fm.id.length === 6 ? `${X.fm.id.slice(0, 3)}/${X.fm.id.slice(3)}` : X.fm.id} ${X.fm.trend === 'up' ? '▲' : X.fm.trend === 'down' ? '▼' : '→'}` : 'no chart yet', busy: !!X.fpos.length },
-        trader: { bubble: X.positions.length ? `${X.positions.length} open ${usd(X.livePnlAll)}` : X.orders.length ? `${X.orders.length} order${X.orders.length === 1 ? '' : 's'} waiting` : 'no trade yet', busy: X.positions.length > 0 },
-        risk: { bubble: `${X.d?.riskMode ?? 'normal'} mode`, busy: false },
-        decisions: { bubble: X.d?.log?.[0]?.e.slice(0, 28) ?? 'nothing yet', busy: false },
-        historian: { bubble: `${X.d?.chosen.length ?? 0} at work`, busy: false },
-        news: { bubble: X.cal.data?.clock?.noNewTrades ? 'no new trades!' : (X.cal.data?.events ?? []).some((e) => e.t > X.now && e.t - X.now < 30 * 60_000 && e.impact === 'High') ? 'news in 30 min!' : 'quiet', busy: !!X.cal.data?.clock?.noNewTrades },
-        crypto: { bubble: `${X.sys.data?.trading?.lastHour?.evaluated ?? 0} coins / h`, busy: (X.sys.data?.trading?.lastHour?.evaluated ?? 0) > 0 },
-        pnl: { bubble: X.pnl.data?.periods ? `today ${usd(X.pnl.data.periods.today.pnlUsd)} · week ${usd(X.pnl.data.periods.week.pnlUsd)}` : 'counting…', busy: false },
-      };
+      const says = saysFor(X);
       for (const m of world.people) {
         const s = says[m.kind as RoomKey];
-        m.bubble = s?.bubble ?? null;
-        m.busy = s?.busy ?? false;
-        if (!m.path.length && now > m.idleUntil) {
+        m.bubble = s.bubble;
+        m.busy = s.busy;
+        if (!still && !m.path.length && now > m.idleUntil) {
           if (m.busy && Math.random() < 0.7) { m.path = findPath(m.tx, m.ty, m.home.x, m.home.y); m.idleUntil = now + 4000 + Math.random() * 6000; }
           else {
             const goPlaza = Math.random() < 0.15;
@@ -467,7 +495,7 @@ export function Village() {
         });
       }
       for (const a of world.apprentices) {
-        if (!a.path.length && now > a.idleUntil) {
+        if (!still && !a.path.length && now > a.idleUntil) {
           const tx = a.home.x + Math.round((r2() - 0.5) * 6), ty = a.home.y + Math.round((r2() - 0.5) * 2);
           if (walkable(tx, ty)) a.path = findPath(a.tx, a.ty, tx, ty);
           a.idleUntil = now + 3000 + Math.random() * 8000;
@@ -528,17 +556,23 @@ export function Village() {
         ctx.fillStyle = bg; ctx.fillRect(sx - w / 2, sy - 14, w, 16);
         ctx.fillStyle = col; ctx.fillText(text, sx, sy - 2);
       };
-      ctx.font = '600 10px ui-sans-serif, system-ui, sans-serif';
-      for (const b of BUILDINGS) label(b.name, b.x * T + b.w * T / 2, b.y * T - (b.kind === 'hall' ? 14 : b.kind === 'tower' ? 12 : 2), '#e2e8f0', 'rgba(15,23,42,0.55)');
-      ctx.font = '600 11px ui-sans-serif, system-ui, sans-serif';
+      ctx.font = '700 11px ui-sans-serif, system-ui, sans-serif';
+      for (const b of BUILDINGS) label(b.name, b.x * T + b.w * T / 2, b.y * T - (b.kind === 'hall' ? 14 : b.kind === 'tower' ? 12 : 2), '#f8fafc', 'rgba(15,23,42,0.7)');
+      // every worker wears a name tag in its own colour; what it is doing floats above when it is busy, near you or hovered
+      ctx.font = '700 11px ui-sans-serif, system-ui, sans-serif';
       for (const m of [...world.people, ...world.apprentices]) {
         const d = Math.hypot(m.px - p.px, m.py - p.py) / T;
-        const show = d <= 2.5 || world.hoverId === m.id || (m.busy && !m.small);
-        if (!show) continue;
-        if (m.bubble && (d <= 2.5 || world.hoverId === m.id)) label(`${m.label}: ${m.bubble}`, m.px + 8, m.py - 8, '#0f172a', 'rgba(255,255,255,0.92)');
-        else if (m.bubble) label(m.bubble, m.px + 8, m.py - 8, '#0f172a', 'rgba(255,255,255,0.85)');
-        else label(m.label, m.px + 8, m.py - 8);
+        const near3 = d <= 2.5 || world.hoverId === m.id;
+        if (m.small && !near3) continue;
+        const col = PAL[m.kind].cloak;
+        label(m.label, m.px + 8, m.py - 6, '#ffffff', col + 'e6');
+        if (m.bubble && (near3 || m.busy)) {
+          ctx.font = '600 11px ui-sans-serif, system-ui, sans-serif';
+          label(m.bubble, m.px + 8, m.py - 22, '#0f172a', 'rgba(255,255,255,0.94)');
+          ctx.font = '700 11px ui-sans-serif, system-ui, sans-serif';
+        }
       }
+      label('You', p.px + 8, p.py - 6, '#0f172a', 'rgba(253,230,138,0.95)');
       for (const [i, t] of world.toasts.entries()) {
         const age = (now - t.t) / 7000;
         label(t.text.length > 60 ? `${t.text.slice(0, 58)}…` : t.text, 15 * T, 1 * T - 20 - i * 18 - age * 10, '#fef3c7', `rgba(91,75,138,${0.9 - age * 0.7})`);
@@ -613,6 +647,7 @@ export function Village() {
           </div>
           <div className="rounded-lg bg-black/60 px-2 py-1 text-slate-100 backdrop-blur-sm sm:hidden">{x.d?.chosen.length ?? 0} apprentices at work · {x.positions.length} trade{x.positions.length === 1 ? '' : 's'} open</div>
         </div>
+        <button type="button" onClick={() => setHelp(true)} aria-label="How the village works" className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/60 text-sm font-bold text-slate-100 backdrop-blur-sm sm:top-10">?</button>
         <div className="pointer-events-none absolute right-2 top-2 hidden rounded-lg bg-black/60 px-2 py-1 text-xs text-slate-100 backdrop-blur-sm sm:block">
           {world.people.length} villagers · {(x.d?.chosen.length ?? 0)} apprentices at work · {x.positions.length} trade{x.positions.length === 1 ? '' : 's'} open
         </div>
@@ -647,11 +682,79 @@ export function Village() {
           <PanelBody panel={panel} x={x} onClose={() => setPanel(null)} />
         </div>
       )}
+      {help && (
+        <div className="card mt-3 p-3 sm:p-4">
+          <div className="flex items-start gap-3">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-accent-soft text-accent-text"><Icon name="sparkles" size={18} /></div>
+            <div className="min-w-0 flex-1 text-sm text-ink-2">
+              <div className="text-sm font-semibold text-ink">How the village works</div>
+              <ul className="mt-1 list-disc space-y-1 pl-4">
+                <li><span className="font-semibold text-ink">The guild hall in the middle is the bot.</span> Each villager is one part of it: the Scout watches markets, the Analyst reads the chart, the Trader runs the open trades, the Risk keeper sizes them, the Treasurer counts the money, the Clerk logs decisions, the Historian grades strategies, the Crier watches the news, the Miner runs the crypto side.</li>
+                <li><span className="font-semibold text-ink">The white bubble over a villager is what they are doing right now.</span> Their name tag is in their colour. The small grey ones by the library are apprentices: one per strategy the bot has put to work.</li>
+                <li><span className="font-semibold text-ink">To open someone's screen</span>, tap them, or walk up with the arrows / WASD / the d-pad and press E. The list under the map does the same without walking.</li>
+                <li>Daylight means forex is open; night means it is closed. New decisions float up over the guild hall.</li>
+              </ul>
+            </div>
+            <Button size="sm" variant="ghost" onClick={closeHelp} aria-label="Close help"><Icon name="x" size={16} /></Button>
+          </div>
+        </div>
+      )}
+      <Roster x={x} onOpen={(pnl) => setPanel(pnl)} />
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
         <span>Walk: arrows / WASD or tap. Talk: stand next to someone and press E, or tap them. Esc closes a screen.</span>
+        <button type="button" className="text-accent-text hover:underline" onClick={() => setHelp(true)}>How it works</button>
         <Link to="/forex" className="text-accent-text hover:underline">Control room view</Link>
         <Link to="/forex/bot" className="text-accent-text hover:underline">Auto-bot page</Link>
       </div>
+    </div>
+  );
+}
+
+/** who works for you, what they are doing now, one tap to open — the readable twin of the map */
+function Roster({ x, onOpen }: { x: CRData; onOpen: (p: Panel) => void }) {
+  const says = saysFor(x);
+  const rows: Array<{ panel: Panel; kind: Mover['kind']; name: string; place: string; line: string; busy: boolean }> = [
+    { panel: { k: 'hub' }, kind: 'hub', name: 'The bot', place: 'Guild hall', line: `${x.state.word} · next look ${mmss(x.next.at - x.now)}`, busy: x.positions.length > 0 },
+    ...BUILDINGS.filter((b) => b.k !== 'hub').map((b) => {
+      const k = b.k as RoomKey;
+      return { panel: { k }, kind: k as Mover['kind'], name: NAMES[k], place: b.name.split(' · ')[0] ?? b.name, line: says[k].bubble, busy: says[k].busy };
+    }),
+    { panel: { k: 'pnl' }, kind: 'pnl', name: NAMES.pnl, place: 'Outside the vault', line: says.pnl.bubble, busy: false },
+  ];
+  const chosen = (x.d?.chosen ?? []).slice(0, 12);
+  return (
+    <div className="mt-3">
+      <div className="mb-2 flex items-baseline justify-between">
+        <h2 className="text-sm font-semibold text-ink">Who is working right now</h2>
+        <span className="text-xs text-muted">tap anyone to open their screen</span>
+      </div>
+      <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {rows.map((r) => (
+          <li key={r.name}>
+            <button type="button" onClick={() => onOpen(r.panel)} className="card cr-room flex w-full items-center gap-3 p-2.5 text-left">
+              <img src={spriteUrl(r.kind)} alt="" width={32} height={44} className="shrink-0" style={{ imageRendering: 'pixelated' }} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-ink">{r.name}</span>
+                  <span className="truncate text-xs text-muted">{r.place}</span>
+                  {r.busy && <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-good" aria-label="busy" />}
+                </div>
+                <p className="truncate text-xs text-ink-2">{r.line}</p>
+              </div>
+              <Icon name="chevron" size={16} className="shrink-0 text-muted" />
+            </button>
+          </li>
+        ))}
+      </ul>
+      {chosen.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-muted">Apprentices (strategies at work):</span>
+          {chosen.map((id) => {
+            const name = `${x.names[id.split(':')[0]!] ?? id.split(':')[0]} · ${id.split(':')[1] ?? ''}`;
+            return <button key={id} type="button" onClick={() => onOpen({ k: 'historian', apprentice: name })} className="min-h-7 rounded-full bg-surface-2 px-2.5 text-xs text-ink-2 hover:bg-surface-3">{name}</button>;
+          })}
+        </div>
+      )}
     </div>
   );
 }
