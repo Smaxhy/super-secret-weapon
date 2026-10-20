@@ -32,7 +32,7 @@ import { RISK_MODES, newSyncReport, type HeatLive, type LabOpenTrade, type Pract
 import { marketClock, type ForexCalendar } from './calendar';
 import type { ForexHeadlines } from './headlines';
 import { DEFAULT_SIM, equityCurve, rStats, signalsFor, simulate, type RiskResult, type RStats } from './engine';
-import { STRATEGIES, runsOn, strategyById, styleOf, type Family, type Strategy, type Style } from './strategies';
+import { NOT_FOR_CRYPTO, STRATEGIES, runsOn, strategyById, styleOf, type Family, type Strategy, type Style } from './strategies';
 import { buildCtx, to4h, type Ctx } from './ta';
 import { drawingsFor, type Drawings } from './drawings';
 import { applyDesks, buildDesks, type MarketDesk } from './desks';
@@ -1859,7 +1859,7 @@ export class ForexLab {
     const alwaysOff = new Set((rolling?.thisWeek.paused ?? []).map((p) => p.key));
     const mode = FX_CONFIG.strict.mode;
     const strict = mode !== 'off';
-    const chosenRows = rows.filter((x) => x.id !== 'random' && !rec.dropped.includes(`${x.id}:${x.tf}`) && (mode === 'edge' ? x.verdict === 'edge' : mode === 'quality' ? !!x.quality?.ok : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`))));
+    const chosenRows = rows.filter((x) => x.id !== 'random' && !(this.universe === 'crypto' && NOT_FOR_CRYPTO.has(x.id)) && !rec.dropped.includes(`${x.id}:${x.tf}`) && (mode === 'edge' ? x.verdict === 'edge' : mode === 'quality' ? !!x.quality?.ok : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`))));
     // v20.1 strict mode: say once per hour-of-change why the list is empty (the owner reads the Decisions log)
     if (strict && !chosenRows.length && this.chosen.length) this.logBot([mode === 'edge' ? 'strict mode: no strategy has passed the unseen exam right now — the bot waits (nothing is traded until one earns Edge)' : 'strict mode: no strategy clears the quality bar right now — the bot waits']);
     for (const p of rolling?.thisWeek.paused ?? []) {

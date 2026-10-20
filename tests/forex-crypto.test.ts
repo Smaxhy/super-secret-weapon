@@ -113,3 +113,11 @@ describe('v24.2 the coin account through the close / reset routes', () => {
     expect(src.split("acctParam(req.body?.acct, 'me')").length - 1).toBeGreaterThanOrEqual(2); // close + reset
   });
 });
+
+describe('v24.3 coin chooser', () => {
+  it('never puts a forex-only rule (always-on local_hours / fix_flow) on the coin list', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../src/forex/lab.ts', import.meta.url), 'utf8');
+    expect(src).toMatch(/this\.universe === 'crypto' && NOT_FOR_CRYPTO\.has\(x\.id\)/);
+  });
+});

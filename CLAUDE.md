@@ -758,6 +758,12 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v24.3 coin list cleanup (Oct 20, VPS read 20:21 UTC)
+The coin bot's chosen list carried local_hours:1h / fix_flow:1h (botAlways rows kept with 0 coin trades — they never fire on a
+coin, `NOT_FOR_CRYPTO`); the coin lab's chooser now drops every NOT_FOR_CRYPTO id. VPS 20:21: forex 10 chosen, 1 open (USDJPY
+fib_pullback 4h long), 15 of 105 signals opened in 24 h; coin bot 3 open news_fade shorts; Coinbase candles + live OK (the
+Data-age "source: yahoo" label = the primary store, not the feed); every ICT row 'no' (best fvg_entry:4h 29 unseen, +0.11R, PF
+1.37); Dukascopy still 0 bars — every file answers 202 even after 8 × 2 s retries (v21.2 didn't fix it on the VPS).
 ## v24.2 coin trades can be closed by hand (Oct 20, owner: "I can't close trades by hand crypto")
 `POST /api/forex/practice/close` and `/reset` mapped `acct` with `=== 'bot' ? 'bot' : 'me'` (v22.1 missed them), so a
 coin-bot close went to the owner's own account ("no such position") and the crypto Trades page's Reset would have reset
