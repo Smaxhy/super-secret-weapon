@@ -7,6 +7,9 @@ import { summarizeFinancing } from '../src/forex/lab';
 import { newAccount, tick, type PracticeAccount, type Quote } from '../src/forex/practice';
 import { buildCtx, type CtxExt } from '../src/forex/ta';
 import { INSTRUMENTS, type Bar, type Signal } from '../src/forex/types';
+import { VENUE_FEES } from '../src/forex/venue-fees';
+// v26: these tests pin exact R / USD numbers of other features — the venue fee is tested on its own (forex-venue-fees)
+VENUE_FEES.on = false;
 
 const H = 3_600_000;
 const EUR = INSTRUMENTS.find((i) => i.id === 'EURUSD')!;

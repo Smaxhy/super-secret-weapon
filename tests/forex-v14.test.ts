@@ -11,6 +11,9 @@ import { newAccount, tick, type Quote } from '../src/forex/practice';
 import { marketClock } from '../src/forex/calendar';
 import { buildStrength } from '../src/forex/strength';
 import { INSTRUMENTS, type Bar, type Signal } from '../src/forex/types';
+import { VENUE_FEES } from '../src/forex/venue-fees';
+// v26: these tests pin exact R / USD numbers of other features — the venue fee is tested on its own (forex-venue-fees)
+VENUE_FEES.on = false;
 
 const H = 3_600_000;
 const EUR = INSTRUMENTS[0]!;

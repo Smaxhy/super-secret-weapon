@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { newAccount, pnlUsd, tick, unitsFor, usdPer, view, type Quote } from '../src/forex/practice';
 import { instrument } from '../src/forex/types';
+import { VENUE_FEES } from '../src/forex/venue-fees';
+// v26: these tests pin exact R / USD numbers of other features — the venue fee is tested on its own (forex-venue-fees)
+VENUE_FEES.on = false;
 
 const mids = { EURUSD: 1.1, USDJPY: 150, GBPUSD: 1.25, XAUUSD: 2500 };
 const q = (id: string, mid: number, bars: Array<[number, number, number, number]> = []): Quote => ({ id, mid, bid: mid - 0.00004, ask: mid + 0.00004, t: 0, bars, dayChangePct: null, source: 'yahoo' });

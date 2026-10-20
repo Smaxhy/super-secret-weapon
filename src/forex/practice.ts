@@ -5,6 +5,7 @@
  * closed (a broker stop-out). Stops / targets are checked against every 1-minute high / low since the last check.
  * Redis `fx:practice` (one account). Nothing here touches a real broker.
  */
+import { feeUsd } from './venue-fees';
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
 import { bus, type FxNotice } from '../lib/bus';
@@ -216,6 +217,8 @@ export interface ClosedPractice extends PracticePosition {
   closedAt: number;
   pnlUsd: number;
   reason: 'manual' | 'stop' | 'target' | 'stop-out' | 'signal' | 'weekend' | 'partial';
+  /** v26: the venue's open + close fee taken out of `pnlUsd` (venue-fees.ts) */
+  feeUsd?: number;
 }
 
 /** v14: a bot trade paused for the weekend, re-opened after Monday's open if its lab trade is still running */
@@ -494,10 +497,12 @@ export function undoOpen(a: PracticeAccount): { open: number; parts: number; usd
  * weekend. Returns this close's P&L. Mutates `a`. */
 function closePos(a: PracticeAccount, p: PracticePosition, px: number, mids: Record<string, number>, reason: ClosedPractice['reason'], at: number): number {
   ensureStats(a); // an older account's record is rebuilt from the closed list BEFORE this close joins it
-  const pl = Math.round(pnlUsd(p, px, mids) * 100) / 100;
+  // v26: the venue's open + close fee on what is left of the position (venue-fees.ts)
+  const fee = feeUsd(instrument(p.pair) ?? { id: p.pair, kind: 'fx' }, p.marginUsd, p.leverage);
+  const pl = Math.round((pnlUsd(p, px, mids) - fee) * 100) / 100;
   a.balanceUsd = Math.round((a.balanceUsd + pl) * 100) / 100;
   a.open = a.open.filter((x) => x.id !== p.id);
-  a.closed.unshift({ ...p, exit: px, closedAt: at, pnlUsd: pl, reason });
+  a.closed.unshift({ ...p, exit: px, closedAt: at, pnlUsd: pl, reason, ...(fee > 0 ? { feeUsd: fee } : {}) });
   a.closed = a.closed.slice(0, 200);
   logClose(a, a.closed[0]!); // v17.8
   // v17.12: a phone alert for a finished trade (a weekend pause is not the end of it)
@@ -515,14 +520,15 @@ function resumeItemOf(p: PracticePosition, leg: number, at: number): ResumeItem 
 function closePart(a: PracticeAccount, p: PracticePosition, frac: number, px: number, mids: Record<string, number>, at: number): number {
   const units = p.units * frac;
   const part = { ...p, units, marginUsd: Math.round(p.marginUsd * frac * 100) / 100 };
-  const pl = Math.round(pnlUsd(part, px, mids) * 100) / 100;
+  const fee = feeUsd(instrument(p.pair) ?? { id: p.pair, kind: 'fx' }, p.marginUsd * frac, p.leverage); // v26
+  const pl = Math.round((pnlUsd(part, px, mids) - fee) * 100) / 100;
   a.balanceUsd = Math.round((a.balanceUsd + pl) * 100) / 100;
   p.bankedUsd = Math.round(((p.bankedUsd ?? 0) + pl) * 100) / 100;
   p.units -= units;
   p.marginUsd = Math.round(p.marginUsd * (1 - frac) * 100) / 100;
   // one id per part (a trade can take part off at +1R and again at its target)
   const n = a.closed.filter((c) => c.id.startsWith(`${p.id}-part`)).length;
-  a.closed.unshift({ ...part, id: `${p.id}-part${n ? n + 1 : ''}`, exit: px, closedAt: at, pnlUsd: pl, reason: 'partial' });
+  a.closed.unshift({ ...part, id: `${p.id}-part${n ? n + 1 : ''}`, exit: px, closedAt: at, pnlUsd: pl, reason: 'partial', ...(fee > 0 ? { feeUsd: fee } : {}) });
   a.closed = a.closed.slice(0, 200);
   logClose(a, a.closed[0]!); // v17.8
   return pl;

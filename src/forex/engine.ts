@@ -4,6 +4,7 @@
  * gaps fill at the open, stops slip an extra quarter spread. Results are in R so any account size or leverage
  * can be applied afterwards (`equityCurve`).
  */
+import { VENUE_FEES, feeR } from './venue-fees';
 import { spreadMultAt } from './spreads';
 import { ENTRY, type EntryKind } from './entries';
 import { FINANCING, finPerBar } from './financing';
@@ -78,8 +79,10 @@ export interface SimOpts {
   /** v18: accrue overnight financing (the carry its way minus the broker markup) on every bar held (financing.ts) —
    * the practice account books the same at each daily roll. Needs `ctx.ext.carry` (policy rates); unknown = 0. */
   financing?: boolean;
+  /** v26: charge the trading venue's open + close fee (gTrade, venue-fees.ts) on every trade */
+  venueFees?: boolean;
 }
-export const DEFAULT_SIM: Required<SimOpts> = { weekendPause: true, sessionSpreads: true, liveEdge: true, profitLock: PROFIT_LOCK.on, entry: 'market', financing: FINANCING.on };
+export const DEFAULT_SIM: Required<SimOpts> = { weekendPause: true, sessionSpreads: true, liveEdge: true, profitLock: PROFIT_LOCK.on, entry: 'market', financing: FINANCING.on, venueFees: VENUE_FEES.on };
 
 export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: string, sigs: ReadonlyArray<Signal | null>, allow?: Allow, opts: SimOpts = DEFAULT_SIM): Trade[] {
   const o = { ...DEFAULT_SIM, ...opts };
@@ -182,7 +185,9 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
   };
   const finish = (i: number, fill: number, reason: Trade['reason']) => {
     const p = pos!;
-    const r = p.realized + (p.frac * p.side * (fill - p.legEntry)) / p.risk;
+    // v26: the venue's open + close fee on the whole position (venue-fees.ts), in R
+    const fee = o.venueFees ? feeR(inst, p.entry, p.risk) : 0;
+    const r = p.realized + (p.frac * p.side * (fill - p.legEntry)) / p.risk - fee;
     out.push({
       strategy: strategyId,
       tf,

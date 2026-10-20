@@ -12,6 +12,9 @@ import { dataAgeOf, lagBars, staleReason } from '../src/forex/freshness';
 import { cotScoreAt, cotSeries, refreshMacro, valueAt, type MacroData } from '../src/forex/macro';
 import { blindNewsBlock } from '../src/forex/calendar';
 import { tradeLines } from '../src/forex/plan';
+import { VENUE_FEES } from '../src/forex/venue-fees';
+// v26: these tests pin exact R / USD numbers of other features — the venue fee is tested on its own (forex-venue-fees)
+VENUE_FEES.on = false;
 
 const H = 3_600_000;
 const M = 60_000;

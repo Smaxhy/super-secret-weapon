@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { newAccount, takeNotices, tick, type PracticePosition, type Quote } from '../src/forex/practice';
 import { DEFAULT_PUSH_SETTINGS, fxMessageFor } from '../src/lib/push';
 import { PYTH, pythConf, pythKey, setPythConf, testPythKey } from '../src/forex/pyth';
+import { VENUE_FEES } from '../src/forex/venue-fees';
+// v26: these tests pin exact R / USD numbers of other features — the venue fee is tested on its own (forex-venue-fees)
+VENUE_FEES.on = false;
 
 const T = Date.UTC(2026, 9, 14, 14, 0, 0);
 const q = (mid: number, bars: Array<[number, number, number, number, number]>): Quote => ({ id: 'EURUSD', mid, bid: mid - 0.00004, ask: mid + 0.00004, t: T, bars, dayChangePct: null, source: 'yahoo-live' });

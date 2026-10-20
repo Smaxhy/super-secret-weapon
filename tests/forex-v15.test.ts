@@ -16,6 +16,9 @@ import { buildStrength } from '../src/forex/strength';
 import { buildMood } from '../src/forex/mood';
 import { INSTRUMENTS, type Bar, type Signal, isCrypto } from '../src/forex/types';
 import type { RStats } from '../src/forex/engine';
+import { VENUE_FEES } from '../src/forex/venue-fees';
+// v26: these tests pin exact R / USD numbers of other features — the venue fee is tested on its own (forex-venue-fees)
+VENUE_FEES.on = false;
 
 const H = 3_600_000;
 const M = 60_000;

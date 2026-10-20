@@ -758,6 +758,19 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v26 the venue's fee in every test and paper trade (Oct 20 ~21:30 UTC, owner: "add the real gTrade fees"; "my trades
+aren't like 25k tho")
+`src/forex/venue-fees.ts` (`VENUE_FEES` on, gTrade per side, % of the WHOLE position = margin × leverage: majors 0.012, crosses
+0.016, metals 0.05; coins 0 because their `spreadPips` already is a perp taker cost): `feeR(inst, entry, risk)` = 2 × fee% ×
+entry ÷ stop distance → engine `finish` subtracts it from every trade's R (`SimOpts.venueFees`, default on: lab, fast lab,
+honest test, luck twins, judge rows all see it → ONE re-pick event after deploy; some Maybe rows may turn 'no' = fewer
+trades); practice `closePos` / `closePart` take `feeUsd(inst, margin, leverage)` (open + close of the closed size) out of
+`pnlUsd` and store `ClosedPractice.feeUsd` (all accounts; the open fee is charged at the close, so equity during a trade is
+overstated by half the fee). Rates came from search extracts of docs.gains.trade (host unreachable from the sandbox; a
+DefiLlama snapshot showed 0.02 maker / 0.05 taker for EUR/USD + XAU in June) — re-check before going live. NOT modelled:
+gTrade borrowing / funding fees (financing stands in) and open price impact. Bot sizing: position = equity × risk% ÷ stop%
+(margin = that ÷ leverage, capped at 25% of free margin) → at max mode ≈ $10–25k positions on forex majors, which the owner
+sees as ~$50–125 of margin. Tests that pin other features' numbers set `VENUE_FEES.on = false` at the top; tests/forex-venue-fees (4).
 ## v25 owner's rules: ICT live, Fibonacci never alone (Oct 20 ~20:45 UTC, owner: "don't use Fibonacci alone, it clearly
 didn't work yet, put ICT trades live")
 - `FX_CONFIG.ownerLive` ['judas_swing', 'ny_q3', 'amd_daily', 'fvg_entry', 'mss_sweep'] (lab.ts): on the FOREX desk these join
