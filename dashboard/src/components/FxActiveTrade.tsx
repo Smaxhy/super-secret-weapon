@@ -16,6 +16,7 @@ import { fitBars, MarketChart } from './MarketChart';
 import { TradeReadPanel, type ReadsData } from './FxTradeRead';
 import { TvChart } from './TvChart';
 import { Badge, Button, Card, Tabs, useStored } from './ui';
+import { botAcct } from '../lib/ws';
 
 export interface ActiveConviction { tier: 'normal' | 'sure' | 'verySure'; conf: number; of: number; mult: number; lev: number | null }
 export interface ActivePos {
@@ -112,7 +113,7 @@ export function FxActiveTrade({ positions, selectedId, onSelect, plan, onClose, 
           <Tabs label="Open trades" tabs={positions.map((x) => ({ key: x.id, label: `${x.side === 1 ? '▲' : '▼'} ${x.pair}` }))} value={p.id} onChange={onSelect} />
         </div>
       )}
-      <TradeView key={p.id} p={p} plan={pl} onClose={onClose} read={row ? <TradeReadPanel row={row} info={reads?.ai ?? null} acct="bot" onAsked={() => onReadsChanged?.()} /> : null} />
+      <TradeView key={p.id} p={p} plan={pl} onClose={onClose} read={row ? <TradeReadPanel row={row} info={reads?.ai ?? null} acct={botAcct()} onAsked={() => onReadsChanged?.()} /> : null} />
     </Card>
   );
 }
