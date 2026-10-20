@@ -88,15 +88,20 @@ export const FX_CONFIG = {
      *   first part too, at least as good as random timing, not beaten by the luck twins — the deflated Sharpe is shown
      *   but does not gate (with 80+ rows graded on the same weeks it clears nothing on 2 years of hourly data);
      * 'off' = the v18.9 chooser (Edge + Maybe + the always-on four / the rolling picker). */
-    mode: 'quality' as 'edge' | 'quality' | 'off',
+    /** v24.1 (owner, after a day of 'waiting for a setup' with 3 chosen rows, all on the 4-hour chart: "it's been hours"):
+     * 'off' — Edge + Maybe rows trade (the v18.9 chooser); the quality bar is still graded and shown, and the shadow
+     * book scores every gate from now on. Put 'quality' back to return to the 3-row list. */
+    mode: 'off' as 'edge' | 'quality' | 'off',
     /** v24 (owner: "enough solid signals, firing setups but not executing"): was 2 of 4 — on a coin only two of the four
      * checks can even speak (no strength meter, mood mostly "no say"), on forex it held back every trade of the day.
      * 1 = at least one check on its side. The shadow book (shadow.ts) now records what the held-back trades do, so the
      * stricter rule can be judged on real numbers before it comes back. */
     minAgree: 1,
     deskTrades: false,
-    /** v20.4: a strategy may only open on a market where its own tested record there is a winning one */
-    market: { minN: 12, minPf: 1.1 },
+    /** v20.4 / v24.1: a strategy stays off a market where its own tested record there is a LOSING one (12+ trades,
+     * profit factor under 0.9). Was "only a winning one (PF 1.1+)", which also refused every market with a thin or
+     * break-even record — half the chosen rows' markets. */
+    market: { minN: 12, losingPf: 0.9 },
   },
   /** v18.7 (owner: "we can't fast trade these charts, they take time"): the bot account trades the 1h + 4h charts only.
    * The 15m / 1m charts stay lab-tested (Strategies / Lab) but place no bot trades while this is off. */
@@ -2024,13 +2029,13 @@ export class ForexLab {
       })();
       // v20.1: how many market checks stand behind the trade at its signal close (strict mode needs `need` of them)
       const agree = { n: openAgree.get(tradeKey(t)) ?? 0, of: maxConfirmations(t.tf, false), need: FX_CONFIG.strict.minAgree };
-      // v20.4: the strategy's own tested record on THIS market — no winning record here → the trade waits
+      // v20.4 / v24.1: the strategy's own tested record on THIS market — a losing record here → the trade waits
       const marketRec = ((): LabOpenTrade['marketRec'] => {
-        if (!strict || !row) return null;
+        if (!row) return null;
         const pr = row.pairs.find((x) => x.pair === t.pair);
         const m = FX_CONFIG.strict.market;
-        if (!pr) return { n: 0, pf: null, totalR: 0, ok: false };
-        return { n: pr.n, pf: pr.pf, totalR: pr.totalR, ok: pr.n >= m.minN && (pr.pf ?? 99) >= m.minPf && pr.totalR > 0 };
+        if (!pr) return { n: 0, pf: null, totalR: 0, ok: true };
+        return { n: pr.n, pf: pr.pf, totalR: pr.totalR, ok: !(pr.n >= m.minN && (pr.pf ?? 99) < m.losingPf) };
       })();
       return toLabTrade(t, {
         order,

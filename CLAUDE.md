@@ -758,6 +758,16 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v24.1 the gates behind the gate (Oct 20 ~19:00 UTC, owner: "still no trades in forex… it's been hours")
+With the 1-check rule live (18:01 look) the next gates bit: EURUSD pivot_bounce "no winning record on this market (282 trades,
+PF 1.05)", NZDUSD round_fade "no winning record (11 trades)", GBPUSD round_fade judge 58% < 65%, USDJPY pivot_bounce 0 of 3
+checks. And the quality bar left only 3 chosen rows, all 4-hour → at most a handful of chances a day. Changes:
+- `FX_CONFIG.strict.mode` 'quality' → **'off'** (the v18.9 chooser: Edge + Maybe rows − dropped, always-on rows unless resting;
+  the live read had 10 Maybe rows). The quality bar is still graded and shown; `qualityPass` untouched. Put 'quality' back
+  for the 3-row list.
+- Market gate = a LOSING record only: `strict.market` {minN 12, losingPf 0.9}; `marketRec.ok` = !(n ≥ 12 && pf < 0.9), a
+  thin / missing record passes; computed in every mode (was null when strict was off). Wording "losing record on this
+  market (…)"; why.ts hint. The judge gate (tested, AUC 0.58) and the 1-check rule stay. The shadow book scores all of them.
 ## v24 shadow book, the 2-checks gate loosened, real exchange data + 5 more coins (Oct 20, owner: "forex hasn't traded all
 day, enough solid signals; crypto isn't trading at all, needs more accurate data, more hardworking; you didn't add a shadow
 trade feature on forex")

@@ -1585,8 +1585,8 @@ export class Practice {
           continue;
         }
         if (t.marketRec && !t.marketRec.ok && !t.desk) {
-          // v20.4: the strategy has no winning tested record on this market → it does not trade it here
-          const w = t.marketRec.n ? `no winning record on this market (${t.marketRec.n} tested trades here, profit factor ${t.marketRec.pf ?? '—'}, ${t.marketRec.totalR}R)` : 'no tested record on this market yet';
+          // v20.4 / v24.1: the strategy's tested record on this market is a losing one → it does not trade it here
+          const w = `losing record on this market (${t.marketRec.n} tested trades here, profit factor ${t.marketRec.pf ?? '—'}, ${t.marketRec.totalR}R)`;
           note(`${t.ref}:market`, `waiting on ${t.pair} (${t.strategy}): ${w}`);
           skip(t, w, true);
           continue;

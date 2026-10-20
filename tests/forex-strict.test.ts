@@ -76,7 +76,7 @@ afterEach(() => vi.useRealTimers());
 
 describe('v20.1 strict mode is the default', () => {
   it('edge only, 2 market checks, no desk trades, market entries only', () => {
-    expect(FX_CONFIG.strict).toEqual({ mode: 'quality', minAgree: 1, deskTrades: false, market: { minN: 12, minPf: 1.1 } });
+    expect(FX_CONFIG.strict).toEqual({ mode: 'off', minAgree: 1, deskTrades: false, market: { minN: 12, losingPf: 0.9 } });
     expect(FX_CONFIG.liveEntries).toBe(false);
   });
 });
@@ -208,7 +208,7 @@ describe('v20.4 quality mode: the bar the bot trades on, and a winning record on
     expect(qualityPass(row({ outSample: st(20, 0.3, 2) }), 0).why).toMatch(/only 20 unseen trades/);
     expect(qualityPass(row({ id: 'random' }), 0).ok).toBe(false);
   });
-  it('syncBot waits while the strategy has no winning record on that market, and opens once it has one', async () => {
+  it('syncBot waits while the strategy has a losing record on that market, and opens once it has a good one', async () => {
     vi.useFakeTimers({ now: WED });
     const r = new NxRedis();
     r.m.set('fx:practice:bot', JSON.stringify(newAccount(1000)));
@@ -216,7 +216,7 @@ describe('v20.4 quality mode: the bar the bot trades on, and a winning record on
     (p as unknown as { quotes: () => Promise<Record<string, Quote>> }).quotes = async () => ({ EURUSD: quote('EURUSD', 1.1) });
     const lab = { ref: `x:1h:EURUSD:${WED - H}`, strategy: 'x', tf: '1h', pair: 'EURUSD', side: 1 as const, entryT: WED - M, stop: 1.098, target: 1.104, chosen: true, sizeF: 1, prio: 0.2, judge: null, agree: { n: 3, of: 4, need: 2 }, marketRec: { n: 9, pf: 0.8, totalR: -2.1, ok: false } };
     const ev = await p.syncBot([lab], () => null, {}, { scope: ['1h', '4h'] });
-    expect(ev.join(' ')).toMatch(/no winning record on this market \(9 tested trades here, profit factor 0.8, -2.1R\)/);
+    expect(ev.join(' ')).toMatch(/losing record on this market \(9 tested trades here, profit factor 0.8, -2.1R\)/);
     expect((JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount).open).toHaveLength(0);
     expect(classify('no winning record on this market (9 tested trades here, profit factor 0.8, -2.1R)')).toBe('market_rec');
     expect(classify('no tested record on this market yet')).toBe('market_rec');
