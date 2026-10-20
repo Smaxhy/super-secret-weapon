@@ -74,12 +74,24 @@ export const FX_CONFIG = {
    * (a pullback order fills on the signals that came back against the trade and misses the ones that ran). */
   liveEntries: false,
   /** v20.1 strict mode (owner: "I want to win, make it trade only what will work with proper research"):
-   * edgeOnly — the bot trades ONLY rows that passed the unseen exam (verdict Edge after the luck + deflated-Sharpe
-   *   checks); the always-on four and the rolling picker's list no longer let a row in on their own;
+   * mode (v20.4, below) — which rows the bot may trade; in 'edge' / 'quality' the always-on four and the rolling
+   *   picker's list no longer let a row in on their own;
    * minAgree — a trade needs this many of the market checks (strength gap, 4h trend, daily trend, mood) on its side at
    *   the signal close, else it waits;
    * deskTrades — the market desks' daily learning trades (v20) are OFF: the desks rank and study, they don't trade. */
-  strict: { edgeOnly: true, minAgree: 2, deskTrades: false },
+  strict: {
+    /** v20.4 (owner: "make the bot trade again, but good setups, not a random chase"):
+     * 'edge' = only verdict Edge rows (v20.1; on the real feed that was 0 rows for a day);
+     * 'quality' = rows that pass `qualityPass`: 30+ unseen trades, ≥ 0.05R a trade and PF ≥ 1.2 there, positive in the
+     *   first part too, at least as good as random timing, not beaten by the luck twins — the deflated Sharpe is shown
+     *   but does not gate (with 80+ rows graded on the same weeks it clears nothing on 2 years of hourly data);
+     * 'off' = the v18.9 chooser (Edge + Maybe + the always-on four / the rolling picker). */
+    mode: 'quality' as 'edge' | 'quality' | 'off',
+    minAgree: 2,
+    deskTrades: false,
+    /** v20.4: a strategy may only open on a market where its own tested record there is a winning one */
+    market: { minN: 12, minPf: 1.1 },
+  },
   /** v18.7 (owner: "we can't fast trade these charts, they take time"): the bot account trades the 1h + 4h charts only.
    * The 15m / 1m charts stay lab-tested (Strategies / Lab) but place no bot trades while this is off. */
   botFastCharts: false,
@@ -126,6 +138,8 @@ export interface Row {
   /** edge / maybe / no */
   verdict: 'edge' | 'maybe' | 'no';
   why: string;
+  /** v20.4: does it clear the quality bar the bot trades on in strict 'quality' mode (and why not) */
+  quality?: { ok: boolean; why: string };
   /** v17 luck meter: where its unseen R falls among 20 random-timing copies (weekend job; same filter + exit only) */
   luck?: { pctl: number; twinsP90: number; twinPassPct: number };
   /** v17.11: the same filter + exit WITHOUT the owner's profit lock (what the lock changed) */
@@ -473,6 +487,22 @@ export function verdictFor(row: Pick<Row, 'inSample' | 'outSample' | 'all'>, ran
   return { verdict: 'no', why: o.avgR <= 0 ? `loses on unseen data (${o.avgR}R a trade)` : 'too weak overall' };
 }
 
+/** v20.4 pure: the quality bar for strict 'quality' mode. Stricter than Maybe (needs ≥ 0.05R a trade AND PF ≥ 1.2 on the
+ * unseen 30%, a positive first part, at least random's R over all trades, and not beaten by its luck twins), looser than
+ * Edge only in that the deflated Sharpe is reported, not required. */
+export function qualityPass(row: Pick<Row, 'id' | 'inSample' | 'outSample' | 'all' | 'luck'>, randomAvgR: number | null): { ok: boolean; why: string } {
+  const o = row.outSample;
+  const i = row.inSample;
+  if (row.id === 'random') return { ok: false, why: 'yardstick' };
+  if (o.n < FX_CONFIG.minOosTrades) return { ok: false, why: `only ${o.n} unseen trades (needs ${FX_CONFIG.minOosTrades})` };
+  if (!(o.avgR >= 0.05)) return { ok: false, why: `unseen ${o.avgR}R a trade (needs 0.05R+)` };
+  if ((o.pf ?? 99) < 1.2) return { ok: false, why: `unseen profit factor ${o.pf} (needs 1.2+)` };
+  if (!(i.avgR > 0)) return { ok: false, why: `lost in the first part (${i.avgR}R a trade)` };
+  if (randomAvgR !== null && row.all.avgR < randomAvgR) return { ok: false, why: `random timing did better over all trades (${randomAvgR}R vs ${row.all.avgR}R)` };
+  if (row.luck && Number.isFinite(row.luck.twinsP90) && o.avgR <= row.luck.twinsP90) return { ok: false, why: `its luck twins did as well (their top 10%: ${row.luck.twinsP90}R vs ${o.avgR}R)` };
+  return { ok: true, why: `unseen ${o.n} trades, ${o.avgR}R a trade, PF ${o.pf ?? '∞'}; positive before the split too; beats random and its luck twins` };
+}
+
 /** Pure: does a strategy's first-70% record earn it a place in the bot (the honest whole-bot test)? */
 export const pickedOnInSample = (s: RStats) => s.n >= FX_CONFIG.pick.minN && s.avgR >= FX_CONFIG.pick.minAvgR && (s.pf ?? 99) >= FX_CONFIG.pick.minPf;
 
@@ -611,10 +641,11 @@ export function slimTrade(t: Trade): Trade {
 export const tradeKey = (t: { strategy: string; tf: string; pair: string; entryT: number; keyT?: number }) => `${t.strategy}:${t.tf}:${t.pair}:${t.keyT ?? t.entryT}`;
 
 /** A lab trade as the bot account takes it (v15: with its trailing take-profit and the exit rules still in force). */
-export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction']; sniper?: LabOpenTrade['sniper']; dataWait?: string | null; order?: LabOpenTrade['order']; agree?: LabOpenTrade['agree'] }): LabOpenTrade {
+export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction']; sniper?: LabOpenTrade['sniper']; dataWait?: string | null; order?: LabOpenTrade['order']; agree?: LabOpenTrade['agree']; marketRec?: LabOpenTrade['marketRec'] }): LabOpenTrade {
   return {
     ...(o.order ? { order: o.order } : {}),
     ...(o.agree ? { agree: o.agree } : {}),
+    ...(o.marketRec ? { marketRec: o.marketRec } : {}),
     ref: tradeKey(t),
     strategy: t.strategy,
     tf: t.tf,
@@ -1614,6 +1645,11 @@ export class ForexLab {
     } catch (err) {
       log.warn({ err: (err as Error).message }, 'honest statistics failed');
     }
+    // v20.4: the quality bar (after the luck meter; the deflated Sharpe is reported, not required)
+    for (const r of rows) {
+      const rnd = rows.find((x) => x.id === 'random' && x.tf === r.tf);
+      r.quality = qualityPass(r, rnd ? rnd.all.avgR : null);
+    }
     statInputs.length = 0;
     await yieldNow();
     const filters = summarizeFilters(rows);
@@ -1782,10 +1818,11 @@ export class ForexLab {
 
     // v18.9: an always-on row rests while its own last 26 weeks lose money (the rolling picker's record, same rule live)
     const alwaysOff = new Set((rolling?.thisWeek.paused ?? []).map((p) => p.key));
-    const strict = FX_CONFIG.strict.edgeOnly;
-    const chosenRows = rows.filter((x) => x.id !== 'random' && !rec.dropped.includes(`${x.id}:${x.tf}`) && (strict ? x.verdict === 'edge' : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`))));
+    const mode = FX_CONFIG.strict.mode;
+    const strict = mode !== 'off';
+    const chosenRows = rows.filter((x) => x.id !== 'random' && !rec.dropped.includes(`${x.id}:${x.tf}`) && (mode === 'edge' ? x.verdict === 'edge' : mode === 'quality' ? !!x.quality?.ok : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`))));
     // v20.1 strict mode: say once per hour-of-change why the list is empty (the owner reads the Decisions log)
-    if (strict && !chosenRows.length && this.chosen.length) this.logBot(['strict mode: no strategy has passed the unseen exam right now — the bot waits (nothing is traded until one earns Edge)']);
+    if (strict && !chosenRows.length && this.chosen.length) this.logBot([mode === 'edge' ? 'strict mode: no strategy has passed the unseen exam right now — the bot waits (nothing is traded until one earns Edge)' : 'strict mode: no strategy clears the quality bar right now — the bot waits']);
     for (const p of rolling?.thisWeek.paused ?? []) {
       const k = `${p.key}:paused`;
       if (!this.pausedNoted.has(k)) {
@@ -1953,9 +1990,18 @@ export class ForexLab {
       })();
       // v20.1: how many market checks stand behind the trade at its signal close (strict mode needs `need` of them)
       const agree = { n: openAgree.get(tradeKey(t)) ?? 0, of: maxConfirmations(t.tf, false), need: FX_CONFIG.strict.minAgree };
+      // v20.4: the strategy's own tested record on THIS market — no winning record here → the trade waits
+      const marketRec = ((): LabOpenTrade['marketRec'] => {
+        if (!strict || !row) return null;
+        const pr = row.pairs.find((x) => x.pair === t.pair);
+        const m = FX_CONFIG.strict.market;
+        if (!pr) return { n: 0, pf: null, totalR: 0, ok: false };
+        return { n: pr.n, pf: pr.pf, totalR: pr.totalR, ok: pr.n >= m.minN && (pr.pf ?? 99) >= m.minPf && pr.totalR > 0 };
+      })();
       return toLabTrade(t, {
         order,
         agree,
+        marketRec,
         chosen: chosen.has(`${t.strategy}:${t.tf}`),
         sizeF,
         prio: row ? row.all.avgR : -1,

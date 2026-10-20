@@ -51,7 +51,7 @@ export interface PlanInputs {
   /** USD P&L of a position closed at a price */
   pnlAt: (p: PracticePosition, price: number) => number;
   /** v20.2: strict mode in force (edge-only rows, N market checks per trade) — the plan says so in words */
-  strict?: { edgeOnly: boolean; minAgree: number } | null;
+  strict?: { mode: 'edge' | 'quality' | 'off'; minAgree: number } | null;
 }
 
 export interface PlanSignal {
@@ -373,7 +373,7 @@ export function buildPlan(x: PlanInputs): BotPlan {
     let plan: string;
     if (status === 'trading') plan = headline;
     else if (!x.clock.open) plan = 'Market closed: nothing to do until it opens.';
-    else if (!nChosen) plan = 'Nothing to wait for: no strategy has passed the unseen exam yet, so it will not trade here until one does.';
+    else if (!nChosen) plan = `Nothing to wait for: no strategy ${x.strict?.mode === 'quality' ? 'clears the quality bar' : 'has passed the unseen exam'} yet, so it will not trade here until one does.`;
     else if (status === 'waiting') {
       const w = wanted[0]!;
       plan = `A proven strategy (${w.name}, ${w.tf}) fired to ${w.side === 1 ? 'buy' : 'sell'} — ${w.verdict}.`;
@@ -413,7 +413,7 @@ export function buildPlan(x: PlanInputs): BotPlan {
     : x.positions.length
       ? { kind: 'trading', word: `In ${x.positions.length} trade${x.positions.length > 1 ? '' : ''}${x.positions.length > 1 ? 's' : ''}`, line: `${usd(pnl)} open. It manages the stop and target every second and looks for new setups at every candle close.` }
       : !nTrading
-        ? { kind: 'nothing_proven', word: 'Nothing qualifies yet', line: `No strategy has passed the unseen exam${x.strict?.edgeOnly ? ' (strict mode: only Edge rows trade)' : ''}, so it trades nothing. The lab re-grades every strategy each hour; the moment one earns Edge it is put to work.` }
+        ? { kind: 'nothing_proven', word: 'Nothing qualifies yet', line: x.strict?.mode === 'quality' ? 'No strategy clears the quality bar (strict mode: 30+ unseen trades at 0.05R+ a trade with profit factor 1.2+, positive before the split, beats random and its luck twins), so it trades nothing. The lab re-grades every strategy each hour; the moment one clears it, it is put to work.' : `No strategy has passed the unseen exam${x.strict?.mode === 'edge' ? ' (strict mode: only Edge rows trade)' : ''}, so it trades nothing. The lab re-grades every strategy each hour; the moment one earns Edge it is put to work.` }
         : waitingMkts.length
           ? { kind: 'waiting', word: 'Waiting for a setup', line: `${waitingMkts.length} market${waitingMkts.length > 1 ? 's have' : ' has'} a proven strategy firing but something holds it back (${waitingMkts[0]!.label}: ${waitingMkts[0]!.signals.find((sg) => sg.tone === 'wait')?.verdict ?? 'waiting'}). ${nTrading} proven setup${nTrading === 1 ? '' : 's'} watched on ${INSTRUMENTS.length} markets.` }
           : { kind: 'scanning', word: 'Waiting for a setup', line: `Nothing has fired. It watches ${nTrading} proven setup${nTrading === 1 ? '' : 's'} (strategy × chart) on ${INSTRUMENTS.length} markets and opens only when one fires${need ? ` with ${need}+ market checks on its side` : ''} and no news is in the way.` };

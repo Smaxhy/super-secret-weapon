@@ -854,6 +854,8 @@ export interface LabOpenTrade {
   /** v20.1: market checks on the trade's side at its signal close (strength gap, 4h trend, daily trend, mood), out of
    * `of`; the bot waits while `n < need` (strict mode) */
   agree?: { n: number; of: number; need: number } | null;
+  /** v20.4: the strategy's own tested record on this market (`ok` = enough trades, winning); the bot waits while not ok */
+  marketRec?: { n: number; pf: number | null; totalR: number; ok: boolean } | null;
 }
 
 /** v18.4: a resting limit order on the bot account (entries.ts, picked on the first 70%); filled by `tick` against the
@@ -1572,6 +1574,13 @@ export class Practice {
           // v20.1 strict mode: not enough of the market checks stand behind it → wait for a better-backed setup
           const w = `only ${t.agree.n} of ${t.agree.of} market checks agree (needs ${Math.min(t.agree.need, t.agree.of)}: strength, bigger charts, mood)`;
           note(`${t.ref}:agree`, `waiting on ${t.pair} (${t.strategy}): ${w}`);
+          skip(t, w, true);
+          continue;
+        }
+        if (t.marketRec && !t.marketRec.ok && !t.desk) {
+          // v20.4: the strategy has no winning tested record on this market → it does not trade it here
+          const w = t.marketRec.n ? `no winning record on this market (${t.marketRec.n} tested trades here, profit factor ${t.marketRec.pf ?? '—'}, ${t.marketRec.totalR}R)` : 'no tested record on this market yet';
+          note(`${t.ref}:market`, `waiting on ${t.pair} (${t.strategy}): ${w}`);
           skip(t, w, true);
           continue;
         }

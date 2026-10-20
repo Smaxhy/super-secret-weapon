@@ -182,7 +182,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
               fastFiring: deps.fastFx?.firing ?? {},
               chosen: [...fx.chosen, ...(deps.fastFx?.chosen ?? [])],
               fastCharts: FX_CONFIG.botFastCharts,
-              strict: { edgeOnly: FX_CONFIG.strict.edgeOnly, minAgree: FX_CONFIG.strict.minAgree },
+              strict: { mode: FX_CONFIG.strict.mode, minAgree: FX_CONFIG.strict.minAgree },
               names: Object.fromEntries(STRATEGIES.map((x) => [x.id, x.name])),
               positions: snap.account.positions,
               resume: snap.account.resume ?? [],

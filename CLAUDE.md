@@ -897,6 +897,29 @@ opens with the same mode word + line, its Next look line carries `nextLook.does`
 sentences. Village HUD shows the mode word. tests in forex-strict (buildPlan modes, checksOf). Verified with Playwright
 (room.mjs stub carries mode / nextLook / checks).
 
+## v20.4 quality mode — the bot trades again, on a bar it can actually clear (Oct 20, owner: "make the bot trade
+again but good, accurate setups, not a random chase")
+Live read of the VPS (11:07 UTC, through the Trading-env check session): 93 rows, **0 Edge**, 10 Maybe, 83 no — the
+deflated-Sharpe test (82 rows graded on the same 30 unseen weeks, expected max no-edge Sharpe 0.279) downgrades every
+Edge row on 2 years of hourly data, so v20.1 edge-only = zero trades for good. `FX_CONFIG.strict.mode` 'edge' |
+**'quality'** (default) | 'off' (v18.9 chooser) replaces `edgeOnly`:
+- **`qualityPass(row, randomAvgR)`** (lab.ts, pure; `Row.quality {ok, why}` set after the luck meter + honest stats):
+  unseen n ≥ 30, unseen avg R ≥ 0.05, unseen PF ≥ 1.2, first-part avg R > 0, all-trades avg R ≥ random's (no margin),
+  not beaten by its luck twins (`luck.twinsP90`). The deflated Sharpe is reported, not required. On the live numbers
+  this admits round_fade:4h (102 unseen, 0.13R, PF 1.45), carry_trend:4h (154, 0.06R, 1.21), fix_flow:1h (495,
+  0.05R, 1.21), pivot_bounce:4h (1333, 0.05R, 1.24); near-misses month_end_flow:1h (28 trades, 1.06R, PF 13.8 —
+  needs 30), cot_squeeze:1h (22), pin_bar:4h (20). Sizing stays the Maybe factor (×1) — nothing here is "proven".
+- **Winning record on the market** (`FX_CONFIG.strict.market` {minN 12, minPf 1.1}): every bot trade carries
+  `LabOpenTrade.marketRec` {n, pf, totalR, ok} from `Row.pairs` for its pair; `syncBot` waits "no winning record on this
+  market (N tested trades here, profit factor x, R)" / "no tested record on this market yet" while not ok (desk trades
+  exempt). why.ts kind `market_rec` + hint.
+- Kept from v20.1: 2 market checks per trade, market entries only, desks study only. plan.ts `PlanInputs.strict.mode`
+  → "No strategy clears the quality bar (…)" / per-market "no strategy clears the quality bar yet"; server passes
+  `mode`; Auto-bot "How it trades" text. Empty list logs "strict mode: no strategy clears the quality bar right now".
+- Told the owner: the bot account is on risk mode **max** (5% a trade at 200×) — their call, not changed; Dukascopy
+  is unreachable from the VPS ("no answer in 10 s") so the lab only has ~2 years of Yahoo history; Pyth answers 401
+  (no key). tests in forex-strict (4 new). 1,312 tests.
+
 ## v20.3 letting the cloud session read the VPS (Oct 20, owner: "how can I make you see the VPS always"; then "from now
 on use the check-the-VPS one")
 **HOW TO READ THE VPS from a cloud session (works since Oct 20 11:07 UTC):** this session's own environment ("Default",

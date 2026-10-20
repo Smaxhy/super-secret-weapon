@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type Redis from 'ioredis';
 import { Practice, newAccount, undoOpen, type ClosedPractice, type PracticeAccount, type PracticePosition, type Quote } from '../src/forex/practice';
-import { FX_CONFIG } from '../src/forex/lab';
+import { FX_CONFIG, qualityPass } from '../src/forex/lab';
 import { buildDesks, desksSummary, type DeskInput } from '../src/forex/desks';
 import { classify, whyNoTrades } from '../src/forex/why';
 import { INSTRUMENTS } from '../src/forex/types';
@@ -76,7 +76,7 @@ afterEach(() => vi.useRealTimers());
 
 describe('v20.1 strict mode is the default', () => {
   it('edge only, 2 market checks, no desk trades, market entries only', () => {
-    expect(FX_CONFIG.strict).toEqual({ edgeOnly: true, minAgree: 2, deskTrades: false });
+    expect(FX_CONFIG.strict).toEqual({ mode: 'quality', minAgree: 2, deskTrades: false, market: { minN: 12, minPf: 1.1 } });
     expect(FX_CONFIG.liveEntries).toBe(false);
   });
 });
@@ -168,14 +168,14 @@ describe('v20.2 the plan says the state in one word and what it is waiting for',
   const inputs = (chosen: string[]) => ({
     now: WED, clock: marketClock(WED), oanda: false, markets: [], mood: null, fastFiring: {}, chosen, names: { x: 'X rule' },
     positions: [], resume: [], equityUsd: 1000, lastSync: {}, labOpen: {}, runs: [], upcoming: () => [], blockNow: () => null, pnlAt: () => 0,
-    strict: { edgeOnly: true, minAgree: 2 },
+    strict: { mode: 'quality' as const, minAgree: 2 },
   });
   it('nothing proven → "Nothing qualifies yet"; a proven setup → "Waiting for a setup" + what the next look does', () => {
     const none = buildPlan(inputs([]));
     expect(none.mode.kind).toBe('nothing_proven');
     expect(none.mode.word).toBe('Nothing qualifies yet');
     expect(none.mode.line).toMatch(/strict mode/);
-    expect(none.markets[0]!.plan).toMatch(/no strategy has passed the unseen exam/);
+    expect(none.markets[0]!.plan).toMatch(/no strategy clears the quality bar/);
     const one = buildPlan(inputs(['x:1h']));
     expect(one.mode.kind).toBe('scanning');
     expect(one.mode.word).toBe('Waiting for a setup');
@@ -189,5 +189,42 @@ describe('v20.2 the plan says the state in one word and what it is waiting for',
     const c = checksOf({ id: 'EURUSD', mtf: { h1: 1, h4: 1, d1: -1 }, strength: { base: 'EUR', quote: 'USD', gap: 0.42 }, risk: 0 } as unknown as Parameters<typeof checksOf>[0], null);
     expect(c.map((k) => `${k.name}${k.side}`)).toEqual(['strength1', '4h1', 'daily-1', 'mood0']);
     expect(c[0]!.text).toMatch(/EUR stronger/);
+  });
+});
+
+describe('v20.4 quality mode: the bar the bot trades on, and a winning record on the market', () => {
+  const st = (n: number, avgR: number, pf: number | null) => ({ n, avgR, pf, winPct: 50, totalR: Math.round(n * avgR * 100) / 100, medianR: 0, maxDdR: 0, expectancy: avgR } as unknown as import('../src/forex/lab').Row['all']);
+  const row = (o: Partial<Parameters<typeof qualityPass>[0]>) => ({ id: 'round_fade', inSample: st(240, 0.03, 1.07), outSample: st(102, 0.13, 1.45), all: st(342, 0.06, 1.15), ...o });
+  it('admits a row that is positive in both halves, 0.05R+ and PF 1.2+ unseen, beats random and its luck twins', () => {
+    expect(qualityPass(row({}), 0.0).ok).toBe(true);
+    expect(qualityPass(row({ luck: { pctl: 95, twinsP90: 0.08, twinPassPct: 10 } }), -0.02).ok).toBe(true);
+  });
+  it('rejects thin, luck-beaten, first-part-losing and worse-than-random rows, and the yardstick', () => {
+    expect(qualityPass(row({ outSample: st(102, 0.02, 1.06) }), 0).why).toMatch(/needs 0.05R\+/);
+    expect(qualityPass(row({ outSample: st(102, 0.06, 1.1) }), 0).why).toMatch(/needs 1.2\+/);
+    expect(qualityPass(row({ inSample: st(240, -0.01, 0.97) }), 0).why).toMatch(/lost in the first part/);
+    expect(qualityPass(row({}), 0.1).why).toMatch(/random timing did better/);
+    expect(qualityPass(row({ luck: { pctl: 40, twinsP90: 0.2, twinPassPct: 60 } }), 0).why).toMatch(/luck twins did as well/);
+    expect(qualityPass(row({ outSample: st(20, 0.3, 2) }), 0).why).toMatch(/only 20 unseen trades/);
+    expect(qualityPass(row({ id: 'random' }), 0).ok).toBe(false);
+  });
+  it('syncBot waits while the strategy has no winning record on that market, and opens once it has one', async () => {
+    vi.useFakeTimers({ now: WED });
+    const r = new NxRedis();
+    r.m.set('fx:practice:bot', JSON.stringify(newAccount(1000)));
+    const p = new Practice(asRedis(r));
+    (p as unknown as { quotes: () => Promise<Record<string, Quote>> }).quotes = async () => ({ EURUSD: quote('EURUSD', 1.1) });
+    const lab = { ref: `x:1h:EURUSD:${WED - H}`, strategy: 'x', tf: '1h', pair: 'EURUSD', side: 1 as const, entryT: WED - M, stop: 1.098, target: 1.104, chosen: true, sizeF: 1, prio: 0.2, judge: null, agree: { n: 3, of: 4, need: 2 }, marketRec: { n: 9, pf: 0.8, totalR: -2.1, ok: false } };
+    const ev = await p.syncBot([lab], () => null, {}, { scope: ['1h', '4h'] });
+    expect(ev.join(' ')).toMatch(/no winning record on this market \(9 tested trades here, profit factor 0.8, -2.1R\)/);
+    expect((JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount).open).toHaveLength(0);
+    expect(classify('no winning record on this market (9 tested trades here, profit factor 0.8, -2.1R)')).toBe('market_rec');
+    expect(classify('no tested record on this market yet')).toBe('market_rec');
+    await p.syncBot([{ ...lab, marketRec: { n: 20, pf: 1.4, totalR: 3.2, ok: true } }], () => null, {}, { scope: ['1h', '4h'] });
+    expect((JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount).open).toHaveLength(1);
+  });
+  it('the plan names the quality bar', () => {
+    const none = buildPlan({ now: WED, clock: marketClock(WED), oanda: false, markets: [], mood: null, fastFiring: {}, chosen: [], names: {}, positions: [], resume: [], equityUsd: 1000, lastSync: {}, labOpen: {}, runs: [], upcoming: () => [], blockNow: () => null, pnlAt: () => 0, strict: { mode: 'quality', minAgree: 2 } });
+    expect(none.mode.line).toMatch(/quality bar/);
   });
 });

@@ -18,6 +18,7 @@ export type ReasonKind =
   | 'judge_missing'
   | 'judge_no'
   | 'agree'
+  | 'market_rec'
   | 'check_data'
   | 'stale_feed'
   | 'clock'
@@ -37,6 +38,7 @@ const LABEL: Record<ReasonKind, string> = {
   judge_missing: 'the signal judge had a reading missing (a feed is down) — it waits rather than trade blind',
   judge_no: 'the signal judge scored the setup too low',
   agree: 'too few market checks (strength, bigger charts, mood) stood behind the setup',
+  market_rec: 'the strategy has no winning tested record on that market',
   check_data: 'a check the strategy was tested with had no data (feed missing)',
   stale_feed: 'the price feed was lagging (candles behind) — no new trades on that market',
   clock: 'the market clock (closed, rollover, weekly open / close)',
@@ -57,6 +59,7 @@ export function classify(why: string): ReasonKind {
   if (w.includes('slots are full') || w.includes('trades open')) return 'caps';
   if (w.includes('signal judge') && w.includes('missing')) return 'judge_missing';
   if (w.includes('market checks agree')) return 'agree';
+  if (w.includes('record on this market')) return 'market_rec';
   if (w.includes('signal judge')) return 'judge_no';
   if (w.includes('check has no data') || w.includes('feed missing')) return 'check_data';
   if (w.includes('candles behind') || w.includes('price data for') || w.includes('feed is lagging') || w.includes('no fresh')) return 'stale_feed';
@@ -195,6 +198,7 @@ const HINT: Partial<Record<ReasonKind, string>> = {
   stale_feed: 'Yahoo candles are behind. Setup → Data feeds shows the ages; Dukascopy fills currency pairs when it can reach the host.',
   judge_no: 'Working as designed: the judge only lets the better-looking setups through.',
   agree: 'Working as designed (strict mode): a trade needs 2 of the market checks on its side. Fewer, better-backed trades.',
+  market_rec: 'Working as designed (strict mode): a strategy only trades a market where its own tested record there is a winning one (12+ trades, PF 1.1+).',
   caps: 'Working as designed: raise the risk mode (Risk desk) for more slots.',
   news: 'Working as designed: it skips the half hour around high-impact news.',
   late: 'The lab filled a bar earlier than the bot saw the price; nothing to fix unless it repeats on every signal.',
