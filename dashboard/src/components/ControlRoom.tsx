@@ -29,11 +29,13 @@ interface Closed { id: string; pair: string; side: 1 | -1; pnlUsd: number; reaso
 interface Order { id: string; pair: string; side: 1 | -1; limit: number; kind: 'limit' | 'pullback'; expiresAt: number; strategy: string; tf?: string }
 interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; positions: Pos[]; closed: Closed[]; orders?: Order[] }
 interface PlanSignal { tf: string; name: string; side: 1 | -1; verdict: string; tone: 'go' | 'wait' | 'no' }
-interface PlanMarket { id: string; label: string; price: number | null; status: 'trading' | 'waiting' | 'blocked' | 'watching'; headline: string; lean: { side: 1 | -1 | 0; why: string }; signals: PlanSignal[]; blocks: string[] }
+export interface PlanCheck { name: 'strength' | '4h' | 'daily' | 'mood'; side: 1 | -1 | 0; text: string }
+interface PlanMarket { id: string; label: string; price: number | null; status: 'trading' | 'waiting' | 'blocked' | 'watching'; headline: string; lean: { side: 1 | -1 | 0; why: string }; checks?: PlanCheck[]; plan?: string; signals: PlanSignal[]; blocks: string[] }
+export interface PlanMode { kind: 'closed' | 'trading' | 'waiting' | 'nothing_proven' | 'scanning'; word: string; line: string }
 interface PlanLine { k: string; text: string; done?: boolean }
 interface PlanTrade { id: string; pair: string; side: 1 | -1; strategy: string; name: string; tf: string; pnlUsd: number; lines: PlanLine[] }
 interface RunNote { t: number; tf: string; signals: number; chosen: number; opened: number; skipped: number; waits: number; holding: number; note: string }
-interface BotPlan { at: number; summary: string; next: Array<{ tf: string; at: number }>; markets: PlanMarket[]; trades: PlanTrade[]; timeline: RunNote[] }
+interface BotPlan { at: number; summary: string; mode?: PlanMode; nextLook?: { tf: string; at: number; does: string }; next: Array<{ tf: string; at: number }>; markets: PlanMarket[]; trades: PlanTrade[]; timeline: RunNote[] }
 type RiskMode = 'normal' | 'aggressive' | 'max';
 interface RiskLimits { label: string; riskPct: number; leverage: number; maxOpen: number }
 export interface WhyReport { at: number; orders?: { placed: number; filled: number; expired: number; cancelled: number }; hoursSinceOpen: number | null; openNow: number; ordersNow: number; marketOpen: boolean; window: { hours: number; checks: number; signals: number; chosen: number; opened: number; skipped: number; waits: number; lastCheckAt: number | null }; reasons: Array<{ kind: string; label: string; n: number; example: string }>; staleMarkets: string[]; verdict: string; hint: string | null; quiet: boolean }
@@ -155,7 +157,11 @@ export function useControlRoomData(): CRData {
   const open = cal.data?.clock?.open ?? true;
   const next = (plan?.next ?? []).filter((x) => x.at > now).sort((x, y) => x.at - y.at)[0] ?? localNext(now);
   const livePnlAll = positions.reduce((s, p) => s + livePnl(p, fx, now), 0);
-  const state = !open ? { word: 'Market closed', tone: 'text-muted' } : positions.length ? { word: `In ${positions.length} trade${positions.length === 1 ? '' : 's'}`, tone: tone(livePnlAll) } : closest.length ? { word: 'Waiting on setups', tone: 'text-warning' } : { word: 'Scanning', tone: 'text-accent-text' };
+  // v20.2: the server's plan says the state in one word; the local guess only stands in until it arrives
+  const mode = plan?.mode ?? null;
+  const state = mode
+    ? { word: mode.word, tone: mode.kind === 'closed' ? 'text-muted' : mode.kind === 'trading' ? tone(livePnlAll) : mode.kind === 'nothing_proven' ? 'text-down' : 'text-warning' }
+    : !open ? { word: 'Market closed', tone: 'text-muted' } : positions.length ? { word: `In ${positions.length} trade${positions.length === 1 ? '' : 's'}`, tone: tone(livePnlAll) } : closest.length ? { word: 'Waiting for a setup', tone: 'text-warning' } : { word: 'Scanning', tone: 'text-accent-text' };
   const lastRun = (plan?.timeline ?? []).slice().sort((x, y) => y.t - x.t)[0] ?? null;
   return { bot, lab, cal, sys, ov, pnl, fx, now, d, a, plan, positions, orders, markets, reads: reads.data?.trades ?? [], names, focus, setPicked, fm, fp, fpos, open, next, livePnlAll, state, lastRun, closest };
 }
@@ -327,7 +333,8 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
         <div className="min-w-0 flex-1 text-center sm:text-left">
           <div className="text-xs font-semibold text-muted">Forex bot · control room</div>
           <div className={`text-2xl font-semibold tracking-tight ${state.tone}`}>{state.word}</div>
-          <p className="mt-1 text-sm text-ink-2">{d?.plan?.summary ?? (error ? `Couldn't reach the bot: ${error}` : d?.planError ? `No plan right now: ${d.planError}` : 'Waiting for its first look since the restart.')}</p>
+          <p className="mt-1 text-sm text-ink-2">{d?.plan?.mode?.line ?? d?.plan?.summary ?? (error ? `Couldn't reach the bot: ${error}` : d?.planError ? `No plan right now: ${d.planError}` : 'Waiting for its first look since the restart.')}</p>
+          {d?.plan?.nextLook && <p className="mt-1 text-xs text-muted"><span className="font-semibold text-ink-2">At the next look ({clock(d.plan.nextLook.at)}, {d.plan.nextLook.tf}):</span> {d.plan.nextLook.does}</p>}
         </div>
         <div className="grid shrink-0 grid-cols-3 gap-2 text-center sm:grid-cols-1 sm:text-right">
           <div>
@@ -362,6 +369,9 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
           ))}
         </div>
       )}
+
+      {/* v20.2: the plan, market by market — what it is waiting for on each one */}
+      {d?.plan && <PlanBoard plan={d.plan} focus={picked} onPick={onPick} />}
 
       {/* the big screen */}
       <div className="cr-screen relative mt-4 overflow-hidden rounded-xl border border-line bg-surface-2">
@@ -553,6 +563,68 @@ function pnlSays(p: PnlData | null): string {
 }
 
 // ───────────────────────────── scout ─────────────────────────────
+/** v20.2: the four market checks as pips (▲ on the buy side, ▼ on the sell side, · no reading) */
+export function CheckPips({ checks }: { checks: PlanCheck[] }) {
+  const short: Record<PlanCheck['name'], string> = { strength: 'Str', '4h': '4h', daily: '1D', mood: 'Mood' };
+  return (
+    <span className="inline-flex items-center gap-1" aria-label={checks.map((c) => `${c.name}: ${c.text}`).join('; ')}>
+      {checks.map((c) => (
+        <span key={c.name} title={c.text} className={`inline-flex h-5 items-center rounded px-1 text-[10px] font-semibold tabular ${c.side === 1 ? 'bg-good/15 text-up' : c.side === -1 ? 'bg-critical/15 text-down' : 'bg-surface-2 text-muted'}`}>
+          {short[c.name]}{c.side === 1 ? '▲' : c.side === -1 ? '▼' : '·'}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+const STATUS_CHIP: Record<PlanMarket['status'], { text: string; cls: string }> = {
+  trading: { text: 'In a trade', cls: 'bg-good/15 text-up' },
+  waiting: { text: 'Setup fired · held', cls: 'bg-warning/15 text-warning' },
+  watching: { text: 'Watching', cls: 'bg-surface-2 text-ink-2' },
+  blocked: { text: 'Blocked', cls: 'bg-critical/15 text-down' },
+};
+
+/** v20.2 (owner: "I want to know obviously if it's waiting for a setup and what it's planning"): one row per market —
+ * status, the four checks, and what it is waiting for in plain words. Sorted: in a trade, setup fired, leaning, the rest. */
+export function PlanBoard({ plan, focus, onPick }: { plan: BotPlan; focus: string | null; onPick: (id: string) => void }) {
+  const [all, setAll] = useState(false);
+  const order: Record<PlanMarket['status'], number> = { trading: 0, waiting: 1, watching: 2, blocked: 3 };
+  const rows = plan.markets.slice().sort((a, b) => order[a.status] - order[b.status] || (b.lean.side ? 1 : 0) - (a.lean.side ? 1 : 0) || a.label.localeCompare(b.label));
+  const shown = all ? rows : rows.slice(0, 6);
+  if (!rows.length) return null;
+  return (
+    <div className="mt-4 rounded-xl border border-line bg-surface">
+      <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
+        <div>
+          <div className="text-sm font-semibold text-ink">The plan, market by market</div>
+          <div className="text-xs text-muted">What it is waiting for on each market. Checks: currency strength · 4-hour trend · daily trend · market mood.</div>
+        </div>
+        {rows.length > 6 && (
+          <button type="button" className="shrink-0 text-xs font-semibold text-accent-text" onClick={() => setAll((v) => !v)}>{all ? 'Fewer' : `All ${rows.length}`}</button>
+        )}
+      </div>
+      <ul className="divide-y divide-line">
+        {shown.map((m) => {
+          const chip = STATUS_CHIP[m.status];
+          return (
+            <li key={m.id}>
+              <button type="button" onClick={() => onPick(m.id)} className={`flex w-full flex-col gap-1 px-3 py-2 text-left hover:bg-surface-2 ${focus === m.id ? 'bg-accent/5' : ''}`}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold text-ink">{m.label}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${chip.cls}`}>{chip.text}</span>
+                  {m.lean.side !== 0 && <span className={`text-xs font-semibold ${m.lean.side === 1 ? 'text-up' : 'text-down'}`}>{m.lean.side === 1 ? '▲ leans buy' : '▼ leans sell'}</span>}
+                  {m.checks && <CheckPips checks={m.checks} />}
+                </div>
+                <p className="text-xs text-ink-2">{m.plan ?? m.headline}</p>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 function scoutSays(plan: BotPlan | null, markets: MarketNow[]): string {
   if (!markets.length) return 'waiting for the first market read';
   const long = plan?.markets.filter((m) => m.lean.side === 1).length ?? 0;

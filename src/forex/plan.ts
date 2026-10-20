@@ -50,6 +50,8 @@ export interface PlanInputs {
   blockNow: (pair: string) => string | null;
   /** USD P&L of a position closed at a price */
   pnlAt: (p: PracticePosition, price: number) => number;
+  /** v20.2: strict mode in force (edge-only rows, N market checks per trade) — the plan says so in words */
+  strict?: { edgeOnly: boolean; minAgree: number } | null;
 }
 
 export interface PlanSignal {
@@ -61,6 +63,14 @@ export interface PlanSignal {
   tone: 'go' | 'wait' | 'no';
 }
 
+/** v20.2: one of the four market checks and which way it points right now (0 = no reading / no clear side) */
+export interface PlanCheck {
+  name: 'strength' | '4h' | 'daily' | 'mood';
+  side: 1 | -1 | 0;
+  /** short words for the pip's tooltip */
+  text: string;
+}
+
 export interface PlanMarket {
   id: string;
   label: string;
@@ -68,6 +78,10 @@ export interface PlanMarket {
   status: 'trading' | 'waiting' | 'blocked' | 'watching';
   headline: string;
   lean: { side: 1 | -1 | 0; why: string };
+  /** v20.2: the four checks (strength gap, 4-hour trend, daily trend, mood) one by one */
+  checks: PlanCheck[];
+  /** v20.2: what it is waiting for here, in one plain sentence */
+  plan: string;
   signals: PlanSignal[];
   blocks: string[];
   /** strategies the bot trades on this market, per chart */
@@ -94,9 +108,20 @@ export interface PlanTrade {
   lines: PlanLine[];
 }
 
+/** v20.2: the bot's state in one word + one line, and what the next look will do */
+export interface PlanMode {
+  kind: 'closed' | 'trading' | 'waiting' | 'nothing_proven' | 'scanning';
+  word: string;
+  line: string;
+}
+
 export interface BotPlan {
   at: number;
   summary: string;
+  /** v20.2 */
+  mode: PlanMode;
+  /** v20.2: the next look and what happens then */
+  nextLook: { tf: string; at: number; does: string };
   next: Array<{ tf: string; at: number }>;
   markets: PlanMarket[];
   trades: PlanTrade[];
@@ -137,6 +162,24 @@ export function nextChecks(now: number, _oanda = false): Array<{ tf: string; at:
     { tf: '15m', at: grid(15 * MIN, 40_000) },
     { tf: '1h', at: grid(HOUR, 90_000) },
     { tf: '4h', at: grid(4 * HOUR, 90_000) },
+  ];
+}
+
+/** v20.2: the four market checks one by one (what the strict mode counts before a trade). Pure. */
+export function checksOf(m: Pick<MarketNow, 'id' | 'mtf' | 'strength' | 'risk'>, mood: MoodNow | null): PlanCheck[] {
+  const st = m.strength;
+  const metal = m.id.startsWith('XA');
+  const gapSide: 1 | -1 | 0 = st && st.gap !== null && Math.abs(st.gap) >= STRENGTH_MIN ? (st.gap > 0 ? 1 : -1) : 0;
+  const t4 = (m.mtf?.h4 ?? 0) as 1 | -1 | 0;
+  const td = (m.mtf?.d1 ?? 0) as 1 | -1 | 0;
+  const risk = m.risk ?? 0;
+  const moodSide: 1 | -1 | 0 = mood && mood.label !== 'calm' && Math.abs(risk) > 0.4 ? (((mood.label === 'risk-on' ? 1 : -1) * Math.sign(risk)) as 1 | -1) : 0;
+  const arrow = (x: 1 | -1 | 0, up = 'up', down = 'down', none = 'no clear side') => (x === 1 ? up : x === -1 ? down : none);
+  return [
+    { name: 'strength', side: gapSide, text: st && st.gap !== null ? (metal ? `dollar ${arrow(gapSide, 'weak', 'strong', 'neutral')}` : `${gapSide === 1 ? st.base : gapSide === -1 ? st.quote : 'neither'} stronger${gapSide ? ` (gap ${st.gap >= 0 ? '+' : ''}${st.gap.toFixed(2)})` : ''}`) : 'no strength reading' },
+    { name: '4h', side: t4, text: `4-hour trend ${arrow(t4, 'up', 'down', 'flat')}` },
+    { name: 'daily', side: td, text: `daily trend ${arrow(td, 'up', 'down', 'flat')}` },
+    { name: 'mood', side: moodSide, text: mood ? (moodSide ? `${mood.label} market favours ${moodSide === 1 ? 'buying' : 'selling'} it` : `${mood.label} market: no say here`) : 'no mood reading' },
   ];
 }
 
@@ -296,6 +339,7 @@ export function buildPlan(x: PlanInputs): BotPlan {
       watchers[tf] = (watchers[tf] ?? 0) + 1;
     }
     const lean = m ? leanOf(m, x.mood) : { side: 0 as const, why: 'no hourly data yet' };
+    const checks: PlanCheck[] = m ? checksOf(m, x.mood) : [];
     let status: PlanMarket['status'];
     let headline: string;
     const wanted = signals.filter((s) => s.tone === 'wait');
@@ -320,7 +364,23 @@ export function buildPlan(x: PlanInputs): BotPlan {
         ? `Watching on ${charts}. ${lean.side ? `Leans to ${lean.side === 1 ? 'BUY' : 'SELL'}` : 'No clear side'}: it opens when one of its strategies fires and the checks agree.`
         : 'Watching: none of its strategies has passed its test yet.';
     }
-    markets.push({ id: inst.id, label: inst.label, price: pos[0]?.px ?? m?.price ?? null, status, headline, lean, signals, blocks, watchers });
+    // v20.2: what it is waiting for here, in one plain sentence
+    const need = x.strict?.minAgree ?? 0;
+    const upCount = checks.filter((c) => c.side === 1).length;
+    const downCount = checks.filter((c) => c.side === -1).length;
+    const nChosen = Object.values(watchers).reduce((a, b) => a + b, 0);
+    const checksWord = (side: 1 | -1) => `${side === 1 ? upCount : downCount} of ${checks.length} checks ${side === 1 ? 'up' : 'down'}`;
+    let plan: string;
+    if (status === 'trading') plan = headline;
+    else if (!x.clock.open) plan = 'Market closed: nothing to do until it opens.';
+    else if (!nChosen) plan = 'Nothing to wait for: no strategy has passed the unseen exam yet, so it will not trade here until one does.';
+    else if (status === 'waiting') {
+      const w = wanted[0]!;
+      plan = `A proven strategy (${w.name}, ${w.tf}) fired to ${w.side === 1 ? 'buy' : 'sell'} — ${w.verdict}.`;
+    } else if (status === 'blocked') plan = `${blocks[0]!.charAt(0).toUpperCase() + blocks[0]!.slice(1)}. It will look again at the next candle close.`;
+    else if (lean.side) plan = `Leans ${lean.side === 1 ? 'BUY' : 'SELL'} (${checksWord(lean.side)}). Waiting for one of its ${nChosen} proven setup${nChosen === 1 ? '' : 's'} to fire ${lean.side === 1 ? 'long' : 'short'} at a candle close${need ? ` with ${need}+ checks on its side` : ''} — then it opens at market.`;
+    else plan = `No clear side (${upCount} check${upCount === 1 ? '' : 's'} up, ${downCount} down). Waiting for one of its ${nChosen} proven setup${nChosen === 1 ? '' : 's'} to fire at a candle close${need ? ` with ${need}+ of the ${checks.length || 4} checks on its side` : ''} — until then it does nothing here.`;
+    markets.push({ id: inst.id, label: inst.label, price: pos[0]?.px ?? m?.price ?? null, status, headline, lean, checks, plan, signals, blocks, watchers });
   }
   const order: Record<PlanMarket['status'], number> = { trading: 0, waiting: 1, watching: 2, blocked: 3 };
   markets.sort((a, b) => order[a.status] - order[b.status]);
@@ -345,9 +405,32 @@ export function buildPlan(x: PlanInputs): BotPlan {
   const summary = !x.clock.open
     ? `Market closed for the weekend (opens again in ${Math.round(x.clock.minutesToChange / 60)} h). ${x.resume.length ? `${x.resume.length} trade${x.resume.length > 1 ? 's' : ''} paused, re-opened after Monday's open if still running.` : 'Nothing to do until then.'}`
     : `${x.positions.length ? `In ${x.positions.length} trade${x.positions.length > 1 ? 's' : ''} (${usd(pnl)} open)` : 'No trade open'} · ${nTrading ? `${nTrading} tested setup${nTrading === 1 ? '' : 's'} (strategy × chart) on ${openCharts.join(', ')}` : 'no strategy has passed its test yet'} across ${INSTRUMENTS.length} markets · next check ${hhmm(soon.at)} UTC (${soon.tf}).`;
+  // v20.2: the state in one word, and what the next look does
+  const waitingMkts = markets.filter((mk) => mk.status === 'waiting');
+  const need = x.strict?.minAgree ?? 0;
+  const mode: PlanMode = !x.clock.open
+    ? { kind: 'closed', word: 'Market closed', line: `Forex opens again in ${Math.round(x.clock.minutesToChange / 60)} h. ${x.resume.length ? `${x.resume.length} paused trade${x.resume.length > 1 ? 's' : ''} re-open after Monday's open if still running.` : 'Nothing to do until then.'}` }
+    : x.positions.length
+      ? { kind: 'trading', word: `In ${x.positions.length} trade${x.positions.length > 1 ? '' : ''}${x.positions.length > 1 ? 's' : ''}`, line: `${usd(pnl)} open. It manages the stop and target every second and looks for new setups at every candle close.` }
+      : !nTrading
+        ? { kind: 'nothing_proven', word: 'Nothing qualifies yet', line: `No strategy has passed the unseen exam${x.strict?.edgeOnly ? ' (strict mode: only Edge rows trade)' : ''}, so it trades nothing. The lab re-grades every strategy each hour; the moment one earns Edge it is put to work.` }
+        : waitingMkts.length
+          ? { kind: 'waiting', word: 'Waiting for a setup', line: `${waitingMkts.length} market${waitingMkts.length > 1 ? 's have' : ' has'} a proven strategy firing but something holds it back (${waitingMkts[0]!.label}: ${waitingMkts[0]!.signals.find((sg) => sg.tone === 'wait')?.verdict ?? 'waiting'}). ${nTrading} proven setup${nTrading === 1 ? '' : 's'} watched on ${INSTRUMENTS.length} markets.` }
+          : { kind: 'scanning', word: 'Waiting for a setup', line: `Nothing has fired. It watches ${nTrading} proven setup${nTrading === 1 ? '' : 's'} (strategy × chart) on ${INSTRUMENTS.length} markets and opens only when one fires${need ? ` with ${need}+ market checks on its side` : ''} and no news is in the way.` };
+  const nextLook = {
+    tf: soon.tf,
+    at: soon.at,
+    does: !x.clock.open
+      ? 'Nothing until the market opens.'
+      : !nTrading
+        ? `Re-reads every ${TF_WORD[soon.tf] ?? soon.tf} candle on ${INSTRUMENTS.length} markets; with no proven strategy it opens nothing, but the hourly re-grade may promote one.`
+        : `Reads the ${TF_WORD[soon.tf] ?? soon.tf} candle that just closed on ${INSTRUMENTS.length} markets: did any of the ${trading[soon.tf] ?? nTrading} proven ${soon.tf} setup${(trading[soon.tf] ?? nTrading) === 1 ? '' : 's'} fire? If one did${need ? `, ${need}+ checks agree` : ''}, no news or rollover blocks it and the caps allow, it opens at market with that strategy's stop and target.`,
+  };
   return {
     at: now,
     summary,
+    mode,
+    nextLook,
     next,
     markets,
     trades,

@@ -4,16 +4,16 @@
  * pays in each risk mode, which way the bot leans right now, the trades it is closest to taking, the open trades in one
  * line each, and when it looks again. Display only.
  */
-import { WhyLine, type WhyReport } from './ControlRoom';
+import { CheckPips, WhyLine, type PlanCheck, type PlanMode, type WhyReport } from './ControlRoom';
 import { useEffect, useState } from 'react';
 import { useApi } from '../hooks/useApi';
 import { Badge, Card } from './ui';
 
 interface PlanSignal { tf: string; name: string; side: 1 | -1; verdict: string; tone: 'go' | 'wait' | 'no' }
-interface PlanMarket { id: string; label: string; status: 'trading' | 'waiting' | 'blocked' | 'watching'; headline: string; lean: { side: 1 | -1 | 0; why: string }; signals: PlanSignal[]; blocks: string[] }
+interface PlanMarket { id: string; label: string; status: 'trading' | 'waiting' | 'blocked' | 'watching'; headline: string; lean: { side: 1 | -1 | 0; why: string }; checks?: PlanCheck[]; plan?: string; signals: PlanSignal[]; blocks: string[] }
 interface PlanLine { k: string; text: string; done?: boolean }
 interface PlanTrade { id: string; pair: string; side: 1 | -1; name: string; tf: string; pnlUsd: number; lines: PlanLine[] }
-interface Plan { at: number; summary: string; next: Array<{ tf: string; at: number }>; markets: PlanMarket[]; trades: PlanTrade[] }
+interface Plan { at: number; summary: string; mode?: PlanMode; nextLook?: { tf: string; at: number; does: string }; next: Array<{ tf: string; at: number }>; markets: PlanMarket[]; trades: PlanTrade[] }
 type RiskMode = 'normal' | 'aggressive' | 'max';
 interface RiskLimits { label: string; riskPct: number; leverage: number; maxOpen: number }
 interface Order { id: string; pair: string; side: 1 | -1; limit: number; kind: 'limit' | 'pullback'; expiresAt: number; strategy: string; tf?: string; riskPct: number }
@@ -71,6 +71,13 @@ export function FxBrief({ plan, riskMode, modes, equityUsd, orders = [], names =
   return (
     <Card title="Today" subtitle={plan?.summary ?? 'Its plan appears after the first look at the markets.'} className="hero-glow card-accent">
       <div className="space-y-4">
+        {/* v20.2: the state in one word, first */}
+        {plan?.mode && (
+          <div className={`rounded-lg px-3 py-2 ${plan.mode.kind === 'trading' ? 'bg-good/10' : plan.mode.kind === 'nothing_proven' ? 'bg-critical/10' : plan.mode.kind === 'closed' ? 'bg-surface-2' : 'bg-warning/10'}`} role="status">
+            <div className={`text-lg font-bold ${plan.mode.kind === 'trading' ? 'text-up' : plan.mode.kind === 'nothing_proven' ? 'text-down' : plan.mode.kind === 'closed' ? 'text-muted' : 'text-warning'}`}>{plan.mode.word}</div>
+            <p className="text-sm text-ink-2">{plan.mode.line}</p>
+          </div>
+        )}
         {why && <WhyLine why={why} />}
         {labError && (
           <div role="alert" className="rounded-lg border border-critical/40 bg-critical/10 px-3 py-2 text-sm text-ink">
@@ -177,7 +184,30 @@ export function FxBrief({ plan, riskMode, modes, equityUsd, orders = [], names =
 
         {loadError && <p className="text-sm text-down">Couldn't load the bot's page: {loadError}</p>}
         {!loadError && !plan && <p className="text-sm text-down">{planError ? `No plan right now: ${planError}.` : 'No plan yet: the bot has not finished its first hourly look since it started.'}</p>}
-        <p className="text-xs text-muted">Next look: {clock(next.at)} ({next.tf} candles). It checks every chart on every candle close.</p>
+        <p className="text-xs text-muted"><span className="font-semibold text-ink-2">Next look: {clock(next.at)} ({next.tf} candles).</span> {plan?.nextLook?.does ?? 'It checks every chart on every candle close.'}</p>
+        {/* v20.2: what it is waiting for, market by market (the leaning ones first) */}
+        {plan && plan.markets.some((m) => m.plan) && (
+          <div>
+            <div className="mb-1 text-xs font-semibold text-muted">What it is waiting for, market by market</div>
+            <ul className="divide-y divide-line rounded-lg border border-line">
+              {plan.markets
+                .slice()
+                .sort((a, b) => (b.status === 'trading' ? 2 : b.status === 'waiting' ? 1 : 0) - (a.status === 'trading' ? 2 : a.status === 'waiting' ? 1 : 0) || (b.lean.side ? 1 : 0) - (a.lean.side ? 1 : 0))
+                .slice(0, 6)
+                .map((m) => (
+                  <li key={m.id} className="px-2 py-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-semibold text-ink">{m.label}</span>
+                      {m.lean.side !== 0 && <span className={`text-xs font-semibold ${m.lean.side === 1 ? 'text-up' : 'text-down'}`}>{m.lean.side === 1 ? '▲ leans buy' : '▼ leans sell'}</span>}
+                      {m.checks && <CheckPips checks={m.checks} />}
+                    </div>
+                    <p className="text-xs text-ink-2">{m.plan}</p>
+                  </li>
+                ))}
+            </ul>
+            <p className="mt-1 text-xs text-muted">All {plan.markets.length} markets are on the Control room.</p>
+          </div>
+        )}
       </div>
     </Card>
   );

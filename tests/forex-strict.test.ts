@@ -7,6 +7,8 @@ import { FX_CONFIG } from '../src/forex/lab';
 import { buildDesks, desksSummary, type DeskInput } from '../src/forex/desks';
 import { classify, whyNoTrades } from '../src/forex/why';
 import { INSTRUMENTS } from '../src/forex/types';
+import { buildPlan, checksOf } from '../src/forex/plan';
+import { marketClock } from '../src/forex/calendar';
 
 const M = 60_000;
 const H = 60 * M;
@@ -159,5 +161,33 @@ describe('v20.1 the desks study only', () => {
     expect(desks[0]!.quota).toBe(0);
     expect(desks[0]!.says).toMatch(/study only · best here: ema_cross 1h \(not proven — not traded\)/);
     expect(desksSummary(desks)).toMatch(/0 of 1 markets traded today · 1 waiting for a proven setup · desks study only/);
+  });
+});
+
+describe('v20.2 the plan says the state in one word and what it is waiting for', () => {
+  const inputs = (chosen: string[]) => ({
+    now: WED, clock: marketClock(WED), oanda: false, markets: [], mood: null, fastFiring: {}, chosen, names: { x: 'X rule' },
+    positions: [], resume: [], equityUsd: 1000, lastSync: {}, labOpen: {}, runs: [], upcoming: () => [], blockNow: () => null, pnlAt: () => 0,
+    strict: { edgeOnly: true, minAgree: 2 },
+  });
+  it('nothing proven → "Nothing qualifies yet"; a proven setup → "Waiting for a setup" + what the next look does', () => {
+    const none = buildPlan(inputs([]));
+    expect(none.mode.kind).toBe('nothing_proven');
+    expect(none.mode.word).toBe('Nothing qualifies yet');
+    expect(none.mode.line).toMatch(/strict mode/);
+    expect(none.markets[0]!.plan).toMatch(/no strategy has passed the unseen exam/);
+    const one = buildPlan(inputs(['x:1h']));
+    expect(one.mode.kind).toBe('scanning');
+    expect(one.mode.word).toBe('Waiting for a setup');
+    expect(one.mode.line).toMatch(/2\+ market checks/);
+    expect(one.nextLook.does).toMatch(/proven 1h setup/);
+    expect(one.nextLook.does).toMatch(/2\+ checks agree/);
+    expect(one.markets[0]!.plan).toMatch(/Waiting for one of its 1 proven setup to fire/);
+    expect(one.markets[0]!.checks).toEqual([]);
+  });
+  it('checksOf reads the four checks one by one', () => {
+    const c = checksOf({ id: 'EURUSD', mtf: { h1: 1, h4: 1, d1: -1 }, strength: { base: 'EUR', quote: 'USD', gap: 0.42 }, risk: 0 } as unknown as Parameters<typeof checksOf>[0], null);
+    expect(c.map((k) => `${k.name}${k.side}`)).toEqual(['strength1', '4h1', 'daily-1', 'mood0']);
+    expect(c[0]!.text).toMatch(/EUR stronger/);
   });
 });

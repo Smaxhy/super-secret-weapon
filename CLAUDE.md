@@ -878,6 +878,25 @@ proper research, revert all current active trades")
   rows from the durable P&L log. One-time `v20.1-revert-open` (index.ts) → bot account, bot-log line + "strict mode on".
 tests/forex-strict.test.ts (6). 1,306 tests. To loosen later: `strict.edgeOnly` false restores the v18.9 chooser.
 
+## v20.2 the plan, made obvious (Oct 20, owner: "I want to know more obviously if it's waiting for a setup and what
+it's planning on the countdown")
+plan.ts: `BotPlan.mode` {kind closed / trading / waiting / nothing_proven / scanning, word, line} — the state in ONE word
+("Market closed" / "In N trades" / "Waiting for a setup" / "Nothing qualifies yet") + one plain line (why; in strict mode
+"no strategy has passed the unseen exam (strict mode: only Edge rows trade)"); `BotPlan.nextLook` {tf, at, does} = what
+the next look will do in words ("Reads the hourly candle that just closed on 14 markets: did any of the N proven 1h
+setups fire? If one did, 2+ checks agree, no news … it opens at market …"); per market `checks` (`checksOf`: the four
+checks one by one — strength gap / 4-hour trend / daily trend / mood, each ▲ ▼ ·, with a tooltip text) and `plan` (one
+sentence: "Leans BUY (3 of 4 checks up). Waiting for one of its N proven setups to fire long at a candle close with 2+
+checks on its side — then it opens at market." / "A proven strategy (X, 1h) fired to buy — waiting: …" / "Nothing to wait
+for: no strategy has passed the unseen exam yet"). `PlanInputs.strict` {edgeOnly, minAgree} (server passes FX_CONFIG.strict).
+Dashboard: the hub's state word comes from `plan.mode` (fallback = the old local guess), the mode line replaces the
+summary, "At the next look (time, chart): …" under it, and a **PlanBoard** ("The plan, market by market": status chip
+In a trade / Setup fired · held / Watching / Blocked, lean, `CheckPips` Str ▲ 4h ▲ 1D · Mood ▲, the plan sentence; top 6,
+"All 14"; tap → that market on the big screen) sits under the P&L strip on every screen size. The Today card (FxBrief)
+opens with the same mode word + line, its Next look line carries `nextLook.does`, and lists the top 6 markets' plan
+sentences. Village HUD shows the mode word. tests in forex-strict (buildPlan modes, checksOf). Verified with Playwright
+(room.mjs stub carries mode / nextLook / checks).
+
 ## v18.10 crypto checker plumbing (Oct 19, owner: "crypto still isn't trading or learning")
 Cause suspected from the code (VPS not reachable from the sandbox): a coin is only SCORED once its safety check (RPC
 `getAccountInfo` + Postgres, safety queue worker, concurrency 4) has landed; every checkpoint before that returns silently.
