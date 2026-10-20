@@ -86,7 +86,7 @@ export const ROOMS: Record<RoomKey, { name: string; role: string; icon: IconName
   decisions: { name: 'Decisions', role: 'everything it just did', icon: 'cpu' },
   crypto: { name: 'Crypto room', role: 'the pump.fun data collector', icon: 'wallet' },
   pnl: { name: 'P&L', role: 'profit by day, week and month', icon: 'chart' },
-  desks: { name: 'Market desks', role: 'one desk per market: its own strategies, one trade a day to learn', icon: 'globe' },
+  desks: { name: 'Market desks', role: 'one desk per market: ranks its strategies on that market from the lab and the bot\'s own fills', icon: 'globe' },
 };
 
 /** everything the control room (and the village) reads, in one place */
@@ -485,12 +485,13 @@ export function desksSays(desks: MarketDesk[]): string {
   const traded = desks.filter((d) => d.status === 'traded').length;
   const picked = desks.filter((d) => d.status === 'picked').length;
   const waiting = desks.filter((d) => d.status === 'waiting').length;
-  return `${traded} of ${desks.length} markets traded today${picked ? ` · ${picked} taking a learning trade` : ''}${waiting ? ` · ${waiting} waiting for a setup` : ''}`;
+  const study = desks.length > 0 && desks.every((d) => d.quota === 0);
+  return `${traded} of ${desks.length} markets traded today${picked ? ` · ${picked} taking a learning trade` : ''}${waiting ? ` · ${waiting} waiting for a ${study ? 'proven ' : ''}setup` : ''}${study ? ' · desks study only' : ''}`;
 }
 export function DeskTile({ d, names, active, onPick }: { d: MarketDesk; names: Record<string, string>; active: boolean; onPick: (id: string) => void }) {
   const top = d.arms[0];
   const tone = d.status === 'traded' ? 'bg-good' : d.status === 'picked' ? 'cr-blink bg-warning' : d.status === 'waiting' ? 'bg-muted/50' : 'bg-critical/60';
-  const word = d.status === 'traded' ? `${d.tradesToday}/${d.quota} today` : d.status === 'picked' ? 'taking one' : d.status === 'waiting' ? `0/${d.quota} today` : 'no record';
+  const word = d.status === 'traded' ? (d.quota ? `${d.tradesToday}/${d.quota} today` : `${d.tradesToday} today`) : d.status === 'picked' ? 'taking one' : d.status === 'waiting' ? (d.quota ? `0/${d.quota} today` : 'watching') : 'no record';
   return (
     <button type="button" onClick={() => onPick(d.id)} className={`rounded-lg border p-2 text-left transition-colors hover:bg-surface-2 ${active ? 'border-accent bg-accent-soft' : 'border-line bg-surface'}`} title={d.says}>
       <div className="flex items-center gap-1.5">
@@ -523,7 +524,7 @@ export function DeskDetail({ d, names, now }: { d: MarketDesk; names: Record<str
           ))}
         </tbody>
       </table>
-      <p className="text-muted">Mean R = the lab's record on this market blended with the bot's own fills here (own count double), shrunk by 10 break-even trades. Score adds a bonus for strategies tried rarely here, so the desk keeps learning. One learning trade a day at half size when nothing else traded here.</p>
+      <p className="text-muted">Mean R = the lab's record on this market blended with the bot's own fills here (own count double), shrunk by 10 break-even trades. Score adds a bonus for strategies tried rarely here, so the desk keeps learning. {d.quota ? 'One learning trade a day at half size when nothing else traded here.' : 'Strict mode: the desk ranks and studies only — the bot trades nothing here until a strategy passes the unseen exam.'}</p>
     </div>
   );
 }

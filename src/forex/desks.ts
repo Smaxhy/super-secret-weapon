@@ -87,6 +87,8 @@ export interface DeskInput {
   /** this run's fresh signals (every row's open trades) */
   open: Pick<LabOpenTrade, 'ref' | 'pair' | 'strategy' | 'tf' | 'chosen' | 'entryT'>[];
   chosen: Set<string>;
+  /** learning trades a desk may take today (default `DESK.quotaPerDay`; 0 = the desks rank and study, never trade) */
+  quota?: number;
 }
 
 const DAY = 86_400_000;
@@ -100,6 +102,7 @@ const pairOfRef = (ref: string) => ref.split(':')[2] ?? '';
 
 /** Rank every market's arms and pick today's learning trade where the quota is open. Pure. */
 export function buildDesks(x: DeskInput): { desks: MarketDesk[]; picks: Map<string, { key: string; why: string; rank: number; of: number }> } {
+  const quota = x.quota ?? DESK.quotaPerDay;
   const since = x.now - DESK.ownDays * DAY;
   const day0 = dayStart(x.now);
   // the bot's own record per market × arm (last ownDays, known R, no manual closes = why 5)
@@ -138,8 +141,8 @@ export function buildDesks(x: DeskInput): { desks: MarketDesk[]; picks: Map<stri
     const lastTradeAt = [...x.positions.filter((p) => p.pair === id), ...x.closed.filter((c) => c.pair === id && c.reason !== 'weekend' && c.reason !== 'partial')].reduce<number | null>((m, p) => (m === null || p.openedAt > m ? p.openedAt : m), null);
     const tradesToday = openedToday.length;
     let pick: MarketDesk['pick'] = null;
-    let status: DeskStatus = tradesToday >= DESK.quotaPerDay ? 'traded' : arms.length ? 'waiting' : 'idle';
-    if (tradesToday < DESK.quotaPerDay && arms.length) {
+    let status: DeskStatus = tradesToday > 0 ? 'traded' : arms.length ? 'waiting' : 'idle';
+    if (quota > 0 && tradesToday < quota && arms.length) {
       // signals firing here now from arms the bot does NOT already trade, fresh today, best score first
       const firing = x.open.filter((t) => t.pair === id && !t.chosen && t.entryT >= day0);
       const rank = new Map(arms.map((a, i) => [a.key, i]));
@@ -162,9 +165,11 @@ export function buildDesks(x: DeskInput): { desks: MarketDesk[]; picks: Map<stri
         : status === 'picked'
           ? `taking ${pick!.key.replace(':', ' ')} as today's learning trade`
           : status === 'waiting'
-            ? `no trade yet today · waiting for ${top ? `${top.strategy} ${top.tf}` : 'a setup'}${arms.length > 1 ? ` or ${arms.length - 1} others` : ''}`
+            ? quota > 0
+              ? `no trade yet today · waiting for ${top ? `${top.strategy} ${top.tf}` : 'a setup'}${arms.length > 1 ? ` or ${arms.length - 1} others` : ''}`
+              : `study only · best here: ${top ? `${top.strategy} ${top.tf}` : '—'}${top?.chosen ? ' (the bot trades it)' : ' (not proven — not traded)'}`
             : 'no strategy has a record here yet';
-    return { id, arms: arms.slice(0, DESK.maxArms), tradesToday, quota: DESK.quotaPerDay, lastTradeAt, pick, status, says };
+    return { id, arms: arms.slice(0, DESK.maxArms), tradesToday, quota, lastTradeAt, pick, status, says };
   });
   return { desks, picks };
 }
@@ -191,5 +196,6 @@ export function desksSummary(desks: MarketDesk[]): string {
   const traded = desks.filter((d) => d.status === 'traded').length;
   const picked = desks.filter((d) => d.status === 'picked').length;
   const waiting = desks.filter((d) => d.status === 'waiting').length;
-  return `${traded} of ${desks.length} markets traded today${picked ? ` · ${picked} taking a learning trade now` : ''}${waiting ? ` · ${waiting} waiting for a setup` : ''}`;
+  const study = desks.length > 0 && desks.every((d) => d.quota === 0);
+  return `${traded} of ${desks.length} markets traded today${picked ? ` · ${picked} taking a learning trade now` : ''}${waiting ? ` · ${waiting} waiting for a ${study ? 'proven ' : ''}setup` : ''}${study ? ' · desks study only' : ''}`;
 }

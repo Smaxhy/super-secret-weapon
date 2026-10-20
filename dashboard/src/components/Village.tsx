@@ -525,7 +525,7 @@ export function Village() {
       }
       for (const [i, w] of world.watchers.entries()) {
         const d = desks[i];
-        w.bubble = d ? (d.status === 'traded' ? 'traded today ✓' : d.status === 'picked' ? 'taking a learning trade' : d.status === 'waiting' ? `0/${d.quota} today` : 'no record yet') : null;
+        w.bubble = d ? (d.status === 'traded' ? 'traded today ✓' : d.status === 'picked' ? 'taking a learning trade' : d.status === 'waiting' ? (d.quota ? `0/${d.quota} today` : 'watching') : 'no record yet') : null;
         w.busy = d?.status === 'picked';
         // a watcher keeps its post round the square (no wandering: its name tag must stay readable)
         stepMover(w, dt);
@@ -729,7 +729,7 @@ export function Village() {
               <div className="text-sm font-semibold text-ink">How the village works</div>
               <ul className="mt-1 list-disc space-y-1 pl-4">
                 <li><span className="font-semibold text-ink">The guild hall in the middle is the bot.</span> Each villager is one part of it: the Scout watches markets, the Analyst reads the chart, the Trader runs the open trades, the Risk keeper sizes them, the Treasurer counts the money, the Clerk logs decisions, the Historian grades strategies, the Crier watches the news, the Miner runs the crypto side.</li>
-                <li><span className="font-semibold text-ink">The white bubble over a villager is what they are doing right now.</span> Their name tag is in their colour. The small grey ones by the library are apprentices: one per strategy the bot has put to work. The hooded ones round the square are the market watchers: one per market, each with its own strategy ranking and one learning trade a day — walk up to one for its desk.</li>
+                <li><span className="font-semibold text-ink">The white bubble over a villager is what they are doing right now.</span> Their name tag is in their colour. The small grey ones by the library are apprentices: one per strategy the bot has put to work. The hooded ones round the square are the market watchers: one per market, each ranking the strategies on its market — walk up to one for its desk.</li>
                 <li><span className="font-semibold text-ink">To open someone's screen</span>, tap them, or walk up with the arrows / WASD / the d-pad and press E. The list under the map does the same without walking.</li>
                 <li>Daylight means forex is open; night means it is closed. New decisions float up over the guild hall.</li>
               </ul>
@@ -822,7 +822,7 @@ function PanelBody({ panel, x, onClose }: { panel: Panel; x: CRData; onClose: ()
         <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-accent-soft text-accent-text"><Icon name={isHub ? 'cpu' : r!.icon} size={18} /></div>
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold text-ink">{isHub ? 'The guild hall · the bot' : panel.market ? `${panel.market.length === 6 ? `${panel.market.slice(0, 3)}/${panel.market.slice(3)}` : panel.market} watcher · market desk` : panel.apprentice ? `Apprentice on ${panel.apprentice}` : `${NAMES[rk!]} · ${BUILDINGS.find((b) => b.k === rk)?.name.split(' · ')[0] ?? r!.name}`}</div>
-          <p className="text-xs text-ink-2">{isHub ? x.state.word : panel.market ? (desk?.says ?? 'its own strategies for this market, one learning trade a day') : panel.apprentice && row ? `Works the ${row.name} rule on the ${row.tf} chart · verdict ${row.verdict}` : v!.says}</p>
+          <p className="text-xs text-ink-2">{isHub ? x.state.word : panel.market ? (desk?.says ?? 'ranks the strategies on this market') : panel.apprentice && row ? `Works the ${row.name} rule on the ${row.tf} chart · verdict ${row.verdict}` : v!.says}</p>
         </div>
         <Button size="sm" variant="ghost" onClick={onClose} aria-label="Close"><Icon name="x" size={16} /></Button>
       </div>

@@ -429,6 +429,12 @@ async function main(): Promise<void> {
     forex.logBot([line]);
     log.info({ line }, 'forex bot: 1-minute trades struck');
   });
+  // v20.1 (owner: "revert all current active trades"): every open bot trade is struck as if it never happened, once
+  await oneTimeUpgrade('v20.1-revert-open', async () => {
+    const line = await practice.undoOpen('bot');
+    forex.logBot([line, 'strict mode on: only strategies that passed the unseen exam, 2+ market checks per trade, market entries only, desks study only']);
+    log.info({ line }, 'forex bot: open trades struck');
+  });
   // v17.14: a live read of every open trade + an AI read of its price action every 15 min (display only)
   const tradeWatch = new TradeWatch(practice, new TradeAi(redis), { markets: () => forex.marketsNow, news: (pair, now) => fxCalendar.upcoming(pair, now) });
   tradeWatch.start();

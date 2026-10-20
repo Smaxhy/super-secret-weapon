@@ -856,6 +856,28 @@ square"; help card line. tests/forex-desks.test.ts (6). Verified with Playwright
 NOTE: the desk only lifts arms that already fire from the lab's own strategies; it buys ONE half-size data point a day per
 market — judge how it does on the Lab / Historian cards and the bot's own R ledger before trusting any desk's ranking.
 
+## v20.1 strict mode + open trades reverted (Oct 20, owner: "I want to win, make it trade only what will work with
+proper research, revert all current active trades")
+`FX_CONFIG.strict` {edgeOnly true, minAgree 2, deskTrades false} + `FX_CONFIG.liveEntries` false (lab.ts):
+- **Edge only**: the live chooser keeps ONLY rows with verdict 'edge' (unseen ≥30 trades, both halves positive, unseen
+  PF ≥1.2, beats random, survives the luck twins + deflated Sharpe) minus the learner's dropped list. The always-on four,
+  the rolling picker's list and Maybe rows no longer get a row in (`chooser` stays 'verdict'). An empty list logs
+  "strict mode: no strategy has passed the unseen exam right now — the bot waits" once per change. On the real feed
+  v18.6 saw `edges: 0`, so EXPECT zero bot trades until a row earns Edge — that is the point, told to the owner.
+- **2 market checks per trade**: every lab open trade carries `agree` {n (agreeCount at the signal close: strength gap,
+  4h trend, daily trend, mood), of (4 on 1h, 3 on 4h), need}; `syncBot` waits "only N of M market checks agree (needs 2:
+  strength, bigger charts, mood)" while n < min(need, of) (desk trades exempt). why.ts kind `agree` + hint.
+- **Market entries only**: `liveEntries` false → every row's entry is 'market', no resting orders (the pullback orders
+  filled on the signals that came back against the trade and missed the ones that ran).
+- **Desks study only**: `DeskInput.quota` (0 → no pick, status 'waiting' = "study only · best here: …", summary
+  "… waiting for a proven setup · desks study only"); the lab passes 0 while `strict.deskTrades` is false and never calls
+  `applyDesks`. Dashboard tiles say "watching" instead of "0/1 today"; Village bubbles / help / Auto-bot "How it trades"
+  text updated.
+- **Revert**: `undoOpen(a)` (practice.ts, pure): strikes every open position + its parts (USD back out of the balance,
+  peak lowered), resting orders and weekend pauses; closed trades stay. `Practice.undoOpen(acct)` also drops those ids'
+  rows from the durable P&L log. One-time `v20.1-revert-open` (index.ts) → bot account, bot-log line + "strict mode on".
+tests/forex-strict.test.ts (6). 1,306 tests. To loosen later: `strict.edgeOnly` false restores the v18.9 chooser.
+
 ## v18.10 crypto checker plumbing (Oct 19, owner: "crypto still isn't trading or learning")
 Cause suspected from the code (VPS not reachable from the sandbox): a coin is only SCORED once its safety check (RPC
 `getAccountInfo` + Postgres, safety queue worker, concurrency 4) has landed; every checkpoint before that returns silently.

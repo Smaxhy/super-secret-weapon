@@ -17,6 +17,7 @@ export type ReasonKind =
   | 'caps'
   | 'judge_missing'
   | 'judge_no'
+  | 'agree'
   | 'check_data'
   | 'stale_feed'
   | 'clock'
@@ -35,6 +36,7 @@ const LABEL: Record<ReasonKind, string> = {
   caps: 'its slots were full (per strategy, per chart or in total)',
   judge_missing: 'the signal judge had a reading missing (a feed is down) — it waits rather than trade blind',
   judge_no: 'the signal judge scored the setup too low',
+  agree: 'too few market checks (strength, bigger charts, mood) stood behind the setup',
   check_data: 'a check the strategy was tested with had no data (feed missing)',
   stale_feed: 'the price feed was lagging (candles behind) — no new trades on that market',
   clock: 'the market clock (closed, rollover, weekly open / close)',
@@ -54,6 +56,7 @@ export function classify(why: string): ReasonKind {
   if (w.includes('cooling off')) return 'cooldown';
   if (w.includes('slots are full') || w.includes('trades open')) return 'caps';
   if (w.includes('signal judge') && w.includes('missing')) return 'judge_missing';
+  if (w.includes('market checks agree')) return 'agree';
   if (w.includes('signal judge')) return 'judge_no';
   if (w.includes('check has no data') || w.includes('feed missing')) return 'check_data';
   if (w.includes('candles behind') || w.includes('price data for') || w.includes('feed is lagging') || w.includes('no fresh')) return 'stale_feed';
@@ -191,6 +194,7 @@ const HINT: Partial<Record<ReasonKind, string>> = {
   check_data: 'A filter input is missing (Setup → Data feeds). The row trades again when the feed is back.',
   stale_feed: 'Yahoo candles are behind. Setup → Data feeds shows the ages; Dukascopy fills currency pairs when it can reach the host.',
   judge_no: 'Working as designed: the judge only lets the better-looking setups through.',
+  agree: 'Working as designed (strict mode): a trade needs 2 of the market checks on its side. Fewer, better-backed trades.',
   caps: 'Working as designed: raise the risk mode (Risk desk) for more slots.',
   news: 'Working as designed: it skips the half hour around high-impact news.',
   late: 'The lab filled a bar earlier than the bot saw the price; nothing to fix unless it repeats on every signal.',

@@ -466,6 +466,29 @@ export function undoChart(a: PracticeAccount, tf: string): { closed: number; usd
   return { closed: gone.length, usd, open, orders };
 }
 
+/**
+ * v20.1 (owner: "revert all current active trades"): strike every OPEN trade from an account as if it never happened —
+ * the positions, their parts already taken (USD back out of the balance), their overnight rolls, resting orders and
+ * weekend pauses. Closed trades stay. Returns what was removed + the ids whose P&L-log rows must go. Mutates `a`. Pure.
+ */
+export function undoOpen(a: PracticeAccount): { open: number; parts: number; usd: number; orders: number; paused: number; ids: string[] } {
+  const ids = a.open.map((p) => p.id);
+  const partOf = (c: { id: string }) => ids.some((id) => c.id === id || c.id.startsWith(`${id}-part`));
+  const parts = a.closed.filter(partOf);
+  // every dollar these trades booked so far: parts taken + rolls (bankedUsd), never the unrealised P&L (never booked)
+  const usd = Math.round(a.open.reduce((n, p) => n + (p.bankedUsd ?? 0), 0) * 100) / 100;
+  a.closed = a.closed.filter((c) => !partOf(c));
+  a.balanceUsd = Math.round((a.balanceUsd - usd) * 100) / 100;
+  const open = a.open.length;
+  a.open = [];
+  const orders = (a.orders ?? []).length;
+  if (a.orders) a.orders = [];
+  const paused = (a.resume ?? []).length;
+  if (a.resume) a.resume = [];
+  if (a.peakUsd !== undefined && usd > 0) a.peakUsd = Math.max(a.balanceUsd, a.peakUsd - usd);
+  return { open, parts: parts.length, usd, orders, paused, ids };
+}
+
 /** Close a position; a bot trade's total (parts + this close) goes into its record unless it only paused for the
  * weekend. Returns this close's P&L. Mutates `a`. */
 function closePos(a: PracticeAccount, p: PracticePosition, px: number, mids: Record<string, number>, reason: ClosedPractice['reason'], at: number): number {
@@ -828,6 +851,9 @@ export interface LabOpenTrade {
   exitWhen?: string | null;
   /** v18.4: the strategy's tested way in is a resting order — the limit (mid price) and when it expires */
   order?: { kind: 'limit' | 'pullback'; limit: number; until: number } | null;
+  /** v20.1: market checks on the trade's side at its signal close (strength gap, 4h trend, daily trend, mood), out of
+   * `of`; the bot waits while `n < need` (strict mode) */
+  agree?: { n: number; of: number; need: number } | null;
 }
 
 /** v18.4: a resting limit order on the bot account (entries.ts, picked on the first 70%); filled by `tick` against the
@@ -1542,6 +1568,13 @@ export class Practice {
           skip(t, t.dataWait, true);
           continue;
         }
+        if (t.agree && t.agree.need > 0 && t.agree.n < Math.min(t.agree.need, t.agree.of) && !t.desk) {
+          // v20.1 strict mode: not enough of the market checks stand behind it → wait for a better-backed setup
+          const w = `only ${t.agree.n} of ${t.agree.of} market checks agree (needs ${Math.min(t.agree.need, t.agree.of)}: strength, bigger charts, mood)`;
+          note(`${t.ref}:agree`, `waiting on ${t.pair} (${t.strategy}): ${w}`);
+          skip(t, w, true);
+          continue;
+        }
         if (t.judge && !t.judge.ok && t.judge.missing && !t.desk) {
           // v17: the judge can't score it right now (a reading it learned from is missing) — wait, don't trade blind
           note(`${t.ref}:judge`, `waiting on ${t.pair} (${t.strategy}): the signal judge is missing ${t.judge.missing}`);
@@ -1806,6 +1839,29 @@ export class Practice {
       }
       await this.save(a, acct);
       return `${tf} chart struck from the ${acct} account: ${r.closed} closed trade${r.closed === 1 ? '' : 's'} (${r.usd >= 0 ? '−' : '+'}$${Math.abs(r.usd).toFixed(2)} taken back out), ${r.open} open, ${r.orders} resting order${r.orders === 1 ? '' : 's'} removed — balance now $${a.balanceUsd.toFixed(2)}`;
+    });
+  }
+
+  /** v20.1: strike every open trade (+ its parts, orders, weekend pauses) from an account as if it never happened. */
+  async undoOpen(acct: AcctId): Promise<string> {
+    return this.serial(async () => {
+      const a = await this.load(acct);
+      const r = undoOpen(a);
+      if (this.pnlLogs() && r.ids.length) {
+        const key = pnlKey(acct);
+        const raw = await this.redis.lrange(key, 0, -1);
+        const keep = raw.filter((x) => {
+          const row = parsePnlRow(x);
+          return row !== null && !r.ids.some((id) => row.id === id || row.id.startsWith(`${id}-part`));
+        });
+        const m = this.redis.multi().del(key);
+        if (keep.length) m.rpush(key, ...keep);
+        await m.exec();
+        this.pnlReady.add(acct);
+        this.pnlDirty(acct);
+      }
+      await this.save(a, acct);
+      return `open trades struck from the ${acct} account as if they never happened: ${r.open} position${r.open === 1 ? '' : 's'}, ${r.parts} part${r.parts === 1 ? '' : 's'} (${r.usd >= 0 ? '−' : '+'}$${Math.abs(r.usd).toFixed(2)} taken back out), ${r.orders} resting order${r.orders === 1 ? '' : 's'}, ${r.paused} weekend pause${r.paused === 1 ? '' : 's'} — balance now $${a.balanceUsd.toFixed(2)}`;
     });
   }
 

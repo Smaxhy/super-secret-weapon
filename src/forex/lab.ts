@@ -69,8 +69,17 @@ export const FX_CONFIG = {
   /** whole-bot backtest: base risk levels tried, and what a strategy needs on the first 70% to be picked */
   portfolioRiskPct: [0.5, 1, 2, 3, 5],
   pick: { minN: 40, minAvgR: 0.05, minPf: 1.15 },
-  /** v18.4: let a strategy trade with a limit / pullback entry once that proved better on its first 70% (entries.ts) */
-  liveEntries: true,
+  /** v18.4: let a strategy trade with a limit / pullback entry once that proved better on its first 70% (entries.ts).
+   * v20.1 (owner: "trade only what will work"): OFF — market entries only until the entry lab proves itself on real data
+   * (a pullback order fills on the signals that came back against the trade and misses the ones that ran). */
+  liveEntries: false,
+  /** v20.1 strict mode (owner: "I want to win, make it trade only what will work with proper research"):
+   * edgeOnly — the bot trades ONLY rows that passed the unseen exam (verdict Edge after the luck + deflated-Sharpe
+   *   checks); the always-on four and the rolling picker's list no longer let a row in on their own;
+   * minAgree — a trade needs this many of the market checks (strength gap, 4h trend, daily trend, mood) on its side at
+   *   the signal close, else it waits;
+   * deskTrades — the market desks' daily learning trades (v20) are OFF: the desks rank and study, they don't trade. */
+  strict: { edgeOnly: true, minAgree: 2, deskTrades: false },
   /** v18.7 (owner: "we can't fast trade these charts, they take time"): the bot account trades the 1h + 4h charts only.
    * The 15m / 1m charts stay lab-tested (Strategies / Lab) but place no bot trades while this is off. */
   botFastCharts: false,
@@ -602,9 +611,10 @@ export function slimTrade(t: Trade): Trade {
 export const tradeKey = (t: { strategy: string; tf: string; pair: string; entryT: number; keyT?: number }) => `${t.strategy}:${t.tf}:${t.pair}:${t.keyT ?? t.entryT}`;
 
 /** A lab trade as the bot account takes it (v15: with its trailing take-profit and the exit rules still in force). */
-export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction']; sniper?: LabOpenTrade['sniper']; dataWait?: string | null; order?: LabOpenTrade['order'] }): LabOpenTrade {
+export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction']; sniper?: LabOpenTrade['sniper']; dataWait?: string | null; order?: LabOpenTrade['order']; agree?: LabOpenTrade['agree'] }): LabOpenTrade {
   return {
     ...(o.order ? { order: o.order } : {}),
+    ...(o.agree ? { agree: o.agree } : {}),
     ref: tradeKey(t),
     strategy: t.strategy,
     tf: t.tf,
@@ -1772,7 +1782,10 @@ export class ForexLab {
 
     // v18.9: an always-on row rests while its own last 26 weeks lose money (the rolling picker's record, same rule live)
     const alwaysOff = new Set((rolling?.thisWeek.paused ?? []).map((p) => p.key));
-    const chosenRows = rows.filter((x) => x.id !== 'random' && !rec.dropped.includes(`${x.id}:${x.tf}`) && (rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`))));
+    const strict = FX_CONFIG.strict.edgeOnly;
+    const chosenRows = rows.filter((x) => x.id !== 'random' && !rec.dropped.includes(`${x.id}:${x.tf}`) && (strict ? x.verdict === 'edge' : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`))));
+    // v20.1 strict mode: say once per hour-of-change why the list is empty (the owner reads the Decisions log)
+    if (strict && !chosenRows.length && this.chosen.length) this.logBot(['strict mode: no strategy has passed the unseen exam right now — the bot waits (nothing is traded until one earns Edge)']);
     for (const p of rolling?.thisWeek.paused ?? []) {
       const k = `${p.key}:paused`;
       if (!this.pausedNoted.has(k)) {
@@ -1783,7 +1796,7 @@ export class ForexLab {
     for (const k of [...this.pausedNoted]) if (!alwaysOff.has(k.replace(/:paused$/, ''))) this.pausedNoted.delete(k);
     const chosen = new Set(chosenRows.map((x) => `${x.id}:${x.tf}`));
     this.chosen = [...chosen];
-    this.chooser = rollLive ? 'rolling' : 'verdict';
+    this.chooser = strict ? 'verdict' : rollLive ? 'rolling' : 'verdict';
     // v17: a point-in-time record of what the bot was allowed to trade (only when the list changes)
     await this.noteChosen(chosen);
 
@@ -1938,8 +1951,11 @@ export class ForexLab {
         const barMs = se.ctx.barMin * 60_000;
         return { kind: row.entry, limit, until: b.t + barMs * (1 + (row.entry === 'limit' ? ENTRY.limitBars : ENTRY.pullbackBars)) };
       })();
+      // v20.1: how many market checks stand behind the trade at its signal close (strict mode needs `need` of them)
+      const agree = { n: openAgree.get(tradeKey(t)) ?? 0, of: maxConfirmations(t.tf, false), need: FX_CONFIG.strict.minAgree };
       return toLabTrade(t, {
         order,
+        agree,
         chosen: chosen.has(`${t.strategy}:${t.tf}`),
         sizeF,
         prio: row ? row.all.avgR : -1,
@@ -1985,8 +2001,9 @@ export class ForexLab {
         closed: snap.account.closed,
         open: out.botTrades,
         chosen: new Set(out.chosen),
+        quota: FX_CONFIG.strict.deskTrades ? undefined : 0,
       });
-      const n = applyDesks(out.botTrades, built.picks);
+      const n = FX_CONFIG.strict.deskTrades ? applyDesks(out.botTrades, built.picks) : 0;
       this.desks = built.desks;
       if (n) this.logBot(built.desks.filter((d) => d.pick).map((d) => `desk: ${d.pick!.why}`));
       await this.redis.set(FX_DESKS, JSON.stringify({ at: Date.now(), desks: built.desks })).catch(() => undefined);
