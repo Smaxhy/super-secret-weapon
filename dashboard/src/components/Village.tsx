@@ -10,6 +10,12 @@
  *
  * Everything is drawn in code (no image assets): tiles, buildings, people, smoke, the fountain. Day while forex is
  * open, night when it is closed. New bot decisions float up over the guild hall as they happen. Display only.
+ *
+ * v21.1 (owner: "the town needs to be fixed"): the HUD sits ABOVE the map (nothing covers the guild hall or the square
+ * any more), a phone gets a real control bar UNDER the map (big d-pad + a Talk button) instead of buttons over the
+ * buildings, the map is wider on a phone (scale 1.5 → ~15 tiles across), the market watchers only show a status dot
+ * until you walk up to one (their 14 pair tags were the clutter), building labels are short on a phone, the Treasurer
+ * moved to the observatory side (its tag collided with the Risk keeper's), and the help card is three short lines.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
@@ -39,6 +45,8 @@ const BUILDINGS: Building[] = [
   { k: 'crypto', kind: 'mine', x: 25, y: 13, w: 4, h: 3, door: 26, name: 'Mine · Miner (crypto)', roof: '#6b5a3e', wall: '#857253' },
 ];
 const doorTile = (b: Building) => ({ x: b.door, y: b.y + b.h });
+/** v21.1 the Treasurer's post: a counting table by the observatory, away from the vault door (its tag collided with the Risk keeper's) */
+const TREASURER_HOME: Array<[number, number]> = [[28, 5], [28, 6], [27, 6], [28, 4], [27, 7], [28, 7]];
 /** v20: the market watchers' posts — a ring round the square, two tiles apart, so every name tag stays readable */
 const WATCH_POSTS: Array<{ x: number; y: number }> = [
   { x: 11, y: 7 }, { x: 13, y: 7 }, { x: 15, y: 7 }, { x: 17, y: 7 },
@@ -172,6 +180,8 @@ interface Mover {
   small?: boolean;
   bubble?: string | null;
   busy?: boolean;
+  /** a market watcher's desk status (traded / picked / waiting / idle) — drawn as a dot when you are far away */
+  status?: string;
 }
 function mover(id: string, kind: Mover['kind'], label: string, x: number, y: number, speed: number, wander: number, small = false): Mover {
   return { id, kind, label, tx: x, ty: y, px: x * T, py: y * T, path: [], facing: 1, speed, idleUntil: 0, home: { x, y }, wander, small };
@@ -377,9 +387,11 @@ export function Village() {
   const closeHelp = () => { setHelp(false); try { localStorage.setItem('village.help', 'seen'); } catch { /* private mode */ } };
   const held = useRef<Set<string>>(new Set());
   const phone = wrapW > 0 && wrapW < 640;
-  const scale = wrapW >= 1000 ? 2 : wrapW >= 720 ? 1.5 : 2;
+  // v21.1: a phone draws at 1.5 so ~15 tiles fit across (at 2 it was 11: the square never fit); the labels are drawn in
+  // screen pixels, so they stay 11 px whatever the scale
+  const scale = wrapW >= 1000 ? 2 : 1.5;
   const viewW = Math.min(W * T, Math.floor(wrapW / scale));
-  const viewH = phone ? 13 * T : H * T;
+  const viewH = phone ? 14 * T : H * T;
 
   // the world's people live in refs; React only sees the panel, the prompt and the hover label
   const world = useMemo(() => {
@@ -390,7 +402,8 @@ export function Village() {
       people.push(mover(b.k, b.k, NAMES[b.k], d.x, d.y, 28, b.k === 'scout' ? 5 : 3));
     }
     // the Treasurer counts the gold outside the vault
-    people.push(mover('pnl', 'pnl', NAMES.pnl, 27, 12, 24, 2));
+    const th = TREASURER_HOME.find(([tx, ty]) => walkable(tx, ty)) ?? [28, 6];
+    people.push(mover('pnl', 'pnl', NAMES.pnl, th[0], th[1], 24, 1));
     const plaza = { x: 14, y: 9 };
     const player = mover('player', 'player', 'You', plaza.x, plaza.y, 56, 99);
     return { people, player, apprentices: [] as Mover[], watchers: [] as Mover[], toasts: [] as Array<{ t: number; text: string }>, seenLog: 0, hoverId: null as string | null, time: 0 };
@@ -527,7 +540,8 @@ export function Village() {
         const d = desks[i];
         w.bubble = d ? (d.status === 'traded' ? 'traded today ✓' : d.status === 'picked' ? 'taking a learning trade' : d.status === 'waiting' ? (d.quota ? `0/${d.quota} today` : 'watching') : 'no record yet') : null;
         w.busy = d?.status === 'picked';
-        // a watcher keeps its post round the square (no wandering: its name tag must stay readable)
+        w.status = d?.status;
+        // a watcher keeps its post round the square (no wandering)
         stepMover(w, dt);
       }
       // new decisions float up over the guild hall
@@ -585,23 +599,28 @@ export function Village() {
         ctx.fillStyle = col; ctx.fillText(text, sx, sy - 2);
       };
       ctx.font = '700 11px ui-sans-serif, system-ui, sans-serif';
-      for (const b of BUILDINGS) label(b.name, b.x * T + b.w * T / 2, b.y * T - (b.kind === 'hall' ? 14 : b.kind === 'tower' ? 12 : 2), '#f8fafc', 'rgba(15,23,42,0.7)');
+      for (const b of BUILDINGS) label(phone ? (b.name.split(' · ')[0] ?? b.name) : b.name, b.x * T + b.w * T / 2, b.y * T - (b.kind === 'hall' ? 14 : b.kind === 'tower' ? 12 : 2), '#f8fafc', 'rgba(15,23,42,0.7)');
       // every worker wears a name tag in its own colour; what it is doing floats above when it is busy, near you or hovered
       ctx.font = '700 11px ui-sans-serif, system-ui, sans-serif';
       for (const m of [...world.people, ...world.apprentices, ...world.watchers]) {
         const d = Math.hypot(m.px - p.px, m.py - p.py) / T;
-        const near3 = d <= 2.5 || world.hoverId === m.id;
+        // a watcher only shows its pair tag within talking distance (its posts are 2 tiles apart: two tags at 2.5 overlapped)
+        const near3 = (m.kind === 'watcher' ? d <= 1.6 : d <= 2.5) || world.hoverId === m.id;
         if (m.small && !near3 && m.kind !== 'watcher') continue;
         if (m.kind === 'watcher' && !near3 && !m.busy) {
-          // far away: a small pair tag; neighbours on the square alternate above / below so the tags never overlap
-          const below = world.watchers.indexOf(m) % 2 === 1;
-          ctx.font = '600 9px ui-sans-serif, system-ui, sans-serif';
-          label(m.label, m.px + 8, below ? m.py + 24 : m.py - 2, '#ffffff', PAL.watcher.cloak + 'cc');
-          ctx.font = '700 11px ui-sans-serif, system-ui, sans-serif';
+          // far away: only a status dot over the hood (green = traded today, amber = taking a trade, grey = watching);
+          // the pair tag and the bubble appear when you walk up or hover — 14 tags round the square were the clutter
+          if (m.status && m.status !== 'idle') {
+            const [sx, sy] = toScreen(m.px + 8, m.py - 3);
+            ctx.fillStyle = 'rgba(15,23,42,0.85)'; ctx.fillRect(sx - 4, sy - 4, 8, 8);
+            ctx.fillStyle = m.status === 'traded' ? '#34d399' : m.status === 'picked' ? '#fbbf24' : '#cbd5e1'; ctx.fillRect(sx - 3, sy - 3, 6, 6);
+          }
           continue;
         }
         const col = PAL[m.kind].cloak;
-        label(m.label, m.px + 8, m.py - 6, '#ffffff', col + 'e6');
+        // two neighbouring watchers both in reach: one tag above the hood, the other under the feet, so they never overlap
+        const tagY = m.kind === 'watcher' && world.watchers.indexOf(m) % 2 === 1 ? m.py + 26 : m.py - 6;
+        label(m.label, m.px + 8, tagY, '#ffffff', col + 'e6');
         // a watcher's bubble only within talking distance (or hovered / busy) — the square is crowded
         const speak = m.kind === 'watcher' ? d <= 1.6 || world.hoverId === m.id || m.busy : near3 || m.busy;
         if (m.bubble && speak) {
@@ -662,9 +681,24 @@ export function Village() {
 
   const equity = x.a?.equityUsd ?? null;
   const dayPnl = x.a ? x.a.closed.filter((c) => x.now - c.closedAt < 86_400_000).reduce((s, c) => s + c.pnlUsd, 0) : 0;
+  const talk = () => { const n = nearest(); if (n) setPanel(n); };
+  /** "the Trader" / "the guild hall" / "the EURUSD watcher" — who the Talk button opens */
+  const who = prompt ? prompt.replace(/^E · (talk to |enter )/, '') : null;
+  const enter = !!prompt && prompt.startsWith('E · enter');
+  const pads: Array<[string, string]> = [['arrowup', '▲'], ['arrowleft', '◀'], ['arrowright', '▶'], ['arrowdown', '▼']];
 
   return (
     <div ref={wrapRef} className="relative select-none">
+      {/* v21.1 the HUD lives ABOVE the map: nothing covers the guild hall or the square */}
+      <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs" aria-label="Village status">
+        <span className="rounded-full bg-surface-2 px-2.5 py-1 text-ink"><span className="font-semibold">Gold</span> {equity !== null ? `$${equity.toFixed(0)}` : '—'} <span className={dayPnl >= 0 ? 'text-up' : 'text-down'}>{usd(dayPnl)} today</span></span>
+        <span className="rounded-full bg-surface-2 px-2.5 py-1 font-semibold text-ink">{x.state.word}</span>
+        <span className="rounded-full bg-surface-2 px-2.5 py-1 text-ink-2">Next look {mmss(x.next.at - x.now)} · {x.next.tf}</span>
+        <span className="rounded-full bg-surface-2 px-2.5 py-1 text-ink-2">{x.open ? 'Day · forex open' : 'Night · forex closed'}</span>
+        <span className="hidden rounded-full bg-surface-2 px-2.5 py-1 text-ink-2 md:inline">{world.people.length} villagers · {x.d?.chosen.length ?? 0} apprentices · {x.positions.length} trade{x.positions.length === 1 ? '' : 's'} open</span>
+        <button type="button" onClick={() => (help ? closeHelp() : setHelp(true))} aria-label="How the village works" aria-expanded={help} className="ml-auto grid h-7 w-7 place-items-center rounded-full bg-surface-2 text-sm font-bold text-ink hover:bg-surface-3">?</button>
+      </div>
+      {x.d?.why?.quiet && <div role="status" className="mb-2 rounded-lg bg-amber-200/90 px-2.5 py-1.5 text-xs text-amber-950"><span className="font-semibold">Why no trades? </span>{x.d.why.verdict}</div>}
       <div className="relative overflow-hidden rounded-xl border border-line bg-[#1f3a1a]" style={{ height: viewH * scale }}>
         <canvas
           ref={canvasRef}
@@ -675,40 +709,11 @@ export function Village() {
           onPointerLeave={() => { world.hoverId = null; setHover(null); }}
           aria-label="The village: the bot's workers as villagers. Arrow keys or WASD walk, E talks, tap to walk or talk."
         />
-        {/* HUD */}
-        <div className="pointer-events-none absolute left-2 top-2 flex flex-col gap-1 text-xs">
-          <div className="rounded-lg bg-black/60 px-2 py-1 text-amber-200 backdrop-blur-sm">
-            <span className="font-semibold">Gold</span> {equity !== null ? `$${equity.toFixed(0)}` : '—'} <span className={dayPnl >= 0 ? 'text-emerald-300' : 'text-rose-300'}>{usd(dayPnl)} today</span>
-          </div>
-          <div className="rounded-lg bg-black/60 px-2 py-1 text-slate-100 backdrop-blur-sm">
-            <span className="font-semibold">{x.state.word}</span> · next look {mmss(x.next.at - x.now)} ({x.next.tf}) · {x.open ? 'day — forex open' : 'night — forex closed'}
-          </div>
-          {x.d?.why?.quiet && <div className="max-w-[min(92vw,560px)] rounded-lg bg-amber-300/95 px-2 py-1 text-slate-900"><span className="font-semibold">Why no trades? </span>{x.d.why.verdict}</div>}
-          <div className="rounded-lg bg-black/60 px-2 py-1 text-slate-100 backdrop-blur-sm sm:hidden">{x.d?.chosen.length ?? 0} apprentices at work · {x.positions.length} trade{x.positions.length === 1 ? '' : 's'} open</div>
-        </div>
-        <button type="button" onClick={() => setHelp(true)} aria-label="How the village works" className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/60 text-sm font-bold text-slate-100 backdrop-blur-sm sm:top-10">?</button>
-        <div className="pointer-events-none absolute right-2 top-2 hidden rounded-lg bg-black/60 px-2 py-1 text-xs text-slate-100 backdrop-blur-sm sm:block">
-          {world.people.length} villagers · {(x.d?.chosen.length ?? 0)} apprentices at work · {x.positions.length} trade{x.positions.length === 1 ? '' : 's'} open
-        </div>
-        {prompt && !panel && (
+        {/* inside the map only what belongs to the moment: the talk prompt (desktop) or who you point at */}
+        {prompt && !panel && !phone && (
           <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-amber-300 px-3 py-1 text-xs font-semibold text-slate-900 shadow">{prompt}</div>
         )}
-        {hover && !prompt && !panel && <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs text-slate-100">{hover} · tap to open</div>}
-        {/* phone d-pad + talk */}
-        {phone && !panel && (
-          <div className="absolute bottom-2 left-2 grid grid-cols-3 gap-1 text-slate-100">
-            {[['', 'arrowup', ''], ['arrowleft', '', 'arrowright'], ['', 'arrowdown', '']].map((row, i) => row.map((d, j) => (
-              d ? (
-                <button key={`${i}${j}`} type="button" aria-label={d.replace('arrow', '')} className="h-10 w-10 rounded-lg bg-black/55 text-lg active:bg-black/80" onPointerDown={() => pad(d, true)} onPointerUp={() => pad(d, false)} onPointerCancel={() => pad(d, false)} onPointerLeave={() => pad(d, false)}>
-                  {d === 'arrowup' ? '▲' : d === 'arrowdown' ? '▼' : d === 'arrowleft' ? '◀' : '▶'}
-                </button>
-              ) : <span key={`${i}${j}`} />
-            )))}
-          </div>
-        )}
-        {phone && !panel && prompt && (
-          <button type="button" className="absolute bottom-2 right-2 h-12 w-12 rounded-full bg-amber-300 text-sm font-bold text-slate-900 shadow" onClick={() => { const n = nearest(); if (n) setPanel(n); }}>E</button>
-        )}
+        {hover && !prompt && !panel && !phone && <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs text-slate-100">{hover} · tap to open</div>}
         {/* the screen of whoever you talked to (desktop: a drawer inside the world) */}
         {panel && !phone && (
           <div className="absolute inset-y-0 right-0 z-20 w-[460px] max-w-full overflow-y-auto border-l border-line bg-surface p-3 shadow-2xl fade-in">
@@ -716,6 +721,24 @@ export function Village() {
           </div>
         )}
       </div>
+      {/* v21.1 phone: a real control bar UNDER the map — big d-pad, who you stand next to, one Talk button */}
+      {phone && (
+        <div className="mt-2 flex items-center gap-3">
+          <div className="grid shrink-0 grid-cols-3 gap-1" role="group" aria-label="Walk">
+            {[['', 'arrowup', ''], ['arrowleft', '', 'arrowright'], ['', 'arrowdown', '']].map((row, i) => row.map((d, j) => (
+              d ? (
+                <button key={`${i}${j}`} type="button" aria-label={d.replace('arrow', '')} disabled={!!panel} className="h-11 w-11 rounded-lg bg-surface-2 text-base text-ink active:bg-surface-3 disabled:opacity-40" onPointerDown={() => pad(d, true)} onPointerUp={() => pad(d, false)} onPointerCancel={() => pad(d, false)} onPointerLeave={() => pad(d, false)}>
+                  {pads.find((p) => p[0] === d)![1]}
+                </button>
+              ) : <span key={`${i}${j}`} />
+            )))}
+          </div>
+          <p className="min-w-0 flex-1 text-xs text-ink-2" aria-live="polite">
+            {who ? <>Next to <span className="font-semibold text-ink">{who}</span> — tap {enter ? 'Enter' : 'Talk'}.</> : hover ? <>{hover} · tap to open</> : 'Arrows or tap a tile to walk. Tap anyone to open their screen.'}
+          </p>
+          <button type="button" disabled={!prompt || !!panel} onClick={talk} className={`h-14 w-14 shrink-0 rounded-full text-sm font-bold ${prompt && !panel ? 'bg-amber-300 text-slate-900 shadow' : 'bg-surface-2 text-muted'}`}>{enter ? 'Enter' : 'Talk'}</button>
+        </div>
+      )}
       {panel && phone && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-surface p-3 pb-20 fade-in">
           <PanelBody panel={panel} x={x} onClose={() => setPanel(null)} />
@@ -728,10 +751,9 @@ export function Village() {
             <div className="min-w-0 flex-1 text-sm text-ink-2">
               <div className="text-sm font-semibold text-ink">How the village works</div>
               <ul className="mt-1 list-disc space-y-1 pl-4">
-                <li><span className="font-semibold text-ink">The guild hall in the middle is the bot.</span> Each villager is one part of it: the Scout watches markets, the Analyst reads the chart, the Trader runs the open trades, the Risk keeper sizes them, the Treasurer counts the money, the Clerk logs decisions, the Historian grades strategies, the Crier watches the news, the Miner runs the crypto side.</li>
-                <li><span className="font-semibold text-ink">The white bubble over a villager is what they are doing right now.</span> Their name tag is in their colour. The small grey ones by the library are apprentices: one per strategy the bot has put to work. The hooded ones round the square are the market watchers: one per market, each ranking the strategies on its market — walk up to one for its desk.</li>
-                <li><span className="font-semibold text-ink">To open someone's screen</span>, tap them, or walk up with the arrows / WASD / the d-pad and press E. The list under the map does the same without walking.</li>
-                <li>Daylight means forex is open; night means it is closed. New decisions float up over the guild hall.</li>
+                <li><span className="font-semibold text-ink">The guild hall is the bot; every villager is one part of it.</span> The white bubble over someone is what they are doing right now.</li>
+                <li><span className="font-semibold text-ink">Tap anyone to open their screen</span> (or walk up and press E / Talk). The list under the map opens the same screens without walking.</li>
+                <li><span className="font-semibold text-ink">Round the square: one watcher per market.</span> A green dot = traded today, amber = taking a trade, grey = watching. The small grey ones by the library are the strategies at work. Day = forex open, night = closed.</li>
               </ul>
             </div>
             <Button size="sm" variant="ghost" onClick={closeHelp} aria-label="Close help"><Icon name="x" size={16} /></Button>
@@ -740,10 +762,10 @@ export function Village() {
       )}
       <Roster x={x} onOpen={(pnl) => setPanel(pnl)} />
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
-        <span>Walk: arrows / WASD or tap. Talk: stand next to someone and press E, or tap them. Esc closes a screen.</span>
+        <span>{phone ? 'Walk with the arrows or tap a tile. Tap anyone to open their screen.' : 'Walk: arrows / WASD or tap. Talk: stand next to someone and press E, or tap them. Esc closes a screen.'}</span>
         <button type="button" className="text-accent-text hover:underline" onClick={() => setHelp(true)}>How it works</button>
         <Link to="/forex" className="text-accent-text hover:underline">Control room view</Link>
-        <Link to="/forex/bot" className="text-accent-text hover:underline">Auto-bot page</Link>
+        <Link to="/forex/bot" className="text-accent-text hover:underline">Trades</Link>
       </div>
     </div>
   );
@@ -758,7 +780,7 @@ function Roster({ x, onOpen }: { x: CRData; onOpen: (p: Panel) => void }) {
       const k = b.k as RoomKey;
       return { panel: { k }, kind: k as Mover['kind'], name: NAMES[k], place: b.name.split(' · ')[0] ?? b.name, line: says[k].bubble, busy: says[k].busy };
     }),
-    { panel: { k: 'pnl' }, kind: 'pnl', name: NAMES.pnl, place: 'Outside the vault', line: says.pnl.bubble, busy: false },
+    { panel: { k: 'pnl' }, kind: 'pnl', name: NAMES.pnl, place: 'By the observatory', line: says.pnl.bubble, busy: false },
     { panel: { k: 'desks' }, kind: 'watcher', name: NAMES.desks, place: 'Round the square', line: says.desks.bubble, busy: says.desks.busy },
   ];
   const chosen = (x.d?.chosen ?? []).slice(0, 12);

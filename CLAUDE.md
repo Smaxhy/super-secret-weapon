@@ -921,6 +921,19 @@ accessible, a live news feed, fun not a mess")
   the stubbed API calls after the first navigation, which made the News page look empty; room.mjs / village.mjs fixed
   the same way). Verified phone 390 px + desktop 1440 px, light + dark.
 
+## v21.1 the village, fixed (Oct 20, owner: "no, the town needs to be fixed — the village; I'll keep all the new features")
+`Village.tsx` only (v21 untouched). The HUD (Gold / state word / next look / day-night / counts / "?") is a pill strip ABOVE
+the map — before, three overlay pills covered the guild hall and the bubbles on a phone. Inside the canvas only the desktop
+talk prompt / hover pill and the drawer remain. **Phone**: a control bar UNDER the map (44 px d-pad, "Next to the Trader — tap
+Talk" line with `aria-live`, one Talk / Enter button, dimmed when nobody is in reach) replaces the d-pad + E that sat over the
+buildings; scale 1.5 (≈15 tiles across, was 11 at scale 2 — the square never fit) and 14 tiles tall; building labels are the
+short name (`b.name.split(' · ')[0]`). **Square declutter**: a market watcher far away shows only a status dot over its hood
+(`Mover.status`: green traded / amber taking a trade / grey watching, none idle); its pair tag + bubble appear within 1.6
+tiles (was 2.5: two tags overlapped) or on hover / busy, odd-numbered posts tag under the feet. The Treasurer moved from the
+vault door (its tag sat on the Risk keeper's) to `TREASURER_HOME` by the observatory (first walkable of a short list, wander 1;
+roster "By the observatory"). Help card = three lines (incl. the dot legend). Verified with Playwright (`shots/village.mjs`)
+at 390 / 1440 px, light + dark, incl. opening a watcher's screen.
+
 ## v20.6 Pyth: the key is accepted, the stream is refused → poll (Oct 20, owner: "Pyth is fixed now")
 VPS read 12:05 UTC (version 5177c8c): the dashboard key is saved (`pyth.dourolabs.app`), `/v2/price_feeds` answers 200
 with it (12 pairs planned), but `/v2/updates/price/stream` answers **HTTP 403** (109 fails) → no tick ever arrived.
