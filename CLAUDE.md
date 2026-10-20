@@ -934,6 +934,19 @@ vault door (its tag sat on the Risk keeper's) to `TREASURER_HOME` by the observa
 roster "By the observatory"). Help card = three lines (incl. the dot legend). Verified with Playwright (`shots/village.mjs`)
 at 390 / 1440 px, light + dark, incl. opening a watcher's screen.
 
+## v21.2 Dukascopy never got a bar: the HTTP 202 warm-up (Oct 20, owner ran the probe from PowerShell: "HTTP 202", empty body)
+`jetta.dukascopy.com/v1/candles/hour/<INSTR>/BID/<y>/<m>` answers **202 Accepted with an empty body** on the first request
+for a month it hasn't cached ("preparing the file") and serves the data on a later request. dukascopy-node 1.50.0 counts
+any non-200 as a failed attempt, retried it `retryCount` 2 × 500 ms apart and (with `failAfterRetryCount` false) returned
+an EMPTY array → "empty answer from Dukascopy" on every VPS since v16, the probe passing (202 isn't 403 / 5xx). Fix
+(dukascopy.ts): `DK.retries` 8 × `DK.retryPauseMs` 2 s per file (`pauseBetweenRetriesMs`, `retryOnEmpty: true`; m1 tail
+5 × 1.5 s), `DK.timeoutMs` 75 s (a 90-day piece = 3–4 files, batch 5 in parallel), and `DK.failRetryHours` 1: a refresh
+whose every market came back with 0 bars counts as fresh for an hour, not `refreshHours` 24 (one bad run blocked the
+next try for a day; after this deploy the 3-min-after-start refresh runs at once because the stored meta is all-empty).
+First full pull ≈ 22 markets × 36 months, mostly cold → expect 30–60 min; watch Setup → Data feeds → Dukascopy bars grow.
+VERIFIED only by the owner's PC: a second request should answer 200 with candles. Pyth: the key's plan has no Hermes
+price rights (poll 403 too) — Yahoo stream is the live feed; nothing more to build there.
+
 ## v20.6 Pyth: the key is accepted, the stream is refused → poll (Oct 20, owner: "Pyth is fixed now")
 VPS read 12:05 UTC (version 5177c8c): the dashboard key is saved (`pyth.dourolabs.app`), `/v2/price_feeds` answers 200
 with it (12 pairs planned), but `/v2/updates/price/stream` answers **HTTP 403** (109 fails) → no tick ever arrived.

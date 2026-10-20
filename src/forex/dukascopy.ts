@@ -33,7 +33,16 @@ export const DK = {
   /** pause between requests (be polite to the free service) */
   pauseMs: 300,
   /** one request may take at most this long (the library has no abort) */
-  timeoutMs: 45_000,
+  timeoutMs: 75_000,
+  /** v21.2: Dukascopy answers HTTP 202 ("accepted, preparing the file") on the first request for a month it hasn't cached
+   * and only serves the candles on a later request. dukascopy-node treats any non-200 as a failed attempt and retried
+   * twice, 500 ms apart → every cold month came back EMPTY ("empty answer from Dukascopy") on every VPS, ever. Now each
+   * file gets up to `retries` more attempts `retryPauseMs` apart (≈ 16 s), a 200 with an empty body is retried too. */
+  retries: 8,
+  retryPauseMs: 2_000,
+  /** v21.2: a refresh that got NOTHING for every market counts as fresh for only this long (was `refreshHours`: one bad
+   * run — e.g. the 202 warm-up above — blocked the next try for a whole day) */
+  failRetryHours: 1,
   /** v17: stored history starting within this many days of `historyDays` back counts as reaching back */
   slackDays: 7,
   /** v17: back-fills in a row that brought nothing older before the store's start is trusted as where the data begins */
@@ -86,7 +95,7 @@ export function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise
  */
 const fetchDk: Fetch = (id, priceType, from, to) =>
   withTimeout(
-    getHistoricalRates({ instrument: id.toLowerCase() as never, dates: { from, to }, timeframe: 'h1', priceType, format: 'array', volumes: true, ignoreFlats: true, batchSize: 5, pauseBetweenBatchesMs: 800, retryCount: 2, failAfterRetryCount: false }) as unknown as Promise<number[][]>,
+    getHistoricalRates({ instrument: id.toLowerCase() as never, dates: { from, to }, timeframe: 'h1', priceType, format: 'array', volumes: true, ignoreFlats: true, batchSize: 5, pauseBetweenBatchesMs: 800, retryCount: DK.retries, pauseBetweenRetriesMs: DK.retryPauseMs, retryOnEmpty: true, failAfterRetryCount: false }) as unknown as Promise<number[][]>,
     DK.timeoutMs,
     `dukascopy ${id} ${priceType}`,
   );
@@ -94,8 +103,8 @@ const fetchDk: Fetch = (id, priceType, from, to) =>
 /** v17: 1-minute candles (backup live prices for the practice / bot account). */
 export const fetchDkM1: Fetch = (id, priceType, from, to) =>
   withTimeout(
-    getHistoricalRates({ instrument: id.toLowerCase() as never, dates: { from, to }, timeframe: 'm1', priceType, format: 'array', volumes: true, ignoreFlats: true, retryCount: 1, failAfterRetryCount: false }) as unknown as Promise<number[][]>,
-    15_000,
+    getHistoricalRates({ instrument: id.toLowerCase() as never, dates: { from, to }, timeframe: 'm1', priceType, format: 'array', volumes: true, ignoreFlats: true, retryCount: 5, pauseBetweenRetriesMs: 1_500, retryOnEmpty: true, failAfterRetryCount: false }) as unknown as Promise<number[][]>,
+    25_000,
     `dukascopy ${id} m1 ${priceType}`,
   );
 
@@ -337,6 +346,7 @@ export const DK_PROBE_URL = `https://${DK_HOST}/v1/candles/hour/EURUSD/BID/2024/
 export async function probeDukascopy(timeoutMs = 10_000): Promise<string | null> {
   try {
     const res = await fetch(DK_PROBE_URL, { method: 'GET', signal: AbortSignal.timeout(timeoutMs), headers: { 'user-agent': 'Mozilla/5.0' } });
+    // 200 = served, 202 = "accepted, preparing the file" (normal on a cold month — the downloader waits for it)
     if (res.status >= 500) return `${DK_HOST} answered HTTP ${res.status}`;
     if (res.status === 403 || res.status === 429) return `${DK_HOST} refused this server (HTTP ${res.status}: blocked or throttled)`;
     return null;
@@ -352,7 +362,8 @@ export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: 
   } catch {
     prev = null;
   }
-  if (prev && now - prev.at < DK.refreshHours * 3_600_000) {
+  const allEmpty = !!prev && Object.keys(prev.ids).length > 0 && Object.values(prev.ids).every((v) => !v.bars);
+  if (prev && now - prev.at < (allEmpty ? DK.failRetryHours : DK.refreshHours) * 3_600_000) {
     await installSpreadProfiles(redis, now);
     return prev;
   }
@@ -423,7 +434,7 @@ export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: 
     let tries = 0;
     let note: string | undefined;
     // v18.6: nothing stored and nothing came back without an error = the library swallowed a refusal
-    if (!bars.length && !error) error = 'empty answer from Dukascopy (blocked, throttled or the feed moved) — will retry';
+    if (!bars.length && !error) error = 'empty answer from Dukascopy after waiting for its file prep (HTTP 202) — blocked, throttled or the feed moved; will retry';
     if (!full && have.length && backTo === null) {
       full = true; // fullKept
       tries = was?.tries ?? 0;
