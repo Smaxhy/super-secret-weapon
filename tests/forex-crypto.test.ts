@@ -104,3 +104,12 @@ describe('v22 crypto markets', () => {
     expect(newsBlock('BTCUSD', now, [cpi])).toContain('USD news');
   });
 });
+
+describe('v24.2 the coin account through the close / reset routes', () => {
+  it('no route maps the coin account (cbot) onto the owner account', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../src/api/server.ts', import.meta.url), 'utf8');
+    expect(src).not.toMatch(/=== 'bot' \? 'bot' : 'me'/);
+    expect(src.split("acctParam(req.body?.acct, 'me')").length - 1).toBeGreaterThanOrEqual(2); // close + reset
+  });
+});

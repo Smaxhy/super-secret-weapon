@@ -343,7 +343,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       return r;
     });
     secured.post<{ Body: { id?: string; acct?: string } }>('/api/forex/practice/close', async (req, reply) => {
-      const r = deps.practice ? await deps.practice.close(req.body?.id === 'all' ? 'all' : String(req.body?.id ?? ''), req.body?.acct === 'bot' ? 'bot' : 'me') : { ok: false, error: 'not running' };
+      const r = deps.practice ? await deps.practice.close(req.body?.id === 'all' ? 'all' : String(req.body?.id ?? ''), acctParam(req.body?.acct, 'me')) : { ok: false, error: 'not running' };
       if (!r.ok) reply.code(400);
       return r;
     });
@@ -454,7 +454,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       return { ok: true };
     });
     secured.post<{ Body: { startUsd?: number; acct?: string } }>('/api/forex/practice/reset', async (req) => {
-      await deps.practice?.reset(Number(req.body?.startUsd ?? 1000) || 1000, req.body?.acct === 'bot' ? 'bot' : 'me');
+      await deps.practice?.reset(Number(req.body?.startUsd ?? 1000) || 1000, acctParam(req.body?.acct, 'me'));
       return { ok: true };
     });
     // v11.16 AI meme reader: today's reads, spend, cache hits, last 20 verdicts.

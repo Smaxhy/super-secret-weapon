@@ -758,6 +758,10 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v24.2 coin trades can be closed by hand (Oct 20, owner: "I can't close trades by hand crypto")
+`POST /api/forex/practice/close` and `/reset` mapped `acct` with `=== 'bot' ? 'bot' : 'me'` (v22.1 missed them), so a
+coin-bot close went to the owner's own account ("no such position") and the crypto Trades page's Reset would have reset
+the OWNER's account. Both now use `acctParam(req.body?.acct, 'me')`. Regression test in forex-crypto.
 ## v24.1 the gates behind the gate (Oct 20 ~19:00 UTC, owner: "still no trades in forex… it's been hours")
 With the 1-check rule live (18:01 look) the next gates bit: EURUSD pivot_bounce "no winning record on this market (282 trades,
 PF 1.05)", NZDUSD round_fade "no winning record (11 trades)", GBPUSD round_fade judge 58% < 65%, USDJPY pivot_bounce 0 of 3
