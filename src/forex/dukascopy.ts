@@ -452,6 +452,10 @@ export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: 
     }
     meta.ids[id] = { bars: bars.length, firstT: bars[0]?.t ?? null, lastT: bars[bars.length - 1]?.t ?? null, error, full, ...(tries ? { tries } : {}), ...(note ? { note } : {}) };
     if (error) log.warn({ id, err: error }, 'dukascopy refresh failed');
+    // v23: a cold first pull waits out the HTTP 202 file prep on hundreds of files and can run for hours — save each
+    // market's result as it lands (with the OLD `at`, so a restart mid-way starts the refresh again) so the Setup card
+    // shows the bars growing instead of "0 bars" until the very end
+    await redis.set(DK_META, JSON.stringify({ at: prev?.at ?? 0, ids: { ...(prev?.ids ?? {}), ...meta.ids } })).catch(() => undefined);
   }
   await redis.set(DK_META, JSON.stringify(meta)).catch(() => undefined);
   const errs = Object.entries(meta.ids).filter(([, v]) => v.error);

@@ -187,6 +187,8 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
               fastFiring: U.fast?.firing ?? {},
               chosen: [...fx.chosen, ...(U.fast?.chosen ?? [])],
               fastCharts: FX_CONFIG.botFastCharts,
+              fastStrategies: FX_CONFIG.botFastStrategies,
+              universe: fx.universe,
               strict: { mode: FX_CONFIG.strict.mode, minAgree: FX_CONFIG.strict.minAgree },
               names: Object.fromEntries(STRATEGIES.map((x) => [x.id, x.name])),
               positions: snap.account.positions,
@@ -368,20 +370,27 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       return { at: c.at, clock: marketClock(now), headlines: heads, events: c.events.filter((e) => e.t >= now - 12 * 3_600_000 && e.t <= now + 8 * 86_400_000 && e.impact !== 'Non-Economic') };
     });
     // v17: every free data feed's health + how up to date each market's prices are (1h + 15m + 1m)
-    secured.get('/api/forex/feeds', async (_req, reply) => {
-      reply.header('Cache-Control', 'no-store');
-      const now = Date.now();
-      const clock = marketClock(now);
-      const ages = [...Object.values(deps.forex?.dataAge ?? {}), ...Object.values(deps.fastFx?.dataAge ?? {}).flatMap((m) => Object.values(m ?? {}))];
-      return {
-        at: now,
-        open: clock.open,
-        feeds: feedHealth(fxFeeds.snapshot(), { now, open: clock.open, oanda: oandaReady(await loadOanda()), pyth: !!pythKey(), paused: (p) => fxFeeds.pausedUntil(p) }),
-        dataAge: ages,
-        calendarBlind: deps.fxCalendar?.blind(now) ?? null,
-        labError: deps.forex?.lastError ?? null,
-      };
-    });
+    // v22.1 fix: one feeds route per desk — the coin desk's data ages were missing (`/api/crypto/feeds` was a 404)
+    for (const F of [
+      { path: '/api/forex/feeds', lab: deps.forex ?? null, fast: deps.fastFx ?? null, crypto: false },
+      { path: '/api/crypto/feeds', lab: deps.crypto ?? null, fast: deps.fastCrypto ?? null, crypto: true },
+    ]) {
+      secured.get(F.path, async (_req, reply) => {
+        reply.header('Cache-Control', 'no-store');
+        const now = Date.now();
+        const clock = marketClock(now);
+        const open = F.crypto ? true : clock.open;
+        const ages = [...Object.values(F.lab?.dataAge ?? {}), ...Object.values(F.fast?.dataAge ?? {}).flatMap((m) => Object.values(m ?? {}))];
+        return {
+          at: now,
+          open,
+          feeds: feedHealth(fxFeeds.snapshot(), { now, open, oanda: oandaReady(await loadOanda()), pyth: !!pythKey(), paused: (p) => fxFeeds.pausedUntil(p) }),
+          dataAge: ages,
+          calendarBlind: deps.fxCalendar?.blind(now) ?? null,
+          labError: F.lab?.lastError ?? null,
+        };
+      });
+    }
     // OANDA demo token = a free DATA feed only (no trading through it); masked on read.
     // v17.12: the Pyth API key, pasted on the dashboard: tested on Pyth first, kept in this server's DB, shown masked
     secured.get('/api/forex/pyth', async () => {

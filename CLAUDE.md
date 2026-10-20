@@ -758,6 +758,35 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v23 ICT / smart-money rules + the desk plans fixed (Oct 20, owner: "ICT quarterly theory, automate it and order flow,
+trustworthy news outlets (ForexFactory…), a Judas swing at the NY open, 15:45 / 10 am")
+- `src/forex/ny-time.ts` (pure): `usDst`, `nyOffsetMs`, `nyMinOfDay`, `nyDow` (calendar.ts re-exports them); `Ctx.nyMin` =
+  minutes since New York midnight at the bar's open (ta.ts). `Strategy.charts` = the only charts a rule runs on
+  (`runsOn` honours it); family **'ict'** (Playbook label "ICT / smart money", first in the list).
+- Five rules (strategies.ts, `ICT` consts, `sessionRange` / `fvgSignal` / `mssSignal` exported, all causal, graded by the lab
+  like every other row — nothing trades until it clears the quality bar): `judas_swing` (15m + 1h: after the 9:30 NY open the
+  first close back inside the pre-open 3:00–9:30 range after a sweep ≥ 0.05 ATR past it → fade, stop past the sweep, target
+  the other side, flat 4 pm NY; first signal at the 9:45 close), `ny_q3` (15m only, quarterly theory 90-min quarters: at the
+  9:00 NY close, Q2 7:30–9:00 swept Q1 6:00–7:30 and closed back inside → trade Q3 the other way, 2R, flat noon), `amd_daily`
+  (15m + 1h: at the 6:00 am NY close, London 0–6 swept Asia 18–24 (previous NY day) and came back → target Asia's other side,
+  flat noon), `fvg_entry` (any chart / market: sweep of the last 10 lows, displacement body ≥ 1.2 ATR leaving a 3-candle fair
+  value gap, retrace into the gap within 6 candles closing back above it → 2R; a gap the price falls through is dead),
+  `mss_sweep` (any: dip under a confirmed swing low, close above the last lower swing high within 6 candles → 2R). Session
+  blocks use the bar's CLOSE minute, so the hourly 9–10 NY bar counts for the Judas window. The three session rules are in
+  `NOT_FOR_CRYPTO` (+ `pdh_pdl`, which was misspelt there).
+- **15m trading for the ICT session rules**: `FX_CONFIG.botFastStrategies` ['judas_swing', 'ny_q3', 'amd_daily'] — fast.ts
+  passes them `chosen: true` while `botFastCharts` stays false (they hold hours, not minutes; still only once chosen by the
+  quality bar on the 15m chart); plan.ts `PlanInputs.fastStrategies` (no "lab only" tag for them). Dashboard texts updated.
+- **News outlets**: headlines.ts `FEEDS` + DailyFX market news + Investing.com forex RSS (unverified from the sandbox; a feed
+  that fails only loses its own items). ForexFactory stays the calendar.
+- **Fixes from the v22.1 VPS read** (16:56 UTC: coin lab 93 rows / 1 edge / 16 quality rows, chosen 16, both bots "waiting
+  for a setup" on the 2-checks rule; forex lab clean): `buildPlan` listed every instrument (17) on BOTH desks →
+  `PlanInputs.universe` (server passes `lab.universe`); `/api/crypto/feeds` was a 404 → one feeds route per desk, the Data
+  feeds card reads `apiBase()`. Dukascopy: the hours-long cold pull now saves `fx:dk:meta` after EVERY market (old `at`, so a
+  restart re-runs it) — before, the Setup card showed 0 bars until the whole pull finished; the VPS meta was still from 12:04
+  at 16:56, i.e. the post-deploy pull was still running — read Setup → Data feeds again before judging v21.2.
+- tests/forex-ict.test.ts (13). 1,335 tests. Synthetic candles only — the lab grades the ICT rows on real data after deploy.
+
 ## v19 control room (Oct 19, owner: "I want him in the middle, a big monitor screen, everything around it like a web, other rooms /
 people that work and diagnose for me, animated, also crypto")
 `dashboard/src/components/ControlRoom.tsx` = the new Forex home (`/forex`, section 'room'; Auto-bot moved to `/forex/bot`; nav

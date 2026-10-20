@@ -4,6 +4,7 @@
  */
 import { useApi } from '../hooks/useApi';
 import { ago } from '../lib/format';
+import { apiBase } from '../lib/ws';
 import { Badge, Card, Row, Rows } from './ui';
 
 interface Feed {
@@ -25,7 +26,7 @@ const TONE: Record<Feed['status'], 'up' | 'warn' | 'down' | 'neutral'> = { ok: '
 const WORD: Record<Feed['status'], string> = { ok: 'ok', stale: 'late', down: 'down', off: 'off', closed: 'market shut', never: 'not yet' };
 
 export function FxFeeds() {
-  const { data } = useApi<Data>('/api/forex/feeds', 30_000);
+  const { data } = useApi<Data>(`${apiBase()}/feeds`, 30_000);
   if (!data) return null;
   const stale = data.dataAge.filter((a) => a.status === 'stale' || a.status === 'none');
   return (

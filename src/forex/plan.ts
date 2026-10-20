@@ -37,6 +37,10 @@ export interface PlanInputs {
   chosen: readonly string[];
   /** v18.7: does the bot account place trades from the 15m / 1m charts (default no: hourly + 4-hour only) */
   fastCharts?: boolean;
+  /** v23: strategies allowed to trade the 15-minute chart even while `fastCharts` is off (the ICT session rules) */
+  fastStrategies?: string[];
+  /** v22.1 fix: which desk's markets this plan is for (unset = every instrument, the pre-v22 behaviour) */
+  universe?: 'fx' | 'crypto';
   names: Record<string, string>;
   positions: ReadonlyArray<PracticePosition & { px: number; pnlUsd: number }>;
   resume: readonly ResumeItem[];
@@ -300,7 +304,9 @@ export function buildPlan(x: PlanInputs): BotPlan {
   }
   const byId = new Map(x.markets.map((m) => [m.id, m]));
   const markets: PlanMarket[] = [];
-  for (const inst of INSTRUMENTS) {
+  // v22.1 fix: each desk's plan lists only ITS markets (the forex plan had the coins in it and the coin plan the 14 forex pairs)
+  const insts = x.universe ? INSTRUMENTS.filter((i) => (x.universe === 'crypto' ? i.kind === 'crypto' : i.kind !== 'crypto')) : INSTRUMENTS;
+  for (const inst of insts) {
     const m = byId.get(inst.id);
     const pos = x.positions.filter((p) => p.pair === inst.id);
     // signals on the newest closes, every chart
@@ -311,7 +317,7 @@ export function buildPlan(x: PlanInputs): BotPlan {
       const k = `${f.id}:${f.tf}`;
       const note = syncNotes.get(`${f.id}:${f.tf}:${inst.id}`);
       if (!chosen.has(k)) return { tf: f.tf, name: f.name, side: f.side, verdict: 'not one it trades (no edge on unseen data)', tone: 'no' };
-      if ((f.tf === '1m' || f.tf === '15m') && !x.fastCharts) return { tf: f.tf, name: f.name, side: f.side, verdict: 'lab only: the bot trades the hourly and 4-hour charts', tone: 'no' };
+      if ((f.tf === '1m' || f.tf === '15m') && !x.fastCharts && !x.fastStrategies?.includes(f.id)) return { tf: f.tf, name: f.name, side: f.side, verdict: 'lab only: the bot trades the hourly and 4-hour charts', tone: 'no' };
       if (!f.allowed) return { tf: f.tf, name: f.name, side: f.side, verdict: `held back: ${f.why}`, tone: 'no' };
       if (heldKey.has(`${f.id}:${f.tf}:${inst.id}`)) return { tf: f.tf, name: f.name, side: f.side, verdict: 'in the trade', tone: 'go' };
       if (note) return { tf: f.tf, name: f.name, side: f.side, verdict: `${note.wait ? 'waiting' : 'skipped'}: ${note.why}`, tone: note.wait ? 'wait' : 'no' };

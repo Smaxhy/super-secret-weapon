@@ -601,7 +601,7 @@ function Setup({ r, fast }: { r: Report; fast: FastReport | null }) {
         </Card>
       )}
       {fast && (
-        <Card title="15-minute candles" subtitle={`Lab only — the bot trades the hourly and 4-hour charts. From OANDA when connected (deeper history), else Yahoo (60 days). The 1-minute chart is switched off. Last test ${ago(new Date(fast.at).toISOString())}.`}>
+        <Card title="15-minute candles" subtitle={`Lab only (the ICT session rules may trade it once proven) — the bot trades the hourly and 4-hour charts. From OANDA when connected (deeper history), else Yahoo (60 days). The 1-minute chart is switched off. Last test ${ago(new Date(fast.at).toISOString())}.`}>
           <Rows>
             {(['15m'] as const).map((tf) => {
               const fs = fast.feed.filter((x) => x.tf === tf);

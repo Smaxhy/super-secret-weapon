@@ -503,7 +503,7 @@ export class FastLab {
           const s = strategyById(row.id);
           if (!s) continue;
           // v18.7: fast charts manage what the bot still holds but open nothing unless switched on
-          const isChosen = FX_CONFIG.botFastCharts && keep.has(`${row.id}:${tf}`);
+          const isChosen = (FX_CONFIG.botFastCharts || FX_CONFIG.botFastStrategies.includes(row.id)) && keep.has(`${row.id}:${tf}`);
           const sigs = signalsFor(se.ctx, s).map((sg, i) => applyExit(sg, row.exit ?? 'designed', se.ctx, i));
           for (const t of simulate(inst, tf, se.ctx, s.id, sigs, allowFor(row.filter ?? 'none', se.env, styleOf(s)))) {
             if (t.reason !== 'open') continue;

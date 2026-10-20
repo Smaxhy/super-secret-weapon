@@ -5,6 +5,7 @@
 import { buildQuant, type Quant } from './quant';
 import { bollinger, emaSeries, macd, rsiSeries, sma } from '../evaluator/ta/indicators';
 import type { Bar } from './types';
+import { nyMinOfDay } from './ny-time';
 
 export function atr(b: readonly Bar[], n = 14): number[] {
   const out: number[] = [];
@@ -234,6 +235,8 @@ export interface Ctx {
   asia: Array<{ h: number; l: number } | null>;
   /** hour UTC of the bar */
   hour: number[];
+  /** v23: minutes since New York midnight at the bar's OPEN (the ICT session rules read the clock in New York time) */
+  nyMin: number[];
   /** minutes per bar */
   barMin: number;
   /** instrument id (EURUSD…) — for session / currency rules */
@@ -343,6 +346,7 @@ export function buildCtx(bars: Bar[], barMin: number, pair = ''): Ctx {
     prevDay,
     asia,
     hour: bars.map((b) => new Date(b.t).getUTCHours()),
+    nyMin: bars.map((b) => nyMinOfDay(b.t)),
     barMin,
     pair,
     psar: psar(bars),

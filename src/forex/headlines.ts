@@ -10,7 +10,10 @@ import { feeds } from './feeds';
 
 const log = moduleLogger('forex-news');
 const KEY = 'fx:news';
-const FEEDS = ['https://www.forexlive.com/feed/news', 'https://www.fxstreet.com/rss/news'];
+/** v23 (owner: "trustworthy forex news outlets"): ForexLive + FXStreet since v12.5; DailyFX and Investing.com forex news
+ * added. ForexFactory is the calendar feed (calendar.ts). A feed that fails only costs its own items (the others still
+ * count); all of them fail → the headline feed shows as failed on Setup → Data feeds. */
+const FEEDS = ['https://www.forexlive.com/feed/news', 'https://www.fxstreet.com/rss/news', 'https://www.dailyfx.com/feeds/market-news', 'https://www.investing.com/rss/news_1.rss'];
 
 export interface Headline {
   t: number;

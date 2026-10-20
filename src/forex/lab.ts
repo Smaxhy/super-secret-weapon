@@ -95,6 +95,10 @@ export const FX_CONFIG = {
   /** v18.7 (owner: "we can't fast trade these charts, they take time"): the bot account trades the 1h + 4h charts only.
    * The 15m / 1m charts stay lab-tested (Strategies / Lab) but place no bot trades while this is off. */
   botFastCharts: false,
+  /** v23 (owner: "a Judas swing at the New York open… 15:45 / 10 am"): the session rules that only make sense on the
+   * quarter-hours may trade the 15-minute chart even while `botFastCharts` is off — they hold for hours (flat by noon /
+   * 4 pm New York), not minutes. Still only once they clear the quality bar on that chart. */
+  botFastStrategies: ['judas_swing', 'ny_q3', 'amd_daily'] as string[],
   /** walk-forward: re-pick every month from the trades closed in the previous N months */
   walkForward: { lookbackMonths: 6, minN: 15, minAvgR: 0.05, minPf: 1.15 },
   /** owner (v15 "more pips", v15.1 "a trailing SL for safety"): use a trailing stop-loss, else a trailing take-profit,

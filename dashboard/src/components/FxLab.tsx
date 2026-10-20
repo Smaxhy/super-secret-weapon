@@ -15,13 +15,14 @@ const FAMILY: Record<string, { label: string; what: string }> = {
   breakout: { label: 'Breakouts', what: 'Enter when price leaves a range: Donchian highs / lows, Bollinger squeeze, Keltner, inside bars, breakout-and-retest, volatility-forecast breaks, round-number breaks.' },
   reversion: { label: 'Mean reversion', what: 'Bet on a snap-back: RSI dips, Connors RSI(2), Bollinger reversion, pivot bounces, Fibonacci 50–61.8% pullbacks, Turtle Soup false breaks, stochastic / Williams %R turns, stat-arb on linked crosses, round-number fades.' },
   pattern: { label: 'Candle patterns', what: 'Engulfing and pin bars at an extreme, double bottoms / tops, momentum candles.' },
+  ict: { label: 'ICT / smart money', what: 'Inner Circle Trader concepts in New York time: the Judas swing after the 9:30 open, quarterly theory (accumulation → manipulation → distribution in 90-minute and 6-hour quarters), and order flow — a liquidity sweep, a displacement candle, the fair-value gap it leaves, a market-structure shift.' },
   session: { label: 'Session timing', what: 'The clock as the edge: London and New York open breakouts, the Asian-range fade, the dollar into the London fix.' },
   news: { label: 'News shocks', what: 'After a shock candle: follow the drift, or fade the shock that fails.' },
   intermarket: { label: 'Linked markets', what: 'Oil → CAD, US yields → USD/JPY, stocks → yen crosses, the dollar → gold: trade the laggard when the leader has moved.' },
   flow: { label: 'Flows & positioning', what: 'Month-end rebalancing, crowded CFTC positioning squeezes, overstretched 3-month runs.' },
   control: { label: 'Yardstick', what: 'Random entries with the same costs. Anything that cannot beat this has no edge.' },
 };
-const FAMILY_ORDER = ['trend', 'breakout', 'reversion', 'pattern', 'session', 'news', 'intermarket', 'flow', 'control'];
+const FAMILY_ORDER = ['ict', 'session', 'trend', 'breakout', 'reversion', 'pattern', 'news', 'intermarket', 'flow', 'control'];
 
 /** v18.3 playbook: every strategy the bot knows, grouped by what kind of edge it hunts, with its grade per chart. */
 function Playbook({ rows, chosen }: { rows: LabRow[]; chosen: Set<string> }) {

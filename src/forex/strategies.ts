@@ -6,6 +6,7 @@
 import { STRETCH } from './stretch';
 import type { Ctx } from './ta';
 import { isCrypto, type Signal } from './types';
+import { nyOffsetMs } from './ny-time';
 
 /**
  * v13: a "shock" candle = what a big news release looks like on an hourly chart: range ≥ 2.2× the normal hourly range
@@ -23,7 +24,7 @@ export function shockDir(c: Ctx, i: number, k = 2.2): 1 | -1 | 0 {
   return 0;
 }
 
-export type Family = 'trend' | 'breakout' | 'session' | 'reversion' | 'pattern' | 'news' | 'intermarket' | 'flow' | 'control';
+export type Family = 'trend' | 'breakout' | 'session' | 'reversion' | 'pattern' | 'news' | 'intermarket' | 'flow' | 'ict' | 'control';
 /**
  * v14: what market a strategy needs (the regime check): 'trend' = a clean directional market, 'revert' = a choppy one,
  * 'pullback' = buys dips inside a bigger trend (the bigger-chart check covers it), 'neutral' = timing / flow rules.
@@ -42,6 +43,8 @@ export interface Strategy {
   slow?: boolean;
   /** v14: the market it needs (defaults from the family) */
   style?: Style;
+  /** v23: the only charts this rule runs on (session rules built on the quarter-hours); unset = every chart */
+  charts?: string[];
   signal(c: Ctx, i: number): Signal | null;
 }
 
@@ -112,6 +115,157 @@ function levelSig(c: Ctx, i: number, side: 1 | -1, stop: number, r: number | nul
 const lastHighs = (c: Ctx, i: number, n: number) => c.sw.highs.slice(Math.max(0, c.hiPtr[i]! - n + 1), c.hiPtr[i]! + 1);
 const lastLows = (c: Ctx, i: number, n: number) => c.sw.lows.slice(Math.max(0, c.loPtr[i]! - n + 1), c.loPtr[i]! + 1);
 const body = (c: Ctx, i: number) => Math.abs(c.bars[i]!.c - c.bars[i]!.o);
+
+/** v23: the ICT clock, minutes since New York midnight. */
+export const ICT = {
+  /** the pre-open range starts with London (3:00 am NY) */
+  preOpenFrom: 3 * 60,
+  /** 9:30 am New York: the stock-market open */
+  nyOpen: 9 * 60 + 30,
+  /** the Judas window: the first hour after the open */
+  judasUntil: 10 * 60 + 30,
+  /** 4:00 pm New York: the open-session trades are flat */
+  nyFlat: 16 * 60,
+  nyNoon: 12 * 60,
+  /** quarterly theory, New York morning session 6:00–12:00 in 90-minute quarters */
+  q1Start: 6 * 60,
+  q2Start: 7 * 60 + 30,
+  q3Start: 9 * 60,
+  /** daily AMD: Asia from 6:00 pm NY, the decision at the 6:00 am close */
+  asiaStart: 18 * 60,
+  amdDecide: 6 * 60,
+  /** a displacement candle's body in ATRs; how many candles a gap stays valid; how far back a sweep counts */
+  fvgBodyAtr: 1.2,
+  fvgValidBars: 6,
+  sweepLook: 10,
+  mssBars: 6,
+  /** a sweep must reach this far past the range (in ATRs) — a wick a fraction of a pip over it is noise */
+  sweepAtr: 0.05,
+} as const;
+
+interface SessionRange {
+  h: number;
+  l: number;
+  /** the extremes of the decision window so far (up to bar i) */
+  winHi: number;
+  winLo: number;
+  /** an earlier bar of the window already gave the short / long signal (first close back inside after the sweep) */
+  hiSignalled: boolean;
+  loSignalled: boolean;
+}
+/**
+ * A session range and the decision window after it, in New York minutes. A bar belongs to a block when its CLOSE
+ * minute (open + bar length) lies in (from, to] — so the hourly bar 9:00–10:00 sits in a window opening at 9:30, and
+ * the 15-minute bar 9:30–9:45 does too. The range is read on the same NY day as bar i, or on the previous NY day
+ * with `wrap` (Asia 18:00 → 24:00 for a decision this morning). Bar i must be inside the window; the range needs at
+ * least 2 bars. `depth` = how far past the range a sweep must reach to count (noise doesn't). Null when the data
+ * doesn't reach back. Pure, causal (only bars ≤ i).
+ */
+export function sessionRange(c: Ctx, i: number, rFrom: number, rTo: number, wFrom: number, wTo: number, wrap = false, depth = 0): SessionRange | null {
+  const cm = (j: number) => c.nyMin[j]! + c.barMin;
+  if (!(cm(i) > wFrom && cm(i) <= wTo)) return null;
+  const dayOf = (t: number) => Math.floor((t + nyOffsetMs(t)) / 86_400_000);
+  const today = dayOf(c.bars[i]!.t);
+  const rDay = wrap ? today - 1 : today;
+  const inWin = (j: number) => dayOf(c.bars[j]!.t) === today && cm(j) > wFrom && cm(j) <= wTo;
+  const inRng = (j: number) => dayOf(c.bars[j]!.t) === rDay && cm(j) > rFrom && cm(j) <= rTo;
+  let start = i;
+  while (start > 0 && inWin(start - 1)) start--;
+  let h = -Infinity;
+  let l = Infinity;
+  let n = 0;
+  const maxBack = Math.ceil((36 * 60) / c.barMin);
+  for (let j = start - 1; j >= 0 && i - j <= maxBack; j--) {
+    if (inRng(j)) {
+      h = Math.max(h, c.bars[j]!.h);
+      l = Math.min(l, c.bars[j]!.l);
+      n++;
+      continue;
+    }
+    if (n > 0) break;
+    const dj = dayOf(c.bars[j]!.t);
+    if (dj < rDay || (dj === rDay && cm(j) <= rFrom)) break;
+  }
+  if (n < 2 || !Number.isFinite(h) || !Number.isFinite(l) || h <= l) return null;
+  let winHi = -Infinity;
+  let winLo = Infinity;
+  let hiSignalled = false;
+  let loSignalled = false;
+  for (let j = start; j <= i; j++) {
+    const b = c.bars[j]!;
+    winHi = Math.max(winHi, b.h);
+    winLo = Math.min(winLo, b.l);
+    if (j < i) {
+      if (winHi > h + depth && b.c < h && b.c > l) hiSignalled = true;
+      if (winLo < l - depth && b.c > l && b.c < h) loSignalled = true;
+    }
+  }
+  return { h, l, winHi, winLo, hiSignalled, loSignalled };
+}
+
+/** v23: ICT fair-value-gap entry (see `fvg_entry`). Pure. */
+export function fvgSignal(c: Ctx, i: number): Signal | null {
+  const a = c.atr14[i]!;
+  if (!ok(a) || a <= 0 || i < ICT.sweepLook + ICT.fvgValidBars + 4) return null;
+  for (let k = i - 1; k >= i - ICT.fvgValidBars; k--) {
+    // gap between bar k−2 and bar k, displacement = bar k−1
+    const g0 = c.bars[k - 2]!;
+    const d = c.bars[k - 1]!;
+    const g1 = c.bars[k]!;
+    const bodyD = Math.abs(d.c - d.o);
+    if (bodyD < ICT.fvgBodyAtr * c.atr14[k - 1]!) continue;
+    const lowBefore = Math.min(...c.bars.slice(k - 2 - ICT.sweepLook, k - 2).map((b) => b.l));
+    const highBefore = Math.max(...c.bars.slice(k - 2 - ICT.sweepLook, k - 2).map((b) => b.h));
+    if (d.c > d.o && g0.h < g1.l) {
+      // bullish gap [g0.h, g1.l]; needs a sweep of the recent lows just before it
+      if (Math.min(g0.l, d.l) >= lowBefore) continue;
+      let dead = false;
+      let touched = false;
+      for (let j = k + 1; j <= i; j++) {
+        if (c.bars[j]!.l < g0.h) dead = true;
+        if (j < i && c.bars[j]!.l <= g1.l && c.close[j]! > g1.l) touched = true; // an earlier bar already signalled
+      }
+      const b = c.bars[i]!;
+      if (dead || touched || !(b.l <= g1.l && b.c > g1.l)) continue;
+      return levelSig(c, i, 1, g0.h - 0.1 * a, 2);
+    }
+    if (d.c < d.o && g0.l > g1.h) {
+      if (Math.max(g0.h, d.h) <= highBefore) continue;
+      let dead = false;
+      let touched = false;
+      for (let j = k + 1; j <= i; j++) {
+        if (c.bars[j]!.h > g0.l) dead = true;
+        if (j < i && c.bars[j]!.h >= g1.h && c.close[j]! < g1.h) touched = true;
+      }
+      const b = c.bars[i]!;
+      if (dead || touched || !(b.h >= g1.h && b.c < g1.h)) continue;
+      return levelSig(c, i, -1, g0.l + 0.1 * a, 2);
+    }
+  }
+  return null;
+}
+
+/** v23: liquidity sweep + market structure shift (see `mss_sweep`). Pure. */
+export function mssSignal(c: Ctx, i: number): Signal | null {
+  const a = c.atr14[i]!;
+  if (!ok(a) || a <= 0 || i < 30) return null;
+  const b = c.bars[i]!;
+  const lo = c.sw.lows[c.loPtr[i]!];
+  const hi = c.sw.highs[c.hiPtr[i]!];
+  if (!lo || !hi) return null;
+  // bullish: an old swing low (confirmed before the sweep window), a lower swing high after it, the sweep, the close above the high
+  if (lo.at <= i - ICT.mssBars && hi.i > lo.i && hi.at <= i && b.c > hi.p && c.close[i - 1]! <= hi.p) {
+    let sweepLo = Infinity;
+    for (let j = i - ICT.mssBars; j <= i; j++) sweepLo = Math.min(sweepLo, c.bars[j]!.l);
+    if (sweepLo < lo.p) return levelSig(c, i, 1, sweepLo - 0.1 * a, 2);
+  }
+  if (hi.at <= i - ICT.mssBars && lo.i > hi.i && lo.at <= i && b.c < lo.p && c.close[i - 1]! >= lo.p) {
+    let sweepHi = -Infinity;
+    for (let j = i - ICT.mssBars; j <= i; j++) sweepHi = Math.max(sweepHi, c.bars[j]!.h);
+    if (sweepHi > hi.p) return levelSig(c, i, -1, sweepHi + 0.1 * a, 2);
+  }
+  return null;
+}
 
 /** v16: crosses of closely linked currencies — where a stretched price tends to come back (the stat-arb candidates) */
 export const STAT_ARB_PAIRS = ['EURGBP', 'AUDNZD', 'EURCHF'];
@@ -1067,6 +1221,105 @@ export const STRATEGIES: Strategy[] = [
       return null;
     },
   },
+  // ── v23 ICT / smart-money concepts (owner: "ICT quarterly theory, order flow, a Judas swing at the New York open") ──
+  // All read the clock in New York time (`c.nyMin` = minutes since NY midnight at the bar's open). Graded like every
+  // other rule: picked on the first 70%, judged on the unseen 30%; nothing trades until it clears the quality bar.
+  {
+    id: 'judas_swing',
+    name: 'Judas swing (New York open)',
+    family: 'ict',
+    style: 'revert',
+    charts: ['15m', '1h'],
+    desc: 'ICT: in the first hour after the 9:30 New York open the price runs past the pre-open range (3:00–9:30 NY, the London session) to take the stops there, then closes back inside — the "Judas" move. Fade it: stop just past the sweep, target the other side of the range, flat by 4:00 pm New York. 15-minute (first signal at the 9:45 close) and hourly charts.',
+    signal(c, i) {
+      const a = c.atr14[i]!;
+      if (!ok(a) || a <= 0) return null;
+      const d = ICT.sweepAtr * a;
+      const r = sessionRange(c, i, ICT.preOpenFrom, ICT.nyOpen, ICT.nyOpen, ICT.judasUntil, false, d);
+      if (!r) return null;
+      const b = c.bars[i]!;
+      const maxBars = Math.max(1, Math.floor((ICT.nyFlat - (c.nyMin[i]! + c.barMin)) / c.barMin));
+      // the first close back inside after a sweep of the high → short toward the low (mirror for a sweep of the low)
+      if (r.winHi > r.h + d && b.c < r.h && b.c > r.l && !r.hiSignalled) {
+        const s = levelSig(c, i, -1, r.winHi + 0.1 * a, null, { maxBars });
+        return s ? { ...s, target: r.l } : null;
+      }
+      if (r.winLo < r.l - d && b.c > r.l && b.c < r.h && !r.loSignalled) {
+        const s = levelSig(c, i, 1, r.winLo - 0.1 * a, null, { maxBars });
+        return s ? { ...s, target: r.h } : null;
+      }
+      return null;
+    },
+  },
+  {
+    id: 'ny_q3',
+    name: 'Quarterly theory: New York Q3',
+    family: 'ict',
+    style: 'revert',
+    charts: ['15m'],
+    desc: 'Quarterly theory (Daye / ICT): the New York morning (6:00–12:00 NY) splits into four 90-minute quarters — Q1 accumulation 6:00–7:30, Q2 manipulation 7:30–9:00 (the 8:30 news), Q3 distribution 9:00–10:30, Q4 continuation. At the 9:00 close: if Q2 ran past Q1\'s high (or low) and closed back inside Q1\'s range, Q3 is traded the other way — stop past the Q2 extreme, 2R, flat by noon New York. 15-minute chart only (the quarters sit on the quarter-hours).',
+    signal(c, i) {
+      if (c.nyMin[i]! + c.barMin !== ICT.q3Start) return null;
+      const a = c.atr14[i]!;
+      if (!ok(a) || a <= 0) return null;
+      const d = ICT.sweepAtr * a;
+      const r = sessionRange(c, i, ICT.q1Start, ICT.q2Start, ICT.q2Start, ICT.q3Start, false, d);
+      if (!r) return null;
+      const b = c.bars[i]!;
+      const maxBars = Math.max(1, Math.floor((ICT.nyNoon - ICT.q3Start) / c.barMin));
+      if (r.winHi > r.h + d && b.c < r.h && b.c > r.l) return levelSig(c, i, -1, r.winHi + 0.1 * a, 2, { maxBars });
+      if (r.winLo < r.l - d && b.c > r.l && b.c < r.h) return levelSig(c, i, 1, r.winLo - 0.1 * a, 2, { maxBars });
+      return null;
+    },
+  },
+  {
+    id: 'amd_daily',
+    name: 'Daily cycle: accumulation → manipulation → distribution',
+    family: 'ict',
+    style: 'revert',
+    charts: ['15m', '1h'],
+    desc: 'ICT daily AMD, quarterly theory on the day: Asia (6:00 pm–midnight NY) builds the range, London (midnight–6:00 am NY) runs past one side of it and comes back — the manipulation — and New York (6:00 am–noon) distributes the other way. At the 6:00 am New York close: London swept Asia\'s high and closed back inside → short (mirror for the low); stop past the London extreme, target Asia\'s other side, flat by noon.',
+    signal(c, i) {
+      if (c.nyMin[i]! + c.barMin !== ICT.amdDecide) return null;
+      // Asia = the bars from 18:00 the previous NY day to midnight; London = midnight to 6:00 am (today)
+      const a = c.atr14[i]!;
+      if (!ok(a) || a <= 0) return null;
+      const d = ICT.sweepAtr * a;
+      const r = sessionRange(c, i, ICT.asiaStart, 24 * 60, 0, ICT.amdDecide, true, d);
+      if (!r) return null;
+      const b = c.bars[i]!;
+      const maxBars = Math.max(1, Math.floor((ICT.nyNoon - ICT.amdDecide) / c.barMin));
+      if (r.winHi > r.h + d && b.c < r.h && b.c > r.l) {
+        const s = levelSig(c, i, -1, r.winHi + 0.1 * a, null, { maxBars });
+        return s ? { ...s, target: r.l } : null;
+      }
+      if (r.winLo < r.l - d && b.c > r.l && b.c < r.h) {
+        const s = levelSig(c, i, 1, r.winLo - 0.1 * a, null, { maxBars });
+        return s ? { ...s, target: r.h } : null;
+      }
+      return null;
+    },
+  },
+  {
+    id: 'fvg_entry',
+    name: 'Order flow: sweep, displacement, fair-value gap',
+    family: 'ict',
+    style: 'pullback',
+    desc: 'ICT order flow: the price takes out a recent low (liquidity), then a displacement candle (body ≥ 1.2 ATR) leaves a fair-value gap — three candles where the first\'s high never meets the third\'s low. Within 6 candles the price comes back into the gap and closes back above it → buy; stop under the gap, 2R. A gap the price falls through is dead. Mirrored for shorts. Any chart, any market.',
+    signal(c, i) {
+      return fvgSignal(c, i);
+    },
+  },
+  {
+    id: 'mss_sweep',
+    name: 'Liquidity sweep + market structure shift',
+    family: 'ict',
+    style: 'revert',
+    desc: 'ICT: the price dips under an old confirmed swing low (takes the stops there) and within 6 candles closes above the last lower swing high — the structure has shifted. Buy; stop under the sweep low, 2R. Mirrored for shorts. Any chart, any market.',
+    signal(c, i) {
+      return mssSignal(c, i);
+    },
+  },
   // ── control ──
   {
     id: 'random',
@@ -1088,9 +1341,10 @@ export const strategyById = (id: string) => STRATEGIES.find((s) => s.id === id) 
 /** v15: does a strategy run on this chart? Session rules need hourly bars; multi-day rules skip 15m / 1m. Pure. */
 /** v22: rules built on the forex week, its sessions, central-bank rates, the CFTC report or currency baskets have no
  * meaning on a coin that trades 24/7 against the dollar — they never run there. */
-export const NOT_FOR_CRYPTO = new Set(['london_breakout', 'ny_open', 'prev_day_hl', 'asian_fade', 'local_hours', 'fix_flow', 'month_end_flow', 'weekend_gap', 'nr7_break', 'carry_trend', 'cot_squeeze', 'stretch_squeeze', 'ccy_momentum', 'stat_arb', 'mom_blend', 'oil_cad', 'yield_jpy', 'stocks_jpy', 'dollar_gold', 'turtle_soup']);
-export function runsOn(s: Pick<Strategy, 'onlyHourly' | 'slow' | 'id'>, tf: string, pair?: string): boolean {
+export const NOT_FOR_CRYPTO = new Set(['london_breakout', 'ny_open', 'pdh_pdl', 'judas_swing', 'ny_q3', 'amd_daily', 'asian_fade', 'local_hours', 'fix_flow', 'month_end_flow', 'weekend_gap', 'nr7_break', 'carry_trend', 'cot_squeeze', 'stretch_squeeze', 'ccy_momentum', 'stat_arb', 'mom_blend', 'oil_cad', 'yield_jpy', 'stocks_jpy', 'dollar_gold', 'turtle_soup']);
+export function runsOn(s: Pick<Strategy, 'onlyHourly' | 'slow' | 'id' | 'charts'>, tf: string, pair?: string): boolean {
   if (pair && isCrypto(pair) && NOT_FOR_CRYPTO.has(s.id)) return false;
+  if (s.charts) return s.charts.includes(tf);
   if (s.onlyHourly) return tf === '1h';
   if (s.slow) return tf === '1h' || tf === '4h';
   return true;
