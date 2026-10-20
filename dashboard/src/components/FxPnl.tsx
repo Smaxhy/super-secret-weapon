@@ -14,7 +14,7 @@ import { Badge, Card, Empty, Skeleton } from './ui';
 
 interface Period { pnlUsd: number; trades: number; wins: number }
 interface Day { day: string; pnlUsd: number; trades: number; wins: number; bestUsd: number | null; worstUsd: number | null; byStrategy: Array<{ strategy: string; name: string; tf: string | null; trades: number; pnlUsd: number }> }
-export interface PnlData { acct: 'bot' | 'me'; startUsd: number; equityUsd: number; openPnlUsd: number; since: number | null; periods: { today: Period; week: Period; month: Period; all: Period }; days: Day[]; curve: Array<[number, number]> }
+export interface PnlData { acct: 'bot' | 'me' | 'cbot'; startUsd: number; equityUsd: number; openPnlUsd: number; since: number | null; periods: { today: Period; week: Period; month: Period; all: Period }; days: Day[]; curve: Array<[number, number]> }
 interface DayTrade { id: string; pair: string; side: 1 | -1; strategy: string | null; name: string | null; tf: string | null; entry: number; exit: number; pnlUsd: number; reason: string; openedAt: number | null; closedAt: number; partial: boolean }
 
 const WEEK = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
@@ -30,7 +30,7 @@ const cell = (v: number) => {
 const winPct = (p: { trades: number; wins: number }) => (p.trades ? `${Math.round((p.wins / p.trades) * 100)}% won` : '');
 const sideTxt = (s: 1 | -1) => (s === 1 ? 'Long' : 'Short');
 
-export function FxPnl({ acct = 'bot', fallback = null }: { acct?: 'bot' | 'me'; fallback?: ReactNode }) {
+export function FxPnl({ acct = 'bot', fallback = null }: { acct?: 'bot' | 'me' | 'cbot'; fallback?: ReactNode }) {
   const tz = new Date().getTimezoneOffset();
   const { data, error } = useApi<PnlData>(`/api/forex/pnl?acct=${acct}&tz=${tz}`, 60_000);
   // an older server (404) or a broken answer → the page's old tiles
@@ -184,7 +184,7 @@ function EquityCurve({ d }: { d: PnlData }) {
   );
 }
 
-function MonthCalendar({ d, acct, tz }: { d: PnlData; acct: 'bot' | 'me'; tz: number }) {
+function MonthCalendar({ d, acct, tz }: { d: PnlData; acct: 'bot' | 'me' | 'cbot'; tz: number }) {
   const now = new Date();
   const today = keyOf(now.getFullYear(), now.getMonth(), now.getDate());
   const [month, setMonth] = useState({ y: now.getFullYear(), m: now.getMonth() });
@@ -260,7 +260,7 @@ function MonthCalendar({ d, acct, tz }: { d: PnlData; acct: 'bot' | 'me'; tz: nu
   );
 }
 
-function DayTrades({ day, sum, acct, tz, onClose }: { day: string; sum: Day | undefined; acct: 'bot' | 'me'; tz: number; onClose: () => void }) {
+function DayTrades({ day, sum, acct, tz, onClose }: { day: string; sum: Day | undefined; acct: 'bot' | 'me' | 'cbot'; tz: number; onClose: () => void }) {
   const { data, error } = useApi<{ day: string; trades: DayTrade[] }>(sum ? `/api/forex/pnl/day?acct=${acct}&day=${day}&tz=${tz}` : null, 60_000);
   const trades = data?.day === day ? data.trades : null;
   return (

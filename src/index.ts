@@ -423,6 +423,16 @@ async function main(): Promise<void> {
   // v15: the same strategies on 15-minute and 1-minute candles (tested hourly, checked live at every close)
   const fastFx = new FastLab(redis, forex);
   fastFx.start();
+  // v22.1 (owner: "change the crypto bot from memecoins to liquid real coins with real strategies"): a second lab of the
+  // same engine on BTC / ETH / SOL — its own report (`cm:…`), its own bot account ('cbot'), its own pages. The forex
+  // lab never sees a coin; the coin lab shares only the bars, feeds, calendar and headlines.
+  const cryptoLab = new ForexLab(redis, 'crypto');
+  cryptoLab.practice = practice;
+  cryptoLab.calendar = fxCalendar;
+  cryptoLab.headlines = fxNews;
+  cryptoLab.start();
+  const fastCrypto = new FastLab(redis, cryptoLab);
+  fastCrypto.start();
   // v18.8 (owner): the two 1-minute trades never happened — strike every 1-minute trade from the bot account once
   await oneTimeUpgrade('v18.8-undo-1m', async () => {
     const line = await practice.undoChart('bot', '1m');
@@ -844,7 +854,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament, meme: memeReader, forex, fastFx, practice, fxCalendar, fxNews, tradeWatch }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament, meme: memeReader, forex, fastFx, crypto: cryptoLab, fastCrypto, practice, fxCalendar, fxNews, tradeWatch }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -955,6 +965,8 @@ async function main(): Promise<void> {
       tournament.stop();
       forex.stop();
       fastFx.stop();
+      cryptoLab.stop();
+      fastCrypto.stop();
       practice.stop();
       tradeWatch.stop();
       pythLive.stop();

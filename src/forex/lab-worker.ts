@@ -32,7 +32,7 @@ process.on('message', (msg: { cmd: 'run'; refresh: boolean; input: WorkerInput }
       // v17: start with the parent's breakers (an open Yahoo breaker there is not ignored here)
       feeds.mergeBreakers(msg.input.breakers);
       await installSpreadProfiles(redis).catch(() => undefined);
-      const lab = new ForexLab(redis);
+      const lab = new ForexLab(redis, msg.input.universe ?? 'fx');
       lab.practice = new Practice(redis); // read-only here: the bot's record for the learner
       const cal = new ForexCalendar(redis);
       await cal.loadCached();

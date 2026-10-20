@@ -3,6 +3,7 @@
  * screens — and a bottom bar on phones), theme toggle and routes. Hash routing so GitHub Pages can
  * serve every page from one index.html.
  */
+import { wsBase } from './lib/ws';
 import { useEffect, useRef, useState } from 'react';
 import { HashRouter, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AppFooter, Brand, ModePill } from './components/Brand';
@@ -83,21 +84,37 @@ const WS: Record<Ws, { label: string; icon: IconName; home: string; groups: Grou
     label: 'Crypto',
     icon: 'layers',
     home: '/crypto',
-    phone: ['/crypto', '/positions', '/history', '/performance'],
+    // v22.1 (owner: "change the crypto bot from memecoins to liquid real coins with real strategies"): the Crypto desk
+    // is the coin bot (BTC / ETH / SOL on the forex engine, its own lab + account); the memecoin pages stay reachable
+    // under "Memecoins" as the paper watch they are
+    phone: ['/crypto', '/crypto/bot', '/crypto/news', '/crypto/live'],
     groups: [
       {
-        label: 'Trading',
+        label: 'Every day',
         items: [
-          { to: '/crypto', label: 'Overview', icon: 'home', desc: 'Profit, open trades, latest activity' },
-          { to: '/positions', label: 'Positions', icon: 'layers', desc: 'What it holds right now' },
-          { to: '/history', label: 'History', icon: 'clock', desc: 'Every closed trade' },
-          { to: '/performance', label: 'Performance', icon: 'chart', desc: 'Charts, mistakes, money map, tests' },
+          { to: '/crypto', label: 'Home', icon: 'home', desc: 'Is the coin bot working, what is it waiting for, the money, live news' },
+          { to: '/crypto/bot', label: 'Trades', icon: 'bolt', desc: 'Open trades with their plan, today, closed trades' },
+          { to: '/crypto/news', label: 'News', icon: 'bell', desc: 'Crypto and macro headlines, what the bot pauses for' },
+          { to: '/crypto/live', label: 'Markets', icon: 'chart', desc: 'BTC, ETH, SOL: charts, levels, signals' },
         ],
       },
       {
-        label: 'Lab',
+        label: 'Deeper',
         items: [
-          { to: '/strategies', label: 'Strategies', icon: 'flask', desc: 'Chart strategies tested live' },
+          { to: '/crypto/lab', label: 'Lab', icon: 'flask', desc: 'Every self-test and the playbook' },
+          { to: '/crypto/strategies', label: 'Strategies', icon: 'sliders', desc: 'Every strategy on each coin chart' },
+          { to: '/crypto/paper', label: 'Paper results', icon: 'clock', desc: 'The live forward test' },
+          { to: '/crypto/practice', label: 'Trade by hand', icon: 'user', desc: 'Your own practice account' },
+        ],
+      },
+      {
+        label: 'Memecoins (paper watch)',
+        items: [
+          { to: '/memes', label: 'Overview', icon: 'home', desc: 'Pump.fun paper bot: profit, open trades, activity' },
+          { to: '/positions', label: 'Positions', icon: 'layers', desc: 'What it holds right now' },
+          { to: '/history', label: 'History', icon: 'clock', desc: 'Every closed trade' },
+          { to: '/performance', label: 'Performance', icon: 'chart', desc: 'Charts, mistakes, money map, tests' },
+          { to: '/strategies', label: 'Chart strategies', icon: 'flask', desc: 'Chart strategies tested live' },
           { to: '/shadow', label: 'Shadow trades', icon: 'eye', desc: 'Coins it skipped, traded on paper' },
           { to: '/brain', label: 'Brain', icon: 'cpu', desc: 'Models, rules it found, tips' },
           { to: '/learning', label: 'Learning', icon: 'sparkles', desc: 'Score weights, coach, lessons' },
@@ -166,7 +183,7 @@ function FxTradesPill({ st, variant }: { st: FxBotStatus | null; variant: 'sideb
   if (variant === 'phone')
     return (
       // compact (the phone header is full): pulsing dot, how many trades, open P&L
-      <NavLink to="/forex" end aria-label={label} title={label} className="ml-0.5 inline-flex min-h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-good/40 bg-good/10 px-2 py-1 text-xs font-semibold text-ink">
+      <NavLink to={wsBase()} end aria-label={label} title={label} className="ml-0.5 inline-flex min-h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-good/40 bg-good/10 px-2 py-1 text-xs font-semibold text-ink">
         {dot}
         {/* the word "open" goes on narrow phones so the Forex / Crypto switch keeps its room */}
         <span className="tabular">{st.open}<span className="max-[389px]:hidden"> open</span></span>
@@ -174,7 +191,7 @@ function FxTradesPill({ st, variant }: { st: FxBotStatus | null; variant: 'sideb
       </NavLink>
     );
   return (
-    <NavLink to="/forex" end aria-label={label} title={label} className="flex min-h-9 items-center justify-center gap-2 rounded-xl border border-good/40 bg-good/10 px-2 py-1.5 text-xs font-semibold text-ink hover:bg-good/15 lg:justify-start lg:px-3">
+    <NavLink to={wsBase()} end aria-label={label} title={label} className="flex min-h-9 items-center justify-center gap-2 rounded-xl border border-good/40 bg-good/10 px-2 py-1.5 text-xs font-semibold text-ink hover:bg-good/15 lg:justify-start lg:px-3">
       {dot}
       <span className="lg:hidden tabular">{st.open}</span>
       <span className="hidden min-w-0 flex-1 truncate lg:inline">In {st.open === 1 ? 'a trade' : `${st.open} trades`}</span>
@@ -387,8 +404,9 @@ function Shell() {
     document.documentElement.setAttribute('data-ws', ws);
   }, [ws]);
   // v17.8: is the forex bot in a trade (Forex workspace only; an error / older server → no pill)
-  const fxSt = useApi<FxBotStatus>(ws === 'forex' ? '/api/forex/bot/status' : null, 15_000);
-  const fxStatus = ws === 'forex' && !fxSt.error ? fxSt.data : null;
+  // v22.1: both desks have an auto-bot now — the pill follows the desk
+  const fxSt = useApi<FxBotStatus>(ws === 'forex' ? '/api/forex/bot/status' : '/api/crypto/bot/status', 15_000);
+  const fxStatus = !fxSt.error ? fxSt.data : null;
   const GROUPS = groupsOf(ws);
   const PHONE_MAIN = WS[ws].phone;
   const wsNav = GROUPS.flatMap((g) => g.items);
@@ -513,7 +531,9 @@ function Shell() {
           <div key={pathname} className="page-enter">
             <Routes>
               <Route path="/" element={<Landing />} />
-              <Route path="/crypto" element={<Overview />} />
+              <Route path="/crypto" element={<Forex />} />
+              <Route path="/crypto/:section" element={<Forex />} />
+              <Route path="/memes" element={<Overview />} />
               <Route path="/forex" element={<Forex />} />
               <Route path="/forex/:section" element={<Forex />} />
               <Route path="/feed" element={<LiveFeed />} />

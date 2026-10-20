@@ -19,6 +19,7 @@ import { LiveBadge, LivePrice } from './LivePrice';
 import { Badge, Button, Card, Empty, Row, Rows, Stack, StatTile, Tabs, Timeline, useTab } from './ui';
 import { AdvancedFold, FxBrief } from './FxBrief';
 import { ConvictionCard, DeskCard, PortfolioCard, RiskCard, RollingCard, SniperCard, type ConvictionReport, type DeskReport, type JudgeReport, type Ledger, type PortfolioReport, type RiskSummary, type RollReport, type SniperReport } from './FxInsights';
+import { apiBase, botAcct } from '../lib/ws';
 
 interface Conviction { tier: 'normal' | 'sure' | 'verySure'; conf: number; of: number; mult: number; lev: number | null }
 interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; /** v17.9 */ pnlPerPx?: number; units?: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number; tf?: string; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; closePending?: { reason: string; at: number } | null; /** v17.11 profit lock */ lock?: { at: number; to: number; gap: number } | null; locked?: boolean }
@@ -49,7 +50,7 @@ const STATUS: Record<PlanMarket['status'], { label: string; tone: 'up' | 'warn' 
 
 export function FxBot() {
   // v17.8: 5 s — the "in a trade" header and the open trade's P&L are live
-  const { data, reload, error } = useApi<Data>('/api/forex/bot', 5_000);
+  const { data, reload, error } = useApi<Data>(`${apiBase()}/bot`, 5_000);
   const [sel, setSel] = useState<string | null>(null);
   const a = data?.account;
   const plan = data?.plan ?? null;
@@ -57,18 +58,18 @@ export function FxBot() {
   const closedN = a ? a.closed.filter((x) => x.reason !== 'partial').length : 0;
   const reset = async () => {
     if (!confirm("Reset the bot's account to $1,000? Its positions and history are cleared.")) return;
-    await api('/api/forex/practice/reset', { method: 'POST', body: JSON.stringify({ startUsd: 1000, acct: 'bot' }) });
+    await api('/api/forex/practice/reset', { method: 'POST', body: JSON.stringify({ startUsd: 1000, acct: botAcct() }) });
     await reload();
   };
   const close = async (id: string) => {
     if (!confirm('Close this trade now at the market price? The bot normally closes it by itself.')) return;
-    await api('/api/forex/practice/close', { method: 'POST', body: JSON.stringify({ id, acct: 'bot' }) });
+    await api('/api/forex/practice/close', { method: 'POST', body: JSON.stringify({ id, acct: botAcct() }) });
     await reload();
   };
   const positions = a?.positions ?? [];
   const selected = positions.find((p) => p.id === sel) ?? positions[0] ?? null;
   // v17.14: every open trade's live read + AI read
-  const reads = useTradeReads('bot', positions.length > 0);
+  const reads = useTradeReads(botAcct(), positions.length > 0);
   // tapping a trade in the header shows it in the chart card (scrolled into view when that card is off screen)
   const pick = (id: string) => {
     setSel(id);
@@ -92,7 +93,7 @@ export function FxBot() {
       <BotHero plan={plan} a={a ?? null} loaded={!!data} selectedId={selected?.id ?? null} onPick={pick} reads={reads.data} />
       {positions.length > 0 && <FxActiveTrade positions={positions} selectedId={selected?.id ?? null} onSelect={setSel} plan={plan?.trades ?? []} onClose={(id) => void close(id)} reads={reads.data} onReadsChanged={() => void reads.reload()} />}
       <FxBrief why={data?.why ?? null} plan={plan} riskMode={data?.riskMode ?? 'normal'} modes={data?.riskModes} equityUsd={a?.equityUsd ?? null} orders={a?.orders ?? []} names={data?.names} labError={data?.labError ?? null} planError={data?.planError ?? null} loadError={error} />
-      <FxPnl acct="bot" fallback={tiles} />
+      <FxPnl acct={botAcct()} fallback={tiles} />
       <RiskModeCard mode={data?.riskMode ?? 'normal'} modes={data?.riskModes} portfolio={data?.portfolio ?? null} onChange={() => void reload()} />
       <MarketsCard plan={plan} />
       <ChecksCard plan={plan} log={data?.log ?? []} />
@@ -133,7 +134,7 @@ function RiskModeCard({ mode, modes, portfolio, onChange }: { mode: RiskMode; mo
     if (m !== 'normal' && !confirm(`${modes[m].label}: ${modes[m].riskPct}% of the account at risk on every trade, up to ${modes[m].maxOpen} trades at once. Losing streaks hit ${modes[m].riskPct}× harder. Switch?`)) return;
     setBusy(true);
     try {
-      await api('/api/forex/bot/mode', { method: 'POST', body: JSON.stringify({ mode: m }) });
+      await api(`${apiBase()}/bot/mode`, { method: 'POST', body: JSON.stringify({ mode: m }) });
       onChange();
     } finally {
       setBusy(false);

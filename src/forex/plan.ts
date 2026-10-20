@@ -283,6 +283,7 @@ export function tradeLines(p: PracticePosition & { px: number }, now: number, pn
 
 /** The whole plan. Pure. */
 export function buildPlan(x: PlanInputs): BotPlan {
+  const nMk = x.markets.length; // v22.1: the markets THIS plan covers (forex or the coins), not every instrument
   const { now } = x;
   const chosen = new Set(x.chosen);
   const trading: Record<string, number> = {};
@@ -403,10 +404,10 @@ export function buildPlan(x: PlanInputs): BotPlan {
   const nTrading = Object.values(trading).reduce((a, b) => a + b, 0);
   const pnl = x.positions.reduce((s, p) => s + p.pnlUsd, 0);
   const soon = next.filter((n) => trading[n.tf]).sort((a, b) => a.at - b.at)[0] ?? next[1]!;
-  const coins = INSTRUMENTS.filter((i) => i.kind === 'crypto').length;
+  const coins = x.markets.filter((m) => isCrypto(m.id)).length;
   const summary = !x.clock.open && !coins
     ? `Market closed for the weekend (opens again in ${Math.round(x.clock.minutesToChange / 60)} h). ${x.resume.length ? `${x.resume.length} trade${x.resume.length > 1 ? 's' : ''} paused, re-opened after Monday's open if still running.` : 'Nothing to do until then.'}`
-    : `${x.positions.length ? `In ${x.positions.length} trade${x.positions.length > 1 ? 's' : ''} (${usd(pnl)} open)` : 'No trade open'} · ${nTrading ? `${nTrading} tested setup${nTrading === 1 ? '' : 's'} (strategy × chart) on ${openCharts.join(', ')}` : 'no strategy has passed its test yet'} across ${INSTRUMENTS.length} markets · next check ${hhmm(soon.at)} UTC (${soon.tf}).`;
+    : `${x.positions.length ? `In ${x.positions.length} trade${x.positions.length > 1 ? 's' : ''} (${usd(pnl)} open)` : 'No trade open'} · ${nTrading ? `${nTrading} tested setup${nTrading === 1 ? '' : 's'} (strategy × chart) on ${openCharts.join(', ')}` : 'no strategy has passed its test yet'} across ${nMk} markets · next check ${hhmm(soon.at)} UTC (${soon.tf}).`;
   // v20.2: the state in one word, and what the next look does
   const waitingMkts = markets.filter((mk) => mk.status === 'waiting');
   const need = x.strict?.minAgree ?? 0;
@@ -417,8 +418,8 @@ export function buildPlan(x: PlanInputs): BotPlan {
       : !nTrading
         ? { kind: 'nothing_proven', word: 'Nothing qualifies yet', line: x.strict?.mode === 'quality' ? 'No strategy clears the quality bar (strict mode: 30+ unseen trades at 0.05R+ a trade with profit factor 1.2+, positive before the split, beats random and its luck twins), so it trades nothing. The lab re-grades every strategy each hour; the moment one clears it, it is put to work.' : `No strategy has passed the unseen exam${x.strict?.mode === 'edge' ? ' (strict mode: only Edge rows trade)' : ''}, so it trades nothing. The lab re-grades every strategy each hour; the moment one earns Edge it is put to work.` }
         : waitingMkts.length
-          ? { kind: 'waiting', word: 'Waiting for a setup', line: `${waitingMkts.length} market${waitingMkts.length > 1 ? 's have' : ' has'} a proven strategy firing but something holds it back (${waitingMkts[0]!.label}: ${waitingMkts[0]!.signals.find((sg) => sg.tone === 'wait')?.verdict ?? 'waiting'}). ${nTrading} proven setup${nTrading === 1 ? '' : 's'} watched on ${INSTRUMENTS.length} markets.` }
-          : { kind: 'scanning', word: 'Waiting for a setup', line: `Nothing has fired. It watches ${nTrading} proven setup${nTrading === 1 ? '' : 's'} (strategy × chart) on ${INSTRUMENTS.length} markets and opens only when one fires${need ? ` with ${need}+ market checks on its side` : ''} and no news is in the way.` };
+          ? { kind: 'waiting', word: 'Waiting for a setup', line: `${waitingMkts.length} market${waitingMkts.length > 1 ? 's have' : ' has'} a proven strategy firing but something holds it back (${waitingMkts[0]!.label}: ${waitingMkts[0]!.signals.find((sg) => sg.tone === 'wait')?.verdict ?? 'waiting'}). ${nTrading} proven setup${nTrading === 1 ? '' : 's'} watched on ${nMk} markets.` }
+          : { kind: 'scanning', word: 'Waiting for a setup', line: `Nothing has fired. It watches ${nTrading} proven setup${nTrading === 1 ? '' : 's'} (strategy × chart) on ${nMk} markets and opens only when one fires${need ? ` with ${need}+ market checks on its side` : ''} and no news is in the way.` };
   const nextLook = {
     tf: soon.tf,
     at: soon.at,
@@ -427,8 +428,8 @@ export function buildPlan(x: PlanInputs): BotPlan {
       : !x.clock.open
         ? `Forex is closed for the weekend (opens again in ${Math.round(x.clock.minutesToChange / 60)} h); it reads the ${TF_WORD[soon.tf] ?? soon.tf} candles of the ${coins} coin market${coins > 1 ? 's' : ''} only.`
       : !nTrading
-        ? `Re-reads every ${TF_WORD[soon.tf] ?? soon.tf} candle on ${INSTRUMENTS.length} markets; with no proven strategy it opens nothing, but the hourly re-grade may promote one.`
-        : `Reads the ${TF_WORD[soon.tf] ?? soon.tf} candle that just closed on ${INSTRUMENTS.length} markets: did any of the ${trading[soon.tf] ?? nTrading} proven ${soon.tf} setup${(trading[soon.tf] ?? nTrading) === 1 ? '' : 's'} fire? If one did${need ? `, ${need}+ checks agree` : ''}, no news or rollover blocks it and the caps allow, it opens at market with that strategy's stop and target.`,
+        ? `Re-reads every ${TF_WORD[soon.tf] ?? soon.tf} candle on ${nMk} markets; with no proven strategy it opens nothing, but the hourly re-grade may promote one.`
+        : `Reads the ${TF_WORD[soon.tf] ?? soon.tf} candle that just closed on ${nMk} markets: did any of the ${trading[soon.tf] ?? nTrading} proven ${soon.tf} setup${(trading[soon.tf] ?? nTrading) === 1 ? '' : 's'} fire? If one did${need ? `, ${need}+ checks agree` : ''}, no news or rollover blocks it and the caps allow, it opens at market with that strategy's stop and target.`,
   };
   return {
     at: now,

@@ -25,8 +25,9 @@ import { lockedStop, lockPlan, PROFIT_LOCK, type LockPlan } from './profit-lock'
 import { FINANCING, rollsBetween, swapGain } from './financing';
 
 const log = moduleLogger('forex-practice');
-export type AcctId = 'me' | 'bot';
-const keyFor = (a: AcctId) => (a === 'me' ? 'fx:practice' : 'fx:practice:bot');
+/** 'me' = the owner's own practice account, 'bot' = the forex auto-bot, 'cbot' (v22.1) = the coin auto-bot */
+export type AcctId = 'me' | 'bot' | 'cbot';
+const keyFor = (a: AcctId) => (a === 'me' ? 'fx:practice' : a === 'cbot' ? 'fx:practice:cbot' : 'fx:practice:bot');
 /** v17.8: durable P&L log per account (one JSON row per booked close, newest 20,000) — the calendar / P&L views read it */
 export const pnlKey = (a: AcctId) => `fx:pnl:${a}`;
 export const PNL_KEEP = 20_000;
@@ -990,7 +991,7 @@ export class Practice {
   private pnlReady = new Set<AcctId>();
   /** v17.8: parsed P&L log per account, dropped on every write to it (`pnlVer` guards a read racing a write) */
   private pnlCache = new Map<AcctId, PnlRow[]>();
-  private pnlVer: Record<AcctId, number> = { me: 0, bot: 0 };
+  private pnlVer: Record<AcctId, number> = { me: 0, bot: 0, cbot: 0 };
   constructor(private readonly redis: Redis) {}
 
   start(): void {
@@ -1211,7 +1212,7 @@ export class Practice {
 
   private async checkOpen(): Promise<void> {
     // v17: one account failing to load never stops the other's stops / targets / weekend flatten
-    for (const acct of ['me', 'bot'] as AcctId[]) await this.checkOne(acct).catch((err: Error) => log.error({ acct, err: err.message }, 'practice check failed'));
+    for (const acct of ['me', 'bot', 'cbot'] as AcctId[]) await this.checkOne(acct).catch((err: Error) => log.error({ acct, err: err.message }, 'practice check failed'));
   }
 
   private async checkOne(acct: AcctId): Promise<void> {
@@ -1222,12 +1223,12 @@ export class Practice {
     const ev = tick(a, q, Date.now(), mv, this.carryFor);
     // v18.4: nothing rests over the weekend
     // v22: coins have no weekend — only currency / metal orders and positions are flattened
-    if (acct === 'bot' && marketClock(Date.now()).flattenNow && a.orders?.some((o) => !isCrypto(o.pair))) {
+    if (acct !== 'me' && marketClock(Date.now()).flattenNow && a.orders?.some((o) => !isCrypto(o.pair))) {
       const n = a.orders.filter((o) => !isCrypto(o.pair)).length;
       ev.push(`cancelled ${n} limit order${n > 1 ? 's' : ''} for the weekend`);
       a.orders = a.orders.filter((o) => isCrypto(o.pair));
     }
-    if (acct === 'bot' && marketClock(Date.now()).flattenNow && a.open.some((p) => !isCrypto(p.pair))) {
+    if (acct !== 'me' && marketClock(Date.now()).flattenNow && a.open.some((p) => !isCrypto(p.pair))) {
       const mids: Record<string, number> = {};
       for (const x of Object.values(q)) mids[x.id] = x.mid;
       for (const p of [...a.open]) {
@@ -1363,11 +1364,12 @@ export class Practice {
    * the charts this call manages (the hourly lab passes 1h + 4h, the fast lab 15m or 1m), so one never closes the
    * other's trades; `report` collects what it saw for the bot's plan.
    */
-  async syncBot(labOpen: LabOpenTrade[], blockFor: (pair: string) => string | null = () => null, atr1h: Record<string, number> = {}, opts: { scope?: readonly string[]; report?: SyncReport; pairsSeen?: ReadonlySet<string>; heat?: HeatLive | null } = {}): Promise<string[]> {
+  async syncBot(labOpen: LabOpenTrade[], blockFor: (pair: string) => string | null = () => null, atr1h: Record<string, number> = {}, opts: { scope?: readonly string[]; report?: SyncReport; pairsSeen?: ReadonlySet<string>; heat?: HeatLive | null; acct?: 'bot' | 'cbot' } = {}): Promise<string[]> {
     const inScope = (ref: string | undefined) => !opts.scope || opts.scope.includes(tfOfRef(ref));
     const rep = opts.report;
     return this.serial(async () => {
-      const a = await this.load('bot');
+      const acct: AcctId = opts.acct ?? 'bot'; // v22.1: the forex bot or the coin bot
+      const a = await this.load(acct);
       const L = limitsFor(a.riskMode);
       const events: string[] = [];
       const byRef = new Map(labOpen.map((t) => [t.ref, t]));
@@ -1710,26 +1712,26 @@ export class Practice {
           if (rep) rep.opened++;
         } else skip(t, r.error ?? 'could not open');
       }
-      await this.save(a, 'bot');
+      await this.save(a, acct);
       if (events.length) log.info({ events }, 'forex bot account');
       return events;
     });
   }
 
   /** v15.3: refs of the bot's open trades (no prices needed). */
-  async heldRefs(): Promise<string[]> {
-    const a = await this.load('bot');
+  async heldRefs(acct: AcctId = 'bot'): Promise<string[]> {
+    const a = await this.load(acct);
     return a.open.map((p) => p.ref).filter((r): r is string => !!r);
   }
 
   /** v17: every finished bot trade in R (newest last). */
-  async botLedger(): Promise<BotLedgerRow[]> {
-    return ledgerRows(await this.load('bot'));
+  async botLedger(acct: AcctId = 'bot'): Promise<BotLedgerRow[]> {
+    return ledgerRows(await this.load(acct));
   }
 
   /** Results of the bot account per strategy and chart (`ema_cross:1h`), to drop what loses in real time. */
-  async botResults(now = Date.now()): Promise<Record<string, { n: number; pnlUsd: number }>> {
-    return botRecordOf(await this.load('bot'), now);
+  async botResults(now = Date.now(), acct: AcctId = 'bot'): Promise<Record<string, { n: number; pnlUsd: number }>> {
+    return botRecordOf(await this.load(acct), now);
   }
 
   async close(id: string | 'all', acct: AcctId = 'me'): Promise<{ ok: boolean; error?: string }> {
@@ -1826,7 +1828,7 @@ export class Practice {
       const fresh = newAccount(Math.min(1_000_000, Math.max(10, startUsd)));
       // the bot keeps its risk mode across a reset
       const old = await this.load(acct).catch(() => null);
-      if (acct === 'bot' && old?.riskMode) fresh.riskMode = old.riskMode;
+      if (acct !== 'me' && old?.riskMode) fresh.riskMode = old.riskMode;
       // v17.11: the profit-lock switch survives a reset too
       if (old?.profitLock === false) fresh.profitLock = false;
       // v17.8: the P&L log starts again with the account
@@ -1881,12 +1883,12 @@ export class Practice {
   }
 
   /** v15.6: how hard the bot account trades from now on (open trades keep their size). */
-  async setRiskMode(mode: RiskMode): Promise<RiskMode> {
+  async setRiskMode(mode: RiskMode, acct: AcctId = 'bot'): Promise<RiskMode> {
     return this.serial(async () => {
-      const a = await this.load('bot');
+      const a = await this.load(acct);
       a.riskMode = mode;
-      await this.save(a, 'bot');
-      log.info({ mode }, 'forex bot risk mode');
+      await this.save(a, acct);
+      log.info({ mode, acct }, 'bot risk mode');
       return mode;
     });
   }
@@ -1904,7 +1906,7 @@ export class Practice {
   }
 
   /** v15.6: the bot account's risk mode. */
-  async riskMode(): Promise<RiskMode> {
-    return (await this.load('bot')).riskMode ?? 'normal';
+  async riskMode(acct: AcctId = 'bot'): Promise<RiskMode> {
+    return (await this.load(acct)).riskMode ?? 'normal';
   }
 }

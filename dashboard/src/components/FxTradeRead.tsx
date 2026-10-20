@@ -50,7 +50,7 @@ export const READ_TONE: Record<ReadStatus, Tone> = { closing: 'warn', near_targe
 const AI_LABEL: Record<AiVerdict, { text: string; tone: Tone }> = { on_track: { text: 'On track', tone: 'up' }, watch: { text: 'Watch', tone: 'warn' }, at_risk: { text: 'At risk', tone: 'down' } };
 
 /** every open trade's live read + AI read (every 15 s; nothing while there is no trade) */
-export function useTradeReads(acct: 'bot' | 'me', on: boolean) {
+export function useTradeReads(acct: 'bot' | 'me' | 'cbot', on: boolean) {
   return useApi<ReadsData>(on ? `/api/forex/trades/read?acct=${acct}` : null, 15_000);
 }
 
@@ -130,7 +130,7 @@ function Move({ label, v }: { label: string; v: number | null }) {
 }
 
 /** the live read + the AI read of one trade */
-export function TradeReadPanel({ row, info, acct, onAsked }: { row: ReadRow; info: AiInfo | null; acct: 'bot' | 'me'; onAsked: () => void }) {
+export function TradeReadPanel({ row, info, acct, onAsked }: { row: ReadRow; info: AiInfo | null; acct: 'bot' | 'me' | 'cbot'; onAsked: () => void }) {
   const r = row.read;
   return (
     <div className="space-y-3">
@@ -165,7 +165,7 @@ export function TradeReadPanel({ row, info, acct, onAsked }: { row: ReadRow; inf
   );
 }
 
-function AiBox({ row, info, acct, onAsked }: { row: ReadRow; info: AiInfo | null; acct: 'bot' | 'me'; onAsked: () => void }) {
+function AiBox({ row, info, acct, onAsked }: { row: ReadRow; info: AiInfo | null; acct: 'bot' | 'me' | 'cbot'; onAsked: () => void }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [past, setPast] = useState(false);

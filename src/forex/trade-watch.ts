@@ -120,7 +120,7 @@ export class TradeWatch {
     try {
       const open = marketClock(now).open;
       if (!open || (await this.ai.capped(now))) return 0;
-      for (const acct of ['bot', 'me'] as AcctId[]) {
+      for (const acct of ['bot', 'cbot', 'me'] as AcctId[]) {
         const items = await this.build(acct, now).catch((err: Error) => {
           log.warn({ acct, err: err.message }, 'trade watch: could not read the account');
           return [];

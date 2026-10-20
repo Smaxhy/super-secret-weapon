@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import { Icon } from './Icon';
+import { wsBase } from '../lib/ws';
 
 export interface NewsEv { t: number; ccy: string; title: string; impact: 'High' | 'Medium' | 'Low' | 'Holiday'; forecast?: string; previous?: string }
 export interface NewsClock { open: boolean; minutesToChange: number; noNewTrades: boolean; flattenNow: boolean; sessions: string[] }
@@ -108,7 +109,7 @@ export function NewsTape({ compact = false }: { compact?: boolean }) {
   return (
     <div className="tape relative flex items-stretch overflow-hidden rounded-xl border border-line bg-surface" role="region" aria-label="Live news">
       {/* the front chip: what is coming next, counting down */}
-      <Link to="/forex/news" className={`z-10 flex shrink-0 items-center gap-2 border-r border-line bg-surface-2 px-3 text-sm font-semibold ${big && big.t - now < 45 * 60_000 ? 'border-l-4 border-l-critical text-down' : 'text-ink'}`} title={big ? `${big.ccy} ${big.title}` : 'Open the news desk'}>
+      <Link to={`${wsBase()}/news`} className={`z-10 flex shrink-0 items-center gap-2 border-r border-line bg-surface-2 px-3 text-sm font-semibold ${big && big.t - now < 45 * 60_000 ? 'border-l-4 border-l-critical text-down' : 'text-ink'}`} title={big ? `${big.ccy} ${big.title}` : 'Open the news desk'}>
         <Icon name="bell" size={15} />
         {big ? (
           <span className="whitespace-nowrap">

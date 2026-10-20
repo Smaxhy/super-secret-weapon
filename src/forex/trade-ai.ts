@@ -85,7 +85,7 @@ export const TRADE_AI_SYSTEM =
   'promise an outcome.';
 
 export interface TradeAiContext {
-  acct: 'bot' | 'me';
+  acct: 'bot' | 'me' | 'cbot';
   posId: string;
   pair: string;
   label: string;

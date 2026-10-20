@@ -934,6 +934,35 @@ vault door (its tag sat on the Risk keeper's) to `TREASURER_HOME` by the observa
 roster "By the observatory"). Help card = three lines (incl. the dot legend). Verified with Playwright (`shots/village.mjs`)
 at 390 / 1440 px, light + dark, incl. opening a watcher's screen.
 
+## v22.1 the Crypto desk = a real-coin bot on its own lab and account (Oct 20, owner: "nooo I don't want it in the forex
+bot, I need it on the crypto side… change the crypto bot from memecoins to trading liquid real coins BTC/USD etc with
+real strats")
+Same engine, TWO labs: `new ForexLab(redis, universe)` (lab.ts `Universe` 'fx' | 'crypto'): `lab.insts` = currencies +
+metals (fx) or the coins (crypto) — the forex lab never loads, grades or trades a coin again (v22 had put BTC / ETH /
+SOL into the one lab, which would have mixed coin trades into the forex rows' stats); `lab.k(key)` maps every lab key
+`fx:…` → `cm:…` for the coin lab (report, paper-since, filters chosen, judge, conviction, sniper, portfolio, heat, roll,
+luck, learn, chosen hist, desks, bot log / runs / chosen / dropped; FastLab follows with `fx:fast:*` → `cm:fast:*`);
+shared stores keep their names (bars `fx:bars:<id>`, feeds, calendar, headlines, macro, spread profiles); `lab.acct` =
+'bot' (fx) / **'cbot'** (coins, Redis `fx:practice:cbot`, $1,000, own risk mode; `AcctId` adds 'cbot', ticked / flattened
+(coins never) / resumed like the forex bot; `syncBot(…, { acct })`, `heldRefs / botLedger / botResults / setRiskMode /
+riskMode(acct)`). `refreshAll(redis, cfg, insts, extras)`: the forex lab pulls its markets + strength crosses + mood,
+the coin lab only its 3 coins. The worker child takes `WorkerInput.universe`. index.ts starts `cryptoLab` + `fastCrypto`
+(calendar / headlines / practice shared); `ApiDeps.crypto` / `fastCrypto`. plan.ts counts `x.markets` (not
+INSTRUMENTS), so the forex plan closes on the weekend as before and the coin plan never does.
+**API**: the lab + bot routes are registered per universe (server.ts loop `U`): `/api/forex`, `/run`, `/bot`,
+`/bot/status`, `/bot/mode` and the same under **`/api/crypto/*`** (keys through `K`, account 'cbot'). Account-agnostic
+routes stay under `/api/forex/*` and accept `acct=cbot` (`acctParam`: practice, pnl, pnl/day, trades/read, trades/ai).
+**Dashboard**: `lib/ws.ts` `inCrypto()` (route `#/crypto…`), `apiBase()` '/api/forex' | '/api/crypto', `wsBase()`,
+`botAcct()` 'bot' | 'cbot' — ControlRoom / FxBot / FxBrief / FxLab / Forex page / NewsTape / Village / the header pill
+read them, so the SAME pages serve `/crypto` (Home = control room on the coins), `/crypto/bot`, `/crypto/news`,
+`/crypto/live`, `/crypto/lab`, `/crypto/strategies`, `/crypto/paper`, `/crypto/practice` (Forex.tsx `CRYPTO_TITLES`).
+App.tsx Crypto workspace: Every day (Home / Trades / News / Markets) + Deeper + **"Memecoins (paper watch)"** (the
+pump.fun pages: Overview now at `/memes`, Positions, History, Performance, Chart strategies, Shadow, Brain, Learning,
+Wallets, Live feed); phone bar Home · Trades · News · Markets. The memecoin bot itself keeps running untouched (paper
+data collector) — switching it off is the owner's call. tests: forex-v15 weekend expectation restored (the forex plan
+has no coins). 1,322 tests. Verified by typecheck + build only (no VPS yet): after deploy the coin lab's first run
+builds `cm:report`; read `/api/crypto` + `/api/crypto/bot` on the VPS.
+
 ## v22 crypto majors inside the forex engine (Oct 20, owner: "do it — a forex AND a crypto base, strategies, news, free tools")
 The forex engine is a candle engine; it now also trades **BTC/USD, ETH/USD, SOL/USD** (`INSTRUMENTS` kind `'crypto'`, Yahoo
 spot `BTC-USD` etc., 24/7; spreads 25 / 15 / 6 pips = a typical perp taker cost). Same lab, same 70/30 exam, same quality

@@ -27,7 +27,7 @@ export type BusEvent =
   | { type: 'stats'; data: Record<string, unknown> }
   | { type: 'fx'; data: { t: number; px: Record<string, [number, number, number, number]> } }
   /** v17.12: a forex trade worth a phone alert — its profit locked, ⅔ of the way to its target, or closed */
-  | { type: 'fxTrade'; data: FxNotice & { acct: 'bot' | 'me' } }
+  | { type: 'fxTrade'; data: FxNotice & { acct: 'bot' | 'me' | 'cbot' } }
   | { type: 'positions'; data: { updates: Array<{ id: string; priceSol: number; highSol?: number; multiple: number; peakMultiple: number; unrealizedPnlSol: number; risk: number; holders: number; ownSupplyPct: number; exitImpactPct: number }> } };
 
 class Bus extends EventEmitter {

@@ -26,6 +26,7 @@ import { PythCard } from '../components/PythCard';
 import { fitBars, MarketChart, type ChartDrawings } from '../components/MarketChart';
 import { ENTRY_SHORT, EXIT_SHORT, FILTER_SHORT, MoodCard, StrengthCard, TrendArrows, type EntryKind, type EntrySummary, type ExitKind, type ExitSummary, type FilterKind, type FilterSummary, type FinancingSummary, type HonestReport, type JudgeReport, type LockSummary, type MoodNow, type NewsStudy, type PortfolioReport, type RowStat, type StrengthNow } from '../components/FxInsights';
 import { Badge, Button, Card, Chip, Drawer, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Sparkline, Stack, StatTile, useStored } from '../components/ui';
+import { apiBase, inCrypto, wsBase } from '../lib/ws';
 
 interface RStats { n: number; winPct: number; avgR: number; medianR: number; pf: number | null; totalR: number; maxDdR: number }
 interface Risk { riskPct: number; finalX: number; avgWeekPct: number; medianWeekPct: number; greenWeeksPct: number; bigWeeksPct: number; bestWeekPct: number; worstWeekPct: number; maxDdPct: number; blown: boolean; medianLeverage: number; weeks: number }
@@ -62,11 +63,22 @@ const TITLES: Record<Section, { title: string; sub: string }> = {
   lab: { title: 'Lab', sub: 'Every test the bot runs on itself: what is live, what is still proving itself, and the numbers.' },
 };
 
+/** v22.1: the coin desk's wording where the forex one would mislead */
+const CRYPTO_TITLES: Partial<Record<Section, { title: string; sub: string }>> = {
+  room: { title: 'Home', sub: 'Your coin bot on BTC, ETH and SOL: is it working, what is it waiting for, how is the money doing, and the news.' },
+  bot: { title: 'Trades', sub: 'Its own $1,000 account on BTC / ETH / SOL, traded by itself on the hourly and 4-hour charts, 24/7: open trades with their plan, today, closed trades.' },
+  live: { title: 'Markets', sub: 'The coins the bot watches: trendlines, levels, signals and open trades.' },
+  strategies: { title: 'Strategies', sub: 'Every strategy tested on each coin chart with real costs; the last 30% of each history kept unseen.' },
+  paper: { title: 'Paper results', sub: 'Every strategy traded live on paper on the coins since this lab started: the real test.' },
+  lab: { title: 'Lab', sub: 'Every test the coin bot runs on itself: what is live, what is still proving itself, and the numbers.' },
+};
+
 export function Forex() {
   const params = useParams();
   const section = ((['live', 'practice', 'strategies', 'paper', 'setup', 'lab', 'bot', 'village', 'news'] as const).find((x) => x === params.section) ?? 'room') as Section;
+  const titles = inCrypto() ? { ...TITLES, ...CRYPTO_TITLES } : TITLES;
   const navigate = useNavigate();
-  const { data, error, reload } = useApi<Data>('/api/forex', 60_000);
+  const { data, error, reload } = useApi<Data>(apiBase(), 60_000);
   const [busy, setBusy] = useState(false);
   const running = !!data?.running;
   useEffect(() => {
@@ -77,7 +89,7 @@ export function Forex() {
   const run = async () => {
     setBusy(true);
     try {
-      await api('/api/forex/run', { method: 'POST', body: JSON.stringify({ refresh: true }) });
+      await api(`${apiBase()}/run`, { method: 'POST', body: JSON.stringify({ refresh: true }) });
       await reload();
     } finally {
       setBusy(false);
@@ -91,8 +103,8 @@ export function Forex() {
   return (
     <>
       <PageHeader
-        title={TITLES[section].title}
-        subtitle={TITLES[section].sub}
+        title={titles[section].title}
+        subtitle={titles[section].sub}
         action={labNeeded ? (
           <Button size="sm" variant="outline" disabled={busy || running} onClick={() => void run()}>
             <Icon name="refresh" size={14} className={running ? 'animate-spin' : ''} />
@@ -120,7 +132,7 @@ export function Forex() {
             </div>
           )}
           {section === 'live' && <NewsTape />}
-          {section === 'live' && <Markets r={r} onTrade={(id) => { try { localStorage.setItem('fx.pair', id); } catch { /* ignore */ } navigate('/forex/practice'); }} />}
+          {section === 'live' && <Markets r={r} onTrade={(id) => { try { localStorage.setItem('fx.pair', id); } catch { /* ignore */ } navigate(`${wsBase()}/practice`); }} />}
           {section === 'strategies' && <Strategies r={r} />}
           {section === 'lab' && <FxLab r={r} />}
           {section === 'paper' && <Paper r={r} />}

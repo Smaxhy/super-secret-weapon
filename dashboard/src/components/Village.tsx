@@ -23,6 +23,7 @@ import { useWidth } from '../hooks/useWidth';
 import { Icon } from './Icon';
 import { Badge, Button } from './ui';
 import { DeskDetail, HubView, ROOMS, roomView, useControlRoomData, type CRData, type RoomKey } from './ControlRoom';
+import { wsBase } from '../lib/ws';
 
 // ───────────────────────────── the world ─────────────────────────────
 const T = 16; // one tile in logical pixels
@@ -764,8 +765,8 @@ export function Village() {
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
         <span>{phone ? 'Walk with the arrows or tap a tile. Tap anyone to open their screen.' : 'Walk: arrows / WASD or tap. Talk: stand next to someone and press E, or tap them. Esc closes a screen.'}</span>
         <button type="button" className="text-accent-text hover:underline" onClick={() => setHelp(true)}>How it works</button>
-        <Link to="/forex" className="text-accent-text hover:underline">Control room view</Link>
-        <Link to="/forex/bot" className="text-accent-text hover:underline">Trades</Link>
+        <Link to={wsBase()} className="text-accent-text hover:underline">Control room view</Link>
+        <Link to={`${wsBase()}/bot`} className="text-accent-text hover:underline">Trades</Link>
       </div>
     </div>
   );

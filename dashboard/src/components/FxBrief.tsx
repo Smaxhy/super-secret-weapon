@@ -8,6 +8,7 @@ import { CheckPips, WhyLine, type PlanCheck, type PlanMode, type WhyReport } fro
 import { useEffect, useState } from 'react';
 import { useApi } from '../hooks/useApi';
 import { Badge, Card } from './ui';
+import { botAcct } from '../lib/ws';
 
 interface PlanSignal { tf: string; name: string; side: 1 | -1; verdict: string; tone: 'go' | 'wait' | 'no' }
 interface PlanMarket { id: string; label: string; status: 'trading' | 'waiting' | 'blocked' | 'watching'; headline: string; lean: { side: 1 | -1 | 0; why: string }; checks?: PlanCheck[]; plan?: string; signals: PlanSignal[]; blocks: string[] }
@@ -43,7 +44,7 @@ export function localNextLook(now = Date.now()): { tf: string; at: number } {
 
 export function FxBrief({ plan, riskMode, modes, equityUsd, orders = [], names = {}, labError = null, planError = null, loadError = null, why = null }: { why?: WhyReport | null; plan: Plan | null; riskMode: RiskMode; modes?: Record<RiskMode, RiskLimits>; equityUsd: number | null; orders?: Order[]; names?: Record<string, string>; labError?: { t: number; msg: string } | null; planError?: string | null; loadError?: string | null }) {
   const tz = new Date().getTimezoneOffset();
-  const { data: pnl } = useApi<PnlData>(`/api/forex/pnl?acct=bot&tz=${tz}`, 60_000);
+  const { data: pnl } = useApi<PnlData>(`/api/forex/pnl?acct=${botAcct()}&tz=${tz}`, 60_000);
   const [goal, setGoal] = useState(readGoal);
   const [edit, setEdit] = useState(false);
   useEffect(() => {

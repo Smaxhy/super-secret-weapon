@@ -58,6 +58,9 @@ const log = moduleLogger('api');
 
 const bigintSafe = (payload: unknown) => JSON.stringify(payload, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
 
+/** v22.1: an account id from a query / body value ('me', 'bot' or the coin bot 'cbot'); `dflt` when missing or unknown */
+const acctParam = (x: unknown, dflt: 'me' | 'bot'): 'me' | 'bot' | 'cbot' => (x === 'me' || x === 'bot' || x === 'cbot' ? x : dflt);
+
 export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
   if (!env.DASHBOARD_PASSWORD || !env.JWT_SECRET) {
     log.warn('DASHBOARD_PASSWORD / JWT_SECRET not set in .env — dashboard API disabled');
@@ -129,33 +132,35 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       void runCohortTest(now - days * 86_400_000, now).catch(() => undefined);
       return { ok: true, days };
     });
+    const fxNames = () => Object.fromEntries(STRATEGIES.map((x) => [x.id, x.name]));
+    // v22.1: the lab + auto-bot routes exist twice — `/api/forex/*` for the forex lab (bot account 'bot', keys `fx:…`)
+    // and `/api/crypto/*` for the coin lab (account 'cbot', keys `cm:…`). Same handlers, different universe.
+    for (const U of [
+      { base: '/api/forex', lab: deps.forex ?? null, fast: deps.fastFx ?? null, acct: 'bot' as const },
+      { base: '/api/crypto', lab: deps.crypto ?? null, fast: deps.fastCrypto ?? null, acct: 'cbot' as const },
+    ]) {
+      const K = (key: string) => U.lab?.k(key) ?? key;
     // v12 forex lab: last report (backtest + paper) and a Run button.
-    secured.get('/api/forex', async (_req, reply) => {
+    secured.get(`${U.base}`, async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
-      return { running: (deps.forex?.isRunning() ?? false) || (deps.fastFx?.isRunning() ?? false), last: deps.forex ? await deps.forex.last() : null, fast: deps.fastFx?.report ?? null };
+      return { running: (U.lab?.isRunning() ?? false) || (U.fast?.isRunning() ?? false), last: U.lab ? await U.lab.last() : null, fast: U.fast?.report ?? null };
     });
-    secured.post<{ Body: { refresh?: boolean } }>('/api/forex/run', async (req, reply) => {
-      if (!deps.forex) {
+    secured.post<{ Body: { refresh?: boolean } }>(`${U.base}/run`, async (req, reply) => {
+      if (!U.lab) {
         reply.code(503);
         return { ok: false, error: 'forex lab not running' };
       }
-      if (deps.forex.isRunning()) return { ok: true, already: true };
+      if (U.lab.isRunning()) return { ok: true, already: true };
       // the hourly lab first (it builds the market read the 15m / 1m test needs), then the 15m / 1m test
-      void deps.forex
+      void U.lab
         .run(req.body?.refresh !== false)
-        .then(() => deps.fastFx?.evaluate())
+        .then(() => U.fast?.evaluate())
         .catch(() => undefined);
       return { ok: true };
     });
-    // v12.1 forex practice account
-    secured.get('/api/forex/practice', async (req, reply) => {
+    secured.get(`${U.base}/bot`, async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
-      if (!deps.practice) return { account: null, quotes: {} };
-      return deps.practice.snapshot((req.query as { acct?: string }).acct === 'bot' ? 'bot' : 'me');
-    });
-    secured.get('/api/forex/bot', async (_req, reply) => {
-      reply.header('Cache-Control', 'no-store');
-      const [snap, logRaw, chosenRaw, droppedRaw, portfolioRaw, judgeRaw, convRaw, sniperRaw, rollRaw, deskRaw] = await Promise.all([deps.practice ? deps.practice.snapshot('bot') : null, redis.get('fx:bot:log').catch(() => null), redis.get('fx:bot:chosen').catch(() => null), redis.get('fx:bot:dropped').catch(() => null), redis.get('fx:portfolio').catch(() => null), redis.get('fx:judge:report').catch(() => null), redis.get('fx:conviction').catch(() => null), redis.get('fx:sniper').catch(() => null), redis.get('fx:roll').catch(() => null), redis.get('fx:desk').catch(() => null)]);
+      const [snap, logRaw, chosenRaw, droppedRaw, portfolioRaw, judgeRaw, convRaw, sniperRaw, rollRaw, deskRaw] = await Promise.all([deps.practice ? deps.practice.snapshot(U.acct) : null, redis.get(K('fx:bot:log')).catch(() => null), redis.get(K('fx:bot:chosen')).catch(() => null), redis.get(K('fx:bot:dropped')).catch(() => null), redis.get(K('fx:portfolio')).catch(() => null), redis.get(K('fx:judge:report')).catch(() => null), redis.get(K('fx:conviction')).catch(() => null), redis.get(K('fx:sniper')).catch(() => null), redis.get(K('fx:roll')).catch(() => null), redis.get(K('fx:desk')).catch(() => null)]);
       const parse = <T,>(x: string | null, d: T): T => {
         try {
           return x ? (JSON.parse(x) as T) : d;
@@ -168,7 +173,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       const now = Date.now();
       let planError: string | null = null;
       const oandaOn = oandaReady(await loadOanda());
-      const fx = deps.forex;
+      const fx = U.lab;
       let plan: ReturnType<typeof buildPlan> | null = null;
       try {
         plan =
@@ -179,8 +184,8 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
               oanda: oandaOn,
               markets: fx.marketsNow,
               mood: fx.moodNow,
-              fastFiring: deps.fastFx?.firing ?? {},
-              chosen: [...fx.chosen, ...(deps.fastFx?.chosen ?? [])],
+              fastFiring: U.fast?.firing ?? {},
+              chosen: [...fx.chosen, ...(U.fast?.chosen ?? [])],
               fastCharts: FX_CONFIG.botFastCharts,
               strict: { mode: FX_CONFIG.strict.mode, minAgree: FX_CONFIG.strict.minAgree },
               names: Object.fromEntries(STRATEGIES.map((x) => [x.id, x.name])),
@@ -188,7 +193,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
               resume: snap.account.resume ?? [],
               equityUsd: snap.account.equityUsd,
               lastSync: fx.lastSync,
-              labOpen: Object.assign({}, fx.labOpen, ...Object.values(deps.fastFx?.labOpen ?? {})),
+              labOpen: Object.assign({}, fx.labOpen, ...Object.values(U.fast?.labOpen ?? {})),
               runs: fx.runs,
               upcoming: (pair) => deps.fxCalendar?.upcoming(pair, now) ?? [],
               blockNow: (pair) => deps.fxCalendar?.blockFor(pair, now) ?? deps.fxNews?.blockFor(pair) ?? null,
@@ -222,31 +227,31 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       } catch (err) {
         log.warn({ err: (err as Error).message }, 'forex why-no-trades failed');
       }
-      const desksRaw = await redis.get('fx:desks').catch(() => null);
+      const desksRaw = await redis.get(K('fx:desks')).catch(() => null);
       return {
         plan,
         why,
         // v20: per-market desks (ranked strategies on that market, today's trades, the learning pick)
         desks: parse<{ at: number; desks: unknown[] } | null>(desksRaw, null),
         // v18.12: why the plan is missing (the Today card says so instead of going quiet)
-        planError: planError ?? (!deps.forex ? 'forex lab not running' : !snap ? 'bot account unreadable' : null),
+        planError: planError ?? (!U.lab ? 'forex lab not running' : !snap ? 'bot account unreadable' : null),
         account: snap ? { ...snap.account, ledger: undefined } : null,
         risk: snap ? riskSummary(snap.account, mids, snap.account.equityUsd) : null,
         // v17: what the bot itself made per strategy:chart, in R (its own trades only — never rewritten)
         ledger: snap ? ledgerSummary(snap.account) : {},
         // v17: the last hourly lab run's error (null after a good run)
-        labError: deps.forex?.lastError ?? null,
+        labError: U.lab?.lastError ?? null,
         portfolio: parse(portfolioRaw, null as unknown),
         judge: parse(judgeRaw, null as unknown),
         // v15.2: bigger size when more sure — hourly charts + the 15m / 1m charts
-        conviction: { hourly: parse(convRaw, null as unknown), ...(deps.fastFx?.report?.conviction ?? {}) },
+        conviction: { hourly: parse(convRaw, null as unknown), ...(U.fast?.report?.conviction ?? {}) },
         // v16: the sniper's vote level and whether it proved itself
         sniper: parse(sniperRaw, null as unknown),
         // v17: the rolling picker (re-picks every week; live only once it beats random pickers on unseen weeks)
         rolling: parse(rollRaw, null as unknown),
         // v18: the quant desk (vol-targeted forecast system) and what it would hold today
         desk: parse(deskRaw, null as unknown),
-        chooser: deps.forex?.chooser ?? 'verdict',
+        chooser: U.lab?.chooser ?? 'verdict',
         names: Object.fromEntries(STRATEGIES.map((x) => [x.id, x.name])),
         log: parse(logRaw, [] as Array<{ t: number; e: string }>),
         chosen: parse(chosenRaw, [] as string[]),
@@ -257,18 +262,34 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         riskModes: RISK_MODES,
       };
     });
-    // v17.8 (owner: "see much easier if the bot is in a trade … a PnL and calendar view"): is the bot in a trade (no plan
-    // building), and the P&L + calendar of either practice account from its durable close log; days in the viewer's clock
-    const fxNames = () => Object.fromEntries(STRATEGIES.map((x) => [x.id, x.name]));
-    secured.get('/api/forex/bot/status', async (_req, reply) => {
+    secured.get(`${U.base}/bot/status`, async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
-      return botStatus(deps.practice ? (await deps.practice.snapshot('bot')).account : null, fxNames());
+      return botStatus(deps.practice ? (await deps.practice.snapshot(U.acct)).account : null, fxNames());
     });
     // v17.14 (owner: "an active diagnosis of what the goal of the trade is … an AI that scans all active trades and
     // analyses the price action"): every open trade's live read (rules, free) + its newest AI read (display only)
+    secured.post<{ Body: { mode?: string } }>(`${U.base}/bot/mode`, async (req, reply) => {
+      const mode = req.body?.mode;
+      if (!isRiskMode(mode)) {
+        reply.code(400);
+        return { ok: false, error: 'mode must be normal, aggressive or max' };
+      }
+      if (!deps.practice) {
+        reply.code(503);
+        return { ok: false, error: 'not running' };
+      }
+      return { ok: true, mode: await deps.practice.setRiskMode(mode, U.acct) };
+    });
+    }
+    // v12.1 forex practice account
+    secured.get('/api/forex/practice', async (req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      if (!deps.practice) return { account: null, quotes: {} };
+      return deps.practice.snapshot(acctParam((req.query as { acct?: string }).acct, 'me'));
+    });
     secured.get('/api/forex/trades/read', async (req, reply) => {
       reply.header('Cache-Control', 'no-store');
-      const acct = (req.query as { acct?: string }).acct === 'me' ? 'me' : 'bot';
+      const acct = acctParam((req.query as { acct?: string }).acct, 'bot');
       if (!deps.tradeWatch) return { trades: [], ai: null };
       return deps.tradeWatch.reads(acct);
     });
@@ -278,7 +299,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         reply.code(400);
         return { ok: false, error: !id ? 'id is needed' : 'not running' };
       }
-      return deps.tradeWatch.askNow(req.body?.acct === 'me' ? 'me' : 'bot', id);
+      return deps.tradeWatch.askNow(acctParam(req.body?.acct, 'bot'), id);
     });
     secured.get('/api/forex/pnl', async (req, reply) => {
       reply.header('Cache-Control', 'no-store');
@@ -303,18 +324,6 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       return { day, trades: deps.practice ? dayTrades(await deps.practice.pnlRows(q.acct), day, q.tz, fxNames()) : [] };
     });
     // v15.6: owner switches how hard the bot account trades
-    secured.post<{ Body: { mode?: string } }>('/api/forex/bot/mode', async (req, reply) => {
-      const mode = req.body?.mode;
-      if (!isRiskMode(mode)) {
-        reply.code(400);
-        return { ok: false, error: 'mode must be normal, aggressive or max' };
-      }
-      if (!deps.practice) {
-        reply.code(503);
-        return { ok: false, error: 'not running' };
-      }
-      return { ok: true, mode: await deps.practice.setRiskMode(mode) };
-    });
     secured.post<{ Body: { pair?: string; side?: number; marginUsd?: number; leverage?: number; stop?: number | null; target?: number | null } }>('/api/forex/practice/open', async (req, reply) => {
       const b = req.body ?? {};
       const r = deps.practice ? await deps.practice.open({ pair: String(b.pair ?? ''), side: b.side === -1 ? -1 : 1, marginUsd: Number(b.marginUsd), leverage: Number(b.leverage), stop: b.stop == null || b.stop === ('' as unknown) ? null : Number(b.stop), target: b.target == null || b.target === ('' as unknown) ? null : Number(b.target) }) : { ok: false, error: 'not running' };

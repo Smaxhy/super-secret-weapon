@@ -518,12 +518,8 @@ describe("the bot's plan (v15)", () => {
 
   it('weekends and news blocks', () => {
     const sat = Date.UTC(2026, 9, 17, 12);
-    // v22: the coins trade through the weekend, so the plan is never "closed" — the forex markets are
-    const wk = buildPlan(base({ now: sat, clock: marketClock(sat) }));
-    expect(wk.mode.kind).not.toBe('closed');
-    expect(wk.nextLook.does).toMatch(/Forex is closed for the weekend/);
-    expect(wk.markets.find((m) => m.id === 'EURUSD')!.blocks.join(' ')).toMatch(/market closed/);
-    expect(wk.markets.find((m) => m.id === 'BTCUSD')!.blocks.join(' ')).not.toMatch(/market closed/);
+    // v22.1: the forex plan only covers forex markets, so the weekend closes it as before (the coin bot has its own plan)
+    expect(buildPlan(base({ now: sat, clock: marketClock(sat) })).summary).toMatch(/Market closed/);
     const p = buildPlan(base({ upcoming: (pair) => (pair === 'EURUSD' ? [{ t: WED + 20 * M, ccy: 'USD', title: 'CPI', impact: 'High' }] : []), blockNow: (pair) => (pair === 'EURUSD' ? 'USD news: CPI' : null) }));
     const eur = p.markets.find((m) => m.id === 'EURUSD')!;
     expect(eur.status).toBe('blocked');

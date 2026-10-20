@@ -67,6 +67,9 @@ export interface ApiDeps {
   forex?: ForexLab | null;
   /** v15: the 15-minute / 1-minute forex lab. */
   fastFx?: FastLab | null;
+  /** v22.1: the coin lab (BTC / ETH / SOL) + its 15m chart lab — same classes, universe 'crypto' */
+  crypto?: ForexLab | null;
+  fastCrypto?: FastLab | null;
   /** v12.1: forex practice account (manual trades, fake money, leverage). */
   practice?: Practice | null;
   /** v12.4: economic calendar + market clock. */

@@ -24,6 +24,7 @@ import { FxPnl, type PnlData } from './FxPnl';
 import { useTab } from './ui';
 import type { SystemData } from './SystemHealth';
 import type { JudgeReport, RiskSummary, RollReport, SniperReport } from './FxInsights';
+import { apiBase, botAcct, wsBase } from '../lib/ws';
 
 // ── the bot's own data (the same shapes the Auto-bot page reads) ──
 interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; pnlPerPx?: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number; tf?: string; locked?: boolean }
@@ -125,12 +126,12 @@ export interface CRData {
 }
 
 export function useControlRoomData(): CRData {
-  const bot = useApi<BotData>('/api/forex/bot', 5_000);
-  const lab = useApi<LabData>('/api/forex', 60_000);
+  const bot = useApi<BotData>(`${apiBase()}/bot`, 5_000);
+  const lab = useApi<LabData>(apiBase(), 60_000);
   const cal = useApi<CalData>('/api/forex/calendar', 60_000);
   const sys = useApi<SystemData>('/api/system', 15_000);
   const ov = useApi<Overview>('/api/overview', 30_000, ['trade']);
-  const pnl = useApi<PnlData>(`/api/forex/pnl?acct=bot&tz=${new Date().getTimezoneOffset()}`, 30_000);
+  const pnl = useApi<PnlData>(`/api/forex/pnl?acct=${botAcct()}&tz=${new Date().getTimezoneOffset()}`, 30_000);
   const fx = useFxLive();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -144,7 +145,7 @@ export function useControlRoomData(): CRData {
   const positions = a?.positions ?? [];
   const orders = a?.orders ?? [];
   const markets = lab.data?.last?.markets ?? [];
-  const reads = useTradeReads('bot', positions.length > 0);
+  const reads = useTradeReads(botAcct(), positions.length > 0);
   const names = d?.names ?? {};
 
   // the market on the big screen: the owner's pick, else the first open trade, else the closest setup, else the first market
@@ -189,7 +190,7 @@ export function roomView(k: RoomKey, x: CRData): { says: string; body: ReactNode
     case 'crypto':
       return { says: cryptoSays(x.sys.data ?? null, x.ov.data ?? null), body: <CryptoRoom s={x.sys.data ?? null} o={x.ov.data ?? null} /> };
     case 'pnl':
-      return { says: pnlSays(x.pnl.data ?? null), body: <FxPnl acct="bot" fallback={<p className="text-xs text-muted">No P&L report yet.</p>} /> };
+      return { says: pnlSays(x.pnl.data ?? null), body: <FxPnl acct={botAcct()} fallback={<p className="text-xs text-muted">No P&L report yet.</p>} /> };
     case 'desks':
       return { says: desksSays(d?.desks?.desks ?? []), body: <Desks desks={d?.desks?.desks ?? []} names={names} focus={focus} onPick={setPicked} now={now} /> };
   }
@@ -428,11 +429,11 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
         </div>
       </div>
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
-        <Link to="/forex/bot" className="text-accent-text hover:underline">Trades</Link>
-        <Link to="/forex/news" className="text-accent-text hover:underline">News desk</Link>
-        <Link to="/forex/live" className="text-accent-text hover:underline">All markets</Link>
-        <Link to="/forex/lab" className="text-accent-text hover:underline">Lab</Link>
-        <Link to="/forex/village" className="text-accent-text hover:underline">The village</Link>
+        <Link to={`${wsBase()}/bot`} className="text-accent-text hover:underline">Trades</Link>
+        <Link to={`${wsBase()}/news`} className="text-accent-text hover:underline">News desk</Link>
+        <Link to={`${wsBase()}/live`} className="text-accent-text hover:underline">All markets</Link>
+        <Link to={`${wsBase()}/lab`} className="text-accent-text hover:underline">Lab</Link>
+        <Link to={`${wsBase()}/village`} className="text-accent-text hover:underline">The village</Link>
         <span>{Object.keys(names).length ? `${d?.chosen.length ?? 0} strategy × chart combinations live` : ''}</span>
       </div>
     </div>
@@ -785,7 +786,7 @@ function RiskDesk({ a, risk, mode, modes, onMode }: { a: Acct | null; risk: Risk
   const set = async (m: RiskMode) => {
     setBusy(true);
     try {
-      await api('/api/forex/bot/mode', { method: 'POST', body: JSON.stringify({ mode: m }) });
+      await api(`${apiBase()}/bot/mode`, { method: 'POST', body: JSON.stringify({ mode: m }) });
       onMode();
     } finally {
       setBusy(false);

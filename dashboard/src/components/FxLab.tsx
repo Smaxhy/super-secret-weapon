@@ -6,6 +6,7 @@
 import { useApi } from '../hooks/useApi';
 import { Card, Badge } from './ui';
 import { ConvictionCard, DeskCard, EntriesCard, ExitsCard, FiltersCard, FinancingCard, HonestCard, JudgeCard, LockCard, NewsStudyCard, PortfolioCard, RiskCard, RollingCard, SniperCard, type ConvictionReport, type DeskReport, type EntrySummary, type ExitSummary, type FilterSummary, type FinancingSummary, type HonestReport, type JudgeReport, type Ledger, type LockSummary, type NewsStudy, type PortfolioReport, type RiskSummary, type RollReport, type SniperReport } from './FxInsights';
+import { apiBase } from '../lib/ws';
 
 export interface LabRow { id: string; name: string; family?: string; desc?: string; tf?: string; verdict: 'edge' | 'maybe' | 'no'; outSample?: { n: number; avgR: number } }
 export interface LabReport { honest?: HonestReport; judge?: JudgeReport | null; filters?: FilterSummary[]; lock?: LockSummary; exits?: ExitSummary[]; entries?: EntrySummary[]; financing?: FinancingSummary; news?: NewsStudy | null; rows: LabRow[] }
@@ -78,7 +79,7 @@ type State = 'on' | 'off' | 'test';
 const chip = (s: State, text: string) => <Badge tone={s === 'on' ? 'up' : s === 'off' ? 'neutral' : 'accent'}>{text}</Badge>;
 
 export function FxLab({ r }: { r: LabReport }) {
-  const { data: b } = useApi<BotData>('/api/forex/bot', 60_000);
+  const { data: b } = useApi<BotData>(`${apiBase()}/bot`, 60_000);
   const edges = r.rows.filter((x) => x.verdict === 'edge').length;
   const maybes = r.rows.filter((x) => x.verdict === 'maybe').length;
   const judgeOn = !!(b?.judge ?? r.judge)?.active;

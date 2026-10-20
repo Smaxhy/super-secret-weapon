@@ -20,7 +20,7 @@ import { loadOanda, oandaCandles, oandaReady } from './oanda';
 import { signalsFor, simulate, WARMUP } from './engine';
 import { STRATEGIES, runsOn, strategyById, styleOf } from './strategies';
 import { to4h } from './ta';
-import { INSTRUMENTS, TF_MIN, type Bar, type Instrument, type Trade } from './types';
+import { TF_MIN, type Bar, type Instrument, type Trade } from './types';
 import { allowFor, blockReason, filterCoverage, missingInput } from './filters';
 import { applyExit } from './exits';
 import { stratFactorFromVerdict, volFactor } from './portfolio';
@@ -214,13 +214,18 @@ export class FastLab {
   ) {}
 
   private key = (tf: FastTf, id: string) => `${tf}:${id}`;
+  /** v22.1: this lab's markets + Redis keys follow the hourly lab it belongs to (forex `fx:…` or the coins `cm:…`) */
+  private get insts(): readonly Instrument[] {
+    return this.lab.insts;
+  }
+  private k = (key: string) => this.lab.k(key);
   series(tf: FastTf, id: string): Bar[] {
     return this.bars.get(this.key(tf, id)) ?? [];
   }
 
   start(): void {
     void this.redis
-      .get(FX_FAST_REPORT)
+      .get(this.k(FX_FAST_REPORT))
       .then((raw) => {
         if (raw && !this.report) {
           this.report = JSON.parse(raw) as FastReport;
@@ -269,7 +274,7 @@ export class FastLab {
   ensureLoaded(): Promise<void> {
     if (!this.loaded) {
       this.loaded = (async () => {
-        for (const tf of FX_FAST.tfs) for (const inst of INSTRUMENTS) this.bars.set(this.key(tf, inst.id), await loadFastBars(this.redis, tf, inst.id));
+        for (const tf of FX_FAST.tfs) for (const inst of this.insts) this.bars.set(this.key(tf, inst.id), await loadFastBars(this.redis, tf, inst.id));
       })();
     }
     return this.loaded;
@@ -296,7 +301,7 @@ export class FastLab {
     await this.ensureLoaded();
     this.oandaOn = await this.src.oanda().catch(() => false);
     const barMs = TF_MIN[tf] * MIN;
-    for (const inst of INSTRUMENTS) {
+    for (const inst of this.insts) {
       const k = this.key(tf, inst.id);
       const have = this.bars.get(k) ?? [];
       const lastT = have[have.length - 1]?.t ?? 0;
@@ -360,10 +365,10 @@ export class FastLab {
     if (!book) return null;
     await this.ensureLoaded();
     const t0 = Date.now();
-    const since = await paperSince(this.redis, FX_FAST_SINCE, now);
+    const since = await paperSince(this.redis, this.k(FX_FAST_SINCE), now);
     // v17.8: last test's picks per chart, only while that chart's 70/30 line hasn't moved back (`prevPicks`); the old
     // unstamped format is ignored once (one re-pick after the deploy)
-    const prevRaw = await this.redis.get(FX_FAST_CHOSEN).catch(() => null);
+    const prevRaw = await this.redis.get(this.k(FX_FAST_CHOSEN)).catch(() => null);
     const rows: Row[] = [];
     const paperRows: PaperRow[] = [];
     const open: Trade[] = [];
@@ -376,7 +381,7 @@ export class FastLab {
       let series: Series[] = [];
       let from = Infinity;
       let to = -Infinity;
-      for (const inst of INSTRUMENTS) {
+      for (const inst of this.insts) {
         const all = this.series(tf, inst.id);
         if (all.length < FX_FAST.minEvalBars) continue;
         const bars = all.slice(-FX_FAST.maxEvalBars);
@@ -432,12 +437,12 @@ export class FastLab {
         : 'Not enough 15-minute / 1-minute candles yet (the server keeps collecting them).',
     };
     this.chosen = chosenOf(rows, this.lab.dropped);
-    await this.redis.set(FX_FAST_REPORT, JSON.stringify(this.report)).catch(() => undefined);
+    await this.redis.set(this.k(FX_FAST_REPORT), JSON.stringify(this.report)).catch(() => undefined);
     const chosenStore: ChosenStore = {
       oosFrom: Object.fromEntries(FX_FAST.tfs.flatMap((tf) => (spans[tf].oosFrom !== null ? [[tf, spans[tf].oosFrom]] : []))),
       picks: Object.fromEntries(rows.map((r) => [`${r.id}:${r.tf}`, { f: r.filter, e: r.exit }])),
     };
-    await this.redis.set(FX_FAST_CHOSEN, JSON.stringify(chosenStore)).catch(() => undefined);
+    await this.redis.set(this.k(FX_FAST_CHOSEN), JSON.stringify(chosenStore)).catch(() => undefined);
     log.info({ rows: rows.length, pass, ms: this.report.durationMs }, 'forex fast test done');
     return this.report;
   }
@@ -460,7 +465,7 @@ export class FastLab {
       // strategies the bot still holds a trade from on this chart keep being followed (their stop, their exit) even
       // when they are no longer chosen: a verdict flip stops new entries, it never closes a running trade early
       const practice = this.lab.practice;
-      const heldIds = new Set(((await practice?.heldRefs().catch(() => [] as string[])) ?? []).filter((r) => r.split(':')[1] === tf).map((r) => r.split(':')[0]!));
+      const heldIds = new Set(((await practice?.heldRefs(this.lab.acct).catch(() => [] as string[])) ?? []).filter((r) => r.split(':')[1] === tf).map((r) => r.split(':')[0]!));
       const followRows = rowsTf.filter((r) => keep.has(`${r.id}:${r.tf}`) || heldIds.has(r.id));
       const labOpen: LabOpenTrade[] = [];
       const openKeys: Record<string, number> = {};
@@ -470,7 +475,7 @@ export class FastLab {
       const pairsSeen = new Set<string>();
       /** v17: how far behind each market's candles are (a lagging market gets no new trades) */
       const ages: Record<string, DataAge> = {};
-      for (const inst of INSTRUMENTS) {
+      for (const inst of this.insts) {
         const all = this.series(tf, inst.id);
         ages[inst.id] = dataAgeOf(inst.id, tf, all, now, TF_MIN[tf] * MIN);
         if (all.length < WARMUP + 60 || !clockFor(inst.id, now).open) continue;
@@ -527,7 +532,7 @@ export class FastLab {
       const bookAge = now - book.at;
       const bookWait = bookAge > FRESH.bookMaxAgeMs ? `the hourly market read (bigger charts, strength, mood) is ${Math.round(bookAge / 3_600_000)} h old: no new ${tf} trades` : null;
       const ev = await practice
-        .syncBot(labOpen, (pair) => bookWait ?? staleReason(ages[pair], now) ?? this.lab.calendar?.blockFor(pair) ?? this.lab.headlines?.blockFor(pair) ?? null, this.lab.atr1h, { scope: [tf], report: sync, pairsSeen, heat: this.lab.heatNow })
+        .syncBot(labOpen, (pair) => bookWait ?? staleReason(ages[pair], now) ?? this.lab.calendar?.blockFor(pair) ?? this.lab.headlines?.blockFor(pair) ?? null, this.lab.atr1h, { scope: [tf], report: sync, pairsSeen, heat: this.lab.heatNow, acct: this.lab.acct })
         .catch((err: Error) => [`bot sync (${tf}) failed: ${err.message}`]);
       this.lab.lastSync[tf] = sync;
       this.lab.logBot(ev);

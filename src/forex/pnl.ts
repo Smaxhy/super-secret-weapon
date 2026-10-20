@@ -47,7 +47,7 @@ export interface PnlDay {
   byStrategy: PnlStrategyDay[];
 }
 export interface PnlReport {
-  acct: 'bot' | 'me';
+  acct: 'bot' | 'me' | 'cbot';
   startUsd: number;
   equityUsd: number;
   openPnlUsd: number;
@@ -241,7 +241,7 @@ export function dayTrades(rows: readonly PnlRow[], day: string, tzOffsetMin = 0,
 type AccountIn = Pick<AccountView, 'startUsd' | 'balanceUsd' | 'equityUsd' | 'createdAt'> & { positions: ReadonlyArray<{ pnlUsd: number }> };
 
 /** GET /api/forex/pnl. `account` null = practice not running (empty shapes). Pure. */
-export function pnlReport(acct: 'bot' | 'me', rows: readonly PnlRow[], account: AccountIn | null, now: number, tzOffsetMin = 0, names: Readonly<Record<string, string>> = {}): PnlReport {
+export function pnlReport(acct: 'bot' | 'me' | 'cbot', rows: readonly PnlRow[], account: AccountIn | null, now: number, tzOffsetMin = 0, names: Readonly<Record<string, string>> = {}): PnlReport {
   const startUsd = account?.startUsd ?? 0;
   const sum = rows.reduce((s, r) => s + r.usd, 0);
   // the curve ends at the real realised balance: when the log misses older closes (an account older than the log, the
@@ -270,10 +270,10 @@ export function botStatus(account: (Pick<AccountView, 'startUsd' | 'equityUsd'> 
 
 /** Query of the P&L routes: acct bot | me (default bot), tz = JS getTimezoneOffset() (default 0, clamped ±14 h), day
  * YYYY-MM-DD when `needDay`. Pure. */
-export function parsePnlQuery(q: { acct?: unknown; tz?: unknown; day?: unknown } | null | undefined, needDay = false): { ok: true; acct: 'bot' | 'me'; tz: number; day: string | null } | { ok: false; error: string } {
+export function parsePnlQuery(q: { acct?: unknown; tz?: unknown; day?: unknown } | null | undefined, needDay = false): { ok: true; acct: 'bot' | 'me' | 'cbot'; tz: number; day: string | null } | { ok: false; error: string } {
   const a = q?.acct;
-  if (a !== undefined && a !== '' && a !== 'bot' && a !== 'me') return { ok: false, error: 'acct must be bot or me' };
-  const acct = a === 'me' ? 'me' : 'bot';
+  if (a !== undefined && a !== '' && a !== 'bot' && a !== 'me' && a !== 'cbot') return { ok: false, error: 'acct must be bot, cbot or me' };
+  const acct = a === 'me' ? 'me' : a === 'cbot' ? 'cbot' : 'bot';
   let tz = 0;
   if (q?.tz !== undefined && q.tz !== '') {
     const n = Number(q.tz);
