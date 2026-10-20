@@ -37,7 +37,9 @@ interface BotPlan { at: number; summary: string; next: Array<{ tf: string; at: n
 type RiskMode = 'normal' | 'aggressive' | 'max';
 interface RiskLimits { label: string; riskPct: number; leverage: number; maxOpen: number }
 export interface WhyReport { at: number; orders?: { placed: number; filled: number; expired: number; cancelled: number }; hoursSinceOpen: number | null; openNow: number; ordersNow: number; marketOpen: boolean; window: { hours: number; checks: number; signals: number; chosen: number; opened: number; skipped: number; waits: number; lastCheckAt: number | null }; reasons: Array<{ kind: string; label: string; n: number; example: string }>; staleMarkets: string[]; verdict: string; hint: string | null; quiet: boolean }
-interface BotData { why?: WhyReport | null; labError?: { t: number; msg: string } | null; planError?: string | null; rolling?: RollReport | null; chooser?: string; names?: Record<string, string>; sniper?: SniperReport | null; riskMode?: RiskMode; riskModes?: Record<RiskMode, RiskLimits>; plan?: BotPlan | null; account: Acct | null; risk?: RiskSummary | null; judge?: JudgeReport | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
+export interface DeskArm { key: string; strategy: string; tf: string; prior: { n: number; totalR: number; pf: number | null }; own: { n: number; totalR: number }; mean: number; score: number; chosen: boolean }
+export interface MarketDesk { id: string; arms: DeskArm[]; tradesToday: number; quota: number; lastTradeAt: number | null; pick: { key: string; why: string } | null; status: 'traded' | 'picked' | 'waiting' | 'idle'; says: string }
+interface BotData { desks?: { at: number; desks: MarketDesk[] } | null; why?: WhyReport | null; labError?: { t: number; msg: string } | null; planError?: string | null; rolling?: RollReport | null; chooser?: string; names?: Record<string, string>; sniper?: SniperReport | null; riskMode?: RiskMode; riskModes?: Record<RiskMode, RiskLimits>; plan?: BotPlan | null; account: Acct | null; risk?: RiskSummary | null; judge?: JudgeReport | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
 
 // ── the hourly lab's market read ──
 interface MarketNow { id: string; label: string; price: number; t: number; change24hPct: number; closes: number[]; trend: 'up' | 'down' | 'flat'; rsi: number; atrPips: number; firing: Array<{ id: string; name: string; tf: string; side: 1 | -1; allowed?: boolean; why?: string | null }>; bars: number[][]; drawings: ChartDrawings; mtf?: { h1: number; h4: number; d1: number }; strength?: { base: string; quote: string; gap: number | null } }
@@ -73,7 +75,7 @@ function localNext(now: number): { tf: string; at: number } {
   return h4 <= h1 ? { tf: '4h', at: h4 } : { tf: '1h', at: h1 };
 }
 
-export type RoomKey = 'scout' | 'analyst' | 'trader' | 'risk' | 'historian' | 'news' | 'decisions' | 'crypto' | 'pnl';
+export type RoomKey = 'scout' | 'analyst' | 'trader' | 'risk' | 'historian' | 'news' | 'decisions' | 'crypto' | 'pnl' | 'desks';
 export const ROOMS: Record<RoomKey, { name: string; role: string; icon: IconName }> = {
   scout: { name: 'Scout', role: 'scans every market', icon: 'radar' },
   analyst: { name: 'Analyst', role: 'reads the chart it is on', icon: 'eye' },
@@ -84,6 +86,7 @@ export const ROOMS: Record<RoomKey, { name: string; role: string; icon: IconName
   decisions: { name: 'Decisions', role: 'everything it just did', icon: 'cpu' },
   crypto: { name: 'Crypto room', role: 'the pump.fun data collector', icon: 'wallet' },
   pnl: { name: 'P&L', role: 'profit by day, week and month', icon: 'chart' },
+  desks: { name: 'Market desks', role: 'one desk per market: its own strategies, one trade a day to learn', icon: 'globe' },
 };
 
 /** everything the control room (and the village) reads, in one place */
@@ -179,6 +182,8 @@ export function roomView(k: RoomKey, x: CRData): { says: string; body: ReactNode
       return { says: cryptoSays(x.sys.data ?? null, x.ov.data ?? null), body: <CryptoRoom s={x.sys.data ?? null} o={x.ov.data ?? null} /> };
     case 'pnl':
       return { says: pnlSays(x.pnl.data ?? null), body: <FxPnl acct="bot" fallback={<p className="text-xs text-muted">No P&L report yet.</p>} /> };
+    case 'desks':
+      return { says: desksSays(d?.desks?.desks ?? []), body: <Desks desks={d?.desks?.desks ?? []} names={names} focus={focus} onPick={setPicked} now={now} /> };
   }
 }
 
@@ -241,7 +246,8 @@ export function ControlRoom() {
     historian: 'lg:col-span-3 lg:col-start-4 lg:row-start-3',
     news: 'lg:col-span-3 lg:col-start-7 lg:row-start-3',
     crypto: 'lg:col-span-3 lg:col-start-10 lg:row-start-3',
-    pnl: 'lg:col-span-12 lg:row-start-4',
+    pnl: 'lg:col-span-6 lg:col-start-7 lg:row-start-4',
+    desks: 'lg:col-span-6 lg:col-start-1 lg:row-start-4',
   };
   const keys = Object.keys(ROOMS) as RoomKey[];
   const [roomTab, setRoomTab] = useTab<RoomKey>('cr.room', keys, 'pnl');
@@ -467,6 +473,72 @@ export function WhyLine({ why, always = false }: { why: WhyReport; always?: bool
             </ul>
           ) : <p>No wait or skip recorded in the window.</p>}
           {why.staleMarkets.length > 0 && <p>Lagging feeds: {why.staleMarkets.join(', ')}.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ───────────────────────────── market desks ─────────────────────────────
+export function desksSays(desks: MarketDesk[]): string {
+  if (!desks.length) return 'the desks open after the next hourly check';
+  const traded = desks.filter((d) => d.status === 'traded').length;
+  const picked = desks.filter((d) => d.status === 'picked').length;
+  const waiting = desks.filter((d) => d.status === 'waiting').length;
+  return `${traded} of ${desks.length} markets traded today${picked ? ` · ${picked} taking a learning trade` : ''}${waiting ? ` · ${waiting} waiting for a setup` : ''}`;
+}
+export function DeskTile({ d, names, active, onPick }: { d: MarketDesk; names: Record<string, string>; active: boolean; onPick: (id: string) => void }) {
+  const top = d.arms[0];
+  const tone = d.status === 'traded' ? 'bg-good' : d.status === 'picked' ? 'cr-blink bg-warning' : d.status === 'waiting' ? 'bg-muted/50' : 'bg-critical/60';
+  const word = d.status === 'traded' ? `${d.tradesToday}/${d.quota} today` : d.status === 'picked' ? 'taking one' : d.status === 'waiting' ? `0/${d.quota} today` : 'no record';
+  return (
+    <button type="button" onClick={() => onPick(d.id)} className={`rounded-lg border p-2 text-left transition-colors hover:bg-surface-2 ${active ? 'border-accent bg-accent-soft' : 'border-line bg-surface'}`} title={d.says}>
+      <div className="flex items-center gap-1.5">
+        <span className={`h-2 w-2 shrink-0 rounded-full ${tone}`} aria-hidden="true" />
+        <span className="text-xs font-semibold text-ink">{pretty(d.id)}</span>
+        <span className="ml-auto text-[10px] text-muted">{word}</span>
+      </div>
+      <div className="mt-0.5 truncate text-[11px] text-ink-2">{top ? `${names[top.strategy] ?? top.strategy} · ${top.tf}` : 'no strategy has a record here'}</div>
+      {top && <div className="text-[10px] text-muted">{top.mean >= 0 ? '+' : ''}{top.mean.toFixed(2)}R · {top.prior.n} paper · {top.own.n} own</div>}
+    </button>
+  );
+}
+export function DeskDetail({ d, names, now }: { d: MarketDesk; names: Record<string, string>; now: number }) {
+  return (
+    <div className="space-y-2 text-xs">
+      <p className="text-ink-2">{d.says}{d.lastTradeAt ? ` · last trade here ${agoShort(d.lastTradeAt, now)} ago` : ' · never traded here'}</p>
+      {d.pick && <p className="rounded-lg bg-warning/10 px-2 py-1 text-ink">{d.pick.why}</p>}
+      <table className="w-full text-left">
+        <thead className="text-[10px] text-muted"><tr><th className="font-semibold">#</th><th className="font-semibold">Strategy · chart</th><th className="text-right font-semibold">Mean R</th><th className="text-right font-semibold">Score</th><th className="text-right font-semibold">Paper</th><th className="text-right font-semibold">Own</th></tr></thead>
+        <tbody>
+          {d.arms.map((a, i) => (
+            <tr key={a.key} className="border-t border-line">
+              <td className="py-1 text-muted">{i + 1}</td>
+              <td className="py-1 text-ink">{names[a.strategy] ?? a.strategy} · {a.tf}{a.chosen && <Badge tone="up" className="ml-1">traded</Badge>}</td>
+              <td className={`tabular py-1 text-right ${tone(a.mean)}`}>{a.mean >= 0 ? '+' : ''}{a.mean.toFixed(2)}</td>
+              <td className="tabular py-1 text-right text-ink-2">{a.score.toFixed(2)}</td>
+              <td className="tabular py-1 text-right text-muted">{a.prior.n}</td>
+              <td className="tabular py-1 text-right text-muted">{a.own.n}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-muted">Mean R = the lab's record on this market blended with the bot's own fills here (own count double), shrunk by 10 break-even trades. Score adds a bonus for strategies tried rarely here, so the desk keeps learning. One learning trade a day at half size when nothing else traded here.</p>
+    </div>
+  );
+}
+function Desks({ desks, names, focus, onPick, now }: { desks: MarketDesk[]; names: Record<string, string>; focus: string | null; onPick: (id: string) => void; now: number }) {
+  if (!desks.length) return <p className="text-xs text-muted">The desks open after the next hourly check.</p>;
+  const f = desks.find((d) => d.id === focus) ?? null;
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3">
+        {desks.map((d) => <DeskTile key={d.id} d={d} names={names} active={focus === d.id} onPick={onPick} />)}
+      </div>
+      {f && (
+        <div className="rounded-lg border border-line bg-surface-2 p-2">
+          <div className="mb-1 text-xs font-semibold text-ink">{pretty(f.id)} desk</div>
+          <DeskDetail d={f} names={names} now={now} />
         </div>
       )}
     </div>

@@ -180,6 +180,8 @@ export interface PracticePosition {
   conviction?: Conviction | null;
   /** bot trades (v16): opened at the sniper size (votes it had) */
   sniper?: { votes: number; of: number } | null;
+  /** v20: opened by a market desk as its daily learning trade */
+  desk?: boolean;
   /** bot trades (v15.3): USD already banked by parts taken off (and legs before a weekend pause) */
   bankedUsd?: number;
   /** v17: USD lost if the stop is hit, measured on the real fill when it opened (1 R) */
@@ -802,6 +804,8 @@ export interface LabOpenTrade {
   target: number | null;
   chosen: boolean;
   sizeF?: number;
+  /** v20: a market desk's learning trade (half size, market entry, judge / conviction skipped) */
+  desk?: { rank: number; of: number; why: string } | null;
   prio?: number;
   /** the signal judge: win probability, whether it passes, the bar it needs (null = no judge view) */
   judge?: { p: number; ok: boolean; need: number | null; /** v17: what it relies on that is missing right now (the trade waits) */ missing?: string } | null;
@@ -887,7 +891,7 @@ export interface ExitPlan {
   exitWhen?: string | null;
 }
 
-export interface OpenReq extends ExitPlan { pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; bankedUsd?: number; /** v17: refuse a price older than this (default 30 min) */ maxQuoteAgeMs?: number; /** v17: an hourly / 4-hour trade may use a source's declared delay (Yahoo's metals) on top of the limit */ feedDelayOk?: boolean; /** v17: 1 R of a re-opened trade (else measured on this fill) */ riskUsd0?: number }
+export interface OpenReq extends ExitPlan { /** v20: a market desk's learning trade */ desk?: boolean; pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; bankedUsd?: number; /** v17: refuse a price older than this (default 30 min) */ maxQuoteAgeMs?: number; /** v17: an hourly / 4-hour trade may use a source's declared delay (Yahoo's metals) on top of the limit */ feedDelayOk?: boolean; /** v17: 1 R of a re-opened trade (else measured on this fill) */ riskUsd0?: number }
 
 /** The exit-plan fields of a lab trade, ready for `openIn`. Pure. */
 export function planOf(t: LabOpenTrade): ExitPlan {
@@ -1302,6 +1306,7 @@ export class Practice {
         ...(req.ref ? { ref: req.ref } : {}),
         ...(req.riskPct !== undefined ? { riskPct: req.riskPct } : {}),
         ...(req.conviction ? { conviction: req.conviction } : {}),
+        ...(req.desk ? { desk: true } : {}),
         ...(req.sniper ? { sniper: req.sniper } : {}),
         ...(req.bankedUsd ? { bankedUsd: req.bankedUsd } : {}),
         ...(req.beAt != null ? { beAt: req.beAt } : {}),
@@ -1537,13 +1542,13 @@ export class Practice {
           skip(t, t.dataWait, true);
           continue;
         }
-        if (t.judge && !t.judge.ok && t.judge.missing) {
+        if (t.judge && !t.judge.ok && t.judge.missing && !t.desk) {
           // v17: the judge can't score it right now (a reading it learned from is missing) — wait, don't trade blind
           note(`${t.ref}:judge`, `waiting on ${t.pair} (${t.strategy}): the signal judge is missing ${t.judge.missing}`);
           skip(t, `the signal judge can't score it: missing ${t.judge.missing}`, true);
           continue;
         }
-        if (t.judge && !t.judge.ok) {
+        if (t.judge && !t.judge.ok && !t.desk) {
           note(`${t.ref}:judge`, `skipped ${t.pair} (${t.strategy}): the signal judge gives it a ${Math.round(t.judge.p * 100)}% chance (needs ${Math.round((t.judge.need ?? 0) * 100)}%)`);
           skip(t, `the signal judge gives it ${Math.round(t.judge.p * 100)}% (needs ${Math.round((t.judge.need ?? 0) * 100)}%)`);
           continue;
@@ -1648,8 +1653,8 @@ export class Practice {
           events.push(`placed a ${resting.kind === 'pullback' ? 'pullback' : 'limit'} order to ${t.side === 1 ? 'buy' : 'sell'} ${t.pair} (${t.strategy}, ${tf}) at ${resting.limit.toPrecision(6)}, good until ${new Date(resting.until).toISOString().slice(11, 16)} UTC, risking ${actual}%${heatNote}`);
           continue;
         }
-        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}), maxQuoteAgeMs: BOT.quoteAgeMsByTf[tf] ?? 10 * 60_000, feedDelayOk: tf === '1h' || tf === '4h' });
-        const sure = snipe ? ` — SNIPER: ${snipe.votes} of ${snipe.of} checks agree, risking ${actual}% at ${lev}×` : conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
+        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, desk: !!t.desk, ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}), maxQuoteAgeMs: BOT.quoteAgeMsByTf[tf] ?? 10 * 60_000, feedDelayOk: tf === '1h' || tf === '4h' });
+        const sure = t.desk ? ` — DESK learning trade: ${t.desk.why}` : snipe ? ` — SNIPER: ${snipe.votes} of ${snipe.of} checks agree, risking ${actual}% at ${lev}×` : conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
         events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${sure}${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}${heatNote}` : `skipped ${t.pair}: ${r.error}`);
         if (r.ok) {
           perStrategy.set(sk, (perStrategy.get(sk) ?? 0) + 1);

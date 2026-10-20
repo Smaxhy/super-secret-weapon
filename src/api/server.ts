@@ -221,9 +221,12 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       } catch (err) {
         log.warn({ err: (err as Error).message }, 'forex why-no-trades failed');
       }
+      const desksRaw = await redis.get('fx:desks').catch(() => null);
       return {
         plan,
         why,
+        // v20: per-market desks (ranked strategies on that market, today's trades, the learning pick)
+        desks: parse<{ at: number; desks: unknown[] } | null>(desksRaw, null),
         // v18.12: why the plan is missing (the Today card says so instead of going quiet)
         planError: planError ?? (!deps.forex ? 'forex lab not running' : !snap ? 'bot account unreadable' : null),
         account: snap ? { ...snap.account, ledger: undefined } : null,

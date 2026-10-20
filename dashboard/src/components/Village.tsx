@@ -16,7 +16,7 @@ import { Link } from 'react-router-dom';
 import { useWidth } from '../hooks/useWidth';
 import { Icon } from './Icon';
 import { Badge, Button } from './ui';
-import { HubView, ROOMS, roomView, useControlRoomData, type CRData, type RoomKey } from './ControlRoom';
+import { DeskDetail, HubView, ROOMS, roomView, useControlRoomData, type CRData, type RoomKey } from './ControlRoom';
 
 // ───────────────────────────── the world ─────────────────────────────
 const T = 16; // one tile in logical pixels
@@ -39,6 +39,14 @@ const BUILDINGS: Building[] = [
   { k: 'crypto', kind: 'mine', x: 25, y: 13, w: 4, h: 3, door: 26, name: 'Mine · Miner (crypto)', roof: '#6b5a3e', wall: '#857253' },
 ];
 const doorTile = (b: Building) => ({ x: b.door, y: b.y + b.h });
+/** v20: the market watchers' posts — a ring round the square, two tiles apart, so every name tag stays readable */
+const WATCH_POSTS: Array<{ x: number; y: number }> = [
+  { x: 11, y: 7 }, { x: 13, y: 7 }, { x: 15, y: 7 }, { x: 17, y: 7 },
+  { x: 11, y: 11 }, { x: 13, y: 11 }, { x: 15, y: 11 }, { x: 17, y: 11 },
+  { x: 8, y: 6 }, { x: 8, y: 8 }, { x: 8, y: 10 },
+  { x: 21, y: 6 }, { x: 21, y: 8 }, { x: 21, y: 10 },
+  { x: 8, y: 12 }, { x: 21, y: 12 },
+];
 
 /** a seeded random so the trees stand where they stood last time */
 function rng(seed: number) {
@@ -131,7 +139,7 @@ function findPath(sx: number, sy: number, tx: number, ty: number): Array<[number
 // ───────────────────────────── people ─────────────────────────────
 type HatKind = 'none' | 'flat' | 'point' | 'crown' | 'helmet' | 'hood' | 'band';
 interface Pal { skin: string; hair: string; cloak: string; belt: string; hat: string; hatKind: HatKind; beard?: string }
-const PAL: Record<Spot | 'player' | 'apprentice', Pal> = {
+const PAL: Record<Spot | 'player' | 'apprentice' | 'watcher', Pal> = {
   player: { skin: '#f1c9a5', hair: '#3b2a1a', cloak: '#f3f4f6', belt: '#d4a017', hat: '#f5c542', hatKind: 'crown' },
   hub: { skin: '#cbd5e1', hair: '#1f2937', cloak: '#5b4b8a', belt: '#f5c542', hat: '#5b4b8a', hatKind: 'hood' },
   scout: { skin: '#e8b88a', hair: '#2b1b0e', cloak: '#2f7d4f', belt: '#8b5a2b', hat: '#2f7d4f', hatKind: 'hood' },
@@ -144,12 +152,14 @@ const PAL: Record<Spot | 'player' | 'apprentice', Pal> = {
   crypto: { skin: '#d9a984', hair: '#1a1a1a', cloak: '#ea580c', belt: '#1f2937', hat: '#fde68a', hatKind: 'helmet' },
   pnl: { skin: '#f1c9a5', hair: '#1f2937', cloak: '#0e7c86', belt: '#f5c542', hat: '#0e7c86', hatKind: 'flat' },
   apprentice: { skin: '#f1c9a5', hair: '#374151', cloak: '#64748b', belt: '#94a3b8', hat: '#64748b', hatKind: 'none' },
+  watcher: { skin: '#e8b88a', hair: '#1f2937', cloak: '#1d7a5f', belt: '#a7f3d0', hat: '#1d7a5f', hatKind: 'hood' },
+  desks: { skin: '#e8b88a', hair: '#1f2937', cloak: '#1d7a5f', belt: '#a7f3d0', hat: '#1d7a5f', hatKind: 'hood' },
 };
-const NAMES: Record<RoomKey, string> = { scout: 'Scout', analyst: 'Analyst', trader: 'Trader', risk: 'Risk keeper', decisions: 'Clerk', historian: 'Historian', news: 'Crier', crypto: 'Miner', pnl: 'Treasurer' };
+const NAMES: Record<RoomKey, string> = { scout: 'Scout', analyst: 'Analyst', trader: 'Trader', risk: 'Risk keeper', decisions: 'Clerk', historian: 'Historian', news: 'Crier', crypto: 'Miner', pnl: 'Treasurer', desks: 'Market watchers' };
 
 interface Mover {
   id: string;
-  kind: Spot | 'player' | 'apprentice';
+  kind: Spot | 'player' | 'apprentice' | 'watcher';
   label: string;
   tx: number; ty: number; // the tile it stands on (or walks from)
   px: number; py: number; // pixel position (top-left of its 16×16 cell)
@@ -318,6 +328,7 @@ function saysFor(X: CRData): Record<RoomKey, { bubble: string; busy: boolean }> 
     historian: { bubble: `${X.d?.chosen.length ?? 0} at work`, busy: false },
     news: { bubble: X.cal.data?.clock?.noNewTrades ? 'no new trades!' : (X.cal.data?.events ?? []).some((e) => e.t > X.now && e.t - X.now < 30 * 60_000 && e.impact === 'High') ? 'news in 30 min!' : 'quiet', busy: !!X.cal.data?.clock?.noNewTrades },
     crypto: { bubble: `${X.sys.data?.trading?.lastHour?.evaluated ?? 0} coins / h`, busy: (X.sys.data?.trading?.lastHour?.evaluated ?? 0) > 0 },
+    desks: { bubble: X.d?.desks?.desks?.length ? `${X.d.desks.desks.filter((d) => d.status === 'traded').length} of ${X.d.desks.desks.length} markets traded today` : 'desks open after the next check', busy: !!X.d?.desks?.desks?.some((d) => d.status === 'picked') },
     pnl: { bubble: X.pnl.data?.periods?.today && X.pnl.data.periods.week ? `today ${usd(X.pnl.data.periods.today.pnlUsd)} · week ${usd(X.pnl.data.periods.week.pnlUsd)}` : 'counting…', busy: false },
   };
 }
@@ -341,7 +352,7 @@ function spriteUrl(kind: Mover['kind']): string {
 }
 
 // ───────────────────────────── the page ─────────────────────────────
-interface Panel { k: Spot; apprentice?: string }
+interface Panel { k: Spot; apprentice?: string; market?: string }
 const usd = (x: number) => `${x < 0 ? '−' : x > 0 ? '+' : ''}$${Math.abs(x).toFixed(2)}`;
 const mmss = (ms: number) => {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -382,7 +393,7 @@ export function Village() {
     people.push(mover('pnl', 'pnl', NAMES.pnl, 27, 12, 24, 2));
     const plaza = { x: 14, y: 9 };
     const player = mover('player', 'player', 'You', plaza.x, plaza.y, 56, 99);
-    return { people, player, apprentices: [] as Mover[], toasts: [] as Array<{ t: number; text: string }>, seenLog: 0, hoverId: null as string | null, time: 0 };
+    return { people, player, apprentices: [] as Mover[], watchers: [] as Mover[], toasts: [] as Array<{ t: number; text: string }>, seenLog: 0, hoverId: null as string | null, time: 0 };
   }, []);
 
   // keyboard
@@ -407,9 +418,9 @@ export function Village() {
   const nearest = (): Panel | null => {
     const p = world.player;
     let best: { d: number; panel: Panel } | null = null;
-    for (const m of [...world.people, ...world.apprentices]) {
+    for (const m of [...world.people, ...world.apprentices, ...world.watchers]) {
       const d = Math.hypot(m.px - p.px, m.py - p.py) / T;
-      if (d <= 1.6 && (!best || d < best.d)) best = { d, panel: m.kind === 'apprentice' ? { k: 'historian', apprentice: m.label } : { k: m.kind as Spot } };
+      if (d <= 1.6 && (!best || d < best.d)) best = { d, panel: m.kind === 'apprentice' ? { k: 'historian', apprentice: m.label } : m.kind === 'watcher' ? { k: 'desks', market: m.id.slice(2) } : { k: m.kind as Spot } };
     }
     if (best) return best.panel;
     for (const b of BUILDINGS) {
@@ -502,6 +513,23 @@ export function Village() {
         }
         stepMover(a, dt);
       }
+      // v20 market watchers: one small villager per market desk, at posts round the square; bubble = the desk's status
+      const desks = X.d?.desks?.desks ?? [];
+      if (world.watchers.length !== desks.length || world.watchers.some((w, i) => w.id !== `w:${desks[i]!.id}`)) {
+        world.watchers = desks.map((d, i) => {
+          const prev = world.watchers.find((w) => w.id === `w:${d.id}`);
+          const label = d.id.length === 6 ? `${d.id.slice(0, 3)}/${d.id.slice(3)}` : d.id;
+          const post = WATCH_POSTS[i % WATCH_POSTS.length]!;
+          return prev ?? mover(`w:${d.id}`, 'watcher', label, post.x, post.y, 22, 0, true);
+        });
+      }
+      for (const [i, w] of world.watchers.entries()) {
+        const d = desks[i];
+        w.bubble = d ? (d.status === 'traded' ? 'traded today ✓' : d.status === 'picked' ? 'taking a learning trade' : d.status === 'waiting' ? `0/${d.quota} today` : 'no record yet') : null;
+        w.busy = d?.status === 'picked';
+        // a watcher keeps its post round the square (no wandering: its name tag must stay readable)
+        stepMover(w, dt);
+      }
       // new decisions float up over the guild hall
       const newest = X.d?.log?.[0];
       if (newest && newest.t > world.seenLog) {
@@ -529,9 +557,9 @@ export function Village() {
       for (let i = 0; i < 4; i++) { const t = ((now / 600) + i / 4) % 1; rect(ctx, fx - 1 + Math.round(Math.sin(i * 1.7) * 5 * t), fy - 10 - Math.round(Math.sin(t * Math.PI) * 8), 2, 2, '#bfe3ff'); }
       for (let i = 0; i < 3; i++) { const t = ((now / 2200) + i / 3) % 1; rect(ctx, 17 * T + 5 * T - 11 + Math.round(Math.sin(t * 6) * 2), 13 * T - 2 - Math.round(t * 22), 3 - Math.floor(t * 2), 3 - Math.floor(t * 2), `rgba(220,220,220,${0.6 - t * 0.5})`); }
       // people, back to front
-      const all = [...world.people, ...world.apprentices, p].sort((a, b) => a.py - b.py);
+      const all = [...world.people, ...world.apprentices, ...world.watchers, p].sort((a, b) => a.py - b.py);
       const near = nearest();
-      for (const m of all) drawPerson(ctx, m, now, m.id !== 'player' && (world.hoverId === m.id || (near !== null && (m.kind === near.k || (near.apprentice !== undefined && m.label === near.apprentice)))));
+      for (const m of all) drawPerson(ctx, m, now, m.id !== 'player' && (world.hoverId === m.id || (near !== null && (m.kind === near.k || (near.apprentice !== undefined && m.label === near.apprentice) || (near.market !== undefined && m.id === `w:${near.market}`)))));
       // night
       if (night) {
         ctx.fillStyle = 'rgba(8,12,40,0.5)';
@@ -560,13 +588,23 @@ export function Village() {
       for (const b of BUILDINGS) label(b.name, b.x * T + b.w * T / 2, b.y * T - (b.kind === 'hall' ? 14 : b.kind === 'tower' ? 12 : 2), '#f8fafc', 'rgba(15,23,42,0.7)');
       // every worker wears a name tag in its own colour; what it is doing floats above when it is busy, near you or hovered
       ctx.font = '700 11px ui-sans-serif, system-ui, sans-serif';
-      for (const m of [...world.people, ...world.apprentices]) {
+      for (const m of [...world.people, ...world.apprentices, ...world.watchers]) {
         const d = Math.hypot(m.px - p.px, m.py - p.py) / T;
         const near3 = d <= 2.5 || world.hoverId === m.id;
-        if (m.small && !near3) continue;
+        if (m.small && !near3 && m.kind !== 'watcher') continue;
+        if (m.kind === 'watcher' && !near3 && !m.busy) {
+          // far away: a small pair tag; neighbours on the square alternate above / below so the tags never overlap
+          const below = world.watchers.indexOf(m) % 2 === 1;
+          ctx.font = '600 9px ui-sans-serif, system-ui, sans-serif';
+          label(m.label, m.px + 8, below ? m.py + 24 : m.py - 2, '#ffffff', PAL.watcher.cloak + 'cc');
+          ctx.font = '700 11px ui-sans-serif, system-ui, sans-serif';
+          continue;
+        }
         const col = PAL[m.kind].cloak;
         label(m.label, m.px + 8, m.py - 6, '#ffffff', col + 'e6');
-        if (m.bubble && (near3 || m.busy)) {
+        // a watcher's bubble only within talking distance (or hovered / busy) — the square is crowded
+        const speak = m.kind === 'watcher' ? d <= 1.6 || world.hoverId === m.id || m.busy : near3 || m.busy;
+        if (m.bubble && speak) {
           ctx.font = '600 11px ui-sans-serif, system-ui, sans-serif';
           label(m.bubble, m.px + 8, m.py - 22, '#0f172a', 'rgba(255,255,255,0.94)');
           ctx.font = '700 11px ui-sans-serif, system-ui, sans-serif';
@@ -578,7 +616,7 @@ export function Village() {
         label(t.text.length > 60 ? `${t.text.slice(0, 58)}…` : t.text, 15 * T, 1 * T - 20 - i * 18 - age * 10, '#fef3c7', `rgba(91,75,138,${0.9 - age * 0.7})`);
       }
       // the prompt / hover for React (only when it changed)
-      const near2 = near ? (near.apprentice ? `E · talk to the apprentice on ${near.apprentice}` : `E · ${near.k === 'hub' ? 'enter the guild hall' : `talk to the ${NAMES[near.k]}`}`) : null;
+      const near2 = near ? (near.market ? `E · talk to the ${near.market} watcher` : near.apprentice ? `E · talk to the apprentice on ${near.apprentice}` : `E · ${near.k === 'hub' ? 'enter the guild hall' : `talk to the ${NAMES[near.k]}`}`) : null;
       setPrompt((prev) => (prev === near2 ? prev : near2));
       raf = requestAnimationFrame(loop);
     };
@@ -601,7 +639,7 @@ export function Village() {
     return { lx, ly, tx: Math.floor(lx / T), ty: Math.floor(ly / T) };
   };
   const hit = (lx: number, ly: number): Panel | null => {
-    for (const m of [...world.apprentices, ...world.people]) if (lx >= m.px - 2 && lx <= m.px + 18 && ly >= m.py - 8 && ly <= m.py + 18) return m.kind === 'apprentice' ? { k: 'historian', apprentice: m.label } : { k: m.kind as Spot };
+    for (const m of [...world.apprentices, ...world.watchers, ...world.people]) if (lx >= m.px - 2 && lx <= m.px + 18 && ly >= m.py - 8 && ly <= m.py + 18) return m.kind === 'apprentice' ? { k: 'historian', apprentice: m.label } : m.kind === 'watcher' ? { k: 'desks', market: m.id.slice(2) } : { k: m.kind as Spot };
     for (const b of BUILDINGS) if (lx >= b.x * T && lx < (b.x + b.w) * T && ly >= b.y * T - 16 && ly < (b.y + b.h) * T) return { k: b.k };
     return null;
   };
@@ -614,10 +652,10 @@ export function Village() {
   const onMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const { lx, ly } = toWorld(e);
     let id: string | null = null;
-    for (const m of [...world.apprentices, ...world.people]) if (lx >= m.px - 2 && lx <= m.px + 18 && ly >= m.py - 8 && ly <= m.py + 18) { id = m.id; break; }
+    for (const m of [...world.apprentices, ...world.watchers, ...world.people]) if (lx >= m.px - 2 && lx <= m.px + 18 && ly >= m.py - 8 && ly <= m.py + 18) { id = m.id; break; }
     world.hoverId = id;
     const b = id ? null : BUILDINGS.find((bb) => lx >= bb.x * T && lx < (bb.x + bb.w) * T && ly >= bb.y * T - 16 && ly < (bb.y + bb.h) * T);
-    const h = id ? [...world.apprentices, ...world.people].find((m) => m.id === id)!.label : b ? b.name : null;
+    const h = id ? [...world.apprentices, ...world.watchers, ...world.people].find((m) => m.id === id)!.label : b ? b.name : null;
     setHover((prev) => (prev === h ? prev : h));
   };
   const pad = (dir: string, on: boolean) => { if (on) held.current.add(dir); else held.current.delete(dir); };
@@ -691,7 +729,7 @@ export function Village() {
               <div className="text-sm font-semibold text-ink">How the village works</div>
               <ul className="mt-1 list-disc space-y-1 pl-4">
                 <li><span className="font-semibold text-ink">The guild hall in the middle is the bot.</span> Each villager is one part of it: the Scout watches markets, the Analyst reads the chart, the Trader runs the open trades, the Risk keeper sizes them, the Treasurer counts the money, the Clerk logs decisions, the Historian grades strategies, the Crier watches the news, the Miner runs the crypto side.</li>
-                <li><span className="font-semibold text-ink">The white bubble over a villager is what they are doing right now.</span> Their name tag is in their colour. The small grey ones by the library are apprentices: one per strategy the bot has put to work.</li>
+                <li><span className="font-semibold text-ink">The white bubble over a villager is what they are doing right now.</span> Their name tag is in their colour. The small grey ones by the library are apprentices: one per strategy the bot has put to work. The hooded ones round the square are the market watchers: one per market, each with its own strategy ranking and one learning trade a day — walk up to one for its desk.</li>
                 <li><span className="font-semibold text-ink">To open someone's screen</span>, tap them, or walk up with the arrows / WASD / the d-pad and press E. The list under the map does the same without walking.</li>
                 <li>Daylight means forex is open; night means it is closed. New decisions float up over the guild hall.</li>
               </ul>
@@ -721,6 +759,7 @@ function Roster({ x, onOpen }: { x: CRData; onOpen: (p: Panel) => void }) {
       return { panel: { k }, kind: k as Mover['kind'], name: NAMES[k], place: b.name.split(' · ')[0] ?? b.name, line: says[k].bubble, busy: says[k].busy };
     }),
     { panel: { k: 'pnl' }, kind: 'pnl', name: NAMES.pnl, place: 'Outside the vault', line: says.pnl.bubble, busy: false },
+    { panel: { k: 'desks' }, kind: 'watcher', name: NAMES.desks, place: 'Round the square', line: says.desks.bubble, busy: says.desks.busy },
   ];
   const chosen = (x.d?.chosen ?? []).slice(0, 12);
   return (
@@ -766,8 +805,15 @@ function PanelBody({ panel, x, onClose }: { panel: Panel; x: CRData; onClose: ()
   const r = rk ? ROOMS[rk] : null;
   const v = rk ? roomView(rk, x) : null;
   const row = panel.apprentice ? (x.lab.data?.last?.rows ?? []).find((rr) => `${rr.name} · ${rr.tf}` === panel.apprentice) ?? null : null;
+  const desk = panel.market ? (x.d?.desks?.desks ?? []).find((d) => d.id === panel.market) ?? null : null;
+  // a watcher's screen puts its market on the hub's big chart
+  useEffect(() => {
+    if (panel.market) x.setPicked(panel.market);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panel.market]);
   let body: ReactNode;
   if (isHub) body = <HubView x={x} />;
+  else if (panel.market) body = <><div className="mb-3">{desk ? <DeskDetail d={desk} names={x.names} now={x.now} /> : <p className="text-xs text-muted">This desk opens after the next hourly check.</p>}</div><HubView x={x} /></>;
   else if (panel.k === 'trader') body = <><HubView x={x} /><div className="mt-3">{v!.body}</div></>;
   else body = v!.body;
   return (
@@ -775,8 +821,8 @@ function PanelBody({ panel, x, onClose }: { panel: Panel; x: CRData; onClose: ()
       <div className="mb-2 flex items-start gap-2">
         <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-accent-soft text-accent-text"><Icon name={isHub ? 'cpu' : r!.icon} size={18} /></div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold text-ink">{isHub ? 'The guild hall · the bot' : panel.apprentice ? `Apprentice on ${panel.apprentice}` : `${NAMES[rk!]} · ${BUILDINGS.find((b) => b.k === rk)?.name.split(' · ')[0] ?? r!.name}`}</div>
-          <p className="text-xs text-ink-2">{isHub ? x.state.word : panel.apprentice && row ? `Works the ${row.name} rule on the ${row.tf} chart · verdict ${row.verdict}` : v!.says}</p>
+          <div className="text-sm font-semibold text-ink">{isHub ? 'The guild hall · the bot' : panel.market ? `${panel.market.length === 6 ? `${panel.market.slice(0, 3)}/${panel.market.slice(3)}` : panel.market} watcher · market desk` : panel.apprentice ? `Apprentice on ${panel.apprentice}` : `${NAMES[rk!]} · ${BUILDINGS.find((b) => b.k === rk)?.name.split(' · ')[0] ?? r!.name}`}</div>
+          <p className="text-xs text-ink-2">{isHub ? x.state.word : panel.market ? (desk?.says ?? 'its own strategies for this market, one learning trade a day') : panel.apprentice && row ? `Works the ${row.name} rule on the ${row.tf} chart · verdict ${row.verdict}` : v!.says}</p>
         </div>
         <Button size="sm" variant="ghost" onClick={onClose} aria-label="Close"><Icon name="x" size={16} /></Button>
       </div>

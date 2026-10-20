@@ -833,6 +833,29 @@ HUD: Gold = equity + today's P&L, state word, next look, villagers / apprentices
 fits), phone scale 2 with the camera following the operator (13 tiles tall). Verified with Playwright at 390 / 1440 px,
 light + dark, incl. opening the Trader's screen (scratchpad `shots/village.mjs`). Display only.
 
+## v20 market desks (Oct 20, owner: "scan all markets properly, an agent / villager on each market with its own
+strategies, learning what works, at least 1 trade a day in each market")
+`src/forex/desks.ts` (pure, `DESK` consts): one desk per traded market. Arms = every strategy × chart row with a paper record
+on THAT market (`Row.pairs`, `random` excluded). Arm mean R = (paper totalR + 2 × the bot's own totalR here) ÷ (n + 2 nOwn +
+10 pretend break-even trades); own = the bot's R ledger rows on that market, last 60 days, R clamped ±3, manual closes
+ignored. Score = mean + 0.35 · √(ln(N+1) ÷ (nEff+1)) (UCB-style exploration bonus — rarely tried arms get a turn). Trading
+day rolls 22:00 UTC. **Quota**: a market with no trade opened today (positions + closed rows, weekend / partial rows don't
+count) whose best-ranked firing arm the bot does NOT already trade (`chosen: false`, signal fresh today, arm mean ≥ −0.08)
+takes it as a LEARNING trade: `applyDesks` sets chosen, `desk {rank, of, why}`, `sizeF` 0.5 (half the risk mode's base),
+`order` null (market entry, never a resting order), conviction / sniper null; the judge gates are skipped for desk trades
+(`!t.desk`), every other guard stays (news, clock, stale feeds, cooldown, caps, currency cap, heat, margin). `buildDesks`
+→ {desks, picks}, `desksSummary`. Wired in `ForexLab.syncFrom` (parent process, before `syncBot`): snapshot('bot') +
+report rows + `ledgerRows` → `applyDesks(out.botTrades)`, bot-log line "desk: …", Redis `fx:desks` {at, desks}.
+`PracticePosition.desk` true on such positions (log "DESK learning trade: …"). `/api/forex/bot` → `desks`. Dashboard:
+Control room → **Market desks** room (`DeskTile` grid, status dot traded / taking one / waiting / no record, tap a tile →
+`DeskDetail` table: rank, strategy · chart, mean R, score, paper n, own n; hub summary "N of 14 markets traded today");
+the village gets **market watchers**: one hooded villager per desk at fixed posts round the square (`WATCH_POSTS`, no
+wandering; far tags alternate above / below so they never overlap; bubble only within talking distance / hover / busy),
+tap one → its desk table + the hub with that market on screen (`setPicked`); roster row "Market watchers · Round the
+square"; help card line. tests/forex-desks.test.ts (6). Verified with Playwright (room.mjs / village.mjs). 1,300 tests.
+NOTE: the desk only lifts arms that already fire from the lab's own strategies; it buys ONE half-size data point a day per
+market — judge how it does on the Lab / Historian cards and the bot's own R ledger before trusting any desk's ranking.
+
 ## v18.10 crypto checker plumbing (Oct 19, owner: "crypto still isn't trading or learning")
 Cause suspected from the code (VPS not reachable from the sandbox): a coin is only SCORED once its safety check (RPC
 `getAccountInfo` + Postgres, safety queue worker, concurrency 4) has landed; every checkpoint before that returns silently.

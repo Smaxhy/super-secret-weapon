@@ -33,6 +33,8 @@ import { DEFAULT_SIM, equityCurve, rStats, signalsFor, simulate, type RiskResult
 import { STRATEGIES, runsOn, strategyById, styleOf, type Family, type Strategy, type Style } from './strategies';
 import { buildCtx, to4h, type Ctx } from './ta';
 import { drawingsFor, type Drawings } from './drawings';
+import { applyDesks, buildDesks, type MarketDesk } from './desks';
+import { ledgerRows } from './practice';
 import { INSTRUMENTS, MOOD_SYMBOLS, STRENGTH_PAIRS, TF_MIN, type Bar, type Instrument, type Signal, type Timeframe, type Trade } from './types';
 import { buildStrength, gapSeries, scoreAt, strengthNow, type StrengthBook, type StrengthNow } from './strength';
 import { buildStretch, crowdPxSeries, type StretchBook } from './stretch';
@@ -421,6 +423,8 @@ export interface RunOutput {
   noSync?: boolean;
 }
 /** v17: the rolling picker's report, this week's list (+ last week's, + on / off), the random pickers (cached weekly) */
+/** v20: the market desks' report (per market: ranked arms, today's trades, the learning pick) */
+export const FX_DESKS = 'fx:desks';
 export const FX_ROLL = 'fx:roll';
 export const FX_ROLL_PICKS = 'fx:roll:picks';
 export const FX_ROLL_NULL = 'fx:roll:null';
@@ -1003,6 +1007,8 @@ export class ForexLab {
   atr1h: Record<string, number> = {};
   /** v15: what the bot saw on its latest check, per chart group ('1h' = the hourly check, '15m', '1m') */
   lastSync: Record<string, SyncReport> = {};
+  /** v20: the market desks from the last run */
+  desks: MarketDesk[] = [];
   /** v15: one line per check, newest first */
   runs: RunNote[] = [];
   /** v15: strategy:chart combinations the bot trades (hourly check) */
@@ -1966,6 +1972,27 @@ export class ForexLab {
     // v18: the practice accounts book overnight financing from the same policy rates the lab tests with
     if (this.practice) this.practice.carryFor = (pair, t) => carryAt(this.book?.macro ?? null, pair, t);
     if (!this.practice) return;
+    // v20: every market's desk ranks its strategies on that market (lab record + the bot's own fills) and, where the
+    // market has had no trade today, takes its best firing arm as a half-size learning trade
+    try {
+      const snap = await this.practice.snapshot('bot');
+      const built = buildDesks({
+        now: Date.now(),
+        markets: INSTRUMENTS.map((i) => i.id),
+        rows: out.report.rows.map((r) => ({ id: r.id, tf: r.tf, pairs: r.pairs })),
+        ledger: ledgerRows(snap.account),
+        positions: snap.account.positions,
+        closed: snap.account.closed,
+        open: out.botTrades,
+        chosen: new Set(out.chosen),
+      });
+      const n = applyDesks(out.botTrades, built.picks);
+      this.desks = built.desks;
+      if (n) this.logBot(built.desks.filter((d) => d.pick).map((d) => `desk: ${d.pick!.why}`));
+      await this.redis.set(FX_DESKS, JSON.stringify({ at: Date.now(), desks: built.desks })).catch(() => undefined);
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'forex market desks failed');
+    }
     const sync = newSyncReport();
     const ev = await this.practice
       .syncBot(
