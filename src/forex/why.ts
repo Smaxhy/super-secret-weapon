@@ -197,7 +197,7 @@ const HINT: Partial<Record<ReasonKind, string>> = {
   check_data: 'A filter input is missing (Setup → Data feeds). The row trades again when the feed is back.',
   stale_feed: 'Yahoo candles are behind. Setup → Data feeds shows the ages; Dukascopy fills currency pairs when it can reach the host.',
   judge_no: 'Working as designed: the judge only lets the better-looking setups through.',
-  agree: 'Working as designed (strict mode): a trade needs 2 of the market checks on its side. Fewer, better-backed trades.',
+  agree: 'Working as designed (strict mode): a trade needs at least 1 of the market checks (strength, 4-hour trend, daily trend, mood) on its side. The shadow book on the Trades page shows what the held-back ones did.',
   market_rec: 'Working as designed (strict mode): a strategy only trades a market where its own tested record there is a winning one (12+ trades, PF 1.1+).',
   caps: 'Working as designed: raise the risk mode (Risk desk) for more slots.',
   news: 'Working as designed: it skips the half hour around high-impact news.',

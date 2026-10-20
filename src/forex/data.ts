@@ -71,7 +71,7 @@ export async function loadBars(redis: Redis, id: string): Promise<Bar[]> {
   }
 }
 
-async function saveBars(redis: Redis, id: string, bars: readonly Bar[]): Promise<void> {
+export async function saveBars(redis: Redis, id: string, bars: readonly Bar[]): Promise<void> {
   await redis.set(barsKey(id), JSON.stringify(bars.map((b) => [b.t, b.o, b.h, b.l, b.c])));
 }
 
@@ -85,6 +85,8 @@ export interface FeedStatus {
   error: string | null;
   /** v17: new bars this refresh added */
   fresh?: number;
+  /** v24: where the candles came from (coins: coinbase, else yahoo) */
+  source?: 'yahoo' | 'coinbase';
 }
 
 /** Refresh one series: a full 730-day pull when we hold little, else the last 7 days merged in. */

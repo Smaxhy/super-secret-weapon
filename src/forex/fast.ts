@@ -14,6 +14,7 @@
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
 import { feeds } from './feeds';
+import { fetchCoinbaseFast } from './coinbase';
 import { dataAgeOf, FRESH, staleReason, type DataAge } from './freshness';
 import { fetchYahooBars, loadFastBars, mergeBars, saveFastBars, trimBars } from './data';
 import { loadOanda, oandaCandles, oandaReady } from './oanda';
@@ -68,7 +69,7 @@ export interface FastFeed {
   bars: number;
   firstT: number | null;
   lastT: number | null;
-  source: 'oanda' | 'yahoo' | null;
+  source: 'oanda' | 'yahoo' | 'coinbase' | null;
   error: string | null;
 }
 
@@ -105,7 +106,7 @@ export interface FastSource {
   /** OANDA connected: deeper history, 1-minute checks every minute */
   oanda(): Promise<boolean>;
   /** closed bars from `fromT` up to now (as many as the source serves) */
-  bars(inst: Instrument, tf: FastTf, fromT: number, now: number): Promise<{ bars: Bar[]; source: 'oanda' | 'yahoo' }>;
+  bars(inst: Instrument, tf: FastTf, fromT: number, now: number): Promise<{ bars: Bar[]; source: 'oanda' | 'yahoo' | 'coinbase' }>;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -117,6 +118,16 @@ export const DEFAULT_FAST_SOURCE: FastSource = {
   },
   async bars(inst, tf, fromT, now) {
     const barMs = TF_MIN[tf] * MIN;
+    // v24: coins from the Coinbase Exchange API (Yahoo if it fails)
+    if (inst.kind === 'crypto') {
+      try {
+        const bars = await fetchCoinbaseFast(inst, tf, fromT, now);
+        feeds.ok('coinbase-candles', { items: bars.length, asOf: bars[bars.length - 1]?.t ?? null });
+        return { bars, source: 'coinbase' };
+      } catch (err) {
+        if (!/^coinbase paused/.test((err as Error).message)) feeds.fail('coinbase-candles', err);
+      }
+    }
     const s = await loadOanda();
     if (oandaReady(s)) {
       // page back from now, 5,000 candles a page, until `fromT` (complete candles only)
@@ -317,7 +328,7 @@ export class FastLab {
         this.bars.set(k, merged);
         if (got.bars.length) this.dirty.add(k);
         this.feed.set(k, { id: inst.id, tf, bars: merged.length, firstT: merged[0]?.t ?? null, lastT: merged[merged.length - 1]?.t ?? null, source: got.source, error: null });
-        feeds.ok(got.source === 'oanda' ? 'oanda' : 'yahoo-fast', { items: got.bars.length, asOf: merged[merged.length - 1]?.t ?? null });
+        if (got.source !== 'coinbase') feeds.ok(got.source === 'oanda' ? 'oanda' : 'yahoo-fast', { items: got.bars.length, asOf: merged[merged.length - 1]?.t ?? null });
       } catch (err) {
         if (!/^yahoo paused/.test((err as Error).message)) feeds.fail(this.oandaOn ? 'oanda' : 'yahoo-fast', err);
         const prev = this.feed.get(k);
@@ -503,7 +514,7 @@ export class FastLab {
           const s = strategyById(row.id);
           if (!s) continue;
           // v18.7: fast charts manage what the bot still holds but open nothing unless switched on
-          const isChosen = (FX_CONFIG.botFastCharts || FX_CONFIG.botFastStrategies.includes(row.id)) && keep.has(`${row.id}:${tf}`);
+          const isChosen = (FX_CONFIG.botFastCharts || (this.lab.universe === 'crypto' && FX_CONFIG.botFastChartsCrypto) || FX_CONFIG.botFastStrategies.includes(row.id)) && keep.has(`${row.id}:${tf}`);
           const sigs = signalsFor(se.ctx, s).map((sg, i) => applyExit(sg, row.exit ?? 'designed', se.ctx, i));
           for (const t of simulate(inst, tf, se.ctx, s.id, sigs, allowFor(row.filter ?? 'none', se.env, styleOf(s)))) {
             if (t.reason !== 'open') continue;
@@ -536,6 +547,7 @@ export class FastLab {
         .catch((err: Error) => [`bot sync (${tf}) failed: ${err.message}`]);
       this.lab.lastSync[tf] = sync;
       this.lab.logBot(ev);
+      await this.lab.noteShadows(sync, labOpen, this.report?.paper.recent ?? []);
       const fired = Object.values(byPair).flat();
       this.lab.noteRun({ t: Date.now(), tf, signals: fired.length, chosen: fired.filter((f) => f.chosen && f.allowed).length, opened: sync.opened, skipped: sync.skipped.length, waits: sync.waits.length, holding: sync.heldOpen + sync.opened });
     } finally {

@@ -21,9 +21,10 @@ import { marketClock } from '../forex/calendar';
 import { loadOanda, maskToken, oandaReady, saveOanda, testOanda } from '../forex/oanda';
 import { feedHealth, feeds as fxFeeds } from '../forex/feeds';
 import { pythConf, pythKey, pythLive, savePythConf, testPythKey } from '../forex/pyth';
-import { RISK_MODES, isRiskMode, ledgerSummary, pnlUsd, riskSummary } from '../forex/practice';
+import { RISK_MODES, isRiskMode, ledgerSummary, limitsFor, pnlUsd, riskSummary } from '../forex/practice';
 import { buildPlan } from '../forex/plan';
 import { whyNoTrades } from '../forex/why';
+import { shadowSummary, type ShadowSummary, type ShadowTrade } from '../forex/shadow';
 import { FX_CONFIG } from '../forex/lab';
 import { botStatus, dayTrades, parsePnlQuery, pnlReport } from '../forex/pnl';
 import { STRATEGIES } from '../forex/strategies';
@@ -186,7 +187,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
               mood: fx.moodNow,
               fastFiring: U.fast?.firing ?? {},
               chosen: [...fx.chosen, ...(U.fast?.chosen ?? [])],
-              fastCharts: FX_CONFIG.botFastCharts,
+              fastCharts: FX_CONFIG.botFastCharts || (fx.universe === 'crypto' && FX_CONFIG.botFastChartsCrypto),
               fastStrategies: FX_CONFIG.botFastStrategies,
               universe: fx.universe,
               strict: { mode: FX_CONFIG.strict.mode, minAgree: FX_CONFIG.strict.minAgree },
@@ -230,9 +231,18 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         log.warn({ err: (err as Error).message }, 'forex why-no-trades failed');
       }
       const desksRaw = await redis.get(K('fx:desks')).catch(() => null);
+      // v24: the shadow book — what the signals it refused would have made, per hold-back reason
+      let shadow: ShadowSummary | null = null;
+      try {
+        const book = parse<ShadowTrade[]>(await redis.get(K('fx:shadow')).catch(() => null), []);
+        if (snap) shadow = shadowSummary(Array.isArray(book) ? book : [], { riskPct: limitsFor(snap.account.riskMode).riskPct, equityUsd: snap.account.equityUsd, mids, now });
+      } catch (err) {
+        log.warn({ err: (err as Error).message }, 'shadow summary failed');
+      }
       return {
         plan,
         why,
+        shadow,
         // v20: per-market desks (ranked strategies on that market, today's trades, the learning pick)
         desks: parse<{ at: number; desks: unknown[] } | null>(desksRaw, null),
         // v18.12: why the plan is missing (the Today card says so instead of going quiet)

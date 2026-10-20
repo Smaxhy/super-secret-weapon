@@ -758,6 +758,38 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v24 shadow book, the 2-checks gate loosened, real exchange data + 5 more coins (Oct 20, owner: "forex hasn't traded all
+day, enough solid signals; crypto isn't trading at all, needs more accurate data, more hardworking; you didn't add a shadow
+trade feature on forex")
+VPS read 17:17 UTC (c86afe7): forex 88 chosen signals in 24 h, 18 opened, 35 waits ALL "only N of 3 market checks agree
+(needs 2)" (pivot_bounce / round_fade on USDJPY, EURUSD, NZDUSD, GBPUSD, XAU/XAG; judge 2×); coin bot 15 chosen signals, 0
+opened, 19 waits all the same rule (a coin has no strength reading and mood is mostly "no say", so 2 of 4 was near
+impossible). Bot account +$37 all time (13 trades), today +$1.20.
+- **Shadow book** (`src/forex/shadow.ts`, pure): `recordShadows(book, syncReport, labOpen, heldRefs)` writes every refused
+  signal of a chosen strategy (one row per lab trade: entry / stop / target / why / `classify` kind / wait|skip; a later
+  refusal updates the reason, a trade the bot took after all is struck, unresolved rows die after 45 days, 1,500 max);
+  `gradeShadows(book, labClosedTrades)` fills in R from the lab's own finished paper trade with the same identity
+  (`tradeKey` = the bot's ref); `shadowSummary` → total / per reason / per strategy (n, done, win %, total R, $ at the
+  bot's base risk × equity), still-running rows with R so far at the live mid, newest finished. Both labs call
+  `ForexLab.noteShadows` after every sync (hourly: `out.report.paper.recent`; fast: `report.paper.recent`), Redis
+  `fx:shadow` / `cm:shadow`. `/api/<desk>/bot` → `shadow`; Trades page card **"Trades it held back (shadow book)"**
+  (`components/FxShadow.tsx`: By reason / By strategy / Still running / Finished). This is the evidence for every
+  hold-back rule from now on.
+- **`strict.minAgree` 2 → 1** (lab.ts): a trade needs at least one of the four checks on its side. The 2-of-4 rule was never
+  tested; the shadow book now scores it. why.ts hint updated. (Tests still pass `minAgree: 2` explicitly where they test the
+  wording.)
+- **Coinbase Exchange data** (`src/forex/coinbase.ts`, free, no key): hourly candles `/products/<BTC-USD>/candles` paged 300
+  a call back 1,100 days (`refreshCoinSeries`, used by `refreshAll` for `kind === 'crypto'`, Yahoo as the fallback), 15-minute
+  candles for the fast lab (`fetchCoinbaseFast` inside `DEFAULT_FAST_SOURCE.bars`), and the public WebSocket `ticker`
+  channel (`CoinbaseLive`: real bid / ask per trade, 1-minute candles, watchdog + back-off; `liveFeed` = [pyth, yahoo,
+  coinbase], started / stopped in index.ts) → feeds `coinbase-candles` / `coinbase-live` (provider breaker 'coinbase' /
+  'coinbase-stream'), `FeedStatus.source`. Unverified from the sandbox: Setup → Data feeds says whether the VPS reaches it.
+- **Coins**: + XRPUSD, DOGEUSD, ADAUSD, LINKUSD, AVAXUSD (8 coins; roundStep / RISK_CLASS / headline words added). The coin
+  lab's first run after deploy pulls ~1,100 days × 8 from Coinbase (≈ 90 calls a coin) and grades ~30 rules × 2 charts × 8.
+- **Coin bot trades the 15-minute chart** (`FX_CONFIG.botFastChartsCrypto` true; forex stays 1h / 4h + the ICT session
+  rules): fast.ts `isChosen`, server passes `fastCharts` per universe. Caps unchanged (`BOT.maxOpenByTf` 15m 3).
+- tests/forex-shadow (4), tests/forex-coinbase (5); forex-strict / forex-crypto / forex-ict expectations updated. 1,344 tests.
+
 ## v23 ICT / smart-money rules + the desk plans fixed (Oct 20, owner: "ICT quarterly theory, automate it and order flow,
 trustworthy news outlets (ForexFactory…), a Judas swing at the NY open, 15:45 / 10 am")
 - `src/forex/ny-time.ts` (pure): `usDst`, `nyOffsetMs`, `nyMinOfDay`, `nyDow` (calendar.ts re-exports them); `Ctx.nyMin` =

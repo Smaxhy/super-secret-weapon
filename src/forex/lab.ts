@@ -22,6 +22,8 @@ import { feeds, type BreakerState, type FeedId, type FeedState, type Provider } 
 import { afterLabRun, forkLabRun, heapFor, labWorkerOn, learnerSource, learnerTighten, LAB_WORKER, NO_STREAK, planLabRun, tightenOut, tightenState, type LearnerTighten, type WorkerStreak } from './lab-runner';
 import { moduleLogger } from '../lib/logger';
 import { refreshInstrument, refreshSeries, loadBars, type FeedStatus } from './data';
+import { refreshCoinSeries } from './coinbase';
+import { gradeShadows, recordShadows, type ShadowTrade } from './shadow';
 import { DK_META, refreshDkTail, installSpreadProfiles, loadDk, refreshDukascopy, stitchHistory, type DkMeta } from './dukascopy';
 import { hasSpreadProfile } from './spreads';
 import { carryAt, carrySeries, cotSeries, loadMacro, macroNow, refreshMacro, type MacroData } from './macro';
@@ -87,7 +89,11 @@ export const FX_CONFIG = {
      *   but does not gate (with 80+ rows graded on the same weeks it clears nothing on 2 years of hourly data);
      * 'off' = the v18.9 chooser (Edge + Maybe + the always-on four / the rolling picker). */
     mode: 'quality' as 'edge' | 'quality' | 'off',
-    minAgree: 2,
+    /** v24 (owner: "enough solid signals, firing setups but not executing"): was 2 of 4 — on a coin only two of the four
+     * checks can even speak (no strength meter, mood mostly "no say"), on forex it held back every trade of the day.
+     * 1 = at least one check on its side. The shadow book (shadow.ts) now records what the held-back trades do, so the
+     * stricter rule can be judged on real numbers before it comes back. */
+    minAgree: 1,
     deskTrades: false,
     /** v20.4: a strategy may only open on a market where its own tested record there is a winning one */
     market: { minN: 12, minPf: 1.1 },
@@ -99,6 +105,9 @@ export const FX_CONFIG = {
    * quarter-hours may trade the 15-minute chart even while `botFastCharts` is off — they hold for hours (flat by noon /
    * 4 pm New York), not minutes. Still only once they clear the quality bar on that chart. */
   botFastStrategies: ['judas_swing', 'ny_q3', 'amd_daily'] as string[],
+  /** v24 (owner: "crypto more hardworking"): the COIN bot also trades the 15-minute chart (24/7 markets, no session
+   * timing to wait for; still only strategies that cleared the quality bar on that chart) */
+  botFastChartsCrypto: true,
   /** walk-forward: re-pick every month from the trades closed in the previous N months */
   walkForward: { lookbackMonths: 6, minN: 15, minAvgR: 0.05, minPf: 1.15 },
   /** owner (v15 "more pips", v15.1 "a trailing SL for safety"): use a trailing stop-loss, else a trailing take-profit,
@@ -1020,7 +1029,8 @@ export async function refreshAll(redis: Redis, cfg = REFRESH, insts: readonly In
   const sp = extras ? STRENGTH_PAIRS : [];
   const ms = extras ? MOOD_SYMBOLS : [];
   const jobs: Array<() => Promise<FeedStatus>> = [
-    ...insts.map((inst) => async () => ({ ...(await refreshInstrument(redis, inst)), role: 'traded' as const })),
+    // v24: coins from the Coinbase Exchange API (real exchange candles, 1,100 days), Yahoo as the fallback
+    ...insts.map((inst) => async () => ({ ...(inst.kind === 'crypto' ? await refreshCoinSeries(redis, inst) : await refreshInstrument(redis, inst)), role: 'traded' as const })),
     ...sp.map((p) => async () => ({ ...(await refreshSeries(redis, p.id, p.yahoo)), role: 'strength' as const })),
     ...ms.map((m) => async () => ({ ...(await refreshSeries(redis, `mood:${m.id}`, m.yahoo, Date.now(), 800)), id: m.id, role: 'mood' as const })),
   ];
@@ -2092,8 +2102,31 @@ export class ForexLab {
       .catch((err: Error) => [`bot sync failed: ${err.message}`]);
     this.lastSync['1h'] = sync;
     this.logBot(ev);
+    // v24: every refused signal goes into the shadow book; finished lab trades grade the older ones
+    await this.noteShadows(sync, out.botTrades, out.report.paper.recent);
     this.noteRun({ t: Date.now(), tf: '1h', signals: out.firing.signals, chosen: out.firing.chosen, opened: sync.opened, skipped: sync.skipped.length, waits: sync.waits.length, holding: sync.heldOpen + sync.opened });
     await this.redis.set(this.k('fx:bot:chosen'), JSON.stringify(out.chosen)).catch(() => undefined);
     await this.redis.set(this.k('fx:bot:dropped'), JSON.stringify(out.dropped)).catch(() => undefined);
+  }
+
+  /** v24 shadow book: the signals the bot account refused (Redis `fx:shadow` / `cm:shadow`), graded by the lab's own
+   * finished paper trades. Both labs call it after every sync. */
+  async noteShadows(sync: SyncReport, labOpen: readonly LabOpenTrade[], closed: readonly Trade[]): Promise<void> {
+    if (!this.practice) return;
+    try {
+      const key = this.k('fx:shadow');
+      let book: ShadowTrade[] = [];
+      try {
+        book = JSON.parse((await this.redis.get(key)) ?? '[]') as ShadowTrade[];
+        if (!Array.isArray(book)) book = [];
+      } catch {
+        book = [];
+      }
+      const held = new Set(await this.practice.heldRefs(this.acct));
+      const next = gradeShadows(recordShadows(book, sync, labOpen, held), closed);
+      await this.redis.set(key, JSON.stringify(next));
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'shadow book failed');
+    }
   }
 }

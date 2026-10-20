@@ -6,6 +6,7 @@
 import type { LiveTick, MinuteBar } from './pyth';
 import { pythLive } from './pyth';
 import { yahooLive } from './yahoo-live';
+import { coinbaseLive } from './coinbase';
 
 export interface LiveStream {
   readonly name: string;
@@ -38,4 +39,4 @@ export class LiveFeed {
 }
 
 /** The one live feed the practice account and the dashboard push use. */
-export const liveFeed = new LiveFeed([pythLive, yahooLive]);
+export const liveFeed = new LiveFeed([pythLive, yahooLive, coinbaseLive]);

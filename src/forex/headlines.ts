@@ -87,6 +87,11 @@ const CCY_WORDS: Array<[string, RegExp]> = [
   ['BTC', /\b(bitcoin|btc|crypto|cryptocurrenc\w*|coinbase|binance|stablecoin|sec v\.? |etf)\b/i],
   ['ETH', /\b(ether|ethereum|eth|crypto|cryptocurrenc\w*|coinbase|binance|stablecoin)\b/i],
   ['SOL', /\b(solana|sol|crypto|cryptocurrenc\w*|coinbase|binance|stablecoin)\b/i],
+  ['XRP', /\b(ripple|xrp|crypto|cryptocurrenc\w*|coinbase|binance|stablecoin)\b/i],
+  ['DOGE', /\b(dogecoin|doge|crypto|cryptocurrenc\w*|coinbase|binance|stablecoin)\b/i],
+  ['ADA', /\b(cardano|ada|crypto|cryptocurrenc\w*|coinbase|binance|stablecoin)\b/i],
+  ['LINK', /\b(chainlink|crypto|cryptocurrenc\w*|coinbase|binance|stablecoin)\b/i],
+  ['AVAX', /\b(avalanche|avax|crypto|cryptocurrenc\w*|coinbase|binance|stablecoin)\b/i],
 ];
 const HIGH = /\b(breaking|emergency|intervention|intervene|war|attack|missile|invasion|sanction|tariff|surprise|unexpected|shock|resign|default|crash|plunge|soar|speech|speaks|remarks|press conference|testif|rate (cut|hike)|cuts rates|hikes rates|trump|powell|lagarde|ueda|bailey)\b/i;
 

@@ -7,8 +7,8 @@
  */
 import type Redis from 'ioredis';
 
-export type Provider = 'yahoo' | 'yahoo-stream' | 'dukascopy' | 'pyth' | 'oanda' | 'cftc' | 'bis' | 'forexfactory' | 'rss' | 'internal';
-export type FeedId = 'yahoo-1h' | 'yahoo-fast' | 'yahoo-quotes' | 'dk-history' | 'dk-quotes' | 'yahoo-live' | 'pyth-live' | 'oanda' | 'cftc' | 'bis' | 'calendar' | 'headlines' | 'lab' | 'fast-lab';
+export type Provider = 'yahoo' | 'yahoo-stream' | 'dukascopy' | 'pyth' | 'oanda' | 'cftc' | 'bis' | 'forexfactory' | 'rss' | 'coinbase' | 'coinbase-stream' | 'internal';
+export type FeedId = 'yahoo-1h' | 'yahoo-fast' | 'yahoo-quotes' | 'dk-history' | 'dk-quotes' | 'yahoo-live' | 'pyth-live' | 'coinbase-candles' | 'coinbase-live' | 'oanda' | 'cftc' | 'bis' | 'calendar' | 'headlines' | 'lab' | 'fast-lab';
 
 export interface FeedState {
   okAt: number | null;
@@ -40,6 +40,8 @@ export const FEED_INFO: Record<FeedId, FeedInfo> = {
   'dk-history': { label: 'Older history + real spreads (Dukascopy)', provider: 'dukascopy', staleMin: 36 * 60, downMin: 7 * 24 * 60, marketHours: false, affects: 'years of extra test history, spread per hour of day', fallback: 'the stored history and spread profile' },
   'dk-quotes': { label: 'Backup live prices (Dukascopy, 1-minute)', provider: 'dukascopy', staleMin: 30, downMin: 180, marketHours: true, affects: 'currency-pair prices when Yahoo fails', fallback: 'the last price seen' },
   'yahoo-live': { label: 'Live ticking prices (Yahoo stream, currency pairs)', provider: 'yahoo-stream', staleMin: 5, downMin: 30, marketHours: true, affects: 'live prices on the dashboard, stops / targets checked every second, bot entries at the live price', fallback: 'Pyth (with an API key), else Yahoo 1-minute prices (checked every 15 s), then Dukascopy' },
+  'coinbase-candles': { label: 'Coin candles (Coinbase Exchange, hourly + 15-minute)', provider: 'coinbase', staleMin: 90, downMin: 180, marketHours: false, affects: 'the coin lab and the coin bot (BTC, ETH, SOL…)', fallback: 'Yahoo spot candles (15-minute delayed, no bid / ask)' },
+  'coinbase-live': { label: 'Live coin prices (Coinbase Exchange feed, real bid / ask)', provider: 'coinbase-stream', staleMin: 5, downMin: 30, marketHours: false, affects: 'coin bot fills, stops, targets, live P&L', fallback: 'the Yahoo stream, then Yahoo quotes' },
   'pyth-live': { label: 'Live ticking prices (Pyth, needs an API key since Aug 2026)', provider: 'pyth', staleMin: 5, downMin: 30, marketHours: true, affects: 'a second live price stream next to Yahoo\'s', fallback: 'the Yahoo stream' },
   oanda: { label: 'Live prices (OANDA, optional)', provider: 'oanda', staleMin: 5, downMin: 30, marketHours: true, affects: 'prices + candles when a token is saved', fallback: 'Yahoo' },
   cftc: { label: 'Hedge-fund positioning (CFTC, weekly)', provider: 'cftc', staleMin: 9 * 24 * 60, downMin: 17 * 24 * 60, marketHours: false, affects: 'crowd filter, cot_squeeze, a sniper vote', fallback: 'the last report for up to 17 days, then nothing (those rules go quiet)' },

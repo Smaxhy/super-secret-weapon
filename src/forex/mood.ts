@@ -26,7 +26,7 @@ export interface MoodBook {
 }
 
 /** Risk class per currency: + rises in risk-on, − in risk-off. */
-export const RISK_CLASS: Record<string, number> = { AUD: 1, NZD: 1, CAD: 0.6, GBP: 0.2, EUR: 0, USD: -0.5, CHF: -1, JPY: -1, XAU: -1, XAG: 0, BTC: 1, ETH: 1, SOL: 1 };
+export const RISK_CLASS: Record<string, number> = { AUD: 1, NZD: 1, CAD: 0.6, GBP: 0.2, EUR: 0, USD: -0.5, CHF: -1, JPY: -1, XAU: -1, XAG: 0, BTC: 1, ETH: 1, SOL: 1, XRP: 1, DOGE: 1, ADA: 1, LINK: 1, AVAX: 1 };
 
 /** How "risk-on" buying this pair is (+ = a risk-on trade, − = a safe-haven trade). */
 export function riskOfLong(pair: string): number {

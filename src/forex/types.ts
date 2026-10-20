@@ -42,6 +42,12 @@ export const INSTRUMENTS: Instrument[] = [
   { id: 'BTCUSD', label: 'BTC/USD', yahoo: 'BTC-USD', pip: 1, spreadPips: 25, kind: 'crypto' },
   { id: 'ETHUSD', label: 'ETH/USD', yahoo: 'ETH-USD', pip: 0.1, spreadPips: 15, kind: 'crypto' },
   { id: 'SOLUSD', label: 'SOL/USD', yahoo: 'SOL-USD', pip: 0.01, spreadPips: 6, kind: 'crypto' },
+  // v24 (owner: "crypto more hardworking"): five more liquid majors on Coinbase; spreads ≈ 0.08–0.1% (a touch wider than the top three)
+  { id: 'XRPUSD', label: 'XRP/USD', yahoo: 'XRP-USD', pip: 0.0001, spreadPips: 5, kind: 'crypto' },
+  { id: 'DOGEUSD', label: 'DOGE/USD', yahoo: 'DOGE-USD', pip: 0.00001, spreadPips: 15, kind: 'crypto' },
+  { id: 'ADAUSD', label: 'ADA/USD', yahoo: 'ADA-USD', pip: 0.0001, spreadPips: 5, kind: 'crypto' },
+  { id: 'LINKUSD', label: 'LINK/USD', yahoo: 'LINK-USD', pip: 0.001, spreadPips: 10, kind: 'crypto' },
+  { id: 'AVAXUSD', label: 'AVAX/USD', yahoo: 'AVAX-USD', pip: 0.001, spreadPips: 15, kind: 'crypto' },
 ];
 
 /** v22: a crypto market (always open, priced in USD, 1 unit = 1 coin). */

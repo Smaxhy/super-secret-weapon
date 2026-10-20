@@ -20,7 +20,7 @@ describe('v22 crypto markets', () => {
     }
     expect(isCrypto('EURUSD')).toBe(false);
     expect(isCrypto('XAUUSD')).toBe(false);
-    expect(INSTRUMENTS.filter((i) => i.kind === 'crypto')).toHaveLength(3);
+    expect(INSTRUMENTS.filter((i) => i.kind === 'crypto')).toHaveLength(8);
     expect(CRYPTO.maxLeverage).toBeLessThanOrEqual(30);
   });
 

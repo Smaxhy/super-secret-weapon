@@ -274,6 +274,9 @@ export function roundStep(pair: string): number {
   if (pair === 'XAUUSD') return 10;
   if (pair === 'XAGUSD') return 0.5;
   if (pair === 'BTCUSD') return 1000;
+  if (pair === 'XRPUSD' || pair === 'ADAUSD') return 0.1;
+  if (pair === 'DOGEUSD') return 0.01;
+  if (pair === 'LINKUSD' || pair === 'AVAXUSD') return 1;
   if (pair === 'ETHUSD') return 100;
   if (pair === 'SOLUSD') return 10;
   return pair.endsWith('JPY') ? 1 : 0.01;
