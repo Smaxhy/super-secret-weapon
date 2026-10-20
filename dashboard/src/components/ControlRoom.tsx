@@ -36,7 +36,8 @@ interface RunNote { t: number; tf: string; signals: number; chosen: number; open
 interface BotPlan { at: number; summary: string; next: Array<{ tf: string; at: number }>; markets: PlanMarket[]; trades: PlanTrade[]; timeline: RunNote[] }
 type RiskMode = 'normal' | 'aggressive' | 'max';
 interface RiskLimits { label: string; riskPct: number; leverage: number; maxOpen: number }
-interface BotData { labError?: { t: number; msg: string } | null; planError?: string | null; rolling?: RollReport | null; chooser?: string; names?: Record<string, string>; sniper?: SniperReport | null; riskMode?: RiskMode; riskModes?: Record<RiskMode, RiskLimits>; plan?: BotPlan | null; account: Acct | null; risk?: RiskSummary | null; judge?: JudgeReport | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
+export interface WhyReport { at: number; hoursSinceOpen: number | null; openNow: number; ordersNow: number; marketOpen: boolean; window: { hours: number; checks: number; signals: number; chosen: number; opened: number; skipped: number; waits: number; lastCheckAt: number | null }; reasons: Array<{ kind: string; label: string; n: number; example: string }>; staleMarkets: string[]; verdict: string; hint: string | null; quiet: boolean }
+interface BotData { why?: WhyReport | null; labError?: { t: number; msg: string } | null; planError?: string | null; rolling?: RollReport | null; chooser?: string; names?: Record<string, string>; sniper?: SniperReport | null; riskMode?: RiskMode; riskModes?: Record<RiskMode, RiskLimits>; plan?: BotPlan | null; account: Acct | null; risk?: RiskSummary | null; judge?: JudgeReport | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
 
 // ── the hourly lab's market read ──
 interface MarketNow { id: string; label: string; price: number; t: number; change24hPct: number; closes: number[]; trend: 'up' | 'down' | 'flat'; rsi: number; atrPips: number; firing: Array<{ id: string; name: string; tf: string; side: 1 | -1; allowed?: boolean; why?: string | null }>; bars: number[][]; drawings: ChartDrawings; mtf?: { h1: number; h4: number; d1: number }; strength?: { base: string; quote: string; gap: number | null } }
@@ -341,6 +342,7 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
         </div>
       </div>
       {d?.labError && <p className="mt-3 rounded-lg bg-critical/10 px-3 py-2 text-xs text-down">Last hourly test failed {agoShort(d.labError.t, now)} ago: {d.labError.msg}</p>}
+      {d?.why && <WhyLine why={d.why} />}
 
       {/* P&L strip: the money, always on the home */}
       {pnl?.periods && (
@@ -436,6 +438,37 @@ function Room({ k, bind, className = '', says, children }: { k: RoomKey; bind: (
         </div>
       </div>
       <div className="min-h-0 flex-1 text-sm">{children}</div>
+    </div>
+  );
+}
+
+// ───────────────────────────── why no trades ─────────────────────────────
+/** v19.4: one amber line when the bot has been quiet 3 h+ with the market open; tap for every reason it held back */
+export function WhyLine({ why, always = false }: { why: WhyReport; always?: boolean }) {
+  const [open, setOpen] = useState(false);
+  if (!why.quiet && !always) return null;
+  const tone = why.quiet ? 'border-warning/40 bg-warning/10' : 'border-line bg-surface-2';
+  return (
+    <div className={`mt-3 rounded-lg border px-3 py-2 text-xs text-ink ${tone}`} role={why.quiet ? 'status' : undefined}>
+      <div className="flex items-start gap-2">
+        <span className="font-semibold">{why.quiet ? 'Why no trades?' : 'Trading check'}</span>
+        <span className="min-w-0 flex-1 text-ink-2">{why.verdict}</span>
+        <button type="button" className="shrink-0 text-accent-text hover:underline" onClick={() => setOpen((v) => !v)} aria-expanded={open}>{open ? 'less' : 'details'}</button>
+      </div>
+      {why.hint && <p className="mt-1 text-ink-2">{why.hint}</p>}
+      {open && (
+        <div className="mt-2 space-y-1 text-ink-2">
+          <p>Last {why.window.hours} h: {why.window.checks} checks · {why.window.signals} signals · {why.window.chosen} from strategies it trades · {why.window.opened} opened · {why.window.skipped} skipped · {why.window.waits} waited.</p>
+          {why.reasons.length ? (
+            <ul className="space-y-0.5">
+              {why.reasons.map((r) => (
+                <li key={r.kind} className="flex gap-2"><span className="tabular w-8 shrink-0 text-right font-semibold text-ink">{r.n}×</span><span className="min-w-0"><span>{r.label}</span><span className="block truncate text-muted" title={r.example}>e.g. {r.example}</span></span></li>
+              ))}
+            </ul>
+          ) : <p>No wait or skip recorded in the window.</p>}
+          {why.staleMarkets.length > 0 && <p>Lagging feeds: {why.staleMarkets.join(', ')}.</p>}
+        </div>
+      )}
     </div>
   );
 }

@@ -645,6 +645,7 @@ export function Village() {
           <div className="rounded-lg bg-black/60 px-2 py-1 text-slate-100 backdrop-blur-sm">
             <span className="font-semibold">{x.state.word}</span> · next look {mmss(x.next.at - x.now)} ({x.next.tf}) · {x.open ? 'day — forex open' : 'night — forex closed'}
           </div>
+          {x.d?.why?.quiet && <div className="max-w-[min(92vw,560px)] rounded-lg bg-amber-300/95 px-2 py-1 text-slate-900"><span className="font-semibold">Why no trades? </span>{x.d.why.verdict}</div>}
           <div className="rounded-lg bg-black/60 px-2 py-1 text-slate-100 backdrop-blur-sm sm:hidden">{x.d?.chosen.length ?? 0} apprentices at work · {x.positions.length} trade{x.positions.length === 1 ? '' : 's'} open</div>
         </div>
         <button type="button" onClick={() => setHelp(true)} aria-label="How the village works" className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-black/60 text-sm font-bold text-slate-100 backdrop-blur-sm sm:top-10">?</button>

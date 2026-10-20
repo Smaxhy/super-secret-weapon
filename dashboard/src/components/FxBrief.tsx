@@ -4,6 +4,7 @@
  * pays in each risk mode, which way the bot leans right now, the trades it is closest to taking, the open trades in one
  * line each, and when it looks again. Display only.
  */
+import { WhyLine, type WhyReport } from './ControlRoom';
 import { useEffect, useState } from 'react';
 import { useApi } from '../hooks/useApi';
 import { Badge, Card } from './ui';
@@ -40,7 +41,7 @@ export function localNextLook(now = Date.now()): { tf: string; at: number } {
   return h4 <= h1 ? { tf: '4h', at: h4 } : { tf: '1h', at: h1 };
 }
 
-export function FxBrief({ plan, riskMode, modes, equityUsd, orders = [], names = {}, labError = null, planError = null, loadError = null }: { plan: Plan | null; riskMode: RiskMode; modes?: Record<RiskMode, RiskLimits>; equityUsd: number | null; orders?: Order[]; names?: Record<string, string>; labError?: { t: number; msg: string } | null; planError?: string | null; loadError?: string | null }) {
+export function FxBrief({ plan, riskMode, modes, equityUsd, orders = [], names = {}, labError = null, planError = null, loadError = null, why = null }: { why?: WhyReport | null; plan: Plan | null; riskMode: RiskMode; modes?: Record<RiskMode, RiskLimits>; equityUsd: number | null; orders?: Order[]; names?: Record<string, string>; labError?: { t: number; msg: string } | null; planError?: string | null; loadError?: string | null }) {
   const tz = new Date().getTimezoneOffset();
   const { data: pnl } = useApi<PnlData>(`/api/forex/pnl?acct=bot&tz=${tz}`, 60_000);
   const [goal, setGoal] = useState(readGoal);
@@ -70,6 +71,7 @@ export function FxBrief({ plan, riskMode, modes, equityUsd, orders = [], names =
   return (
     <Card title="Today" subtitle={plan?.summary ?? 'Its plan appears after the first look at the markets.'} className="hero-glow card-accent">
       <div className="space-y-4">
+        {why && <WhyLine why={why} />}
         {labError && (
           <div role="alert" className="rounded-lg border border-critical/40 bg-critical/10 px-3 py-2 text-sm text-ink">
             <b>The hourly test failed</b> at {clock(labError.t)}: {labError.msg}. Open trades are still guarded by their stops; no new hourly-chart trades until a run succeeds. Forex → Setup → Data feeds has the details.

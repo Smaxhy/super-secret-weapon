@@ -23,6 +23,7 @@ import { feedHealth, feeds as fxFeeds } from '../forex/feeds';
 import { pythConf, pythKey, pythLive, savePythConf, testPythKey } from '../forex/pyth';
 import { RISK_MODES, isRiskMode, ledgerSummary, pnlUsd, riskSummary } from '../forex/practice';
 import { buildPlan } from '../forex/plan';
+import { whyNoTrades } from '../forex/why';
 import { FX_CONFIG } from '../forex/lab';
 import { botStatus, dayTrades, parsePnlQuery, pnlReport } from '../forex/pnl';
 import { STRATEGIES } from '../forex/strategies';
@@ -197,8 +198,32 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         planError = (err as Error).message;
         log.warn({ err: planError }, 'forex plan failed to build');
       }
+      // v19.4: one plain-words answer to "why no trades?" from what the bot already records
+      let why: ReturnType<typeof whyNoTrades> | null = null;
+      try {
+        if (fx && snap) {
+          const acct = snap.account;
+          const opened = [...acct.positions.map((p) => p.openedAt), ...(acct.orders ?? []).map((o) => o.placedAt), ...acct.closed.map((c) => (c as { openedAt?: number }).openedAt ?? c.closedAt)].filter((t): t is number => typeof t === 'number');
+          why = whyNoTrades({
+            now,
+            runs: fx.runs,
+            log: parse<Array<{ t: number; e: string }>>(logRaw, []),
+            lastSync: fx.lastSync,
+            chosen: parse<string[]>(chosenRaw, []),
+            lastOpenedAt: opened.length ? Math.max(...opened) : null,
+            openNow: acct.positions.length,
+            ordersNow: acct.orders?.length ?? 0,
+            clock: marketClock(now),
+            dataAge: fx.dataAge,
+            labError: fx.lastError ?? null,
+          });
+        }
+      } catch (err) {
+        log.warn({ err: (err as Error).message }, 'forex why-no-trades failed');
+      }
       return {
         plan,
+        why,
         // v18.12: why the plan is missing (the Today card says so instead of going quiet)
         planError: planError ?? (!deps.forex ? 'forex lab not running' : !snap ? 'bot account unreadable' : null),
         account: snap ? { ...snap.account, ledger: undefined } : null,

@@ -799,6 +799,19 @@ accessible, no-walking twin of the canvas. **Help card** "How the village works"
 `village.help`; "?" button on the map and "How it works" link re-open it). `prefers-reduced-motion`: villagers and
 apprentices stay put (the operator still walks). Verified with Playwright at 390 / 1440 px, light + dark.
 
+## v19.4 "Why no trades?" (Oct 20, owner: "there hasn't been a single trade for hours on either chain"; VPS not reachable
+from the sandbox → the diagnosis is built into the app, like the crypto checker verdict)
+`src/forex/why.ts` `whyNoTrades(input)` (pure): hours since the bot last opened anything (positions `openedAt`, orders
+`placedAt`, closed rows), the last 24 h of `RunNote`s (checks / signals / chosen / opened / skipped / waits), every
+"waiting on / waited on / skipped" line of the bot log + the newest `SyncReport` per chart bucketed by `classify(why)`
+(not_chosen / cooldown / caps / judge_missing / judge_no / check_data / stale_feed / clock / news / shock / late /
+ccy_cap / heat / margin), lagging 1h / 4h markets (`staleReason`), and ONE verdict in order: lab failing → no check in
+2.5 h → market closed → no chosen strategies → nothing fired → fired but none chosen → top hold-back reason (+ a hint:
+what fixes it / "working as designed"). `quiet` = market open and 3 h+ since the last open. `/api/forex/bot` → `why`.
+Dashboard `WhyLine` (ControlRoom.tsx; amber `role=status` when quiet, "details" = the full count list with an example
+line each): control-room hub, Today card (FxBrief), village HUD. FIRST thing to read when forex is quiet.
+tests/forex-why.test.ts (6). For crypto the same question is Scanner → Bot health → Coin checker (v18.10) + Buying.
+
 ## v19.1 the village (Oct 19, owner: "turn this all into a game: an open world where villagers work for us, medieval pixel
 style; click the guy trading forex and see the full trade with all explanations; a cool environment to learn in")
 `dashboard/src/components/Village.tsx`, route `/forex/village` (Forex menu "The village"; link from the control room).
