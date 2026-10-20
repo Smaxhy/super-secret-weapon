@@ -778,6 +778,16 @@ phone: hub first, rooms stacked, no lines. Every read tolerates partial data (`e
 shows placeholders, never a crash. Verified by rendering with Playwright at 390 px + 1440 px, light + dark, against a stubbed API
 (scratchpad `shots/room.mjs`).
 
+## v19.2 control room on the phone + P&L back on the home (Oct 20, owner: "make it mobile friendly and I can't see my
+P&Ls anymore")
+`useControlRoomData` now also loads `/api/forex/pnl?acct=bot` (30 s) → `CRData.pnl`; the hub shows a **P&L strip**
+(Today / Week / Month / All time: $ + trades + % won) under the account tiles on every screen size; new room key `pnl`
+("P&L", icon chart) whose body is the full `FxPnl` (balance curve + month calendar), desktop grid row 4 full width.
+**Phone (< 1024 px)**: hub first, then a horizontal chip strip of the nine rooms (P&L first, remembered in
+`tab.cr.room` via `useTab`), ONE room open at a time — the page is a third as long as the stacked version. Every
+calendar read is guarded (`clock?.`, `events ?? []`) so a calendar without a clock can't blank the page. Village: the
+**Treasurer** villager (teal, outside the vault) carries today / week P&L and opens the P&L room.
+
 ## v19.1 the village (Oct 19, owner: "turn this all into a game: an open world where villagers work for us, medieval pixel
 style; click the guy trading forex and see the full trade with all explanations; a cool environment to learn in")
 `dashboard/src/components/Village.tsx`, route `/forex/village` (Forex menu "The village"; link from the control room).

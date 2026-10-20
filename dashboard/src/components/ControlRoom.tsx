@@ -18,6 +18,8 @@ import { fitBars, MarketChart, type ChartDrawings, type ChartTrade } from './Mar
 import { Icon, type IconName } from './Icon';
 import { Badge, Button } from './ui';
 import { ReadTrack, useTradeReads } from './FxTradeRead';
+import { FxPnl, type PnlData } from './FxPnl';
+import { useTab } from './ui';
 import type { SystemData } from './SystemHealth';
 import type { JudgeReport, RiskSummary, RollReport, SniperReport } from './FxInsights';
 
@@ -70,7 +72,7 @@ function localNext(now: number): { tf: string; at: number } {
   return h4 <= h1 ? { tf: '4h', at: h4 } : { tf: '1h', at: h1 };
 }
 
-export type RoomKey = 'scout' | 'analyst' | 'trader' | 'risk' | 'historian' | 'news' | 'decisions' | 'crypto';
+export type RoomKey = 'scout' | 'analyst' | 'trader' | 'risk' | 'historian' | 'news' | 'decisions' | 'crypto' | 'pnl';
 export const ROOMS: Record<RoomKey, { name: string; role: string; icon: IconName }> = {
   scout: { name: 'Scout', role: 'scans every market', icon: 'radar' },
   analyst: { name: 'Analyst', role: 'reads the chart it is on', icon: 'eye' },
@@ -80,6 +82,7 @@ export const ROOMS: Record<RoomKey, { name: string; role: string; icon: IconName
   news: { name: 'News desk', role: 'watches the calendar and headlines', icon: 'bell' },
   decisions: { name: 'Decisions', role: 'everything it just did', icon: 'cpu' },
   crypto: { name: 'Crypto room', role: 'the pump.fun data collector', icon: 'wallet' },
+  pnl: { name: 'P&L', role: 'profit by day, week and month', icon: 'chart' },
 };
 
 /** everything the control room (and the village) reads, in one place */
@@ -89,6 +92,7 @@ export interface CRData {
   cal: ReturnType<typeof useApi<CalData>>;
   sys: ReturnType<typeof useApi<SystemData>>;
   ov: ReturnType<typeof useApi<Overview>>;
+  pnl: ReturnType<typeof useApi<PnlData>>;
   fx: FxLive;
   now: number;
   d: BotData | null;
@@ -118,6 +122,7 @@ export function useControlRoomData(): CRData {
   const cal = useApi<CalData>('/api/forex/calendar', 60_000);
   const sys = useApi<SystemData>('/api/system', 15_000);
   const ov = useApi<Overview>('/api/overview', 30_000, ['trade']);
+  const pnl = useApi<PnlData>(`/api/forex/pnl?acct=bot&tz=${new Date().getTimezoneOffset()}`, 30_000);
   const fx = useFxLive();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -143,12 +148,12 @@ export function useControlRoomData(): CRData {
   const fpos = positions.filter((p) => p.pair === focus);
 
   // the hub's state
-  const open = cal.data?.clock.open ?? true;
+  const open = cal.data?.clock?.open ?? true;
   const next = (plan?.next ?? []).filter((x) => x.at > now).sort((x, y) => x.at - y.at)[0] ?? localNext(now);
   const livePnlAll = positions.reduce((s, p) => s + livePnl(p, fx, now), 0);
   const state = !open ? { word: 'Market closed', tone: 'text-muted' } : positions.length ? { word: `In ${positions.length} trade${positions.length === 1 ? '' : 's'}`, tone: tone(livePnlAll) } : closest.length ? { word: 'Waiting on setups', tone: 'text-warning' } : { word: 'Scanning', tone: 'text-accent-text' };
   const lastRun = (plan?.timeline ?? []).slice().sort((x, y) => y.t - x.t)[0] ?? null;
-  return { bot, lab, cal, sys, ov, fx, now, d, a, plan, positions, orders, markets, reads: reads.data?.trades ?? [], names, focus, setPicked, fm, fp, fpos, open, next, livePnlAll, state, lastRun, closest };
+  return { bot, lab, cal, sys, ov, pnl, fx, now, d, a, plan, positions, orders, markets, reads: reads.data?.trades ?? [], names, focus, setPicked, fm, fp, fpos, open, next, livePnlAll, state, lastRun, closest };
 }
 
 /** one room's "says" line + body, from the shared data (used by the control room grid and the village panels) */
@@ -171,12 +176,14 @@ export function roomView(k: RoomKey, x: CRData): { says: string; body: ReactNode
       return { says: newsSays(x.cal.data, now), body: <NewsDesk c={x.cal.data ?? null} now={now} /> };
     case 'crypto':
       return { says: cryptoSays(x.sys.data ?? null, x.ov.data ?? null), body: <CryptoRoom s={x.sys.data ?? null} o={x.ov.data ?? null} /> };
+    case 'pnl':
+      return { says: pnlSays(x.pnl.data ?? null), body: <FxPnl acct="bot" fallback={<p className="text-xs text-muted">No P&L report yet.</p>} /> };
   }
 }
 
 /** the hub card (the bot + its big screen) from the shared data */
 export function HubView({ x }: { x: CRData }) {
-  return <Hub d={x.d} state={x.state} next={x.next} now={x.now} lastRun={x.lastRun} open={x.open} error={x.bot.error} fm={x.fm} fp={x.fp} fpos={x.fpos} fx={x.fx} reads={x.reads} names={x.names} markets={x.markets} onPick={x.setPicked} picked={x.focus} />;
+  return <Hub d={x.d} state={x.state} next={x.next} now={x.now} lastRun={x.lastRun} open={x.open} error={x.bot.error} fm={x.fm} fp={x.fp} fpos={x.fpos} fx={x.fx} reads={x.reads} names={x.names} markets={x.markets} onPick={x.setPicked} picked={x.focus} pnl={x.pnl.data ?? null} />;
 }
 
 export function ControlRoom() {
@@ -233,7 +240,11 @@ export function ControlRoom() {
     historian: 'lg:col-span-3 lg:col-start-4 lg:row-start-3',
     news: 'lg:col-span-3 lg:col-start-7 lg:row-start-3',
     crypto: 'lg:col-span-3 lg:col-start-10 lg:row-start-3',
+    pnl: 'lg:col-span-12 lg:row-start-4',
   };
+  const keys = Object.keys(ROOMS) as RoomKey[];
+  const [roomTab, setRoomTab] = useTab<RoomKey>('cr.room', keys, 'pnl');
+  const phone = wrapW > 0 && wrapW < 1024;
 
   return (
     <div ref={wrapRef} className="relative">
@@ -247,12 +258,28 @@ export function ControlRoom() {
           ))}
         </svg>
       )}
-      <div className="relative z-10 grid gap-4 lg:grid-cols-12 lg:grid-rows-[auto_auto_auto] lg:gap-5">
+      {phone ? (
+        <div className="space-y-3">
+          <HubView x={x} />
+          <div className="no-scrollbar -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Rooms">
+            {(['pnl', ...keys.filter((k) => k !== 'pnl')] as RoomKey[]).map((k) => (
+              <button key={k} type="button" role="tab" aria-selected={roomTab === k} onClick={() => setRoomTab(k)} className={`flex min-h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors ${roomTab === k ? 'bg-accent text-on-accent' : 'bg-surface-2 text-ink-2'}`}>
+                <Icon name={ROOMS[k].icon} size={14} />{ROOMS[k].name}
+              </button>
+            ))}
+          </div>
+          {(() => {
+            const v = roomView(roomTab, x);
+            return <Room k={roomTab} bind={bind} says={v.says}>{v.body}</Room>;
+          })()}
+        </div>
+      ) : (
+      <div className="relative z-10 grid gap-4 lg:grid-cols-12 lg:grid-rows-[auto_auto_auto_auto] lg:gap-5">
         {/* ── the hub: the bot in the middle with its big screen ── */}
         <div ref={hubRef} className="order-first lg:order-none lg:col-span-6 lg:col-start-4 lg:row-span-2 lg:row-start-1">
           <HubView x={x} />
         </div>
-        {(Object.keys(ROOMS) as RoomKey[]).map((k) => {
+        {keys.map((k) => {
           const v = roomView(k, x);
           return (
             <Room key={k} k={k} bind={bind} className={place[k]} says={v.says}>
@@ -261,12 +288,13 @@ export function ControlRoom() {
           );
         })}
       </div>
+      )}
     </div>
   );
 }
 
 // ───────────────────────────── the hub ─────────────────────────────
-function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, reads, names, markets, onPick, picked }: { d: BotData | null; state: { word: string; tone: string }; next: { tf: string; at: number }; now: number; lastRun: RunNote | null; open: boolean; error: string | null; fm: MarketNow | null; fp: PlanMarket | null; fpos: Pos[]; fx: FxLive; reads: Array<{ id: string; pair: string; read: import('./FxTradeRead').TradeReadT; ai: import('./FxTradeRead').AiReadT | null }>; names: Record<string, string>; markets: MarketNow[]; onPick: (id: string) => void; picked: string | null }) {
+function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, reads, names, markets, onPick, picked, pnl }: { d: BotData | null; state: { word: string; tone: string }; next: { tf: string; at: number }; now: number; lastRun: RunNote | null; open: boolean; error: string | null; fm: MarketNow | null; fp: PlanMarket | null; fpos: Pos[]; fx: FxLive; reads: Array<{ id: string; pair: string; read: import('./FxTradeRead').TradeReadT; ai: import('./FxTradeRead').AiReadT | null }>; names: Record<string, string>; markets: MarketNow[]; onPick: (id: string) => void; picked: string | null; pnl: PnlData | null }) {
   const [chartRef, chartW] = useWidth<HTMLDivElement>();
   const live = fm ? liveOf(fx, fm.id, 15_000, now) : null;
   const price = live?.mid ?? fm?.price ?? null;
@@ -313,6 +341,19 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
         </div>
       </div>
       {d?.labError && <p className="mt-3 rounded-lg bg-critical/10 px-3 py-2 text-xs text-down">Last hourly test failed {agoShort(d.labError.t, now)} ago: {d.labError.msg}</p>}
+
+      {/* P&L strip: the money, always on the home */}
+      {pnl?.periods && (
+        <div className="mt-4 grid grid-cols-4 gap-1.5 sm:gap-2">
+          {([['Today', pnl.periods.today], ['Week', pnl.periods.week], ['Month', pnl.periods.month], ['All time', pnl.periods.all]] as const).map(([label, p]) => (
+            <div key={label} className="rounded-lg bg-surface-2 px-2 py-1.5 text-center">
+              <div className="text-[11px] text-muted">{label}</div>
+              <div className={`tabular text-sm font-semibold sm:text-base ${tone(p.pnlUsd)}`}>{usd(p.pnlUsd)}</div>
+              <div className="truncate text-[10px] text-muted">{p.trades ? `${p.trades} trade${p.trades === 1 ? '' : 's'} · ${p.trades ? Math.round((p.wins / p.trades) * 100) : 0}% won` : 'no trades'}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* the big screen */}
       <div className="cr-screen relative mt-4 overflow-hidden rounded-xl border border-line bg-surface-2">
@@ -397,6 +438,12 @@ function Room({ k, bind, className = '', says, children }: { k: RoomKey; bind: (
       <div className="min-h-0 flex-1 text-sm">{children}</div>
     </div>
   );
+}
+
+// ───────────────────────────── P&L ─────────────────────────────
+function pnlSays(p: PnlData | null): string {
+  if (!p?.periods) return 'no P&L report yet';
+  return `today ${usd(p.periods.today.pnlUsd)} · week ${usd(p.periods.week.pnlUsd)} · month ${usd(p.periods.month.pnlUsd)} · open ${usd(p.openPnlUsd)}`;
 }
 
 // ───────────────────────────── scout ─────────────────────────────
@@ -632,20 +679,20 @@ function Historian({ d, rows, names }: { d: BotData | null; rows: LabRow[]; name
 // ───────────────────────────── news desk ─────────────────────────────
 function newsSays(c: CalData | null | undefined, now: number): string {
   if (!c) return 'no calendar yet';
-  const next = c.events.filter((e) => e.t > now && (e.impact === 'High' || e.impact === 'Holiday')).sort((x, y) => x.t - y.t)[0];
+  const next = (c.events ?? []).filter((e) => e.t > now && (e.impact === 'High' || e.impact === 'Holiday')).sort((x, y) => x.t - y.t)[0];
   const hot = (c.headlines ?? []).filter((h) => h.severity === 'high' && now - h.t < 3_600_000).length;
-  const parts = [c.clock.open ? `market open · ${c.clock.sessions.join(' + ') || 'quiet hours'}` : `market closed · opens in ${mmss(c.clock.minutesToChange * 60_000)}`];
+  const parts = [!c.clock ? 'market clock unknown' : c.clock.open ? `market open · ${(c.clock.sessions ?? []).join(' + ') || 'quiet hours'}` : `market closed · opens in ${mmss(c.clock.minutesToChange * 60_000)}`];
   if (next) parts.push(`next big one: ${next.ccy} ${next.title} in ${mmss(next.t - now)}`);
   if (hot) parts.push(`${hot} hot headline${hot === 1 ? '' : 's'} this hour`);
   return parts.join(' · ');
 }
 function NewsDesk({ c, now }: { c: CalData | null; now: number }) {
   if (!c) return <p className="text-xs text-muted">Waiting for the calendar.</p>;
-  const ev = c.events.filter((e) => e.t > now - 30 * 60_000 && e.impact !== 'Low').sort((x, y) => x.t - y.t).slice(0, 5);
+  const ev = (c.events ?? []).filter((e) => e.t > now - 30 * 60_000 && e.impact !== 'Low').sort((x, y) => x.t - y.t).slice(0, 5);
   const heads = (c.headlines ?? []).slice().sort((x, y) => y.t - x.t).slice(0, 4);
   return (
     <div className="space-y-2 text-xs">
-      {c.clock.noNewTrades && <Badge tone="warn">no new trades — the week is closing</Badge>}
+      {c.clock?.noNewTrades && <Badge tone="warn">no new trades — the week is closing</Badge>}
       <div>
         <div className="mb-1 font-semibold text-muted">Coming up</div>
         {ev.length ? (

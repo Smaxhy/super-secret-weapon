@@ -142,9 +142,10 @@ const PAL: Record<Spot | 'player' | 'apprentice', Pal> = {
   historian: { skin: '#e9c9a8', hair: '#e5e7eb', cloak: '#7a4b2a', belt: '#d9c8a9', hat: '#7a4b2a', hatKind: 'none', beard: '#e5e7eb' },
   news: { skin: '#f1c9a5', hair: '#b45309', cloak: '#d97706', belt: '#7c2d12', hat: '#fbbf24', hatKind: 'band' },
   crypto: { skin: '#d9a984', hair: '#1a1a1a', cloak: '#ea580c', belt: '#1f2937', hat: '#fde68a', hatKind: 'helmet' },
+  pnl: { skin: '#f1c9a5', hair: '#1f2937', cloak: '#0e7c86', belt: '#f5c542', hat: '#0e7c86', hatKind: 'flat' },
   apprentice: { skin: '#f1c9a5', hair: '#374151', cloak: '#64748b', belt: '#94a3b8', hat: '#64748b', hatKind: 'none' },
 };
-const NAMES: Record<RoomKey, string> = { scout: 'Scout', analyst: 'Analyst', trader: 'Trader', risk: 'Risk keeper', decisions: 'Clerk', historian: 'Historian', news: 'Crier', crypto: 'Miner' };
+const NAMES: Record<RoomKey, string> = { scout: 'Scout', analyst: 'Analyst', trader: 'Trader', risk: 'Risk keeper', decisions: 'Clerk', historian: 'Historian', news: 'Crier', crypto: 'Miner', pnl: 'Treasurer' };
 
 interface Mover {
   id: string;
@@ -340,6 +341,8 @@ export function Village() {
       const d = doorTile(b);
       people.push(mover(b.k, b.k, NAMES[b.k], d.x, d.y, 28, b.k === 'scout' ? 5 : 3));
     }
+    // the Treasurer counts the gold outside the vault
+    people.push(mover('pnl', 'pnl', NAMES.pnl, 27, 12, 24, 2));
     const plaza = { x: 14, y: 9 };
     const player = mover('player', 'player', 'You', plaza.x, plaza.y, 56, 99);
     return { people, player, apprentices: [] as Mover[], toasts: [] as Array<{ t: number; text: string }>, seenLog: 0, hoverId: null as string | null, time: 0 };
@@ -434,8 +437,9 @@ export function Village() {
         risk: { bubble: `${X.d?.riskMode ?? 'normal'} mode`, busy: false },
         decisions: { bubble: X.d?.log?.[0]?.e.slice(0, 28) ?? 'nothing yet', busy: false },
         historian: { bubble: `${X.d?.chosen.length ?? 0} at work`, busy: false },
-        news: { bubble: X.cal.data?.clock.noNewTrades ? 'no new trades!' : X.cal.data?.events.some((e) => e.t > X.now && e.t - X.now < 30 * 60_000 && e.impact === 'High') ? 'news in 30 min!' : 'quiet', busy: !!X.cal.data?.clock.noNewTrades },
+        news: { bubble: X.cal.data?.clock?.noNewTrades ? 'no new trades!' : (X.cal.data?.events ?? []).some((e) => e.t > X.now && e.t - X.now < 30 * 60_000 && e.impact === 'High') ? 'news in 30 min!' : 'quiet', busy: !!X.cal.data?.clock?.noNewTrades },
         crypto: { bubble: `${X.sys.data?.trading?.lastHour?.evaluated ?? 0} coins / h`, busy: (X.sys.data?.trading?.lastHour?.evaluated ?? 0) > 0 },
+        pnl: { bubble: X.pnl.data?.periods ? `today ${usd(X.pnl.data.periods.today.pnlUsd)} · week ${usd(X.pnl.data.periods.week.pnlUsd)}` : 'counting…', busy: false },
       };
       for (const m of world.people) {
         const s = says[m.kind as RoomKey];
