@@ -758,6 +758,21 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.8 run past the target + home / menu cleanup (Oct 21, owner: "if you're taking a trade you're allowed to go higher than
+your TP, just set a tight trailing SL"; "remove why-no-trades from the middle of my screen, raise the chart under the P&L, not
+what it's watching, and remove trade by hand")
+- Engine `SimOpts.runPastTarget` (DEFAULT on, `RUN_PAST_TP` {on, atr 0.6}) + `withRunPastTarget(sig)`: every signal with a
+  target and no trailing take-profit of its own gets `tpTrail` 0.6 ATR / `tpFrac` 0 → at the target the trade is NOT closed:
+  the stop locks 0.6 ATR behind the target (never under break-even + costs) and trails the best close by 0.6 ATR (the v15
+  trailing take-profit machinery). EVERY backtest / paper / honest-test trade includes it → ONE re-pick event after deploy.
+  Live: lab open trades carry `tpTrailPx` → the bot positions inherit it → practice `tick` converts at the target. Positions
+  opened before this deploy keep their old plan. Tests that pin the target exit set `DEFAULT_SIM.runPastTarget = false` at the
+  top (forex, v14, v15, entries, profit-lock); tests/forex-run-past-tp (2).
+- Dashboard: ControlRoom hub — the "Why no trades?" line removed (it stays on the Trades page's Today card), the big screen
+  (chart) now sits right under the P&L strip and the PlanBoard ("the plan, market by market") under the chart.
+  **Trade by hand removed**: nav entries (forex + crypto), the `practice` section, the Markets drawer's "Trade X yourself"
+  button and `components/FxTrade.tsx` (the owner's 'me' account + `/api/forex/practice*` routes stay on the server, unused
+  by the UI). Verified by rendering (shots room.mjs at 390 px).
 ## v27.7 the strongest currencies back on the focus list (Oct 21, owner: "add the strongest currencies also back on the list")
 `FX_CONFIG.focus.strong` {on, top 2, minGap 0.6} + `strongPairs(strengthNow)` (lab.ts, pure): traded FX pairs that put one of
 the 2 strongest currencies of the strength meter against one of the 2 weakest, gap ≥ 0.6 → `setStrongFocus` (module set

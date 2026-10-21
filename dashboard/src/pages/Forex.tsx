@@ -16,7 +16,6 @@ import { LiveBadge, LivePrice } from '../components/LivePrice';
 import { api } from '../lib/api';
 import { ago } from '../lib/format';
 import { Icon } from '../components/Icon';
-import { FxTrade } from '../components/FxTrade';
 import { OandaCard } from '../components/OandaCard';
 import { ControlRoom } from '../components/ControlRoom';
 import { FxNewsPage } from '../components/FxNewsPage';
@@ -52,12 +51,11 @@ const signed = (x: number, dp = 1) => `${x >= 0 ? '+' : ''}${x.toFixed(dp)}`;
 const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink-2');
 const day = (t: number | null) => (t ? new Date(t).toISOString().slice(0, 10) : '—');
 const VERDICT: Record<RowT['verdict'], { label: string; tone: 'up' | 'warn' | 'neutral' }> = { edge: { label: 'Edge', tone: 'up' }, maybe: { label: 'Maybe', tone: 'warn' }, no: { label: 'No edge', tone: 'neutral' } };
-type Section = 'room' | 'live' | 'practice' | 'bot' | 'strategies' | 'paper' | 'setup' | 'lab' | 'news';
+type Section = 'room' | 'live' | 'bot' | 'strategies' | 'paper' | 'setup' | 'lab' | 'news';
 const TITLES: Record<Section, { title: string; sub: string }> = {
   room: { title: 'Home', sub: 'Is the bot working, what is it waiting for, how is the money doing, and what is in the news.' },
   news: { title: 'News desk', sub: 'What is coming, what just happened, and what the bot pauses for.' },
   live: { title: 'Markets', sub: "Every market the bot watches: its trendlines, levels, signals and open trades." },
-  practice: { title: 'Trade by hand', sub: 'Optional: your own $1,000 practice account. The auto-bot trades without you.' },
   bot: { title: 'Trades', sub: 'Its own $1,000 account, traded by itself on the hourly and 4-hour charts: open trades with their plan, today, closed trades.' },
   strategies: { title: 'Strategies', sub: 'Every strategy tested on each chart with real spreads; the last 30% of each history kept unseen.' },
   paper: { title: 'Paper results', sub: 'Every strategy traded live on paper since the lab started: the real test.' },
@@ -77,7 +75,7 @@ const CRYPTO_TITLES: Partial<Record<Section, { title: string; sub: string }>> = 
 
 export function Forex() {
   const params = useParams();
-  const section = ((['live', 'practice', 'strategies', 'paper', 'setup', 'lab', 'bot', 'news'] as const).find((x) => x === params.section) ?? 'room') as Section;
+  const section = ((['live', 'strategies', 'paper', 'setup', 'lab', 'bot', 'news'] as const).find((x) => x === params.section) ?? 'room') as Section;
   const titles = inCrypto() ? { ...TITLES, ...CRYPTO_TITLES } : TITLES;
   const navigate = useNavigate();
   const { data, error, reload } = useApi<Data>(apiBase(), 60_000);
@@ -115,10 +113,9 @@ export function Forex() {
         ) : undefined}
       />
       {error && <ErrorBox message={error} />}
-      {(section === 'live' || section === 'practice' || section === 'bot' || section === 'room' || section === 'news') && <div className="mb-4"><MarketClockBar /></div>}
+      {(section === 'live' || section === 'bot' || section === 'room' || section === 'news') && <div className="mb-4"><MarketClockBar /></div>}
       {section === 'news' && <FxNewsPage />}
       {section === 'room' && <ControlRoom />}
-      {section === 'practice' && <FxTrade />}
       {section === 'bot' && <FxBot />}
       {section === 'setup' && <Stack><FxFeeds /><PythCard /><OandaCard />{r && <Setup r={r} fast={fast} />}</Stack>}
       {labNeeded && !data && !error && <Loading kind="tiles" />}
@@ -133,7 +130,7 @@ export function Forex() {
             </div>
           )}
           {section === 'live' && <NewsTape />}
-          {section === 'live' && <Markets r={r} onTrade={(id) => { try { localStorage.setItem('fx.pair', id); } catch { /* ignore */ } navigate(`${wsBase()}/practice`); }} />}
+          {section === 'live' && <Markets r={r} />}
           {section === 'strategies' && <Strategies r={r} />}
           {section === 'lab' && <FxLab r={r} />}
           {section === 'paper' && <Paper r={r} />}
@@ -157,7 +154,7 @@ function mergeFast(r: Report, f: FastReport | null): Report {
 const DIGITS = digitsOf;
 const STRAT_NAME = (r: Report, id: string) => r.rows.find((x) => x.id === id)?.name ?? id;
 
-function Markets({ r, onTrade }: { r: Report; onTrade: (id: string) => void }) {
+function Markets({ r }: { r: Report }) {
   const [open, setOpen] = useState<MarketNow | null>(null);
   const fx = useFxLive(); // v17.9: card prices tick live (metals keep the hourly price)
   const ms = r.markets ?? [];
@@ -200,7 +197,7 @@ function Markets({ r, onTrade }: { r: Report; onTrade: (id: string) => void }) {
         ))}
       </div>
       <Drawer open={!!open} onClose={() => setOpen(null)} title={open?.label ?? ''} subtitle={open ? `${open.price.toFixed(DIGITS(open.id))} · hourly chart, last ${open.bars.length} hours` : ''} wide>
-        {open && <MarketDetail m={open} r={r} onTrade={() => onTrade(open.id)} />}
+        {open && <MarketDetail m={open} r={r} />}
       </Drawer>
     </Stack>
   );
@@ -219,7 +216,7 @@ function StrengthLine({ m }: { m: MarketNow }) {
   );
 }
 
-function MarketDetail({ m, r, onTrade }: { m: MarketNow; r: Report; onTrade: () => void }) {
+function MarketDetail({ m, r }: { m: MarketNow; r: Report }) {
   const [show, setShow] = useState({ lines: true, levels: true, ranges: true, trades: true });
   const trades = r.paper.open.filter((t) => t.pair === m.id && t.tf === '1h');
   const trades4h = r.paper.open.filter((t) => t.pair === m.id && t.tf === '4h');
@@ -240,7 +237,6 @@ function MarketDetail({ m, r, onTrade }: { m: MarketNow; r: Report; onTrade: () 
       </div>
       <p className="text-xs text-muted">Green lines = support (rising trendline or a floor price kept bouncing off), red = resistance; dashed = broken. Purple dots = yesterday's high / low, blue band = today's Asian session range. Blue line = a bot entry, dashed red / green = its stop / target.</p>
       {m.heat && <HeatmapBox m={m} />}
-      <Button onClick={onTrade}>Trade {m.label} yourself</Button>
       <div className="grid gap-4 md:grid-cols-2">
         <div>
           <div className="mb-1 text-xs font-semibold text-muted">Bot's open paper trades</div>

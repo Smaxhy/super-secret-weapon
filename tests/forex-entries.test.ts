@@ -5,6 +5,9 @@ import { chooseEntry, ENTRY, entryVariantRow, summarizeEntries, type EntryKind, 
 import { buildCtx } from '../src/forex/ta';
 import { INSTRUMENTS, type Bar, type Signal } from '../src/forex/types';
 
+// v27.8: these tests pin the exit AT the target (the run-past-target trail is tested in forex-run-past-tp)
+DEFAULT_SIM.runPastTarget = false;
+
 const H = 3_600_000;
 const EUR = INSTRUMENTS.find((i) => i.id === 'EURUSD')!;
 /** half the spread, charged on every fill (constant: session spreads off) */

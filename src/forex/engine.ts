@@ -81,11 +81,20 @@ export interface SimOpts {
   financing?: boolean;
   /** v26: charge the trading venue's open + close fee (gTrade, venue-fees.ts) on every trade */
   venueFees?: boolean;
+  /** v27.8: a trade that reaches its target is not closed there — the stop locks a tight `RUN_PAST_TP.atr` ATR behind
+   * the target and trails the best close by that much (signals with their own trailing take-profit keep theirs) */
+  runPastTarget?: boolean;
 }
-export const DEFAULT_SIM: Required<SimOpts> = { weekendPause: true, sessionSpreads: true, liveEdge: true, profitLock: PROFIT_LOCK.on, entry: 'market', financing: FINANCING.on, venueFees: VENUE_FEES.on };
+/** v27.8 (owner: "if you're in a trade you're allowed to go higher than your TP, just set a tight trailing SL") */
+export const RUN_PAST_TP = { on: true, atr: 0.6 };
+export const DEFAULT_SIM: Required<SimOpts> = { weekendPause: true, sessionSpreads: true, liveEdge: true, profitLock: PROFIT_LOCK.on, entry: 'market', financing: FINANCING.on, venueFees: VENUE_FEES.on, runPastTarget: RUN_PAST_TP.on };
 
-export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: string, sigs: ReadonlyArray<Signal | null>, allow?: Allow, opts: SimOpts = DEFAULT_SIM): Trade[] {
+/** v27.8: give a signal with a target and no trailing take-profit the tight run-past-target trail. Pure. */
+export const withRunPastTarget = (sig: Signal | null): Signal | null => (sig && sig.target !== null && !sig.tpTrail ? { ...sig, tpTrail: RUN_PAST_TP.atr, tpFrac: sig.tpFrac ?? 0 } : sig);
+
+export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: string, sigs0: ReadonlyArray<Signal | null>, allow?: Allow, opts: SimOpts = DEFAULT_SIM): Trade[] {
   const o = { ...DEFAULT_SIM, ...opts };
+  const sigs = o.runPastTarget ? sigs0.map(withRunPastTarget) : sigs0;
   const bars = c.bars;
   const n = bars.length;
   const base = inst.spreadPips * inst.pip;

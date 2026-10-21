@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { mergeBars, parseYahoo } from '../src/forex/data';
-import { equityCurve, rStats, runSeries } from '../src/forex/engine';
+import { DEFAULT_SIM, equityCurve, rStats, runSeries } from '../src/forex/engine';
 import { verdictFor } from '../src/forex/lab';
 import { STRATEGIES } from '../src/forex/strategies';
 import { buildCtx, to4h } from '../src/forex/ta';
 import { INSTRUMENTS, type Bar, type Trade } from '../src/forex/types';
+
+// v27.8: these tests pin the exit AT the target (the run-past-target trail is tested in forex-run-past-tp)
+DEFAULT_SIM.runPastTarget = false;
 
 const H = 3_600_000;
 const T0 = Date.UTC(2025, 0, 6); // a Monday

@@ -369,7 +369,6 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
         </div>
       </div>
       {d?.labError && <p className="mt-3 rounded-lg bg-critical/10 px-3 py-2 text-xs text-down">Last hourly test failed {agoShort(d.labError.t, now)} ago: {d.labError.msg}</p>}
-      {d?.why && <WhyLine why={d.why} />}
 
       {/* P&L strip: the money, always on the home */}
       {pnl?.periods && (
@@ -379,9 +378,6 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
           ))}
         </div>
       )}
-
-      {/* v20.2: the plan, market by market — what it is waiting for on each one */}
-      {d?.plan && <PlanBoard plan={d.plan} focus={picked} onPick={onPick} />}
 
       {/* the big screen */}
       <div className="cr-screen relative mt-4 overflow-hidden rounded-xl border border-line bg-surface-2">
@@ -434,6 +430,9 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
         )}
         </div>
       </div>
+
+      {/* v20.2: the plan, market by market — what it is waiting for on each one (v27.8: under the chart) */}
+      {d?.plan && <PlanBoard plan={d.plan} focus={picked} onPick={onPick} />}
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
         <Link to={`${wsBase()}/bot`} className="text-accent-text hover:underline">Trades</Link>
         <Link to={`${wsBase()}/news`} className="text-accent-text hover:underline">News desk</Link>

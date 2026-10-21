@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { runSeries, simulate, signalsFor, spreadMult } from '../src/forex/engine';
+import { DEFAULT_SIM, runSeries, simulate, signalsFor, spreadMult } from '../src/forex/engine';
 import { applyExit, EXITS } from '../src/forex/exits';
 import { allowFor, blockReason, type FilterEnv } from '../src/forex/filters';
 import { lastWeekdayOfMonth, pairZ, STRATEGIES, strategyById, styleOf, type Strategy } from '../src/forex/strategies';
@@ -12,6 +12,9 @@ import { marketClock } from '../src/forex/calendar';
 import { buildStrength } from '../src/forex/strength';
 import { INSTRUMENTS, type Bar, type Signal } from '../src/forex/types';
 import { VENUE_FEES } from '../src/forex/venue-fees';
+
+// v27.8: these tests pin the exit AT the target (the run-past-target trail is tested in forex-run-past-tp)
+DEFAULT_SIM.runPastTarget = false;
 // v26: these tests pin exact R / USD numbers of other features — the venue fee is tested on its own (forex-venue-fees)
 VENUE_FEES.on = false;
 
