@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { useApi } from '../hooks/useApi';
 import { Badge, Card } from './ui';
 import { botAcct } from '../lib/ws';
+import { digitsOf } from '../lib/markets';
 
 interface PlanSignal { tf: string; name: string; side: 1 | -1; verdict: string; tone: 'go' | 'wait' | 'no' }
 interface PlanMarket { id: string; label: string; status: 'trading' | 'waiting' | 'blocked' | 'watching'; headline: string; lean: { side: 1 | -1 | 0; why: string }; checks?: PlanCheck[]; plan?: string; signals: PlanSignal[]; blocks: string[] }
@@ -154,7 +155,7 @@ export function FxBrief({ plan, riskMode, modes, equityUsd, orders = [], names =
             <ul className="space-y-1 text-sm">
               {orders.map((o) => (
                 <li key={o.id} className="flex flex-wrap items-baseline gap-x-2">
-                  <span className="font-medium text-ink">{o.side === 1 ? 'Buy' : 'Sell'} {o.pair} at {o.limit.toFixed(o.pair.includes('JPY') ? 3 : o.pair === 'XAUUSD' ? 2 : 5)}</span>
+                  <span className="font-medium text-ink">{o.side === 1 ? 'Buy' : 'Sell'} {o.pair} at {o.limit.toFixed(digitsOf(o.pair))}</span>
                   <span className="text-ink-2">{names[o.strategy] ?? o.strategy}{o.tf ? ` (${o.tf})` : ''}</span>
                   <span className="text-xs text-muted">— {o.kind === 'pullback' ? 'waiting for a pullback' : 'limit at the signal price'}, until {clock(o.expiresAt)} · {o.riskPct}% risk</span>
                 </li>

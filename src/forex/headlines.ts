@@ -83,6 +83,11 @@ const CCY_WORDS: Array<[string, RegExp]> = [
   ['NZD', /\b(rbnz|new zealand|kiwi)\b/i],
   ['CAD', /\b(boc|bank of canada|canada|canadian|loonie|carney)\b/i],
   ['XAU', /\b(gold|bullion)\b/i],
+  // v27: US stock indices — a generic stock-market word tags all four, a named index its own
+  ['NDX', /\b(nasdaq|ndx|nq|tech stocks|big tech|nvidia|apple|microsoft|wall street|stocks|equities|s&p ?500|earnings)\b/i],
+  ['SPX', /\b(s&p|s&p ?500|spx|es futures|wall street|stocks|equities|earnings)\b/i],
+  ['DJI', /\b(dow|djia|dow jones|wall street|stocks|equities|earnings)\b/i],
+  ['RUT', /\b(russell|small caps?|small-caps?|wall street|stocks|equities)\b/i],
   // v22: coins — a generic crypto word tags all three majors; a named coin its own
   ['BTC', /\b(bitcoin|btc|crypto|cryptocurrenc\w*|coinbase|binance|stablecoin|sec v\.? |etf)\b/i],
   ['ETH', /\b(ether|ethereum|eth|crypto|cryptocurrenc\w*|coinbase|binance|stablecoin)\b/i],
@@ -133,7 +138,7 @@ export function currentExpiries(items: readonly Headline[], now: number): Expiry
 
 /** Why a NEW trade on `pair` should wait because of a recent big headline. Pure. */
 export function headlineBlock(pair: string, now: number, items: readonly Headline[], windowMin = 30): string | null {
-  const ccys = pair.startsWith('XA') ? ['USD', 'XAU'] : [pair.slice(0, 3), pair.slice(3, 6)]; // a coin: its own tag + USD
+  const ccys = pair.startsWith('XA') ? ['USD', 'XAU'] : [pair.slice(0, 3), pair.slice(3, 6)]; // an index: its own tag + USD // a coin: its own tag + USD
   for (const h of items) {
     if (h.severity !== 'high' || now - h.t > windowMin * 60_000 || h.t > now + 60_000) continue;
     if (h.ccys.some((c) => ccys.includes(c))) return `headline (${h.why}): ${h.title.slice(0, 80)}`;

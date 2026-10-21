@@ -27,6 +27,7 @@ import { fitBars, MarketChart, type ChartDrawings } from '../components/MarketCh
 import { ENTRY_SHORT, EXIT_SHORT, FILTER_SHORT, MoodCard, StrengthCard, TrendArrows, type EntryKind, type EntrySummary, type ExitKind, type ExitSummary, type FilterKind, type FilterSummary, type FinancingSummary, type HonestReport, type JudgeReport, type LockSummary, type MoodNow, type NewsStudy, type PortfolioReport, type RowStat, type StrengthNow } from '../components/FxInsights';
 import { Badge, Button, Card, Chip, Drawer, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Sparkline, Stack, StatTile, useStored } from '../components/ui';
 import { apiBase, inCrypto, wsBase } from '../lib/ws';
+import { digitsOf, usdPriced } from '../lib/markets';
 
 interface RStats { n: number; winPct: number; avgR: number; medianR: number; pf: number | null; totalR: number; maxDdR: number }
 interface Risk { riskPct: number; finalX: number; avgWeekPct: number; medianWeekPct: number; greenWeeksPct: number; bigWeeksPct: number; bestWeekPct: number; worstWeekPct: number; maxDdPct: number; blown: boolean; medianLeverage: number; weeks: number }
@@ -153,7 +154,7 @@ function mergeFast(r: Report, f: FastReport | null): Report {
   };
 }
 
-const DIGITS = (id: string) => (id.includes('JPY') ? 3 : id === 'XAUUSD' ? 2 : id === 'XAGUSD' ? 3 : 5);
+const DIGITS = digitsOf;
 const STRAT_NAME = (r: Report, id: string) => r.rows.find((x) => x.id === id)?.name ?? id;
 
 function Markets({ r, onTrade }: { r: Report; onTrade: (id: string) => void }) {
@@ -209,7 +210,7 @@ function StrengthLine({ m }: { m: MarketNow }) {
   const st = m.strength!;
   const f = (x: number | null) => (x === null ? '—' : `${x >= 0 ? '+' : ''}${x.toFixed(2)}`);
   const gap = st.gap ?? 0;
-  const metal = m.id.startsWith('XA');
+  const metal = usdPriced(m.id);
   const verdict = Math.abs(gap) < 0.15 ? 'no clear side' : gap > 0 ? `favours buying` : `favours selling`;
   return (
     <span>

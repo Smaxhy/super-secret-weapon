@@ -13,7 +13,7 @@ import { feeds } from './feeds';
 import { dkQuote } from './dukascopy';
 import { HEAT, maxRiskUnder, topCorrelated, type CorrBook } from './risk';
 import { oandaCandles, oandaPrices, oandaReady, loadOanda, type Granularity } from './oanda';
-import { CRYPTO, INSTRUMENTS, TF_MIN, instrument, isCrypto, type Bar, type Instrument, type Timeframe } from './types';
+import { INSTRUMENTS, TF_MIN, instrument, isCrypto, maxLeverageFor, type Bar, type Instrument, type Timeframe } from './types';
 import { clockFor, marketClock } from './calendar';
 import { priceShock } from './headlines';
 import { spreadMultAt } from './spreads';
@@ -1041,7 +1041,7 @@ export class Practice {
     if (!inst) return null;
     // v17.9: a live streamed price first for currency pairs (seconds old; synthetic spread like Yahoo's). Metals never:
     // the lab tests them on COMEX futures (Pyth's are spot, Yahoo's streamed futures are delayed).
-    if (inst.kind !== 'metal') {
+    if (inst.kind === 'fx' || inst.kind === 'crypto') {
       const lp = this.live.get(id);
       if (lp) {
         const now = Date.now();
@@ -1060,7 +1060,7 @@ export class Practice {
       feeds.ok('yahoo-quotes', { items: q.bars.length, asOf: q.priceT ?? null });
     } else if (feeds.allow('yahoo')) feeds.fail('yahoo-quotes', `no price for ${id}`);
     // v17: Yahoo failed → Dukascopy's 1-minute candles for a currency pair (real bid / ask), before any stale cache
-    if (!q && inst.kind !== 'metal') {
+    if (!q && inst.kind === 'fx') {
       const d = await dkQuote(inst.id).catch(() => null);
       if (d) {
         const mid = (d.bid + d.ask) / 2;
@@ -1692,7 +1692,7 @@ export class Practice {
         // less than the mode's own size, still smaller after a drawdown
         const snipe = t.sniper?.on && !a.open.some((p) => p.sniper) ? t.sniper : null;
         // v15.6: the risk mode scales the base risk, leverage and every cap together
-        const lev = Math.min(isCrypto(t.pair) ? CRYPTO.maxLeverage : Infinity, snipe ? Math.max(SNIPER.leverage, L.leverage) : Math.max(conv?.lev ?? 0, L.leverage)); // v22: coins capped
+        const lev = Math.min(maxLeverageFor(t.pair), snipe ? Math.max(SNIPER.leverage, L.leverage) : Math.max(conv?.lev ?? 0, L.leverage)); // v22: coins capped
         let riskPct = snipe ? Math.max(SNIPER.riskPct, L.riskPct) * ddF : clampRisk(L.riskPct, L.riskPct * (t.sizeF ?? 1) * ddF * (conv?.mult ?? 1), conv ? L.convMaxRiskPct / L.riskPct : undefined);
         const exp = currencyExposure(a.open, mids, v.equityUsd);
         const over = snipe ? null : exposureBlock(exp, t.pair, t.side, riskPct, L.ccyCapPct);

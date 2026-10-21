@@ -4,8 +4,9 @@
  * the candle size comes from the page's own buttons.
  */
 import { useEffect, useRef } from 'react';
+import { tvSymbol } from '../lib/markets';
 
-export const tvSymbol = (id: string) => (id === 'XAUUSD' ? 'OANDA:XAUUSD' : id === 'XAGUSD' ? 'OANDA:XAGUSD' : ['BTCUSD', 'ETHUSD', 'SOLUSD'].includes(id) ? `COINBASE:${id}` : `OANDA:${id}`);
+export { tvSymbol };
 
 export function TvChart({ pair, interval = '5', height = 460, compact = false }: { pair: string; interval?: string; height?: number; compact?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);

@@ -5,7 +5,7 @@
  */
 import { STRETCH } from './stretch';
 import type { Ctx } from './ta';
-import { isCrypto, type Signal } from './types';
+import { isCrypto, isFutures, isIndex, type Signal } from './types';
 import { nyOffsetMs } from './ny-time';
 
 /**
@@ -273,6 +273,11 @@ export const STAT_ARB_PAIRS = ['EURGBP', 'AUDNZD', 'EURCHF'];
 export function roundStep(pair: string): number {
   if (pair === 'XAUUSD') return 10;
   if (pair === 'XAGUSD') return 0.5;
+  // v27: index round numbers (stops and take-profits cluster there too)
+  if (pair === 'NDXUSD') return 100;
+  if (pair === 'SPXUSD') return 25;
+  if (pair === 'DJIUSD') return 250;
+  if (pair === 'RUTUSD') return 10;
   if (pair === 'BTCUSD') return 1000;
   if (pair === 'XRPUSD' || pair === 'ADAUSD') return 0.1;
   if (pair === 'DOGEUSD') return 0.01;
@@ -735,7 +740,7 @@ export const STRATEGIES: Strategy[] = [
     onlyHourly: true,
     signal(c, i) {
       const p = c.pair;
-      if (p.length < 6 || p.startsWith('XA')) return null;
+      if (p.length < 6 || isFutures(p)) return null;
       const base = p.slice(0, 3);
       const quote = p.slice(3, 6);
       const closeHour = (c.hour[i]! + 1) % 24; // this bar closes at the next hour
@@ -756,7 +761,7 @@ export const STRATEGIES: Strategy[] = [
     onlyHourly: true,
     signal(c, i) {
       const p = c.pair;
-      if (!p.includes('USD') || p.startsWith('XA')) return null;
+      if (!p.includes('USD') || isFutures(p)) return null;
       if ((c.hour[i]! + 1) % 24 !== 14) return null;
       return atrSig(c, i, p.startsWith('USD') ? 1 : -1, 1.5, null, { maxBars: 2 });
     },
@@ -1029,7 +1034,7 @@ export const STRATEGIES: Strategy[] = [
     onlyHourly: true,
     signal(c, i) {
       const p = c.pair;
-      if (!c.ext || !p.includes('USD') || p.startsWith('XA')) return null;
+      if (!c.ext || !p.includes('USD') || isFutures(p)) return null;
       if ((c.hour[i]! + 1) % 24 !== 14 || !lastWeekdayOfMonth(c.bars[i]!.t)) return null;
       const m = c.ext.spxMtd[i]!;
       if (!ok(m) || Math.abs(m) < 2) return null;
@@ -1352,8 +1357,13 @@ export const NEWS_TRADERS = new Set(['news_drift', 'news_fade']);
 export const tradesNews = (strategy: string | undefined): boolean => !!strategy && NEWS_TRADERS.has(strategy);
 
 export const NOT_FOR_CRYPTO = new Set(['london_breakout', 'ny_open', 'pdh_pdl', 'judas_swing', 'ny_q3', 'amd_daily', 'asian_fade', 'local_hours', 'fix_flow', 'month_end_flow', 'weekend_gap', 'nr7_break', 'carry_trend', 'cot_squeeze', 'stretch_squeeze', 'ccy_momentum', 'stat_arb', 'mom_blend', 'oil_cad', 'yield_jpy', 'stocks_jpy', 'dollar_gold', 'turtle_soup']);
+/** v27: rules built on currency baskets, central-bank rates, the CFTC currency report, FX-only flows (the London fix,
+ * month-end re-hedging, local currency hours) or one named cross never run on a stock index. Session / ICT rules do:
+ * the New York open is the index market's own open. */
+export const NOT_FOR_INDEX = new Set(['local_hours', 'fix_flow', 'month_end_flow', 'carry_trend', 'cot_squeeze', 'stretch_squeeze', 'ccy_momentum', 'stat_arb', 'oil_cad', 'yield_jpy', 'stocks_jpy', 'dollar_gold', 'asian_fade']);
 export function runsOn(s: Pick<Strategy, 'onlyHourly' | 'slow' | 'id' | 'charts'>, tf: string, pair?: string): boolean {
   if (pair && isCrypto(pair) && NOT_FOR_CRYPTO.has(s.id)) return false;
+  if (pair && isIndex(pair) && NOT_FOR_INDEX.has(s.id)) return false;
   if (s.charts) return s.charts.includes(tf);
   if (s.onlyHourly) return tf === '1h';
   if (s.slow) return tf === '1h' || tf === '4h';

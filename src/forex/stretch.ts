@@ -7,7 +7,7 @@
  * bar only sees days that ended by its close. Pure.
  */
 import { toDaily } from './mtf';
-import type { Bar } from './types';
+import { isFutures, type Bar } from './types';
 
 /** fixed before any real result */
 export const STRETCH = { momDays: 63, rankDays: 520, minRank: 120, minPairs: 3, maxAgeDays: 4, crowdMax: 1.2, squeezeAt: 1.5 };
@@ -26,7 +26,7 @@ export function buildStretch(pairsH1: Readonly<Record<string, readonly Bar[]>>):
   const daily = new Map<string, Map<number, number>>();
   const endSet = new Set<number>();
   for (const [id, bars] of Object.entries(pairsH1)) {
-    if (id.length !== 6 || id.startsWith('XA') || bars.length < 24 * 70) continue;
+    if (id.length !== 6 || isFutures(id) || bars.length < 24 * 70) continue;
     const m = new Map<number, number>();
     for (const d of toDaily(bars)) {
       m.set(d.end, d.c);
@@ -105,7 +105,7 @@ export function buildStretch(pairsH1: Readonly<Record<string, readonly Bar[]>>):
 /** A pair's stretch at each bar's close: base − quote (−2 … +2); NaN for metals, unknown or > 4 days old. Pure. */
 export function crowdPxSeries(book: StretchBook | null | undefined, pair: string, bars: readonly Bar[], barMin: number): Float64Array {
   const out = new Float64Array(bars.length).fill(NaN);
-  if (!book || pair.startsWith('XA')) return out;
+  if (!book || isFutures(pair)) return out;
   const b = book.crowd[pair.slice(0, 3)];
   const q = book.crowd[pair.slice(3, 6)];
   if (!b || !q) return out;

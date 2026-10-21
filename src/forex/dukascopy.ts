@@ -11,7 +11,7 @@
 import type Redis from 'ioredis';
 import { getHistoricalRates } from 'dukascopy-node';
 import { moduleLogger } from '../lib/logger';
-import { INSTRUMENTS, STRENGTH_PAIRS, instrument, type Bar } from './types';
+import { INSTRUMENTS, STRENGTH_PAIRS, instrument, isFutures, type Bar } from './types';
 import { profileFrom, setSpreadProfile } from './spreads';
 import { marketClock } from './calendar';
 import { feeds } from './feeds';
@@ -129,7 +129,7 @@ const dkQuoteCache = new Map<string, { at: number; q: DkQuote | null }>();
  * (its metals are spot, Yahoo's are futures). Cached 30 s per market; nothing while its breaker is open. Pure-ish.
  */
 export async function dkQuote(id: string, now = Date.now(), fetcher: Fetch = fetchDkM1): Promise<DkQuote | null> {
-  if (id.startsWith('XA')) return null;
+  if (isFutures(id)) return null;
   const c = dkQuoteCache.get(id);
   if (c && now - c.at < 30_000) return c.q;
   if (!feeds.allow('dukascopy')) return c?.q ?? null;
@@ -393,7 +393,7 @@ export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: 
     }
   }
   const meta: DkMeta = { at: now, ids: {} };
-  const ids = [...INSTRUMENTS.filter((i) => i.kind !== 'crypto').map((i) => i.id), ...STRENGTH_PAIRS.map((p) => p.id)];
+  const ids = [...INSTRUMENTS.filter((i) => i.kind === 'fx' || i.kind === 'metal').map((i) => i.id), ...STRENGTH_PAIRS.map((p) => p.id)];
   const histFrom = now - DK.historyDays * DAY;
   const slack = DK.slackDays * DAY;
   for (const id of ids) {

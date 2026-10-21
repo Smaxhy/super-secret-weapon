@@ -173,15 +173,17 @@ export function cotScoreAt(xs: ReadonlyArray<readonly [number, number]> | undefi
 }
 
 const legs = (pair: string): [string, string] => [pair.slice(0, 3), pair.slice(3, 6)];
+/** v27: bases with no policy rate or CFTC currency row: metals and the US indices (financed at −USD, like a CFD) */
+const NO_RATE = new Set(['XAU', 'XAG', 'NDX', 'SPX', 'DJI', 'RUT']);
 
 /** Carry of a pair (base rate − quote rate, %) at each bar's close; metals pay nothing (−USD rate). NaN = unknown. Pure. */
 export function carrySeries(m: MacroData | null, pair: string, bars: readonly Bar[], barMin: number): Float64Array {
   const out = new Float64Array(bars.length).fill(NaN);
   if (!m) return out;
   const [b, q] = legs(pair);
-  const rb = b === 'XAU' || b === 'XAG' ? null : m.rates[b];
+  const rb = NO_RATE.has(b) ? null : m.rates[b];
   const rq = m.rates[q];
-  if ((!rb && b !== 'XAU' && b !== 'XAG') || !rq) return out;
+  if ((!rb && !NO_RATE.has(b)) || !rq) return out;
   for (let i = 0; i < bars.length; i++) {
     const t = bars[i]!.t + barMin * 60_000;
     const vb = rb ? valueAt(rb, t, MACRO.rateMaxAgeDays * DAY) : 0;
@@ -201,7 +203,7 @@ export function cotSeries(m: MacroData | null, pair: string, bars: readonly Bar[
   const out = new Float64Array(bars.length).fill(NaN);
   if (!m) return out;
   const [b, q] = legs(pair);
-  if (b === 'XAU' || b === 'XAG') return out;
+  if (NO_RATE.has(b)) return out;
   const sb = b === 'USD' ? null : m.cot[b];
   const sq = q === 'USD' ? null : m.cot[q];
   if ((b !== 'USD' && !sb) || (q !== 'USD' && !sq)) return out;

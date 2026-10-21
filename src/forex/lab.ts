@@ -37,7 +37,7 @@ import { buildCtx, to4h, type Ctx } from './ta';
 import { drawingsFor, type Drawings } from './drawings';
 import { applyDesks, buildDesks, type MarketDesk } from './desks';
 import { ledgerRows } from './practice';
-import { INSTRUMENTS, MOOD_SYMBOLS, STRENGTH_PAIRS, TF_MIN, type Bar, type Instrument, type Signal, type Timeframe, type Trade, isCrypto } from './types';
+import { INSTRUMENTS, MOOD_SYMBOLS, STRENGTH_PAIRS, TF_MIN, type Bar, type Instrument, type Signal, type Timeframe, type Trade, isCrypto, isFutures } from './types';
 import { buildStrength, gapSeries, scoreAt, strengthNow, type StrengthBook, type StrengthNow } from './strength';
 import { buildStretch, crowdPxSeries, type StretchBook } from './stretch';
 import { filterHmm, hmmRegime, hmmReturns, type HmmModel } from './hmm';
@@ -1494,7 +1494,7 @@ export class ForexLab {
     // where the two sources agree (fill.ts; metals never — futures vs spot)
     const yahooById = new Map<string, Bar[]>();
     for (const id of [...this.insts.map((i) => i.id), ...STRENGTH_PAIRS.map((p) => p.id)]) yahooById.set(id, await loadBars(this.redis, id));
-    const lagging = [...yahooById].filter(([id, b]) => !id.startsWith('XA') && !isCrypto(id) && (b.length < FILL.bootstrapBars || (marketClock(nowT).open && dataAgeOf(id, '1h', b, nowT, HOUR).status === 'stale'))).map(([id]) => id);
+    const lagging = [...yahooById].filter(([id, b]) => !isFutures(id) && !isCrypto(id) && (b.length < FILL.bootstrapBars || (marketClock(nowT).open && dataAgeOf(id, '1h', b, nowT, HOUR).status === 'stale'))).map(([id]) => id);
     if (lagging.length) {
       const tail = await refreshDkTail(this.redis, lagging, nowT).catch(() => ({}));
       log.info({ lagging, tail }, 'forex: Yahoo behind on some markets, Dukascopy tail fetched');

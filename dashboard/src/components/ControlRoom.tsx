@@ -25,6 +25,7 @@ import { useTab } from './ui';
 import type { SystemData } from './SystemHealth';
 import type { JudgeReport, RiskSummary, RollReport, SniperReport } from './FxInsights';
 import { apiBase, botAcct, wsBase } from '../lib/ws';
+import { digitsOf, usdPriced } from '../lib/markets';
 
 // ── the bot's own data (the same shapes the Auto-bot page reads) ──
 interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; pnlPerPx?: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number; tf?: string; locked?: boolean }
@@ -57,7 +58,7 @@ interface Clock { open: boolean; minutesToChange: number; noNewTrades: boolean; 
 interface Head { t: number; title: string; link: string; source: string; ccys: string[]; severity: 'high' | 'normal' }
 interface CalData { at: number; clock: Clock; events: Ev[]; headlines?: Head[] }
 
-const dp = (id: string) => (id.includes('JPY') ? 3 : id === 'XAUUSD' ? 2 : id === 'XAGUSD' ? 3 : 5);
+const dp = digitsOf;
 const usd = (x: number) => `${x < 0 ? '−' : x > 0 ? '+' : ''}$${Math.abs(x).toFixed(2)}`;
 const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink-2');
 const clock = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -407,7 +408,7 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
               <span className={`text-xs ${tone(fm.change24hPct)}`}>{fm.change24hPct >= 0 ? '+' : ''}{fm.change24hPct.toFixed(2)}% 24 h</span>
               {live && <Badge tone="up">live</Badge>}
               {fp && <Badge tone={fp.status === 'trading' ? 'up' : fp.status === 'waiting' ? 'warn' : fp.status === 'blocked' ? 'down' : 'neutral'}>{fp.status === 'trading' ? 'in a trade' : fp.status}</Badge>}
-              <span className="text-xs text-muted">{fm.trend === 'up' ? 'uptrend' : fm.trend === 'down' ? 'downtrend' : 'sideways'} · RSI {Math.round(fm.rsi)} · ATR {fm.atrPips.toFixed(fm.id.includes('JPY') || fm.id.startsWith('XA') ? 0 : 1)} pips{fm.strength?.gap != null ? ` · strength ${fm.strength.gap >= 0 ? '+' : ''}${fm.strength.gap.toFixed(2)}` : ''}</span>
+              <span className="text-xs text-muted">{fm.trend === 'up' ? 'uptrend' : fm.trend === 'down' ? 'downtrend' : 'sideways'} · RSI {Math.round(fm.rsi)} · ATR {fm.atrPips.toFixed(fm.id.includes('JPY') || usdPriced(fm.id) ? 0 : 1)} pips{fm.strength?.gap != null ? ` · strength ${fm.strength.gap >= 0 ? '+' : ''}${fm.strength.gap.toFixed(2)}` : ''}</span>
             </div>
             <div className="px-1 pb-1">
               {chartW > 0 && <MarketChart bars={fitBars(fm.bars, chartW, 7)} drawings={fm.drawings} trades={trades} digits={digits} height={chartW < 640 ? 280 : 360} width={chartW - 10} live={price} timeAxis interactive tradeLabels={trades.length > 0} entryMarker={trades.length > 0} />}

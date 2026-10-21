@@ -758,6 +758,20 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27 US stock indices on the forex desk (Oct 21, owner: "I want it to trade Nasdaq too, Nasdaq 100 etc")
+`INSTRUMENTS` + kind **'index'**: NDXUSD Nasdaq 100 (NQ=F), SPXUSD S&P 500 (ES=F), DJIUSD Dow 30 (YM=F), RUTUSD Russell 2000
+(RTY=F) — Yahoo hourly CME futures, 730 days, graded by the forex lab like every market (18 markets; nothing trades one until
+a row clears the bar on it). Ids end in USD so every base / quote reading sees a dollar-priced asset. types.ts: `isIndex`,
+`isFutures` (metals + indices: no strength / CFTC / Dukascopy / Pyth / streamed price — Yahoo's futures quotes are delayed,
+`feedDelayOk` covers 1h / 4h; the CME daily halt hour skipped in `lagBars`; judge 'metal' group), `INDEX.maxLeverage` 50 +
+`maxLeverageFor` (bot leverage cap), `digitsOf`. `NOT_FOR_INDEX` (strategies.ts, in `runsOn`): currency-basket / rate / CFTC /
+FX-flow rules (local_hours, fix_flow, month_end_flow, carry_trend, cot_squeeze, stretch_squeeze, ccy_momentum, stat_arb,
+oil_cad, yield_jpy, stocks_jpy, dollar_gold, asian_fade); ICT / NY-open rules run. Financing −USD rate like a CFD (macro.ts
+`NO_RATE`), USD calendar news + headlines pause them (headlines tag NDX / SPX / DJI / RUT on stock-market words), risk-on in
+the mood check (`RISK_CLASS` NDX 1, SPX .8, DJI .6, RUT 1), round numbers 100 / 25 / 250 / 10 points, 1 unit = $1 a point.
+Venue fee `VENUE_FEES.indexPct` 0.03% a side — NOT confirmed (search found no gTrade index rate). Dashboard `lib/markets.ts`
+(digits / pip / TradingView `OANDA:NAS100USD` etc. for every market, replaces five copies), Trade by hand lists the indices,
+news chips NDX / SPX. Lab run ≈ 30% longer (18 markets). tests/forex-indices (7).
 ## v26.5 gTrade fees confirmed, bigger trades, Turbo risk (Oct 21, owner: "check gTrade's real fees, also use more risk when
 you trade for more profit")
 Fees: gTrade's own docs (docs.gains.trade → Fees & Spread, via search extracts) = 0.012% open + 0.012% close of the position

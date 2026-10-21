@@ -160,7 +160,7 @@ export class YahooLive {
   lastTickAt = 0;
 
   constructor(private readonly makeSocket: SocketFactory = realSocket, private readonly clock: () => number = Date.now, insts: readonly Instrument[] = INSTRUMENTS) {
-    for (const i of insts) if (i.kind !== 'metal') this.bySymbol.set(i.yahoo.toUpperCase(), i);
+    for (const i of insts) if (i.kind === 'fx' || i.kind === 'crypto') this.bySymbol.set(i.yahoo.toUpperCase(), i);
   }
 
   get pairs(): string[] {

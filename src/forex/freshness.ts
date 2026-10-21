@@ -4,7 +4,7 @@
  * (open ones keep their stops and targets). Pure.
  */
 import { clockFor, nyOffsetMs } from './calendar';
-import type { Bar } from './types';
+import { isFutures, type Bar } from './types';
 
 export const FRESH = {
   /** bars behind before a market counts as stale, per chart */
@@ -27,7 +27,7 @@ export function lagBars(id: string, lastT: number | null, now: number, barMs: nu
   const want = expectedLastBarT(now, barMs);
   if (lastT === null) return cap;
   let n = 0;
-  const metal = id.startsWith('XA');
+  const metal = isFutures(id); // v27: CME indices share the metals' daily halt hour
   for (let t = want; t > lastT && n < cap; t -= barMs) {
     if (!clockFor(id, t + barMs / 2).open) continue;
     if (metal && barMs <= 3_600_000 && metalHalt(t)) continue;

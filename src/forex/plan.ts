@@ -11,7 +11,7 @@ import type { MarketNow, RunNote } from './lab';
 import type { MoodNow } from './mood';
 import type { PracticePosition, ResumeItem, SyncReport } from './practice';
 import { tfOfRef } from './practice';
-import { INSTRUMENTS, TF_MIN, instrument, isCrypto, type Timeframe } from './types';
+import { INSTRUMENTS, TF_MIN, digitsOf, instrument, isCrypto, type Timeframe } from './types';
 import { STRENGTH_MIN } from './filters';
 
 const MIN = 60_000;
@@ -143,7 +143,7 @@ const EXIT_RULE: Record<string, string> = {
 };
 
 /** Price with the market's usual digits. */
-export const fmtPx = (pair: string, x: number) => x.toFixed(pair.includes('JPY') ? 3 : pair === 'XAUUSD' ? 2 : pair === 'XAGUSD' ? 3 : 5);
+export const fmtPx = (pair: string, x: number) => x.toFixed(digitsOf(pair));
 const pips = (pair: string, d: number) => {
   const pip = instrument(pair)?.pip ?? 0.0001;
   return Math.round((Math.abs(d) / pip) * 10) / 10;

@@ -8,7 +8,7 @@ import { Badge, Card, Chip, Stack, useStored } from './ui';
 import { Icon } from './Icon';
 import { CcyTag, agoWords, inWords, nextBig, useNews, type NewsEv, type NewsHead } from './NewsTape';
 
-const CCYS = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'NZD', 'CAD', 'CHF', 'XAU'] as const;
+const CCYS = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'NZD', 'CAD', 'CHF', 'XAU', 'NDX', 'SPX'] as const;
 type Ccy = (typeof CCYS)[number] | 'all';
 const time = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const dayOf = (t: number) => new Date(t).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' });

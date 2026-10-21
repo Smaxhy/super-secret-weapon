@@ -10,7 +10,7 @@ import { boost, cutPoints, DEFAULT_TREE_OPTIONS, sigmoid, treeValue, type Matrix
 import type { FilterEnv } from './filters';
 import type { Ctx } from './ta';
 import { volRatioAt } from './engine';
-import { instrument, TF_MIN, type Timeframe } from './types';
+import { instrument, isFutures, TF_MIN, type Timeframe } from './types';
 import { roundStep } from './strategies';
 import { spreadMultAt } from './spreads';
 
@@ -140,7 +140,7 @@ export function judgeFeatures(c: Ctx, env: FilterEnv | null, i: number, side: 1 
   set('prior', extra.prior);
   set('form', extra.form);
   set('jpy', c.pair.includes('JPY') ? 1 : 0);
-  set('metal', c.pair.startsWith('XA') ? 1 : 0);
+  set('metal', isFutures(c.pair) ? 1 : 0); // v27: indices share the metals' group (no strength / positioning)
   set('tf', TF_MIN[extra.tf] / 60);
   const risk = Math.abs(px - stop);
   set('targetR', target === null || !(risk > 0) ? 0 : Math.abs(target - px) / risk);

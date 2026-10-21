@@ -11,6 +11,7 @@ import { ReadChip, TradeReadPanel, useTradeReads } from './FxTradeRead';
 import { TvChart } from './TvChart';
 import { fitBars, MarketChart, type ChartDrawings } from './MarketChart';
 import { Badge, Button, Card, Chip, NumberInput, Row, Rows, Stack, StatTile, ToggleRow, useStored } from './ui';
+import { digitsOf, pipOf, usdPriced } from '../lib/markets';
 
 interface Quote { id: string; mid: number; bid: number; ask: number; t: number; dayChangePct: number | null; source: 'oanda' | 'yahoo' | 'dukascopy' | 'pyth' | 'yahoo-live'; tradeable?: boolean }
 interface Pos { id: string; pair: string; side: 1 | -1; units: number; entry: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; px: number; pnlUsd: number; pnlPct: number; /** v17.9 */ pnlPerPx?: number; closePending?: { reason: string; at: number } | null; /** v17.11 profit lock */ lock?: { at: number; to: number; gap: number } | null; locked?: boolean; /** v18 overnight financing booked so far */ swapUsd?: number }
@@ -18,11 +19,10 @@ interface Closed { id: string; pair: string; side: 1 | -1; entry: number; exit: 
 interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; marginLevelPct: number | null; positions: Pos[]; closed: Closed[]; /** v17.11 (missing = on) */ profitLock?: boolean }
 interface Data { account: Acct | null; quotes: Record<string, Quote> }
 
-const PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'USDCHF', 'NZDUSD', 'EURJPY', 'GBPJPY', 'EURGBP', 'XAUUSD', 'XAGUSD'];
+const PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'USDCHF', 'NZDUSD', 'EURJPY', 'GBPJPY', 'EURGBP', 'XAUUSD', 'XAGUSD', 'NDXUSD', 'SPXUSD', 'DJIUSD', 'RUTUSD'];
 const LEVS = [1, 10, 30, 50, 100, 200, 500];
 const TFS: Array<[string, string]> = [['1', '1m'], ['5', '5m'], ['15', '15m'], ['60', '1h'], ['240', '4h'], ['D', '1D']];
-const dp = (id: string) => (id.includes('JPY') ? 3 : id === 'XAUUSD' ? 2 : id === 'XAGUSD' ? 3 : 5);
-const pipOf = (id: string) => (id.includes('JPY') ? 0.01 : id === 'XAUUSD' ? 0.01 : id === 'XAGUSD' ? 0.001 : 0.0001);
+const dp = digitsOf;
 const usd = (x: number) => `${x < 0 ? '−' : ''}$${Math.abs(x).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink-2');
 
@@ -61,7 +61,7 @@ export function FxTrade() {
   // what 1 pip is worth for this size (approx., USD-quoted pairs exact)
   const pipValue = useMemo(() => {
     if (!q) return null;
-    const units = pair.startsWith('USD') ? notional : notional / (pair === 'XAUUSD' || pair === 'XAGUSD' ? q.mid : (data?.quotes?.[`${pair.slice(0, 3)}USD`]?.mid ?? q.mid));
+    const units = pair.startsWith('USD') ? notional : notional / (usdPriced(pair) ? q.mid : (data?.quotes?.[`${pair.slice(0, 3)}USD`]?.mid ?? q.mid));
     const quote = pair.slice(3);
     const qUsd = quote === 'USD' ? 1 : quote === 'JPY' ? 1 / (data?.quotes?.USDJPY?.mid ?? 150) : quote === 'GBP' ? (data?.quotes?.GBPUSD?.mid ?? 1.25) : 1 / (data?.quotes?.[`USD${quote}`]?.mid ?? 1);
     return units * p * qUsd;

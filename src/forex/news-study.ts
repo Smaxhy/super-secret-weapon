@@ -8,6 +8,7 @@
 import type { CalEvent } from './calendar';
 import { shockDir } from './strategies';
 import type { Ctx } from './ta';
+import { isFutures } from './types';
 
 export const HORIZONS = [1, 4, 12, 24];
 
@@ -68,7 +69,7 @@ export function newsStudy(series: ReadonlyArray<{ pair: string; ctx: Ctx }>, eve
   const hits: Hit[] = [];
   const big = events.filter((e) => e.impact === 'High' || (e.impact === 'Medium' && eventKind(e.title)?.key === 'speech'));
   for (const { pair, ctx: c } of series) {
-    const ccys = pair.startsWith('XA') ? ['USD'] : [pair.slice(0, 3), pair.slice(3, 6)];
+    const ccys = isFutures(pair) ? ['USD'] : [pair.slice(0, 3), pair.slice(3, 6)];
     const n = c.bars.length;
     for (let i = 20; i < n; i++) {
       const d = shockDir(c, i);

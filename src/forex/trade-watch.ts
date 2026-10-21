@@ -11,12 +11,12 @@ import type { AccountView, AcctId, Practice, Quote } from './practice';
 import { STRATEGIES, styleOf } from './strategies';
 import { aiDue, FX_AI, type AiRead, type TradeAi, type TradeAiContext } from './trade-ai';
 import { liveRead, type TradeRead } from './trade-read';
-import { instrument } from './types';
+import { digitsOf, instrument } from './types';
 
 const log = moduleLogger('forex-trade-watch');
 
 type Pos = AccountView['positions'][number];
-const digitsOf = (pair: string) => (pair.includes('JPY') ? 3 : pair === 'XAUUSD' ? 2 : pair === 'XAGUSD' ? 3 : 5);
+
 
 export interface WatchSources {
   markets: () => readonly MarketNow[];

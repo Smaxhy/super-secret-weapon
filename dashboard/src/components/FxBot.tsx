@@ -21,6 +21,7 @@ import { Badge, Button, Card, Empty, Row, Rows, Stack, StatTile, Tabs, Timeline,
 import { AdvancedFold, FxBrief } from './FxBrief';
 import { ConvictionCard, DeskCard, PortfolioCard, RiskCard, RollingCard, SniperCard, type ConvictionReport, type DeskReport, type JudgeReport, type Ledger, type PortfolioReport, type RiskSummary, type RollReport, type SniperReport } from './FxInsights';
 import { apiBase, botAcct } from '../lib/ws';
+import { digitsOf } from '../lib/markets';
 
 interface Conviction { tier: 'normal' | 'sure' | 'verySure'; conf: number; of: number; mult: number; lev: number | null }
 interface Pos { id: string; pair: string; side: 1 | -1; entry: number; px: number; /** v17.9 */ pnlPerPx?: number; units?: number; marginUsd: number; leverage: number; stop: number | null; target: number | null; openedAt: number; pnlUsd: number; pnlPct: number; strategy?: string; riskPct?: number; tf?: string; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; closePending?: { reason: string; at: number } | null; /** v17.11 profit lock */ lock?: { at: number; to: number; gap: number } | null; locked?: boolean }
@@ -37,7 +38,7 @@ type RiskMode = 'normal' | 'aggressive' | 'max' | 'turbo';
 interface RiskLimits { label: string; riskPct: number; leverage: number; maxOpen: number; ccyCapPct: number; maxPerStrategy: number; convMaxRiskPct: number }
 interface Data { shadow?: ShadowSummary | null; why?: import('./ControlRoom').WhyReport | null; labError?: { t: number; msg: string } | null; planError?: string | null; desk?: DeskReport | null; rolling?: RollReport | null; chooser?: string; ledger?: Ledger; names?: Record<string, string>; sniper?: SniperReport | null; riskMode?: RiskMode; riskModes?: Record<RiskMode, RiskLimits>; plan?: BotPlan | null; account: Acct | null; risk?: RiskSummary | null; portfolio?: PortfolioReport | null; judge?: JudgeReport | null; conviction?: Partial<Record<'hourly' | '15m' | '1m', ConvictionReport | null>> | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
 
-const dp = (id: string) => (id.includes('JPY') ? 3 : id === 'XAUUSD' ? 2 : id === 'XAGUSD' ? 3 : 5);
+const dp = digitsOf;
 const usd = (x: number) => `${x < 0 ? '−' : ''}$${Math.abs(x).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink-2');
 const clock = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

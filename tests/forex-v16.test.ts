@@ -98,7 +98,7 @@ describe('v16 Dukascopy history', () => {
     const meta = await refreshDukascopy(asRedis(redis), now, fetcher).finally(() => {
       DK.pauseMs = pause;
     });
-    const ids = [...INSTRUMENTS.filter((i) => i.kind !== 'crypto').map((i) => i.id), ...STRENGTH_PAIRS.map((p) => p.id)]; // v22: coins aren't on Dukascopy
+    const ids = [...INSTRUMENTS.filter((i) => i.kind === 'fx' || i.kind === 'metal').map((i) => i.id), ...STRENGTH_PAIRS.map((p) => p.id)]; // v22: coins (v27: and indices) aren't on Dukascopy
     expect(Object.keys(meta.ids).sort()).toEqual(ids.sort());
     expect(calls.length).toBe(ids.length * 2 * Math.ceil(DK.historyDays / DK.chunkDays));
     const eur = await loadDk(asRedis(redis), 'EURUSD');

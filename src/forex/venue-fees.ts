@@ -15,6 +15,8 @@ export const VENUE_FEES = {
   majorPct: 0.012,
   minorPct: 0.016,
   metalPct: 0.05,
+  /** v27: US indices — NOT confirmed from gTrade's docs (search found no index rate); between FX majors and gold */
+  indexPct: 0.03,
   cryptoPct: 0,
 };
 
@@ -26,6 +28,7 @@ export function feePctPerSide(inst: Pick<Instrument, 'id' | 'kind'>): number {
   if (!VENUE_FEES.on) return 0;
   if (inst.kind === 'crypto') return VENUE_FEES.cryptoPct;
   if (inst.kind === 'metal') return VENUE_FEES.metalPct;
+  if (inst.kind === 'index') return VENUE_FEES.indexPct;
   return FX_MAJORS.has(inst.id) ? VENUE_FEES.majorPct : VENUE_FEES.minorPct;
 }
 

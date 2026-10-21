@@ -30,7 +30,7 @@ const median = (xs: number[]) => {
 
 export function fillFromDk(id: string, primary: readonly Bar[], dk: readonly DkBar[], now: number, barMs = HOUR): FillResult {
   const inst = instrument(id);
-  const fx = inst ? inst.kind !== 'metal' : !id.startsWith('XA');
+  const fx = inst ? inst.kind === 'fx' : !id.startsWith('XA');
   const plain = (b: DkBar | Bar): Bar => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c });
   if (!fx || !dk.length) return { bars: [...primary], filled: [], source: 'yahoo', reason: fx ? null : 'metals are not filled (futures vs spot)' };
   const done = dk.filter((b) => b.t + barMs <= now);

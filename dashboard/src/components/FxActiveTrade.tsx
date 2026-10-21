@@ -17,6 +17,7 @@ import { TradeReadPanel, type ReadsData } from './FxTradeRead';
 import { TvChart } from './TvChart';
 import { Badge, Button, Card, Tabs, useStored } from './ui';
 import { botAcct } from '../lib/ws';
+import { digitsOf, pipOf } from '../lib/markets';
 
 export interface ActiveConviction { tier: 'normal' | 'sure' | 'verySure'; conf: number; of: number; mult: number; lev: number | null }
 export interface ActivePos {
@@ -59,8 +60,8 @@ const GRAN_MS: Record<Gran, number> = { M1: 60_000, M5: 300_000, M15: 900_000, H
 /** the trade's own chart → a chart a step finer, so the move since the entry has enough candles */
 const DEFAULT_GRAN: Record<string, Gran> = { '1m': 'M1', '15m': 'M5', '1h': 'M15', '4h': 'H1' };
 
-export const fxDigits = (id: string) => (id.includes('JPY') ? 3 : id === 'XAUUSD' ? 2 : id === 'XAGUSD' ? 3 : 5);
-export const fxPip = (id: string) => (id.includes('JPY') ? 0.01 : id === 'XAUUSD' ? 0.01 : id === 'XAGUSD' ? 0.001 : 0.0001);
+export const fxDigits = (id: string) => digitsOf(id);
+export const fxPip = (id: string) => pipOf(id);
 export const fxUsd = (x: number, signed = false) => `${x < 0 ? '−' : signed && x > 0 ? '+' : ''}$${Math.abs(x).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 export const fxTone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink-2');
 export const sinceOpen = (t: number, now = Date.now()) => duration(Math.max(0, Math.round((now - t) / 1000))).replace(/ 0s$/, '').replace(/^(\d+m) \d+s$/, '$1');

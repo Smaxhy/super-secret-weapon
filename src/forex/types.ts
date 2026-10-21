@@ -18,8 +18,10 @@ export interface Instrument {
   pip: number;
   /** typical retail spread in pips (round trip cost = 1 spread) */
   spreadPips: number;
-  /** v22: 'crypto' = a coin against USD (24/7, no central bank, no weekend, no rollover) */
-  kind: 'fx' | 'metal' | 'crypto';
+  /** v22: 'crypto' = a coin against USD (24/7, no central bank, no weekend, no rollover).
+   * v27: 'index' = a US stock index, tested on its CME future (Yahoo NQ=F etc.): USD-priced like a metal, same
+   * Sunday-to-Friday hours with the daily 17:00–18:00 New York halt; 1 unit = $1 a point. */
+  kind: 'fx' | 'metal' | 'crypto' | 'index';
 }
 
 export const INSTRUMENTS: Instrument[] = [
@@ -38,6 +40,13 @@ export const INSTRUMENTS: Instrument[] = [
   { id: 'EURCHF', label: 'EUR/CHF', yahoo: 'EURCHF=X', pip: 0.0001, spreadPips: 1.8, kind: 'fx' },
   { id: 'XAUUSD', label: 'Gold', yahoo: 'GC=F', pip: 0.01, spreadPips: 30, kind: 'metal' },
   { id: 'XAGUSD', label: 'Silver', yahoo: 'SI=F', pip: 0.001, spreadPips: 30, kind: 'metal' },
+  // v27 (owner: "trade Nasdaq too, Nasdaq 100 etc"): US stock indices on their CME futures. Ids end in USD (like the
+  // metals and coins) so every "base / quote" reading sees an asset priced in dollars. pip = 1 point (S&P / Russell
+  // 0.1); spreads = a typical index CFD / perp quote (Nasdaq ~2 points, S&P ~0.5, Dow ~3, Russell ~0.4).
+  { id: 'NDXUSD', label: 'Nasdaq 100', yahoo: 'NQ=F', pip: 1, spreadPips: 2, kind: 'index' },
+  { id: 'SPXUSD', label: 'S&P 500', yahoo: 'ES=F', pip: 0.1, spreadPips: 5, kind: 'index' },
+  { id: 'DJIUSD', label: 'Dow 30', yahoo: 'YM=F', pip: 1, spreadPips: 3, kind: 'index' },
+  { id: 'RUTUSD', label: 'Russell 2000', yahoo: 'RTY=F', pip: 0.1, spreadPips: 4, kind: 'index' },
   // v22: crypto majors against the dollar (Yahoo spot candles, 24/7). Spreads = a typical perp / exchange taker cost.
   { id: 'BTCUSD', label: 'BTC/USD', yahoo: 'BTC-USD', pip: 1, spreadPips: 25, kind: 'crypto' },
   { id: 'ETHUSD', label: 'ETH/USD', yahoo: 'ETH-USD', pip: 0.1, spreadPips: 15, kind: 'crypto' },
@@ -56,6 +65,24 @@ export const isCrypto = (id: string) => INSTRUMENTS.some((i) => i.id === id && i
 export const CRYPTO = { maxLeverage: 20 };
 
 export const instrument = (id: string) => INSTRUMENTS.find((x) => x.id === id) ?? null;
+
+/** v27: a US stock index market. */
+export const isIndex = (id: string) => INSTRUMENTS.some((i) => i.id === id && i.kind === 'index');
+/** v27: a market tested on a CME future (metals + indices): no currency strength / positioning, no Dukascopy / Pyth /
+ * streamed price (Yahoo's futures quotes are delayed; the REST quote says by how much), the CME daily halt hour. */
+export const isFutures = (id: string) => id.startsWith('XA') || isIndex(id);
+/** v27: indices move ~1% a day like gold but gap on earnings / macro surprises — leverage capped whatever the risk mode */
+export const INDEX = { maxLeverage: 50 };
+/** v27: the most leverage a market allows (coins 20×, indices 50×, else the risk mode decides). */
+export const maxLeverageFor = (id: string) => (isCrypto(id) ? CRYPTO.maxLeverage : isIndex(id) ? INDEX.maxLeverage : Infinity);
+/** v27: price decimals for display: currency pairs to a tenth of a pip, indices to the quarter point, others to the pip. */
+export function digitsOf(id: string): number {
+  const i = instrument(id);
+  if (!i) return id.includes('JPY') ? 3 : 5;
+  if (i.kind === 'index') return 2;
+  const d = Math.max(0, Math.round(-Math.log10(i.pip)));
+  return i.kind === 'fx' ? d + 1 : d;
+}
 
 /** v13: extra crosses read ONLY for the currency strength meter (not traded). */
 export const STRENGTH_PAIRS: Array<{ id: string; yahoo: string }> = [

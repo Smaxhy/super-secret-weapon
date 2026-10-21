@@ -5,7 +5,7 @@
  * of high-impact news for a pair's currencies, none on a currency's bank holiday, none in the last 2 h before the
  * weekly close, and everything closed 30 min before it (weekend gaps skip stops).
  */
-import { isCrypto } from './types';
+import { isCrypto, isFutures } from './types';
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
 import { feeds } from './feeds';
@@ -40,7 +40,7 @@ export function parseCalendar(json: unknown): CalEvent[] {
   return out.sort((a, b) => a.t - b.t);
 }
 
-const currenciesOf = (pair: string) => (pair.startsWith('XA') ? ['USD'] : isCrypto(pair) ? ['USD', pair.slice(0, 3)] : [pair.slice(0, 3), pair.slice(3, 6)]);
+const currenciesOf = (pair: string) => (isFutures(pair) ? ['USD'] : isCrypto(pair) ? ['USD', pair.slice(0, 3)] : [pair.slice(0, 3), pair.slice(3, 6)]);
 
 /** Why a NEW trade on `pair` must wait right now (null = fine). Pure. */
 export function newsBlock(pair: string, now: number, events: readonly CalEvent[], windowMin = 30, holidaysOnly = false): string | null {

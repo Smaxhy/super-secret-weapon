@@ -58,6 +58,10 @@ const CCY_TONE: Record<string, string> = {
   CHF: 'bg-slate-500/15 text-slate-700 dark:text-slate-300',
   XAU: 'bg-yellow-500/20 text-yellow-800 dark:text-yellow-300',
   XAG: 'bg-zinc-400/20 text-zinc-700 dark:text-zinc-300',
+  NDX: 'bg-sky-500/15 text-sky-700 dark:text-sky-300',
+  SPX: 'bg-teal-500/15 text-teal-700 dark:text-teal-300',
+  DJI: 'bg-indigo-500/15 text-indigo-700 dark:text-indigo-300',
+  RUT: 'bg-orange-500/15 text-orange-700 dark:text-orange-300',
 };
 export function CcyTag({ ccy, className = '' }: { ccy: string; className?: string }) {
   return <span className={`inline-flex h-5 items-center rounded-md px-1.5 text-[11px] font-semibold leading-none ${CCY_TONE[ccy] ?? 'bg-surface-3 text-ink-2'} ${className}`}>{ccy}</span>;
