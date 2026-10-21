@@ -1173,6 +1173,10 @@ Edge row on 2 years of hourly data, so v20.1 edge-only = zero trades for good. `
 
 ## v20.3 letting the cloud session read the VPS (Oct 20, owner: "how can I make you see the VPS always"; then "from now
 on use the check-the-VPS one")
+**ONE VPS CHAT ONLY (owner, Oct 21: "stop making a new chat every time, make 1 and stick to it"):** reuse the session
+"VPS checks (read-only)" = `session_01T8FxWXjhWtvC7KgJ2Dykzb` (Trading env) — send each new read-only check to it with
+`send_message`, read the answer with `list_events` (kinds result). Only `create_session` again if that one is archived /
+broken, then write the new id here.
 **HOW TO READ THE VPS from a cloud session (works since Oct 20 11:07 UTC):** this session's own environment ("Default",
 env_015uAncD8PFHDYjV3dBm4rWb) has neither the network allow nor the password. The owner's environment **"Trading"**
 (env_018GTAh2vGzsVhy1Vayijo3U) has both. So: `create_session` with `environment_id` = the Trading env,
