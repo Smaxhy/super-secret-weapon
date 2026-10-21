@@ -758,6 +758,23 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v26.1 Hyperliquid backup prices + Dukascopy's firewall named (Oct 21, owner: "build all the rest too besides the lean rule
+changes")
+From the GitHub safety review (no new npm packages added — both use the `ws` client the bot already has):
+- `src/forex/hyperliquid.ts` `HyperliquidLive` (`hyperliquidLive`, started / stopped in index.ts): Hyperliquid's public WebSocket
+  `wss://api.hyperliquid.xyz/ws`, one `l2Book` subscription per coin (`hlCoin`: BTCUSD → BTC), best bid / ask (`parseL2`), a
+  ping every 30 s, watchdog 60 s, back-off; ticks only when the mid moves; feed 'hyperliquid-live' (provider
+  'hyperliquid-stream'). `LiveFeed(streams, backups)`: backups answer only for markets no main stream prices right now —
+  Coinbase stays the coins' main price (the coin lab is graded on Coinbase candles; Hyperliquid perps differ a little).
+  Read-only, no keys. UNVERIFIED from the sandbox: Setup → Data feeds says whether the VPS reaches it.
+- Dukascopy: the 202 is its AWS WAF bot challenge (dukascopy-node issue #261: `x-amzn-waf-action: challenge`), not a cold
+  file — v21.2's retries can't help. `probeDukascopy` returns `DK_WAF_TEXT` on 202 + that header → history refresh skipped,
+  `DkMeta.blocked` stored, next probe after `DK.blockedRetryHours` 24 (was hourly); a good refresh clears it. The maintainer's
+  `dukascopy-node@1.50.0-beta.2` passes the challenge with headless Chrome (playwright-core) — NOT adopted (one day old,
+  ~300 MB Chromium in a 2 GB container). Alternative for older history: a one-off histdata.com 1-minute download offline.
+- NOT built: `@gainsnetwork/sdk` borrowing / funding / price-impact maths (needs gTrade's live trading variables — wire it
+  with the gTrade price feed once the owner picks gTrade), ccxt (not needed), LEAN fill rules (owner: not now).
+tests/forex-hyperliquid (5). 1,359 tests.
 ## v26 the venue's fee in every test and paper trade (Oct 20 ~21:30 UTC, owner: "add the real gTrade fees"; "my trades
 aren't like 25k tho")
 `src/forex/venue-fees.ts` (`VENUE_FEES` on, gTrade per side, % of the WHOLE position = margin × leverage: majors 0.012, crosses

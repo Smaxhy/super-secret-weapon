@@ -40,6 +40,10 @@ export const DK = {
    * file gets up to `retries` more attempts `retryPauseMs` apart (≈ 16 s), a 200 with an empty body is retried too. */
   retries: 8,
   retryPauseMs: 2_000,
+  /** v26: the 202 turned out to be Dukascopy's AWS WAF bot challenge (dukascopy-node issue #261, Oct 2026: the answer
+   * carries `x-amzn-waf-action: challenge`), not a cold file — no number of retries gets through. When the probe sees it
+   * the history refresh is skipped and tried again only after this many hours (one tiny request a day). */
+  blockedRetryHours: 24,
   /** v21.2: a refresh that got NOTHING for every market counts as fresh for only this long (was `refreshHours`: one bad
    * run — e.g. the 202 warm-up above — blocked the next try for a whole day) */
   failRetryHours: 1,
@@ -60,6 +64,8 @@ export interface DkBar extends Bar {
 
 export interface DkMeta {
   at: number;
+  /** v26: the probe found Dukascopy's bot firewall in the way (the reason in words); cleared by the next good refresh */
+  blocked?: string;
   /** v17: `full` = the older history needs no more back-fill; `tries` = back-fills in a row that brought nothing older */
   ids: Record<string, { bars: number; firstT: number | null; lastT: number | null; error: string | null; full?: boolean; tries?: number; note?: string }>;
 }
@@ -343,10 +349,13 @@ export async function installSpreadProfiles(redis: Redis, now = Date.now()): Pro
  * the whole refresh was skipped — "can't reach datafeed.dukascopy.com: no answer in 10 s" for a week. */
 export const DK_HOST = 'jetta.dukascopy.com';
 export const DK_PROBE_URL = `https://${DK_HOST}/v1/candles/hour/EURUSD/BID/2024/1`;
-export async function probeDukascopy(timeoutMs = 10_000): Promise<string | null> {
+/** v26: the words for Dukascopy's bot firewall, shared by the probe and the Setup card */
+export const DK_WAF_TEXT = `blocked by Dukascopy's bot firewall (AWS WAF challenge — HTTP 202 with x-amzn-waf-action) — it only lets real browsers through, so no history can be downloaded from this server; the bot runs on Yahoo's ~2 years`;
+export async function probeDukascopy(timeoutMs = 10_000, fetchImpl: typeof fetch = fetch): Promise<string | null> {
   try {
-    const res = await fetch(DK_PROBE_URL, { method: 'GET', signal: AbortSignal.timeout(timeoutMs), headers: { 'user-agent': 'Mozilla/5.0' } });
-    // 200 = served, 202 = "accepted, preparing the file" (normal on a cold month — the downloader waits for it)
+    const res = await fetchImpl(DK_PROBE_URL, { method: 'GET', signal: AbortSignal.timeout(timeoutMs), headers: { 'user-agent': 'Mozilla/5.0' } });
+    // v26: 202 + `x-amzn-waf-action` = the WAF challenge (issue #261), not a cold file — retrying can't get through
+    if (res.status === 202 && res.headers.get('x-amzn-waf-action')) return DK_WAF_TEXT;
     if (res.status >= 500) return `${DK_HOST} answered HTTP ${res.status}`;
     if (res.status === 403 || res.status === 429) return `${DK_HOST} refused this server (HTTP ${res.status}: blocked or throttled)`;
     return null;
@@ -363,7 +372,8 @@ export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: 
     prev = null;
   }
   const allEmpty = !!prev && Object.keys(prev.ids).length > 0 && Object.values(prev.ids).every((v) => !v.bars);
-  if (prev && now - prev.at < (allEmpty ? DK.failRetryHours : DK.refreshHours) * 3_600_000) {
+  const waitH = prev?.blocked ? DK.blockedRetryHours : allEmpty ? DK.failRetryHours : DK.refreshHours;
+  if (prev && now - prev.at < waitH * 3_600_000) {
     await installSpreadProfiles(redis, now);
     return prev;
   }
@@ -373,6 +383,12 @@ export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: 
     if (why) {
       feeds.fail('dk-history', why);
       log.warn({ why }, 'dukascopy unreachable — history refresh skipped');
+      // v26: the firewall answer is remembered for a day (one probe a day instead of an hourly retry)
+      if (why === DK_WAF_TEXT) {
+        const blocked: DkMeta = { ...(prev ?? { ids: {} }), at: now, blocked: why };
+        await redis.set(DK_META, JSON.stringify(blocked)).catch(() => undefined);
+        return blocked;
+      }
       return prev ?? { at: 0, ids: {} };
     }
   }
@@ -434,7 +450,7 @@ export async function refreshDukascopy(redis: Redis, now = Date.now(), fetcher: 
     let tries = 0;
     let note: string | undefined;
     // v18.6: nothing stored and nothing came back without an error = the library swallowed a refusal
-    if (!bars.length && !error) error = 'empty answer from Dukascopy after waiting for its file prep (HTTP 202) — blocked, throttled or the feed moved; will retry';
+    if (!bars.length && !error) error = 'empty answer from Dukascopy (most likely its bot firewall: HTTP 202 challenge) — will retry';
     if (!full && have.length && backTo === null) {
       full = true; // fullKept
       tries = was?.tries ?? 0;

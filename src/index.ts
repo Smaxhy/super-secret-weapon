@@ -68,6 +68,7 @@ import { Practice } from './forex/practice';
 import { loadPythConf, pythConf, pythKey, pythLive, setPythConf, testPythKey } from './forex/pyth';
 import { yahooLive } from './forex/yahoo-live';
 import { coinbaseLive } from './forex/coinbase';
+import { hyperliquidLive } from './forex/hyperliquid';
 import { startLivePush } from './forex/live-push';
 import { ForexCalendar } from './forex/calendar';
 import { ForexHeadlines } from './forex/headlines';
@@ -406,6 +407,7 @@ async function main(): Promise<void> {
   // no account); Pyth only with an API key (Hermes refuses keyless requests since August 2026)
   yahooLive.start();
   coinbaseLive.start();
+  hyperliquidLive.start();
   // v17.12: the key pasted on the dashboard (DB) wins over the .env one; an .env key finds its endpoint first
   await loadPythConf();
   if (pythConf().source === 'env') {
@@ -974,6 +976,7 @@ async function main(): Promise<void> {
       pythLive.stop();
       yahooLive.stop();
       coinbaseLive.stop();
+      hyperliquidLive.stop();
       stopLivePush();
       await fxFeeds.persist(redis, true).catch(() => undefined);
       fxCalendar.stop();
