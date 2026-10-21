@@ -15,7 +15,7 @@ interface PlanMarket { id: string; label: string; status: 'trading' | 'waiting' 
 interface PlanLine { k: string; text: string; done?: boolean }
 interface PlanTrade { id: string; pair: string; side: 1 | -1; name: string; tf: string; pnlUsd: number; lines: PlanLine[] }
 interface Plan { at: number; summary: string; mode?: PlanMode; nextLook?: { tf: string; at: number; does: string }; next: Array<{ tf: string; at: number }>; markets: PlanMarket[]; trades: PlanTrade[] }
-type RiskMode = 'normal' | 'aggressive' | 'max';
+type RiskMode = 'normal' | 'aggressive' | 'max' | 'turbo';
 interface RiskLimits { label: string; riskPct: number; leverage: number; maxOpen: number }
 interface Order { id: string; pair: string; side: 1 | -1; limit: number; kind: 'limit' | 'pullback'; expiresAt: number; strategy: string; tf?: string; riskPct: number }
 interface PnlData { equityUsd: number; startUsd: number; periods: { today: { pnlUsd: number; trades: number; wins: number }; week: { pnlUsd: number; trades: number; wins: number } } }
@@ -108,7 +108,7 @@ export function FxBrief({ plan, riskMode, modes, equityUsd, orders = [], names =
             {modes ? (
               <>
                 In <b className="text-ink">{modes[riskMode].label}</b> mode a winning trade pays about <b className="text-ink">${need}</b> (it risks {modes[riskMode].riskPct}% of ${Math.round(eq)} a trade), so ${goal} needs about {need ? Math.max(1, Math.ceil(goal / need)) : '?'} more wins than losses today.
-                {' '}The other modes: {(['normal', 'aggressive', 'max'] as RiskMode[]).filter((m) => m !== riskMode).map((m) => `${modes[m].label} ≈ $${winUsd(m)} a win`).join(', ')} — losing trades scale the same way. Change it in "How hard it trades" below.
+                {' '}The other modes: {(['normal', 'aggressive', 'max', 'turbo'] as RiskMode[]).filter((m) => m !== riskMode && modes[m]).map((m) => `${modes[m].label} ≈ $${winUsd(m)} a win`).join(', ')} — losing trades scale the same way. Change it in "How hard it trades" below.
               </>
             ) : 'A winning trade pays about the risk it took; losses scale the same way.'}
           </p>

@@ -39,7 +39,7 @@ interface PlanLine { k: string; text: string; done?: boolean }
 interface PlanTrade { id: string; pair: string; side: 1 | -1; strategy: string; name: string; tf: string; pnlUsd: number; lines: PlanLine[] }
 interface RunNote { t: number; tf: string; signals: number; chosen: number; opened: number; skipped: number; waits: number; holding: number; note: string }
 interface BotPlan { at: number; summary: string; mode?: PlanMode; nextLook?: { tf: string; at: number; does: string }; next: Array<{ tf: string; at: number }>; markets: PlanMarket[]; trades: PlanTrade[]; timeline: RunNote[] }
-type RiskMode = 'normal' | 'aggressive' | 'max';
+type RiskMode = 'normal' | 'aggressive' | 'max' | 'turbo';
 interface RiskLimits { label: string; riskPct: number; leverage: number; maxOpen: number }
 export interface WhyReport { at: number; orders?: { placed: number; filled: number; expired: number; cancelled: number }; hoursSinceOpen: number | null; openNow: number; ordersNow: number; marketOpen: boolean; window: { hours: number; checks: number; signals: number; chosen: number; opened: number; skipped: number; waits: number; lastCheckAt: number | null }; reasons: Array<{ kind: string; label: string; n: number; example: string }>; staleMarkets: string[]; verdict: string; hint: string | null; quiet: boolean }
 export interface DeskArm { key: string; strategy: string; tf: string; prior: { n: number; totalR: number; pf: number | null }; own: { n: number; totalR: number }; mean: number; score: number; chosen: boolean }
@@ -822,8 +822,8 @@ function RiskDesk({ a, risk, mode, modes, onMode }: { a: Acct | null; risk: Risk
         <p className="text-muted">No currency exposure right now.</p>
       )}
       {modes && (
-        <div className="grid grid-cols-3 gap-1">
-          {(['normal', 'aggressive', 'max'] as RiskMode[]).map((m) => (
+        <div className="grid grid-cols-2 gap-1">
+          {(['normal', 'aggressive', 'max', 'turbo'] as RiskMode[]).filter((m) => modes[m]).map((m) => (
             <Button key={m} size="sm" variant={mode === m ? 'primary' : 'outline'} disabled={busy} onClick={() => void set(m)} className="min-w-0 px-1 leading-tight" title={`${modes[m].label}: ${modes[m].riskPct}% a trade at ${modes[m].leverage}×, up to ${modes[m].maxOpen} open`}>
               <span className="block truncate text-[11px]">{modes[m].label}</span>
               <span className="block text-[10px] opacity-80">{modes[m].riskPct}% · {modes[m].leverage}×</span>

@@ -758,6 +758,16 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v26.5 gTrade fees confirmed, bigger trades, Turbo risk (Oct 21, owner: "check gTrade's real fees, also use more risk when
+you trade for more profit")
+Fees: gTrade's own docs (docs.gains.trade → Fees & Spread, via search extracts) = 0.012% open + 0.012% close of the position
+on majors + ~0.01% spread → `VENUE_FEES` was right; third-party pages say 0.008–0.012%. Since the fee is a share of the
+position, a wider stop at the same % risk means a smaller position and a smaller fee in R → exit lab variants `roomy`
+(stop 1.6×, target 1.6×) and `swing` (stop 2.2×, target 2.5×, maxBars ×2.5, trailAtr × the stop factor) via `wider()`
+(exits.ts); picked like every exit on the FIRST 70% only (`chooseVariant`), so a strategy switches only where it tested
+better. Risk mode **turbo** (practice.ts `RISK_MODES`: 8% a trade, 500×, ccy cap 17%, heat 24%, conv cap 12%); honest
+test level 8% (`portfolioRiskPct`); dashboard mode buttons (FxBot card 2×2 / 4 across, ControlRoom risk desk, FxBrief);
+one-time `v26.5-turbo` switches the forex bot account to it (coin bot unchanged). tests/forex-roomy-exits (3).
 ## v26.4 news strategies trade the news (Oct 21, owner: "aren't you supposed to trade WITH news? why no trades")
 VPS read 10:29 UTC: 14 h without an open; 2,187 signals in 24 h, only 106 from strategies the bot trades (1 opened, 6
 skipped, 48 waits; 12 news waits = amd_daily 15m during an Iran-war headline); the hourly / 4-hour chosen list had

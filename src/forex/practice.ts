@@ -95,7 +95,7 @@ export function reentryWait(closed: readonly ClosedPractice[], strategy: string,
  * every mode — only the risk per trade, leverage and how many trades may be open at once grow. Bigger months AND bigger
  * losing months: the honest test shows each level's real weekly / monthly spread before you pick one.
  */
-export type RiskMode = 'normal' | 'aggressive' | 'max';
+export type RiskMode = 'normal' | 'aggressive' | 'max' | 'turbo';
 export interface RiskLimits {
   label: string;
   /** base risk per trade, % of equity */
@@ -116,8 +116,10 @@ export const RISK_MODES: Record<RiskMode, RiskLimits> = {
   normal: { label: 'Normal', riskPct: 1, leverage: 30, maxOpen: 8, ccyCapPct: 2.2, maxPerStrategy: 3, convMaxRiskPct: 2, maxOpenByTf: { '1m': 2, '15m': 3 }, heatCapPct: 3 },
   aggressive: { label: 'Aggressive', riskPct: 3, leverage: 100, maxOpen: 12, ccyCapPct: 6.6, maxPerStrategy: 4, convMaxRiskPct: 5, maxOpenByTf: { '1m': 3, '15m': 5 }, heatCapPct: 9 },
   max: { label: 'Max', riskPct: 5, leverage: 200, maxOpen: 15, ccyCapPct: 11, maxPerStrategy: 5, convMaxRiskPct: 8, maxOpenByTf: { '1m': 4, '15m': 6 }, heatCapPct: 15 },
+  // v26.5 (owner: "use more risk"): 8% a trade — 9 losers in a row halve the account
+  turbo: { label: 'Turbo', riskPct: 8, leverage: 500, maxOpen: 15, ccyCapPct: 17, maxPerStrategy: 5, convMaxRiskPct: 12, maxOpenByTf: { '1m': 4, '15m': 6 }, heatCapPct: 24 },
 };
-export const isRiskMode = (m: unknown): m is RiskMode => m === 'normal' || m === 'aggressive' || m === 'max';
+export const isRiskMode = (m: unknown): m is RiskMode => m === 'normal' || m === 'aggressive' || m === 'max' || m === 'turbo';
 export const limitsFor = (m: RiskMode | undefined): RiskLimits => RISK_MODES[m ?? 'normal'] ?? RISK_MODES.normal;
 
 /** The chart of a bot trade from its lab ref (`strategy:tf:pair:entryT`). */

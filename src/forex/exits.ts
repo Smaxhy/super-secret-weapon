@@ -9,8 +9,8 @@
 import type { Ctx } from './ta';
 import type { Signal } from './types';
 
-export type ExitKind = 'designed' | 'breakeven' | 'scale' | 'tight' | 'runner' | 'quick' | 'wide' | 'trail_tp' | 'half_trail' | 'trail_sl';
-export const EXITS: ExitKind[] = ['designed', 'breakeven', 'scale', 'tight', 'runner', 'quick', 'wide', 'trail_tp', 'half_trail', 'trail_sl'];
+export type ExitKind = 'designed' | 'breakeven' | 'scale' | 'tight' | 'runner' | 'quick' | 'wide' | 'trail_tp' | 'half_trail' | 'trail_sl' | 'roomy' | 'swing';
+export const EXITS: ExitKind[] = ['designed', 'breakeven', 'scale', 'tight', 'runner', 'quick', 'wide', 'trail_tp', 'half_trail', 'trail_sl', 'roomy', 'swing'];
 export const EXIT_LABEL: Record<ExitKind, string> = {
   designed: 'as designed',
   breakeven: 'stop to break-even at +1R',
@@ -22,6 +22,8 @@ export const EXIT_LABEL: Record<ExitKind, string> = {
   trail_tp: 'trailing take-profit: at the target the stop locks behind it and trails',
   half_trail: 'half off at the target, the rest trails',
   trail_sl: 'trailing stop-loss: the stop follows the price from the start, at the target it keeps trailing',
+  roomy: 'bigger trade: stop and target 1.6× further away',
+  swing: 'swing trade: stop 2.2× and target 2.5× further away, held longer',
 };
 /**
  * The owner's exits, in order of preference: the trailing stop-loss first (v15.1, "for safety": the stop moves up with
@@ -62,7 +64,29 @@ export function applyExit(sig: Signal | null, kind: ExitKind, c: Ctx, i: number)
       // the stop follows the best close at its starting distance (1R): +1R → break-even, +2R → +1R locked, …;
       // at the target it does not close but keeps trailing (a trailing take-profit), so the winner keeps running
       return { ...sig, trailR: 1, ...(sig.target !== null ? { tpTrail: 1.5, tpFrac: 0 } : {}) };
+    case 'roomy':
+      return wider(sig, px, 1.6, 1.6);
+    case 'swing':
+      return wider(sig, px, 2.2, 2.5);
     default:
       return sig;
   }
+}
+
+/**
+ * v26.5 (owner: "use more risk when you trade for more profit"): the venue's fee is a share of the whole position, so
+ * on a tight stop it eats a big slice of every trade (≈ 0.15R on a 15-pip hourly stop). The same signal with the stop
+ * `kStop`× and the target `kTarget`× further away risks the same money on a smaller position — the fee shrinks in R by
+ * `kStop` — and aims for a bigger move. Trails widen with the stop, time limits stretch with the target. Pure.
+ */
+function wider(sig: Signal, px: number, kStop: number, kTarget: number): Signal {
+  const stop = px - (px - sig.stop) * kStop;
+  if ((sig.side === 1 && !(stop < px)) || (sig.side === -1 && !(stop > px)) || !(stop > 0)) return sig;
+  return {
+    ...sig,
+    stop,
+    target: sig.target !== null ? px + (sig.target - px) * kTarget : null,
+    ...(sig.trailAtr ? { trailAtr: sig.trailAtr * kStop } : {}),
+    ...(sig.maxBars ? { maxBars: Math.round(sig.maxBars * kTarget) } : {}),
+  };
 }

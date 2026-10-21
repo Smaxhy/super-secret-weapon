@@ -33,7 +33,7 @@ interface PlanLine { k: string; text: string; done?: boolean }
 interface PlanTrade { id: string; pair: string; side: 1 | -1; strategy: string; name: string; tf: string; entry: number; px: number; pnlUsd: number; riskPct: number | null; lines: PlanLine[] }
 interface RunNote { t: number; tf: string; signals: number; chosen: number; opened: number; skipped: number; waits: number; holding: number; note: string }
 interface BotPlan { at: number; summary: string; next: Array<{ tf: string; at: number }>; markets: PlanMarket[]; trades: PlanTrade[]; timeline: RunNote[]; trading: Record<string, number> }
-type RiskMode = 'normal' | 'aggressive' | 'max';
+type RiskMode = 'normal' | 'aggressive' | 'max' | 'turbo';
 interface RiskLimits { label: string; riskPct: number; leverage: number; maxOpen: number; ccyCapPct: number; maxPerStrategy: number; convMaxRiskPct: number }
 interface Data { shadow?: ShadowSummary | null; why?: import('./ControlRoom').WhyReport | null; labError?: { t: number; msg: string } | null; planError?: string | null; desk?: DeskReport | null; rolling?: RollReport | null; chooser?: string; ledger?: Ledger; names?: Record<string, string>; sniper?: SniperReport | null; riskMode?: RiskMode; riskModes?: Record<RiskMode, RiskLimits>; plan?: BotPlan | null; account: Acct | null; risk?: RiskSummary | null; portfolio?: PortfolioReport | null; judge?: JudgeReport | null; conviction?: Partial<Record<'hourly' | '15m' | '1m', ConvictionReport | null>> | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
 
@@ -125,6 +125,7 @@ const MODE_NOTE: Record<RiskMode, string> = {
   normal: 'Steady: small losses, slow growth.',
   aggressive: 'Three times the risk: aims for 10%+ months, and losing months get three times bigger too.',
   max: 'Five times the risk: big months and big drops. A bad streak can halve the account.',
+  turbo: 'Eight times the risk: the biggest wins, and nine losers in a row halve the account.',
 };
 
 /** v15.6: how hard the bot trades — same strategies and checks, only the size and how many trades at once change. */
@@ -146,7 +147,7 @@ function RiskModeCard({ mode, modes, portfolio, onChange }: { mode: RiskMode; mo
   const pct = (x: number) => `${x > 0 ? '+' : ''}${x.toFixed(1)}%`;
   return (
     <Card title="How hard it trades" subtitle="Same strategies and safety checks in every mode. Only the risk per trade, the leverage and how many trades it holds at once change. New trades use the new mode; open ones keep their size.">
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {(Object.keys(modes) as RiskMode[]).map((m) => (
           <Button key={m} size="sm" variant={m === mode ? 'primary' : 'outline'} disabled={busy} onClick={() => void pick(m)}>
             {modes[m].label}

@@ -69,7 +69,7 @@ export const FX_CONFIG = {
   refreshMinutes: 60,
   minOosTrades: 30,
   /** whole-bot backtest: base risk levels tried, and what a strategy needs on the first 70% to be picked */
-  portfolioRiskPct: [0.5, 1, 2, 3, 5],
+  portfolioRiskPct: [0.5, 1, 2, 3, 5, 8],
   pick: { minN: 40, minAvgR: 0.05, minPf: 1.15 },
   /** v18.4: let a strategy trade with a limit / pullback entry once that proved better on its first 70% (entries.ts).
    * v20.1 (owner: "trade only what will work"): OFF — market entries only until the entry lab proves itself on real data

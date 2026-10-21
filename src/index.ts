@@ -449,6 +449,11 @@ async function main(): Promise<void> {
     forex.logBot([line, 'strict mode on: only strategies that passed the unseen exam, 2+ market checks per trade, market entries only, desks study only']);
     log.info({ line }, 'forex bot: open trades struck');
   });
+  // v26.5 (owner: "use more risk when you trade for more profit"): the forex bot account moves to Turbo (8% a trade) once
+  await oneTimeUpgrade('v26.5-turbo', async () => {
+    await practice.setRiskMode('turbo', 'bot');
+    forex.logBot(['risk mode set to Turbo (8% of the account a trade, up to 500×) — the owner asked for more risk']);
+  });
   // v17.14: a live read of every open trade + an AI read of its price action every 15 min (display only)
   const tradeWatch = new TradeWatch(practice, new TradeAi(redis), { markets: () => forex.marketsNow, news: (pair, now) => fxCalendar.upcoming(pair, now) });
   tradeWatch.start();
