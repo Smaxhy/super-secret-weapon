@@ -34,7 +34,7 @@ interface Order { id: string; pair: string; side: 1 | -1; limit: number; kind: '
 interface Acct { startUsd: number; balanceUsd: number; equityUsd: number; marginUsedUsd: number; freeMarginUsd: number; positions: Pos[]; closed: Closed[]; orders?: Order[] }
 interface PlanSignal { tf: string; name: string; side: 1 | -1; verdict: string; tone: 'go' | 'wait' | 'no' }
 export interface PlanCheck { name: 'strength' | '4h' | 'daily' | 'mood'; side: 1 | -1 | 0; text: string }
-interface PlanMarket { id: string; label: string; price: number | null; status: 'trading' | 'waiting' | 'blocked' | 'watching'; headline: string; lean: { side: 1 | -1 | 0; why: string }; checks?: PlanCheck[]; plan?: string; signals: PlanSignal[]; blocks: string[] }
+interface PlanMarket { id: string; label: string; price: number | null; status: 'trading' | 'waiting' | 'blocked' | 'watching'; headline: string; lean: { side: 1 | -1 | 0; why: string }; checks?: PlanCheck[]; plan?: string; signals: PlanSignal[]; blocks: string[]; focus?: boolean }
 export interface PlanMode { kind: 'closed' | 'trading' | 'waiting' | 'nothing_proven' | 'scanning'; word: string; line: string }
 interface PlanLine { k: string; text: string; done?: boolean }
 interface PlanTrade { id: string; pair: string; side: 1 | -1; strategy: string; name: string; tf: string; pnlUsd: number; lines: PlanLine[] }
@@ -619,7 +619,7 @@ const STATUS_CHIP: Record<PlanMarket['status'], { text: string; cls: string }> =
 export function PlanBoard({ plan, focus, onPick }: { plan: BotPlan; focus: string | null; onPick: (id: string) => void }) {
   const [all, setAll] = useState(false);
   const order: Record<PlanMarket['status'], number> = { trading: 0, waiting: 1, watching: 2, blocked: 3 };
-  const rows = plan.markets.slice().sort((a, b) => order[a.status] - order[b.status] || (b.lean.side ? 1 : 0) - (a.lean.side ? 1 : 0) || a.label.localeCompare(b.label));
+  const rows = plan.markets.slice().sort((a, b) => Number(!!b.focus) - Number(!!a.focus) || order[a.status] - order[b.status] || (b.lean.side ? 1 : 0) - (a.lean.side ? 1 : 0) || a.label.localeCompare(b.label));
   const shown = all ? rows : rows.slice(0, 6);
   if (!rows.length) return null;
   return (
@@ -641,6 +641,7 @@ export function PlanBoard({ plan, focus, onPick }: { plan: BotPlan; focus: strin
               <button type="button" onClick={() => onPick(m.id)} className={`flex w-full flex-col gap-1 px-3 py-2 text-left hover:bg-surface-2 ${focus === m.id ? 'bg-accent/5' : ''}`}>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-semibold text-ink">{m.label}</span>
+                  {m.focus && <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-semibold text-accent-text">Focus</span>}
                   <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${chip.cls}`}>{chip.text}</span>
                   {m.lean.side !== 0 && <span className={`text-xs font-semibold ${m.lean.side === 1 ? 'text-up' : 'text-down'}`}>{m.lean.side === 1 ? '▲ leans buy' : '▼ leans sell'}</span>}
                   {m.checks && <CheckPips checks={m.checks} />}
@@ -668,7 +669,7 @@ function Scout({ markets, plan, fx, now, focus, onPick }: { markets: MarketNow[]
   if (!markets.length) return <p className="text-xs text-muted">Nothing yet.</p>;
   const pm = new Map((plan?.markets ?? []).map((m) => [m.id, m]));
   const order = (id: string) => (pm.get(id)?.status === 'trading' ? 0 : pm.get(id)?.status === 'waiting' ? 1 : 2);
-  const sorted = markets.slice().sort((x, y) => order(x.id) - order(y.id) || x.id.localeCompare(y.id));
+  const sorted = markets.slice().sort((x, y) => Number(!!pm.get(y.id)?.focus) - Number(!!pm.get(x.id)?.focus) || order(x.id) - order(y.id) || x.id.localeCompare(y.id));
   return (
     <ul className="divide-y divide-line">
       {sorted.map((m) => {

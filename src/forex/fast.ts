@@ -28,7 +28,7 @@ import { stratFactorFromVerdict, volFactor } from './portfolio';
 import { clockFor, marketClock } from './calendar';
 import { newSyncReport, type LabOpenTrade } from './practice';
 import { withEnd } from './mtf';
-import { FX_CONFIG, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, pickedOnInSample, planChosen, plannedStrategies, prevPicks, profitFloor, signalIndex, slimTrade, soloWait, toLabTrade, tradeKey, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
+import { FX_CONFIG, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, focusPrio, pickedOnInSample, planChosen, plannedStrategies, prevPicks, profitFloor, signalIndex, slimTrade, soloWait, toLabTrade, tradeKey, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
 import type { HmmModel } from './hmm';
 import { agreeCount, boostFor, gradeConviction, maxConfirmations, tierOf, type ConvictionReport, type ConvRow } from './conviction';
 
@@ -541,7 +541,7 @@ export class FastLab {
             // against the tested history's coverage, stored with the hourly test — not this live window's)
             cov = cov ?? liveCoverage(this.report, tf, inst.id, se);
             const dataWait = si >= 0 ? missingInput(row.filter ?? 'none', se.env, si, cov) : null;
-            labOpen.push(toLabTrade(t, { chosen: isChosen, sizeF, prio: row.all.avgR, judge: null, conviction: { tier: b.tier, conf, of: maxConfirmations(tf, false), mult: b.mult, lev: b.lev }, dataWait }));
+            labOpen.push(toLabTrade(t, { chosen: isChosen, sizeF, prio: focusPrio(t.pair, row.all.avgR), judge: null, conviction: { tier: b.tier, conf, of: maxConfirmations(tf, false), mult: b.mult, lev: b.lev }, dataWait }));
             pairOpen.push(t);
           }
         }

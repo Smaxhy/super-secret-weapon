@@ -137,6 +137,11 @@ export const FX_CONFIG = {
    * applies. Markets not listed keep the normal chooser. */
   marketPlan: { NDXUSD: ['judas_swing'] } as Record<string, string[]>,
   planLosing: { minN: 20, pf: 1.0 },
+  /** v27.3 (owner: "focus more on XAU/USD gold, Nasdaq 100 and 500, USD/JPY and EUR/USD"): the forex desk's focus markets.
+   * 'only' = the bot opens new trades on these alone (every other market stays tested and shown, held trades keep their
+   * stops); 'prefer' = every market trades, these get first pick when the caps are full. They always sort first in the
+   * plan. Coins (their own desk) are never affected. */
+  focus: { mode: 'only' as 'only' | 'prefer', markets: ['XAUUSD', 'NDXUSD', 'SPXUSD', 'USDJPY', 'EURUSD'] },
   confluenceBars: 2,
   /** walk-forward: re-pick every month from the trades closed in the previous N months */
   walkForward: { lookbackMonths: 6, minN: 15, minAvgR: 0.05, minPf: 1.15 },
@@ -570,12 +575,21 @@ export function profitFloor(row: Partial<Pick<Row, 'inSample' | 'outSample'>>): 
 /** v27.2 pure: may the bot open `strategy` on `pair`? `rowChosen` = the normal chooser's answer for its strategy × chart row,
  * `rec` = that row's tested record on this market, `dropped` = the learner took the row off. */
 export function planChosen(strategy: string, pair: string, rowChosen: boolean, rec: { n: number; pf: number | null } | undefined, dropped = false): boolean {
+  if (!focusOk(pair)) return false;
   const plan = FX_CONFIG.marketPlan[pair];
   if (!plan) return rowChosen;
   if (!plan.includes(strategy) || dropped) return false;
   const l = FX_CONFIG.planLosing;
   return !(rec && rec.n >= l.minN && (rec.pf ?? 99) < l.pf);
 }
+/** v27.3 pure: may the bot open a new trade on this market under the focus list? Coins: always (their own desk). */
+export function focusOk(pair: string): boolean {
+  const f = FX_CONFIG.focus;
+  return f.mode !== 'only' || !f.markets.length || isCrypto(pair) || f.markets.includes(pair);
+}
+/** v27.3: first pick when the caps are full — a focus market's trade ranks ahead of any other */
+export const focusPrio = (pair: string, prio: number) => (FX_CONFIG.focus.markets.includes(pair) ? prio + 10 : prio);
+
 /** v27.2: strategies the market plan assigns somewhere (the fast chart follows their rows even when not chosen). */
 export const plannedStrategies = () => new Set(Object.values(FX_CONFIG.marketPlan).flat());
 
@@ -2115,7 +2129,7 @@ export class ForexLab {
         marketRec,
         chosen: planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`)),
         sizeF,
-        prio: row ? row.all.avgR : -1,
+        prio: focusPrio(t.pair, row ? row.all.avgR : -1),
         dataWait,
         judge: !jv ? null : { p: p === null ? 0 : Math.round(p * 100) / 100, ok: judgeOk, need: Number.isFinite(jv.threshold) ? Math.round(jv.threshold * 100) / 100 : null, ...(jv.missing ? { missing: jv.missing } : {}) },
         conviction: { tier: b.tier, conf, of: maxConfirmations(t.tf, hasJudge), mult: b.mult, lev: b.lev },

@@ -57,3 +57,21 @@ describe('v27.2 market plan: specific strategies for specific markets', () => {
     expect(src).toMatch(/not on this market's list/);
   });
 });
+
+describe('v27.3 focus markets', () => {
+  it('only gold, Nasdaq 100, S&P 500, USD/JPY and EUR/USD get new trades; coins are untouched', async () => {
+    const { focusOk, focusPrio, planChosen } = await import('../src/forex/lab');
+    expect(FX_CONFIG.focus.markets).toEqual(['XAUUSD', 'NDXUSD', 'SPXUSD', 'USDJPY', 'EURUSD']);
+    for (const p of ['XAUUSD', 'NDXUSD', 'SPXUSD', 'USDJPY', 'EURUSD', 'BTCUSD']) expect(focusOk(p)).toBe(true);
+    expect(focusOk('GBPUSD')).toBe(false);
+    expect(planChosen('ema_cross', 'GBPUSD', true, undefined)).toBe(false);
+    expect(planChosen('ema_cross', 'EURUSD', true, undefined)).toBe(true);
+    expect(focusPrio('USDJPY', 0.1)).toBeGreaterThan(focusPrio('GBPUSD', 5));
+    FX_CONFIG.focus.mode = 'prefer';
+    try {
+      expect(focusOk('GBPUSD')).toBe(true);
+    } finally {
+      FX_CONFIG.focus.mode = 'only';
+    }
+  });
+});

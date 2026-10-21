@@ -758,6 +758,14 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.3 focus markets (Oct 21, owner: "focus more on XAU/USD gold, Nasdaq 100 and 500, USD/JPY and EUR/USD")
+`FX_CONFIG.focus` {mode 'only' | 'prefer', markets [XAUUSD, NDXUSD, SPXUSD, USDJPY, EURUSD]} (lab.ts). `focusOk(pair)` is checked
+first inside `planChosen` (hourly botTrades + labOpen, fast `isChosen`): 'only' = the forex bot opens new trades on these five
+alone (other markets stay graded, shown, and feed the strength meter; held trades keep their own stops); coins never affected.
+`focusPrio` (+10 to `prio`, both labs) = first pick when the caps are full ('prefer' mode keeps every market but ranks these
+first). plan.ts `PlanInputs.focus` (server passes it): focus markets sort first, `PlanMarket.focus`, signals elsewhere read
+"not a focus market (…)", plan sentence "Not a focus market…". Dashboard ControlRoom PlanBoard + Scout: focus first + "Focus"
+chip. Change the list / mode in one line. Tests in forex-profit-floor (+1).
 ## v27.2 market plan: specific strategies for specific markets (Oct 21, owner: "only do our Judas swing thing on NAS100 as
 well, I want specific strategies for specific charts")
 `FX_CONFIG.marketPlan` {NDXUSD: ['judas_swing']} + `planLosing` {minN 20, pf 1.0} + `planChosen(strategy, pair, rowChosen,

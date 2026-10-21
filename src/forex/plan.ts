@@ -41,6 +41,8 @@ export interface PlanInputs {
   fastStrategies?: string[];
   /** v27.2: market → the only strategies the bot trades there (FX_CONFIG.marketPlan) */
   marketPlan?: Record<string, string[]>;
+  /** v27.3: focus markets (FX_CONFIG.focus): 'only' = no new trades elsewhere; always listed first */
+  focus?: { mode: 'only' | 'prefer'; markets: string[] };
   /** v22.1 fix: which desk's markets this plan is for (unset = every instrument, the pre-v22 behaviour) */
   universe?: 'fx' | 'crypto';
   names: Record<string, string>;
@@ -92,6 +94,8 @@ export interface PlanMarket {
   blocks: string[];
   /** strategies the bot trades on this market, per chart */
   watchers: Record<string, number>;
+  /** v27.3: one of the desk's focus markets */
+  focus?: boolean;
 }
 
 export interface PlanLine {
@@ -318,6 +322,8 @@ export function buildPlan(x: PlanInputs): BotPlan {
     const signals: PlanSignal[] = raw.map((f) => {
       const k = `${f.id}:${f.tf}`;
       const note = syncNotes.get(`${f.id}:${f.tf}:${inst.id}`);
+      const fo = x.focus;
+      if (fo?.mode === 'only' && fo.markets.length && !isCrypto(inst.id) && !fo.markets.includes(inst.id)) return { tf: f.tf, name: f.name, side: f.side, verdict: `not a focus market (the bot trades ${fo.markets.map((id) => instrument(id)?.label ?? id).join(', ')})`, tone: 'no' };
       const only = x.marketPlan?.[inst.id];
       if (only && !only.includes(f.id)) return { tf: f.tf, name: f.name, side: f.side, verdict: `not on this market's list (${inst.label} trades only ${only.join(', ')})`, tone: 'no' };
       if (!only && !chosen.has(k)) return { tf: f.tf, name: f.name, side: f.side, verdict: 'not one it trades (no edge on unseen data)', tone: 'no' };
@@ -385,6 +391,7 @@ export function buildPlan(x: PlanInputs): BotPlan {
     let plan: string;
     if (status === 'trading') plan = headline;
     else if (!ck.open) plan = 'Market closed: nothing to do until it opens.';
+    else if (x.focus?.mode === 'only' && x.focus.markets.length && !isCrypto(inst.id) && !x.focus.markets.includes(inst.id)) plan = 'Not a focus market: the lab keeps testing it and shows it here, but the bot opens no new trades on it.';
     else if (!nChosen) plan = `Nothing to wait for: no strategy ${x.strict?.mode === 'quality' ? 'clears the quality bar' : 'has passed the unseen exam'} yet, so it will not trade here until one does.`;
     else if (status === 'waiting') {
       const w = wanted[0]!;
@@ -392,10 +399,10 @@ export function buildPlan(x: PlanInputs): BotPlan {
     } else if (status === 'blocked') plan = `${blocks[0]!.charAt(0).toUpperCase() + blocks[0]!.slice(1)}. It will look again at the next candle close.`;
     else if (lean.side) plan = `Leans ${lean.side === 1 ? 'BUY' : 'SELL'} (${checksWord(lean.side)}). Waiting for one of its ${nChosen} proven setup${nChosen === 1 ? '' : 's'} to fire ${lean.side === 1 ? 'long' : 'short'} at a candle close${need ? ` with ${need}+ checks on its side` : ''} — then it opens at market.`;
     else plan = `No clear side (${upCount} check${upCount === 1 ? '' : 's'} up, ${downCount} down). Waiting for one of its ${nChosen} proven setup${nChosen === 1 ? '' : 's'} to fire at a candle close${need ? ` with ${need}+ of the ${checks.length || 4} checks on its side` : ''} — until then it does nothing here.`;
-    markets.push({ id: inst.id, label: inst.label, price: pos[0]?.px ?? m?.price ?? null, status, headline, lean, checks, plan, signals, blocks, watchers });
+    markets.push({ id: inst.id, label: inst.label, price: pos[0]?.px ?? m?.price ?? null, status, headline, lean, checks, plan, signals, blocks, watchers, ...(x.focus?.markets.includes(inst.id) ? { focus: true } : {}) });
   }
   const order: Record<PlanMarket['status'], number> = { trading: 0, waiting: 1, watching: 2, blocked: 3 };
-  markets.sort((a, b) => order[a.status] - order[b.status]);
+  markets.sort((a, b) => Number(!!b.focus) - Number(!!a.focus) || order[a.status] - order[b.status]); // v27.3: focus markets first
   const trades: PlanTrade[] = x.positions.map((p) => ({
     id: p.id,
     pair: p.pair,
