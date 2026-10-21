@@ -45,7 +45,7 @@ import { filterHmm, hmmRegime, hmmReturns, type HmmModel } from './hmm';
 import { dsrDowngrade, honestStats, type HonestReport, type RowStat, type StatInput } from './honest';
 import { deskFromBars, FX_DESK, type DeskOut } from './desk';
 import { alignTrend, decisionTimes, toDaily, trendSeries, withEnd, type SpanBar } from './mtf';
-import { buildMood, moodNow, moodSeries, riskOfLong, type MoodBook, type MoodNow } from './mood';
+import { buildMood, moodNow, moodSeries, riskOfLong, vixFactor, vixNowOf, type MoodBook, type MoodNow } from './mood';
 import { FILTERS, FILTER_LABEL, allowFor, blockReason, chooseFilter, chooseVariant, filterCoverage, missingInput, preferVariant, type FilterEnv, type FilterKind } from './filters';
 import { chooseEntry, ENTRIES, ENTRY, entryVariantRow, summarizeEntries, type EntryKind, type EntrySummary, type EntryVariantRow } from './entries';
 import { SIZING, simulatePortfolio, stratFactorFromStats, stratFactorFromVerdict, volFactor, walkForward, weekOf, type PortfolioResult, type PTrade, type WalkForward, type WTrade } from './portfolio';
@@ -876,6 +876,7 @@ export function makeSeries(inst: Instrument, tf: Timeframe, bars: Bar[], book: M
     d1: big2 ? alignTrend(dts, big2.bars, big2.trend) : new Int8Array(bars.length),
     mood: moodSeries(book.mood, bars, barMin),
     riskLong: riskOfLong(inst.id),
+    vixRank: moodSeries(book.mood, bars, barMin, 'vixRank'),
   };
   const ctx = buildCtx(bars, barMin, inst.id);
   env.er = Float64Array.from(ctx.er20);
@@ -2088,6 +2089,7 @@ export class ForexLab {
     this.marketsNow = markets;
     this.moodNow = report.mood ?? null;
     const rowOf = new Map(chosenRows.map((x) => [`${x.id}:${x.tf}`, x]));
+    const vixBrake = vixFactor(vixNowOf(book.mood));
     // v27.2: a strategy the market plan assigns to a market is handled with its own row there even when not chosen
     const allRowOf = new Map(rows.map((x) => [`${x.id}:${x.tf}`, x]));
     const rowFor = (t: { strategy: string; tf: string; pair: string }) => {
@@ -2111,7 +2113,8 @@ export class ForexLab {
     // what the bot account is handed (built here so a child process can hand it to the parent: v17.2)
     const botTrades: LabOpenTrade[] = open.map((t) => {
       const row = rowFor(t);
-      const sizeF = (rollLive ? rollSizes[`${t.strategy}:${t.tf}`] ?? 0.6 : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1);
+      // v27.6: × the VIX size brake (0.75× at VIX 25+, 0.5× at 35+)
+      const sizeF = (rollLive ? rollSizes[`${t.strategy}:${t.tf}`] ?? 0.6 : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1) * vixBrake;
       const x = judgeX.get(tradeKey(t));
       const jv = judgeModel && x ? judgeView(judgeModel, x) : null;
       const p = jv?.p ?? null;

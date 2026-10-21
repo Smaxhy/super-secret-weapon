@@ -29,6 +29,7 @@ import { clockFor, marketClock } from './calendar';
 import { newSyncReport, type LabOpenTrade } from './practice';
 import { withEnd } from './mtf';
 import { cellPass } from './montecarlo';
+import { vixFactor, vixNowOf } from './mood';
 import { FX_CONFIG, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, focusPrio, pickedOnInSample, planChosen, plannedStrategies, prevPicks, profitFloor, signalIndex, slimTrade, soloWait, toLabTrade, tradeKey, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
 import type { HmmModel } from './hmm';
 import { agreeCount, boostFor, gradeConviction, maxConfirmations, tierOf, type ConvictionReport, type ConvRow } from './conviction';
@@ -533,7 +534,7 @@ export class FastLab {
               continue;
             }
             openKeys[`${t.strategy}:${tf}:${t.pair}`] = t.entryT;
-            const sizeF = stratFactorFromVerdict(row.verdict) * volFactor(t.volRatio) * (rec.proven.has(`${s.id}:${tf}`) ? 1.15 : 1) * (rec.down[`${s.id}:${tf}`] ?? 1);
+            const sizeF = stratFactorFromVerdict(row.verdict) * volFactor(t.volRatio) * (rec.proven.has(`${s.id}:${tf}`) ? 1.15 : 1) * (rec.down[`${s.id}:${tf}`] ?? 1) * vixFactor(vixNowOf(book.mood)); // v27.6 VIX brake
             // v15.2: how many market checks back it, and the size that earns (only once proven on this chart)
             const si = signalIndex(se.ctx.bars, t.entryT, se.ctx.barMin);
             const conf = si >= 0 ? agreeCount(se.env, si, t.side) : 0;

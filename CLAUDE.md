@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.6 VIX = expected volatility (Oct 21, owner: "look at the VIX index so you can see the expected volatility")
+The VIX (^VIX, already a mood input since v13, only as its 24 h change) is now read as a level. mood.ts: `MoodBook.vixLvl` /
+`vixRank` (rank among the previous ≤ 252 daily closes of days that ended before the hour's day, ≥ 60 needed — causal),
+`VIX` {rankDays 252, minRankDays 60, panicRank 0.9, brake [[35, 0.5], [25, 0.75]]}, `vixRegime` (<15 calm / <20 normal /
+<30 high / else extreme), `vixMove` (VIX ÷ √252 = expected S&P move a day, ÷ √52 a week), `vixFactor` (size brake),
+`vixNowOf(book)`, `moodSeries(book, bars, barMin, 'vixRank' | 'vixLvl')`, `MoodNow.vix` {level, change, rank, regime, dayPct,
+weekPct, sizeFactor, note}. Uses: (1) **size brake** — every bot trade's `sizeF` × `vixFactor` (hourly botTrades `vixBrake`,
+fast decide) = 0.75× at VIX 25+, 0.5× at 35+: a safety rule, NOT graded (the honest test doesn't include it); (2) **filter
+'vix'** (filters.ts `passVix`, `FilterEnv.vixRank` via makeSeries, coverage + missing-input label "VIX fear index"): no new
+trade in the VIX's top 10% of the past year — picked per strategy on the FIRST 70% like every filter (12 variants now, lab
+≈ +9% CPU); (3) dashboard Markets → Market mood card → "Expected volatility (VIX)" block (`VixBlock` in FxInsights: regime
+badge, ±% a day / week, past-year rank, the brake note); FILTER_SHORT 'vix'. tests/forex-vix (3).
 ## v27.5 village removed, opening-range breakout, Kelly (Oct 21, owner: "look up Investopedia and what could help; remove
 the village and clean everything up")
 - **Village removed** (v19.1 / v19.3 / v21.1): `dashboard/src/components/Village.tsx` deleted, route `/forex/village`, nav entry

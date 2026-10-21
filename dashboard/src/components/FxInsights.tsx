@@ -8,8 +8,10 @@ import { ago } from '../lib/format';
 import { Badge, Button, Card, Row, Rows, Sparkline, Stack, StatTile } from './ui';
 
 export interface StrengthNow { at: number | null; ccys: Array<{ ccy: string; score: number; today: number; week: number }> }
-export interface MoodNow { at: number | null; score: number | null; label: 'risk-on' | 'risk-off' | 'calm'; inputs: Array<{ id: string; label: string; value: number | null; change: number | null; unit: '%' | 'bp' }>; note: string }
-export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'volf' | 'hurst' | 'crowd' | 'stretch' | 'hmm' | 'all';
+export interface MoodNow { at: number | null; score: number | null; label: 'risk-on' | 'risk-off' | 'calm'; inputs: Array<{ id: string; label: string; value: number | null; change: number | null; unit: '%' | 'bp' }>; note: string; vix?: VixNow | null }
+/** v27.6: the VIX read from the bot */
+export interface VixNow { level: number; change: number | null; rank: number | null; regime: 'calm' | 'normal' | 'high' | 'extreme'; dayPct: number; weekPct: number; sizeFactor: number; note: string }
+export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'volf' | 'hurst' | 'crowd' | 'stretch' | 'hmm' | 'vix' | 'all';
 export interface FilterSummary { filter: FilterKind; label: string; chosenBy: number; compared: number; inDeltaR: number; outDeltaR: number; outBetterPct: number; keptPct: number; random: { inAvgR: number; outAvgR: number; outN: number } }
 interface StudyCell { n: number; avgAtr: number[]; contPct: number[] }
 export interface NewsStudy { horizons: number[]; shocks: number; overall: StudyCell; byHour: Array<{ key: string; label: string } & StudyCell>; byPair: Array<{ pair: string } & StudyCell>; byEvent: Array<{ key: string; label: string } & StudyCell>; recent: Array<{ pair: string; t: number; dir: 1 | -1; sizeAtr: number; moves: Array<number | null>; event: string | null }>; eventsKnown: number }
@@ -23,7 +25,7 @@ export interface ExitSummary { exit: ExitKind; label: string; chosenBy: number; 
 export interface JudgeReport { active: boolean; why: string; trainedOn: number; tested: number; auc: number | null; threshold: number | null; keepPct: number; allR: number; keptR: number; skippedR: number; allWinPct: number; keptWinPct: number; importance: Array<{ feature: string; label: string; share: number }>; fallback?: { active: boolean; why: string; auc: number | null; keepPct: number; keptR: number; allR: number } }
 export interface RiskSummary { exposure: Array<{ ccy: string; pct: number }>; capPct: number; ddPct: number; ddFactor: number; baseRiskPct: number; openRiskPct: number }
 
-export const FILTER_SHORT: Record<FilterKind | 'regime', string> = { none: 'no filter', strength: '+ strength', mtf: '+ bigger chart', mood: '+ mood', regime: '+ regime', volf: '+ vol forecast', hurst: '+ trend/chop', crowd: '+ not crowded', stretch: '+ not overstretched', hmm: '+ regime model', all: '+ all 3 checks' };
+export const FILTER_SHORT: Record<FilterKind | 'regime', string> = { none: 'no filter', strength: '+ strength', mtf: '+ bigger chart', mood: '+ mood', regime: '+ regime', volf: '+ vol forecast', hurst: '+ trend/chop', crowd: '+ not crowded', stretch: '+ not overstretched', hmm: '+ regime model', vix: '+ VIX not in panic', all: '+ all 3 checks' };
 export const EXIT_SHORT: Record<ExitKind, string> = { designed: 'exits as designed', breakeven: 'break-even at +1R', scale: 'half off at +1R', tight: 'closer target', runner: 'runner exit', quick: 'quick exit', wide: 'bigger target', trail_tp: 'trailing take-profit', half_trail: 'half at target, rest trails', trail_sl: 'trailing stop-loss', roomy: 'bigger trade (wider stop)', swing: 'swing trade (much wider)' };
 const signed = (x: number, dp = 1) => {
   const v = Number(x.toFixed(dp));
@@ -77,7 +79,28 @@ export function MoodCard({ m }: { m: MoodNow | undefined }) {
         ))}
       </Rows>
       <p className="mt-3 text-xs text-muted">{m.note}</p>
+      {m.vix && <VixBlock v={m.vix} />}
     </Card>
+  );
+}
+
+const VIX_TONE: Record<VixNow['regime'], 'up' | 'neutral' | 'warn' | 'down'> = { calm: 'up', normal: 'neutral', high: 'warn', extreme: 'down' };
+const VIX_WORD: Record<VixNow['regime'], string> = { calm: 'Calm', normal: 'Normal', high: 'Nervous', extreme: 'Panic' };
+/** v27.6: expected volatility from the VIX — the move the options market prices in, and the size brake it sets */
+export function VixBlock({ v }: { v: VixNow }) {
+  return (
+    <div className="mt-3 rounded-xl border border-line p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm font-semibold text-ink">Expected volatility (VIX)</div>
+        <Badge tone={VIX_TONE[v.regime]}>{VIX_WORD[v.regime]} · VIX {v.level}</Badge>
+      </div>
+      <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+        <div className="rounded-lg bg-surface-2/60 p-2"><div className="text-[11px] text-muted">S&amp;P a day</div><div className="tabular font-semibold text-ink">±{v.dayPct}%</div></div>
+        <div className="rounded-lg bg-surface-2/60 p-2"><div className="text-[11px] text-muted">S&amp;P a week</div><div className="tabular font-semibold text-ink">±{v.weekPct}%</div></div>
+        <div className="rounded-lg bg-surface-2/60 p-2"><div className="text-[11px] text-muted">Past year rank</div><div className="tabular font-semibold text-ink">{v.rank === null ? '—' : `${Math.round(v.rank * 100)}%`}</div></div>
+      </div>
+      <p className={`mt-2 text-xs ${v.sizeFactor < 1 ? 'text-ink' : 'text-muted'}`}>{v.note}</p>
+    </div>
   );
 }
 
