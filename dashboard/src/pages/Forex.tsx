@@ -336,8 +336,19 @@ function Strategies({ r }: { r: Report }) {
                   </div>
                 </div>
                 <div className="shrink-0 text-right">
-                  <div className={`tabular font-semibold ${tone(k.avgWeekPct)}`}>{signed(k.avgWeekPct)}%/wk</div>
-                  <div className="text-xs text-muted">{k.blown ? 'wiped out' : `worst wk ${signed(k.worstWeekPct, 0)}%`}</div>
+                  {/* v26.6: a wiped-out row leads with that — "+32%/wk" next to it read like a winner (it is the average
+                      of the weeks BEFORE the account was gone) */}
+                  {k.blown ? (
+                    <>
+                      <div className="font-semibold text-down">wiped out</div>
+                      <div className="tabular text-xs text-muted">avg {signed(k.avgWeekPct)}%/wk before</div>
+                    </>
+                  ) : (
+                    <>
+                      <div className={`tabular font-semibold ${tone(k.avgWeekPct)}`}>{signed(k.avgWeekPct)}%/wk</div>
+                      <div className="text-xs text-muted">worst wk {signed(k.worstWeekPct, 0)}%</div>
+                    </>
+                  )}
                 </div>
               </button>
             </li>
