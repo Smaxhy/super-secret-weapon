@@ -189,6 +189,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
               chosen: [...fx.chosen, ...(U.fast?.chosen ?? [])],
               fastCharts: FX_CONFIG.botFastCharts || (fx.universe === 'crypto' && FX_CONFIG.botFastChartsCrypto),
               fastStrategies: FX_CONFIG.botFastStrategies,
+              marketPlan: FX_CONFIG.marketPlan,
               universe: fx.universe,
               strict: { mode: FX_CONFIG.strict.mode, minAgree: FX_CONFIG.strict.minAgree },
               names: Object.fromEntries(STRATEGIES.map((x) => [x.id, x.name])),

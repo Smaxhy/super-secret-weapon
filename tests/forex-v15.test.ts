@@ -433,7 +433,7 @@ describe('15-minute and 1-minute lab (v15)', () => {
     try {
       await fast.decide('15m', WED);
       const call2 = sync.mock.calls[1] as unknown as [LabOpenTrade[]];
-      expect(call2[0].every((t) => t.tf === '15m' && t.chosen)).toBe(true);
+      expect(call2[0].every((t) => t.tf === '15m' && (t.chosen || Object.values(FX_CONFIG.marketPlan).flat().includes(t.strategy)))).toBe(true); // v27.2: market-plan rows are followed everywhere, chosen only on their market
     } finally {
       FX_CONFIG.botFastCharts = false;
     }

@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.2 market plan: specific strategies for specific markets (Oct 21, owner: "only do our Judas swing thing on NAS100 as
+well, I want specific strategies for specific charts")
+`FX_CONFIG.marketPlan` {NDXUSD: ['judas_swing']} + `planLosing` {minN 20, pf 1.0} + `planChosen(strategy, pair, rowChosen,
+rec, dropped)` (lab.ts, pure): a listed market trades ONLY its listed strategies; a listed strategy trades there even when its
+pooled row (all markets) isn't chosen / fails the profit floor, judged on its tested record on THAT market (`Row.pairs`, all
+trades): off at 20+ trades with PF < 1, or when the learner dropped the row. Unlisted markets: the normal chooser. Wired: hourly
+`botTrades` (`rowFor` = the chosen row, else the full row for a planned strategy → its filter / size factor 0.6 for 'no'),
+`labOpen`, fast `decide` (follows planned rows on every market, `isChosen` per market), plan.ts `PlanInputs.marketPlan` ("not on
+this market's list (Nasdaq 100 trades only judas_swing)"). Add a market / strategy = one line in `marketPlan`. NOTE: Yahoo's
+CME quotes are ~10 min delayed, so the 15-minute Judas trade on NAS100 is refused by the stale-price guard (15m never uses a
+delayed feed); the hourly one opens (1h / 4h may). A real-time index price feed is needed for 15m. Tests in
+forex-profit-floor (+2).
 ## v27.1 profit floor: the less profitable strategies are off (Oct 21, owner: "remove less profitable bots")
 VPS read 10:58 UTC: forex chosen = carry_trend:4h only (unseen 153 / 0.01R / PF 1.05; 98 of 99 rows 'no' after the fee re-pick);
 every ICT / always-on row losing on unseen data (judas_swing 1h −0.45R PF 0.39, amd_daily 1h −0.18R, tsmom 1h −0.16R, fix_flow

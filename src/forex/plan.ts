@@ -39,6 +39,8 @@ export interface PlanInputs {
   fastCharts?: boolean;
   /** v23: strategies allowed to trade the 15-minute chart even while `fastCharts` is off (the ICT session rules) */
   fastStrategies?: string[];
+  /** v27.2: market → the only strategies the bot trades there (FX_CONFIG.marketPlan) */
+  marketPlan?: Record<string, string[]>;
   /** v22.1 fix: which desk's markets this plan is for (unset = every instrument, the pre-v22 behaviour) */
   universe?: 'fx' | 'crypto';
   names: Record<string, string>;
@@ -316,7 +318,9 @@ export function buildPlan(x: PlanInputs): BotPlan {
     const signals: PlanSignal[] = raw.map((f) => {
       const k = `${f.id}:${f.tf}`;
       const note = syncNotes.get(`${f.id}:${f.tf}:${inst.id}`);
-      if (!chosen.has(k)) return { tf: f.tf, name: f.name, side: f.side, verdict: 'not one it trades (no edge on unseen data)', tone: 'no' };
+      const only = x.marketPlan?.[inst.id];
+      if (only && !only.includes(f.id)) return { tf: f.tf, name: f.name, side: f.side, verdict: `not on this market's list (${inst.label} trades only ${only.join(', ')})`, tone: 'no' };
+      if (!only && !chosen.has(k)) return { tf: f.tf, name: f.name, side: f.side, verdict: 'not one it trades (no edge on unseen data)', tone: 'no' };
       if ((f.tf === '1m' || f.tf === '15m') && !x.fastCharts && !x.fastStrategies?.includes(f.id)) return { tf: f.tf, name: f.name, side: f.side, verdict: 'lab only: the bot trades the hourly and 4-hour charts', tone: 'no' };
       if (!f.allowed) return { tf: f.tf, name: f.name, side: f.side, verdict: `held back: ${f.why}`, tone: 'no' };
       if (heldKey.has(`${f.id}:${f.tf}:${inst.id}`)) return { tf: f.tf, name: f.name, side: f.side, verdict: 'in the trade', tone: 'go' };

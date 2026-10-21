@@ -130,6 +130,13 @@ export const FX_CONFIG = {
    * ICT and always-on rows were all losing on unseen data (judas_swing 1h −0.45R, amd_daily 1h −0.18R, tsmom −0.16R).
    * Same numbers as the quality bar's first four checks; the random / luck-twin checks stay in 'quality' mode only. */
   profitFloor: { on: true, minN: 30, minAvgR: 0.05, minPf: 1.2 },
+  /** v27.2 (owner: "only do our Judas swing thing on NAS100 as well; I want specific strategies for specific charts"):
+   * market → the ONLY strategies the bot may trade there. A listed strategy trades on its listed market even when its
+   * pooled row (all markets together) is not chosen, judged instead on its record on THAT market: off once that record
+   * holds `planLosing.minN`+ tested trades with profit factor under `planLosing.pf`. The learner's dropped list still
+   * applies. Markets not listed keep the normal chooser. */
+  marketPlan: { NDXUSD: ['judas_swing'] } as Record<string, string[]>,
+  planLosing: { minN: 20, pf: 1.0 },
   confluenceBars: 2,
   /** walk-forward: re-pick every month from the trades closed in the previous N months */
   walkForward: { lookbackMonths: 6, minN: 15, minAvgR: 0.05, minPf: 1.15 },
@@ -559,6 +566,18 @@ export function profitFloor(row: Partial<Pick<Row, 'inSample' | 'outSample'>>): 
   if (!(i.avgR > 0)) return { ok: false, why: `lost before the 70/30 line (${i.avgR}R a trade)` };
   return { ok: true, why: '' };
 }
+
+/** v27.2 pure: may the bot open `strategy` on `pair`? `rowChosen` = the normal chooser's answer for its strategy × chart row,
+ * `rec` = that row's tested record on this market, `dropped` = the learner took the row off. */
+export function planChosen(strategy: string, pair: string, rowChosen: boolean, rec: { n: number; pf: number | null } | undefined, dropped = false): boolean {
+  const plan = FX_CONFIG.marketPlan[pair];
+  if (!plan) return rowChosen;
+  if (!plan.includes(strategy) || dropped) return false;
+  const l = FX_CONFIG.planLosing;
+  return !(rec && rec.n >= l.minN && (rec.pf ?? 99) < l.pf);
+}
+/** v27.2: strategies the market plan assigns somewhere (the fast chart follows their rows even when not chosen). */
+export const plannedStrategies = () => new Set(Object.values(FX_CONFIG.marketPlan).flat());
 
 /** Pure: does a strategy's first-70% record earn it a place in the bot (the honest whole-bot test)? */
 export const pickedOnInSample = (s: RStats) => s.n >= FX_CONFIG.pick.minN && s.avgR >= FX_CONFIG.pick.minAvgR && (s.pf ?? 99) >= FX_CONFIG.pick.minPf;
@@ -2035,8 +2054,11 @@ export class ForexLab {
     await this.redis.set(this.k(FX_REPORT), JSON.stringify(report)).catch(() => undefined);
     this.marketsNow = markets;
     this.moodNow = report.mood ?? null;
-    this.labOpen = Object.fromEntries(open.filter((t) => chosen.has(`${t.strategy}:${t.tf}`)).map((t) => [`${t.strategy}:${t.tf}:${t.pair}`, t.entryT]));
     const rowOf = new Map(chosenRows.map((x) => [`${x.id}:${x.tf}`, x]));
+    // v27.2: a strategy the market plan assigns to a market is handled with its own row there even when not chosen
+    const allRowOf = new Map(rows.map((x) => [`${x.id}:${x.tf}`, x]));
+    const rowFor = (t: { strategy: string; tf: string; pair: string }) => rowOf.get(`${t.strategy}:${t.tf}`) ?? (FX_CONFIG.marketPlan[t.pair]?.includes(t.strategy) ? allRowOf.get(`${t.strategy}:${t.tf}`) : undefined);
+    this.labOpen = Object.fromEntries(open.filter((t) => planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), rowFor(t)?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`))).map((t) => [`${t.strategy}:${t.tf}:${t.pair}`, t.entryT]));
     // v17: how often each filter input was known on the first 70% of each series (for `missingInput`)
     const covCache = new Map<Series, ReturnType<typeof filterCoverage>>();
     const coverageOf = (se: Series) => {
@@ -2050,7 +2072,7 @@ export class ForexLab {
     };
     // what the bot account is handed (built here so a child process can hand it to the parent: v17.2)
     const botTrades: LabOpenTrade[] = open.map((t) => {
-      const row = rowOf.get(`${t.strategy}:${t.tf}`);
+      const row = rowFor(t);
       const sizeF = (rollLive ? rollSizes[`${t.strategy}:${t.tf}`] ?? 0.6 : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1);
       const x = judgeX.get(tradeKey(t));
       const jv = judgeModel && x ? judgeView(judgeModel, x) : null;
@@ -2091,7 +2113,7 @@ export class ForexLab {
         soloWait: soloWait(t, open, TF_MIN[t.tf as Timeframe] ?? 60),
         agree,
         marketRec,
-        chosen: chosen.has(`${t.strategy}:${t.tf}`),
+        chosen: planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`)),
         sizeF,
         prio: row ? row.all.avgR : -1,
         dataWait,

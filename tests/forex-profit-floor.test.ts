@@ -35,3 +35,25 @@ describe('v27.1 profit floor', () => {
     }
   });
 });
+
+describe('v27.2 market plan: specific strategies for specific markets', () => {
+  it('NAS100 trades only Judas swing, judged on its own NAS100 record', async () => {
+    const { planChosen, plannedStrategies } = await import('../src/forex/lab');
+    expect(FX_CONFIG.marketPlan.NDXUSD).toEqual(['judas_swing']);
+    expect(plannedStrategies().has('judas_swing')).toBe(true);
+    expect(planChosen('judas_swing', 'NDXUSD', false, undefined)).toBe(true); // pooled row not chosen: still trades here
+    expect(planChosen('judas_swing', 'NDXUSD', false, { n: 40, pf: 1.3 })).toBe(true);
+    expect(planChosen('judas_swing', 'NDXUSD', false, { n: 40, pf: 0.8 })).toBe(false); // losing on NAS100 → off
+    expect(planChosen('judas_swing', 'NDXUSD', false, { n: 10, pf: 0.5 })).toBe(true); // too few to judge
+    expect(planChosen('judas_swing', 'NDXUSD', true, undefined, true)).toBe(false); // the learner dropped it
+    expect(planChosen('ema_cross', 'NDXUSD', true, { n: 100, pf: 2 })).toBe(false); // not on NAS100's list
+    expect(planChosen('ema_cross', 'EURUSD', true, undefined)).toBe(true); // other markets: the normal chooser
+    expect(planChosen('judas_swing', 'EURUSD', false, undefined)).toBe(false);
+  });
+
+  it('the plan view says why a signal on a listed market is not traded', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../src/forex/plan.ts', import.meta.url), 'utf8');
+    expect(src).toMatch(/not on this market's list/);
+  });
+});
