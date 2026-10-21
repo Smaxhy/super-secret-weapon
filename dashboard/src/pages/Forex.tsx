@@ -19,7 +19,6 @@ import { Icon } from '../components/Icon';
 import { FxTrade } from '../components/FxTrade';
 import { OandaCard } from '../components/OandaCard';
 import { ControlRoom } from '../components/ControlRoom';
-import { Village } from '../components/Village';
 import { FxNewsPage } from '../components/FxNewsPage';
 import { NewsTape } from '../components/NewsTape';
 import { PythCard } from '../components/PythCard';
@@ -53,11 +52,10 @@ const signed = (x: number, dp = 1) => `${x >= 0 ? '+' : ''}${x.toFixed(dp)}`;
 const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink-2');
 const day = (t: number | null) => (t ? new Date(t).toISOString().slice(0, 10) : '—');
 const VERDICT: Record<RowT['verdict'], { label: string; tone: 'up' | 'warn' | 'neutral' }> = { edge: { label: 'Edge', tone: 'up' }, maybe: { label: 'Maybe', tone: 'warn' }, no: { label: 'No edge', tone: 'neutral' } };
-type Section = 'room' | 'village' | 'live' | 'practice' | 'bot' | 'strategies' | 'paper' | 'setup' | 'lab' | 'news';
+type Section = 'room' | 'live' | 'practice' | 'bot' | 'strategies' | 'paper' | 'setup' | 'lab' | 'news';
 const TITLES: Record<Section, { title: string; sub: string }> = {
   room: { title: 'Home', sub: 'Is the bot working, what is it waiting for, how is the money doing, and what is in the news.' },
   news: { title: 'News desk', sub: 'What is coming, what just happened, and what the bot pauses for.' },
-  village: { title: 'The village', sub: 'The same bot as a pixel world: walk up to whoever works for you and open their screen.' },
   live: { title: 'Markets', sub: "Every market the bot watches: its trendlines, levels, signals and open trades." },
   practice: { title: 'Trade by hand', sub: 'Optional: your own $1,000 practice account. The auto-bot trades without you.' },
   bot: { title: 'Trades', sub: 'Its own $1,000 account, traded by itself on the hourly and 4-hour charts: open trades with their plan, today, closed trades.' },
@@ -79,7 +77,7 @@ const CRYPTO_TITLES: Partial<Record<Section, { title: string; sub: string }>> = 
 
 export function Forex() {
   const params = useParams();
-  const section = ((['live', 'practice', 'strategies', 'paper', 'setup', 'lab', 'bot', 'village', 'news'] as const).find((x) => x === params.section) ?? 'room') as Section;
+  const section = ((['live', 'practice', 'strategies', 'paper', 'setup', 'lab', 'bot', 'news'] as const).find((x) => x === params.section) ?? 'room') as Section;
   const titles = inCrypto() ? { ...TITLES, ...CRYPTO_TITLES } : TITLES;
   const navigate = useNavigate();
   const { data, error, reload } = useApi<Data>(apiBase(), 60_000);
@@ -119,7 +117,6 @@ export function Forex() {
       {error && <ErrorBox message={error} />}
       {(section === 'live' || section === 'practice' || section === 'bot' || section === 'room' || section === 'news') && <div className="mb-4"><MarketClockBar /></div>}
       {section === 'news' && <FxNewsPage />}
-      {section === 'village' && <Village />}
       {section === 'room' && <ControlRoom />}
       {section === 'practice' && <FxTrade />}
       {section === 'bot' && <FxBot />}

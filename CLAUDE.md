@@ -758,6 +758,19 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.5 village removed, opening-range breakout, Kelly (Oct 21, owner: "look up Investopedia and what could help; remove
+the village and clean everything up")
+- **Village removed** (v19.1 / v19.3 / v21.1): `dashboard/src/components/Village.tsx` deleted, route `/forex/village`, nav entry
+  and the control-room link gone; comments in why.ts / desks.ts updated. The v19–v21 notes above that mention it are history.
+  No other dashboard file is unused (checked by import scan).
+- **Investopedia** blocks automated readers (the search tool refuses investopedia.com); ideas came from other public trading
+  pages instead. Built: `orb_ny` (strategies.ts, family session, 15m only, `ORB` {from 570, rangeTo 600, until 690, r 1.5}):
+  9:30–10:00 New York range (two 15m candles, `sessionRange`), the FIRST 15m close outside it before 11:30 → that way, stop at
+  the other side (the middle when that is > 4 ATR), 1.5R, flat 4 pm NY; DST-aware (the old `ny_open` uses fixed UTC 12–13
+  and is off by an hour half the year — left as is, graded like any row); in NOT_FOR_CRYPTO. Kelly: `McResult.kellyPct`
+  (win rate and avg win / avg loss of the unseen trades, ≤ 0 → 0); the Strategies drawer's Monte Carlo block shows it with
+  quarter- / half-Kelly and warns when the chosen risk % is past half-Kelly. Display only — nothing is resized by it.
+  tests/forex-orb (4).
 ## v27.4 Monte Carlo, per-market results, NY sessions, market-only edges (Oct 21, owner: "implement Monte Carlo; remove
 strategies that clearly don't work, I don't want it flooded; test certain strategies on certain markets, results might vary;
 in Strategies a tab for each currency with its results, by time frame and NY time")

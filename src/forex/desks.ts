@@ -1,5 +1,5 @@
 /**
- * v20 Market desks — one desk (villager) per market, with its own strategy ranking, its own learning, and a daily
+ * v20 Market desks — one desk per market, with its own strategy ranking, its own learning, and a daily
  * trade quota so every market keeps teaching the bot something.
  *
  * The idea (a bandit per market): each market has "arms" = strategy × chart rows that have a record on it. An arm's

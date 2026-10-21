@@ -4,7 +4,7 @@
  */
 import { Badge } from './ui';
 
-export interface McResult { n: number; pProfit: number; p5AvgR: number; p50AvgR: number; ddR95: number; streak95: number }
+export interface McResult { n: number; pProfit: number; p5AvgR: number; p50AvgR: number; ddR95: number; streak95: number; kellyPct?: number }
 export interface MarketCell { pair: string; inN: number; inAvgR: number; n: number; avgR: number; pf: number | null; winPct: number; mcP: number | null; mcP5: number | null; sess: Array<[number, number]> }
 export interface CellRow { id: string; name: string; tf: string; verdict: 'edge' | 'maybe' | 'no'; markets?: MarketCell[]; mc?: McResult | null; sess?: Array<[number, number]>; dead?: boolean }
 
@@ -107,6 +107,19 @@ export function McBlock({ mc, riskPct }: { mc: McResult | null | undefined; risk
         <div><div className="text-xs text-muted">Longest losing run</div><div className="tabular font-semibold">{mc.streak95} in a row</div></div>
       </div>
       <p className="mt-2 text-xs text-muted">Worst drop and losing run are the 1-in-20 bad case, not the average.</p>
+      {mc.kellyPct !== undefined && (
+        <p className={`mt-2 rounded-lg p-2 text-xs ${mc.kellyPct > 0 && riskPct > mc.kellyPct / 2 ? 'bg-warning/15 text-ink' : 'bg-surface-2/60 text-ink-2'}`}>
+          {mc.kellyPct > 0 ? (
+            <>
+              Kelly sizing: its win rate and win / loss size say at most <b>{mc.kellyPct}%</b> a trade; traders use a quarter to half of that
+              ({Math.round(mc.kellyPct * 25) / 100}–{Math.round(mc.kellyPct * 50) / 100}%) because the estimate is never exact.
+              {riskPct > mc.kellyPct / 2 ? ` At ${riskPct}% you are past half-Kelly — bigger swings for no extra growth.` : ''}
+            </>
+          ) : (
+            'Kelly sizing: 0% — on these trades there is no edge to size up.'
+          )}
+        </p>
+      )}
     </div>
   );
 }

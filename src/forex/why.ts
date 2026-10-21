@@ -4,7 +4,7 @@
  * Pure. Reads the check timeline (RunNote), the bot log (every reason it waited or skipped, with time), the last
  * sync report per chart, the chosen list, the account (last trade), the market clock, data ages and the lab's
  * last error, and answers: how long since the bot last opened a trade, what fired meanwhile, where the signals
- * went, and the ONE thing that explains most of it. The control room, the Today card and the village show it.
+ * went, and the ONE thing that explains most of it. The control room and the Today card show it.
  */
 import type { RunNote } from './lab';
 import type { SyncReport } from './practice';

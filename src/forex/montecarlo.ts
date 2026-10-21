@@ -25,6 +25,8 @@ export interface McResult {
   p50AvgR: number;
   ddR95: number;
   streak95: number;
+  /** v27.5: Kelly risk per trade (% of the account) from the win rate and win / loss size; ≤ 0 = no edge to size */
+  kellyPct: number;
 }
 
 export const MC = { sims: 400, horizon: 100 };
@@ -85,7 +87,13 @@ export function monteCarlo(rs: readonly number[], seed = 1, o: { sims?: number; 
     dds.push(dd);
     streaks.push(worst);
   }
-  return { n, pProfit: r2(wins / sims), p5AvgR: r2(pct(avgs, 0.05)), p50AvgR: r2(pct(avgs, 0.5)), ddR95: r2(pct(dds, 0.95)), streak95: pct(streaks, 0.95) };
+  const w = rs.filter((r) => r > 0);
+  const l = rs.filter((r) => r <= 0);
+  const avgW = w.length ? w.reduce((a, b) => a + b, 0) / w.length : 0;
+  const avgL = l.length ? -l.reduce((a, b) => a + b, 0) / l.length : 0;
+  const pW = w.length / n;
+  const kelly = !w.length ? 0 : !(avgL > 0) ? 1 : pW - (1 - pW) / (avgW / avgL);
+  return { n, kellyPct: Math.round(Math.max(0, kelly) * 1000) / 10, pProfit: r2(wins / sims), p5AvgR: r2(pct(avgs, 0.05)), p50AvgR: r2(pct(avgs, 0.5)), ddR95: r2(pct(dds, 0.95)), streak95: pct(streaks, 0.95) };
 }
 
 /** Share of the account a drop of `ddR` R costs at `riskPct`% risk a trade (compounded). Pure. */

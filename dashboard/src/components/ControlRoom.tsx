@@ -95,7 +95,7 @@ export const ROOMS: Record<RoomKey, { name: string; role: string; icon: IconName
   desks: { name: 'Market desks', role: 'one desk per market: ranks its strategies on that market from the lab and the bot\'s own fills', icon: 'globe' },
 };
 
-/** everything the control room (and the village) reads, in one place */
+/** everything the control room reads, in one place */
 export interface CRData {
   bot: ReturnType<typeof useApi<BotData>>;
   lab: ReturnType<typeof useApi<LabData>>;
@@ -176,7 +176,7 @@ export function useControlRoomData(): CRData {
   return { bot, lab, cal, sys, ov, pnl, fx, now, d, a, plan, positions, orders, markets, reads: reads.data?.trades ?? [], names, focus, setPicked, fm, fp, fpos, open, next, livePnlAll, state, lastRun, closest };
 }
 
-/** one room's "says" line + body, from the shared data (used by the control room grid and the village panels) */
+/** one room's "says" line + body, from the shared data (used by the control room grid) */
 export function roomView(k: RoomKey, x: CRData): { says: string; body: ReactNode } {
   const { d, a, plan, positions, orders, markets, fx, now, reads, names, focus, setPicked, fm, fp, livePnlAll } = x;
   switch (k) {
@@ -439,7 +439,6 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
         <Link to={`${wsBase()}/news`} className="text-accent-text hover:underline">News desk</Link>
         <Link to={`${wsBase()}/live`} className="text-accent-text hover:underline">All markets</Link>
         <Link to={`${wsBase()}/lab`} className="text-accent-text hover:underline">Lab</Link>
-        <Link to={`${wsBase()}/village`} className="text-accent-text hover:underline">The village</Link>
         <span>{Object.keys(names).length ? `${d?.chosen.length ?? 0} strategy × chart combinations live` : ''}</span>
       </div>
     </div>

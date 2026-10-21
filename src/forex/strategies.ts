@@ -116,6 +116,8 @@ const lastHighs = (c: Ctx, i: number, n: number) => c.sw.highs.slice(Math.max(0,
 const lastLows = (c: Ctx, i: number, n: number) => c.sw.lows.slice(Math.max(0, c.loPtr[i]! - n + 1), c.loPtr[i]! + 1);
 const body = (c: Ctx, i: number) => Math.abs(c.bars[i]!.c - c.bars[i]!.o);
 
+/** v27.5: opening-range breakout clock (minutes since New York midnight, by candle close) */
+export const ORB = { from: 570, rangeTo: 600, until: 690, r: 1.5 };
 /** v23: the ICT clock, minutes since New York midnight. */
 export const ICT = {
   /** the pre-open range starts with London (3:00 am NY) */
@@ -1260,6 +1262,32 @@ export const STRATEGIES: Strategy[] = [
     },
   },
   {
+    // v27.5 (owner: "look up Investopedia and what could help"): the classic opening-range breakout on the real 9:30 New
+    // York open (DST-aware, unlike the older `ny_open`, which uses fixed UTC hours)
+    id: 'orb_ny',
+    name: 'Opening range breakout (NY 9:30)',
+    family: 'session',
+    style: 'trend',
+    charts: ['15m'],
+    desc: 'The first 30 minutes after the 9:30 New York open (two 15-minute candles) set the opening range. The first 15-minute close outside it before 11:30 is traded that way: stop at the other side of the range (the middle when the range is wide), 1.5R target, flat by 4:00 pm New York. Only the first break of the day counts — a second break is usually a false one.',
+    signal(c, i) {
+      const r = sessionRange(c, i, ORB.from, ORB.rangeTo, ORB.rangeTo, ORB.until);
+      if (!r) return null;
+      const dayOf = (t: number) => Math.floor((t + nyOffsetMs(t)) / 86_400_000);
+      const today = dayOf(c.bars[i]!.t);
+      for (let j = i - 1; j >= 0 && dayOf(c.bars[j]!.t) === today && c.nyMin[j]! + c.barMin > ORB.rangeTo; j--) {
+        if (c.bars[j]!.c > r.h || c.bars[j]!.c < r.l) return null; // not the first break
+      }
+      const b = c.bars[i]!;
+      const side: 1 | -1 | 0 = b.c > r.h ? 1 : b.c < r.l ? -1 : 0;
+      if (!side) return null;
+      const maxBars = Math.max(1, Math.floor((ICT.nyFlat - (c.nyMin[i]! + c.barMin)) / c.barMin));
+      const far = side === 1 ? r.l : r.h;
+      const mid = (r.h + r.l) / 2;
+      return levelSig(c, i, side, far, ORB.r, { maxBars }) ?? levelSig(c, i, side, mid, ORB.r, { maxBars });
+    },
+  },
+  {
     id: 'ny_q3',
     name: 'Quarterly theory: New York Q3',
     family: 'ict',
@@ -1356,7 +1384,7 @@ export const strategyById = (id: string) => STRATEGIES.find((s) => s.id === id) 
 export const NEWS_TRADERS = new Set(['news_drift', 'news_fade']);
 export const tradesNews = (strategy: string | undefined): boolean => !!strategy && NEWS_TRADERS.has(strategy);
 
-export const NOT_FOR_CRYPTO = new Set(['london_breakout', 'ny_open', 'pdh_pdl', 'judas_swing', 'ny_q3', 'amd_daily', 'asian_fade', 'local_hours', 'fix_flow', 'month_end_flow', 'weekend_gap', 'nr7_break', 'carry_trend', 'cot_squeeze', 'stretch_squeeze', 'ccy_momentum', 'stat_arb', 'mom_blend', 'oil_cad', 'yield_jpy', 'stocks_jpy', 'dollar_gold', 'turtle_soup']);
+export const NOT_FOR_CRYPTO = new Set(['london_breakout', 'ny_open', 'orb_ny', 'pdh_pdl', 'judas_swing', 'ny_q3', 'amd_daily', 'asian_fade', 'local_hours', 'fix_flow', 'month_end_flow', 'weekend_gap', 'nr7_break', 'carry_trend', 'cot_squeeze', 'stretch_squeeze', 'ccy_momentum', 'stat_arb', 'mom_blend', 'oil_cad', 'yield_jpy', 'stocks_jpy', 'dollar_gold', 'turtle_soup']);
 /** v27: rules built on currency baskets, central-bank rates, the CFTC currency report, FX-only flows (the London fix,
  * month-end re-hedging, local currency hours) or one named cross never run on a stock index. Session / ICT rules do:
  * the New York open is the index market's own open. */
