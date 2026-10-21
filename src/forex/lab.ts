@@ -138,6 +138,11 @@ export const FX_CONFIG = {
    * applies. Markets not listed keep the normal chooser. */
   marketPlan: { NDXUSD: ['judas_swing'] } as Record<string, string[]>,
   planLosing: { minN: 20, pf: 1.0 },
+  /** v27.11 (owner: "B" = Judas swing back on the Nasdaq, hourly, at a quarter size, to build a real record): a strategy ×
+   * chart × market that trades whatever its tested record says (profit floor, the market plan's losing-record rule and the
+   * losing-record wait are skipped), at `sizeF` of the normal size. The judge / checks / news / caps still apply, and the
+   * learner can still drop it on the bot's own record. */
+  ownerTrials: [{ pair: 'NDXUSD', strategy: 'judas_swing', tf: '1h', sizeF: 0.25 }] as Array<{ pair: string; strategy: string; tf: string; sizeF: number }>,
   /** v27.3 (owner: "focus more on XAU/USD gold, Nasdaq 100 and 500, USD/JPY and EUR/USD"): the forex desk's focus markets.
    * 'only' = the bot opens new trades on these alone (every other market stays tested and shown, held trades keep their
    * stops); 'prefer' = every market trades, these get first pick when the caps are full. They always sort first in the
@@ -595,8 +600,9 @@ export function profitFloor(row: Partial<Pick<Row, 'inSample' | 'outSample' | 'm
 
 /** v27.2 pure: may the bot open `strategy` on `pair`? `rowChosen` = the normal chooser's answer for its strategy × chart row,
  * `rec` = that row's tested record on this market, `dropped` = the learner took the row off. */
-export function planChosen(strategy: string, pair: string, rowChosen: boolean, rec: { n: number; pf: number | null } | undefined, dropped = false, cell?: MarketCell | null): boolean {
+export function planChosen(strategy: string, pair: string, rowChosen: boolean, rec: { n: number; pf: number | null } | undefined, dropped = false, cell?: MarketCell | null, tf?: string): boolean {
   if (dropped) return false;
+  if (tf && ownerTrialOf(strategy, tf, pair)) return true; // v27.11
   // v27.4: a strategy that proved itself on THIS market on its own (cellPass) trades here even when its pooled row doesn't;
   // v27.9: the looser trial bar is enough (at a smaller size, see `focusTrial`); v27.10 (owner: "if a chart has good
   // strategies use them"): such a strategy also trades past the focus list and next to a market plan's own strategies
@@ -609,6 +615,8 @@ export function planChosen(strategy: string, pair: string, rowChosen: boolean, r
   const l = FX_CONFIG.planLosing;
   return !(rec && rec.n >= l.minN && (rec.pf ?? 99) < l.pf);
 }
+/** v27.11: the owner's trial for this strategy × chart × market, if any */
+export const ownerTrialOf = (strategy: string, tf: string, pair: string) => FX_CONFIG.ownerTrials.find((x) => x.strategy === strategy && x.tf === tf && x.pair === pair);
 /** v27.10 pure: per market, the strategy × chart rows that proved themselves there on their own (full or trial bar) */
 export function provenCells(rows: ReadonlyArray<Pick<Row, 'id' | 'tf' | 'markets'>>): Record<string, string[]> {
   const out: Record<string, string[]> = {};
@@ -2158,10 +2166,10 @@ export class ForexLab {
       const k = `${t.strategy}:${t.tf}`;
       const any = allRowOf.get(k);
       const c = any?.markets?.find((m) => m.pair === t.pair);
-      return rowOf.get(k) ?? (FX_CONFIG.marketPlan[t.pair]?.includes(t.strategy) || cellPass(c) || focusTrial(t.pair, c) ? any : undefined);
+      return rowOf.get(k) ?? (FX_CONFIG.marketPlan[t.pair]?.includes(t.strategy) || ownerTrialOf(t.strategy, t.tf, t.pair) || cellPass(c) || focusTrial(t.pair, c) ? any : undefined);
     };
     const cellFor = (t: { strategy: string; tf: string; pair: string }) => allRowOf.get(`${t.strategy}:${t.tf}`)?.markets?.find((c) => c.pair === t.pair);
-    this.labOpen = Object.fromEntries(open.filter((t) => planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), rowFor(t)?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t))).map((t) => [`${t.strategy}:${t.tf}:${t.pair}`, t.entryT]));
+    this.labOpen = Object.fromEntries(open.filter((t) => planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), rowFor(t)?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf)).map((t) => [`${t.strategy}:${t.tf}:${t.pair}`, t.entryT]));
     // v17: how often each filter input was known on the first 70% of each series (for `missingInput`)
     const covCache = new Map<Series, ReturnType<typeof filterCoverage>>();
     const coverageOf = (se: Series) => {
@@ -2179,7 +2187,9 @@ export class ForexLab {
       // v27.6: × the VIX size brake (0.75× at VIX 25+, 0.5× at 35+)
       // v27.9: a trial trade on a focus market (its row not chosen, only the trial bar cleared there) → the trial size
       const trial = !chosen.has(`${t.strategy}:${t.tf}`) && focusTrial(t.pair, cellFor(t));
-      const sizeF = (trial ? FX_CONFIG.focusTry.sizeF : rollLive ? rollSizes[`${t.strategy}:${t.tf}`] ?? 0.6 : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1) * vixBrake;
+      // v27.11: the owner's trial (Judas swing on the Nasdaq) → its own size
+      const owned = ownerTrialOf(t.strategy, t.tf, t.pair);
+      const sizeF = (owned ? owned.sizeF : trial ? FX_CONFIG.focusTry.sizeF : rollLive ? rollSizes[`${t.strategy}:${t.tf}`] ?? 0.6 : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1) * vixBrake;
       const x = judgeX.get(tradeKey(t));
       const jv = judgeModel && x ? judgeView(judgeModel, x) : null;
       const p = jv?.p ?? null;
@@ -2212,14 +2222,14 @@ export class ForexLab {
         const pr = row.pairs.find((x) => x.pair === t.pair);
         const m = FX_CONFIG.strict.market;
         if (!pr) return { n: 0, pf: null, totalR: 0, ok: true };
-        return { n: pr.n, pf: pr.pf, totalR: pr.totalR, ok: !(pr.n >= m.minN && (pr.pf ?? 99) < m.losingPf) };
+        return { n: pr.n, pf: pr.pf, totalR: pr.totalR, ok: !!owned || !(pr.n >= m.minN && (pr.pf ?? 99) < m.losingPf) };
       })();
       return toLabTrade(t, {
         order,
         soloWait: soloWait(t, open, TF_MIN[t.tf as Timeframe] ?? 60),
         agree,
         marketRec,
-        chosen: planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t)),
+        chosen: planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf),
         sizeF,
         prio: focusPrio(t.pair, row ? row.all.avgR : -1),
         dataWait,

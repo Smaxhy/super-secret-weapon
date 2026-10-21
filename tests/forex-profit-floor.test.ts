@@ -126,3 +126,14 @@ describe('v27.10 a strategy proven on a market trades there past the focus list 
     expect(provenCells([{ id: 'pivot_bounce', tf: '4h', markets: [cell('RUTUSD'), cell('EURUSD', { mcP: 0.5 })] }, { id: 'random', tf: '1h', markets: [cell('RUTUSD')] }])).toEqual({ RUTUSD: ['pivot_bounce:4h'] });
   });
 });
+
+describe('v27.11 owner trial: Judas swing on the Nasdaq hourly at a quarter size', () => {
+  it('trades on NDX 1h despite a losing record; not on 15m, not elsewhere, not once the learner drops it', async () => {
+    const { planChosen, ownerTrialOf } = await import('../src/forex/lab');
+    expect(ownerTrialOf('judas_swing', '1h', 'NDXUSD')?.sizeF).toBe(0.25);
+    expect(planChosen('judas_swing', 'NDXUSD', false, { n: 172, pf: 0.89 }, false, null, '1h')).toBe(true);
+    expect(planChosen('judas_swing', 'NDXUSD', false, { n: 172, pf: 0.89 }, false, null, '15m')).toBe(false); // plan's losing rule
+    expect(planChosen('judas_swing', 'EURUSD', false, undefined, false, null, '1h')).toBe(false);
+    expect(planChosen('judas_swing', 'NDXUSD', false, { n: 172, pf: 0.89 }, true, null, '1h')).toBe(false);
+  });
+});

@@ -758,6 +758,15 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.11 Judas swing back on the Nasdaq hourly at a quarter size (Oct 21, owner chose "B")
+Owner saw a Judas swing on the Nasdaq that wasn't taken. VPS read 14:23 UTC: judas_swing 1h 'no' (unseen 295 / −0.23R / PF 0.61),
+NDX record 172 trades / PF 0.89 / −8.9R → the v27.2 plan's losing rule switched it off there; the 15m row has 5 NDX trades
+but Yahoo's CME price is ~10 min delayed and 15m never opens on a delayed price. Owner offered (a) leave off / (b) hourly at a
+quarter size / (c) 15m with a real-time feed → chose B. `FX_CONFIG.ownerTrials` [{NDXUSD, judas_swing, 1h, sizeF 0.25}] +
+`ownerTrialOf(strategy, tf, pair)`: `planChosen(…, tf)` returns true for it first (skips profit floor, focus, the plan's
+losing rule), hourly `botTrades` sizes it at 0.25 (× vol / learner / VIX) and its `marketRec.ok` is forced true; `rowFor`
+returns its row. Judge / checks / news / caps / learner drop still apply. Callers now pass `tf` to planChosen (both labs).
+Test in forex-profit-floor (+1).
 ## v27.10 every chart checked: proven strategies trade where they proved themselves (Oct 21, owner: "check all other charts too")
 VPS read 12:32 UTC (9adcad0), per market (strict = `cellPass`, trial = `cellTry`): FOREX strict = NDX pivot_bounce:4h (106
 unseen, +0.19R, PF 2.47) and RUT pivot_bounce:4h (108, +0.19R, PF 2.40); trial = DJI pivot_bounce:4h (84, +0.11R, PF 1.66),
