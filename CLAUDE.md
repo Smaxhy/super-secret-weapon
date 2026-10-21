@@ -758,6 +758,14 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.15 the untested market-checks gate is off (Oct 21 22:45 UTC, owner: "all these strategies and skills but not one trade")
+VPS read (4ab2943): 26.7 h without a forex open; 24 h = 80 checks, 2,579 signals, 3 from traded strategies, 0 opened; the only
+waits were SPXUSD pivot_bounce 4h shorts "only 0 of 3 market checks agree"; the other chosen-strategy signals (USDJPY / NZDUSD
+pivot_bounce, XAU cci_break) were held back by the rows' own TESTED filters (strength / bigger chart) — left as is. Proven /
+trial cells: S pivot_bounce:4h RUT (108, +0.19R, PF 2.40) + NDX (106, +0.19R, 2.47); T pivot_bounce:4h DJI, weekend_gap:1h NDX,
+round_break:4h XAU (42, +0.19R, 1.93), cci_break:1h XAU. `FX_CONFIG.strict.minAgree` 1 → **0**: the agree gate was never in a
+backtest and for bounce / fade rules the bigger-chart trend points against the trade by design. Live = what the test took; the
+shadow book keeps scoring. Put 1 back to restore it. forex-strict expectation updated.
 ## v27.14 the friend's two ICT trades as lab strategies (Oct 21, owner's annotated chart: "a friend of mine took it, he's profitable")
 Chart: long = filled a 30m FVG, then IFVG + CISD + good displacement, TP the previous week's high; short = a 5m gap inverted,
 retrace into the CE (middle) of the new 5m gap, initial TP the swing low, stopped at the trailed high. strategies.ts (family

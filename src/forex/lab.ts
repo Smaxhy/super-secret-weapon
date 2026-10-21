@@ -96,8 +96,12 @@ export const FX_CONFIG = {
     /** v24 (owner: "enough solid signals, firing setups but not executing"): was 2 of 4 — on a coin only two of the four
      * checks can even speak (no strength meter, mood mostly "no say"), on forex it held back every trade of the day.
      * 1 = at least one check on its side. The shadow book (shadow.ts) now records what the held-back trades do, so the
-     * stricter rule can be judged on real numbers before it comes back. */
-    minAgree: 1,
+     * stricter rule can be judged on real numbers before it comes back.
+     * v27.15 (owner: "all these strategies and skills but not one trade"; VPS 22:45 UTC: 26.7 h without an open, the only
+     * chosen-strategy waits were SPXUSD pivot_bounce 4h shorts at "0 of 3 checks agree"): 0 = off. The rule was never in
+     * any backtest, and for bounce / fade rules the bigger-chart trend points against the trade by design, so it threw
+     * away exactly the trades the test graded. Live now takes what the test took; the shadow book keeps scoring. */
+    minAgree: 0,
     deskTrades: false,
     /** v20.4 / v24.1: a strategy stays off a market where its own tested record there is a LOSING one (12+ trades,
      * profit factor under 0.9). Was "only a winning one (PF 1.1+)", which also refused every market with a thin or
