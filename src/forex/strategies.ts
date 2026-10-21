@@ -1344,6 +1344,13 @@ export const strategyById = (id: string) => STRATEGIES.find((s) => s.id === id) 
 /** v15: does a strategy run on this chart? Session rules need hourly bars; multi-day rules skip 15m / 1m. Pure. */
 /** v22: rules built on the forex week, its sessions, central-bank rates, the CFTC report or currency baskets have no
  * meaning on a coin that trades 24/7 against the dollar — they never run there. */
+/** v26.4 (owner: "aren't you supposed to trade WITH news"): the strategies whose whole job is trading the move a release
+ * or headline makes. The news pause (calendar ±30 min, big headlines, a 15-minute price shock) protects every OTHER
+ * strategy from that move; these two were being blocked by it too, so they could almost never take the trade they were
+ * tested on (the backtest has no news pause). Bank holidays and the clock still apply to them. */
+export const NEWS_TRADERS = new Set(['news_drift', 'news_fade']);
+export const tradesNews = (strategy: string | undefined): boolean => !!strategy && NEWS_TRADERS.has(strategy);
+
 export const NOT_FOR_CRYPTO = new Set(['london_breakout', 'ny_open', 'pdh_pdl', 'judas_swing', 'ny_q3', 'amd_daily', 'asian_fade', 'local_hours', 'fix_flow', 'month_end_flow', 'weekend_gap', 'nr7_break', 'carry_trend', 'cot_squeeze', 'stretch_squeeze', 'ccy_momentum', 'stat_arb', 'mom_blend', 'oil_cad', 'yield_jpy', 'stocks_jpy', 'dollar_gold', 'turtle_soup']);
 export function runsOn(s: Pick<Strategy, 'onlyHourly' | 'slow' | 'id' | 'charts'>, tf: string, pair?: string): boolean {
   if (pair && isCrypto(pair) && NOT_FOR_CRYPTO.has(s.id)) return false;

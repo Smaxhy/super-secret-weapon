@@ -758,6 +758,15 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v26.4 news strategies trade the news (Oct 21, owner: "aren't you supposed to trade WITH news? why no trades")
+VPS read 10:29 UTC: 14 h without an open; 2,187 signals in 24 h, only 106 from strategies the bot trades (1 opened, 6
+skipped, 48 waits; 12 news waits = amd_daily 15m during an Iran-war headline); the hourly / 4-hour chosen list had
+shrunk to `carry_trend:4h` alone — most likely the v26 fee re-pick (gTrade fee ≈ 0.024% of the price round trip = ~0.15R
+on a 15-pip hourly stop) turned the Maybe rows into 'no'. Bug fixed: `news_drift` / `news_fade` were blocked by the same
+news pause (calendar ±30 min, big headlines, 15-min price shock) that exists to protect every other strategy — the move
+they trade. `NEWS_TRADERS` / `tradesNews` (strategies.ts); `ForexCalendar.blockFor(pair, now, newsTrader)` → holidays only
+(`newsBlock(…, holidaysOnly)`); `syncBot` blockFor gets `(pair, strategy)` and skips `priceShock` for them; both labs skip
+the headline block for them. Their backtests never had the pause, so live now matches the test. tests/forex-news-traders (3).
 ## v26.3 charts that don't glitch (Oct 21, owner's screenshot: "fix the charts, they often bug a lot")
 Seen on the control-room big screen: trendlines ran off the plot over the price labels / time axis (their ends were clamped
 to the edge separately, which also bent them), stopped half a candle short of the newest one, a moving 1 px "scanline"

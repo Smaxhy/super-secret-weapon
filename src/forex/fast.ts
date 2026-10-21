@@ -19,7 +19,7 @@ import { dataAgeOf, FRESH, staleReason, type DataAge } from './freshness';
 import { fetchYahooBars, loadFastBars, mergeBars, saveFastBars, trimBars } from './data';
 import { loadOanda, oandaCandles, oandaReady } from './oanda';
 import { signalsFor, simulate, WARMUP } from './engine';
-import { STRATEGIES, runsOn, strategyById, styleOf } from './strategies';
+import { STRATEGIES, runsOn, strategyById, styleOf, tradesNews } from './strategies';
 import { to4h } from './ta';
 import { TF_MIN, type Bar, type Instrument, type Trade } from './types';
 import { allowFor, blockReason, filterCoverage, missingInput } from './filters';
@@ -563,7 +563,7 @@ export class FastLab {
       const bookAge = now - book.at;
       const bookWait = bookAge > FRESH.bookMaxAgeMs ? `the hourly market read (bigger charts, strength, mood) is ${Math.round(bookAge / 3_600_000)} h old: no new ${tf} trades` : null;
       const ev = await practice
-        .syncBot(labOpen, (pair) => bookWait ?? staleReason(ages[pair], now) ?? this.lab.calendar?.blockFor(pair) ?? this.lab.headlines?.blockFor(pair) ?? null, this.lab.atr1h, { scope: [tf], report: sync, pairsSeen, heat: this.lab.heatNow, acct: this.lab.acct, labDone })
+        .syncBot(labOpen, (pair, s) => bookWait ?? staleReason(ages[pair], now) ?? this.lab.calendar?.blockFor(pair, now, tradesNews(s)) ?? (tradesNews(s) ? null : this.lab.headlines?.blockFor(pair)) ?? null, this.lab.atr1h, { scope: [tf], report: sync, pairsSeen, heat: this.lab.heatNow, acct: this.lab.acct, labDone })
         .catch((err: Error) => [`bot sync (${tf}) failed: ${err.message}`]);
       this.lab.lastSync[tf] = sync;
       this.lab.logBot(ev);

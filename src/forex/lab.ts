@@ -32,7 +32,7 @@ import { RISK_MODES, newSyncReport, type HeatLive, type LabOpenTrade, type Pract
 import { marketClock, type ForexCalendar } from './calendar';
 import type { ForexHeadlines } from './headlines';
 import { DEFAULT_SIM, equityCurve, rStats, signalsFor, simulate, type RiskResult, type RStats } from './engine';
-import { NOT_FOR_CRYPTO, STRATEGIES, runsOn, strategyById, styleOf, type Family, type Strategy, type Style } from './strategies';
+import { NOT_FOR_CRYPTO, STRATEGIES, tradesNews, runsOn, strategyById, styleOf, type Family, type Strategy, type Style } from './strategies';
 import { buildCtx, to4h, type Ctx } from './ta';
 import { drawingsFor, type Drawings } from './drawings';
 import { applyDesks, buildDesks, type MarketDesk } from './desks';
@@ -2129,7 +2129,8 @@ export class ForexLab {
     const ev = await this.practice
       .syncBot(
         out.botTrades,
-        (pair) => staleReason(this.dataAge[pair], Date.now()) ?? this.calendar?.blockFor(pair) ?? this.headlines?.blockFor(pair) ?? null,
+        // v26.4: news strategies trade through the news pause (they wait only for stale data and bank holidays)
+        (pair, s) => staleReason(this.dataAge[pair], Date.now()) ?? this.calendar?.blockFor(pair, Date.now(), tradesNews(s)) ?? (tradesNews(s) ? null : this.headlines?.blockFor(pair)) ?? null,
         this.atr1h,
         // v17: a held trade on a market with no fresh hourly candles this run is kept (the lab couldn't see it end)
         // v26.2: a held trade whose lab trade vanished without ending (a re-test changed its rules) is kept

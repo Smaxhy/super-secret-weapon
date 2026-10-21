@@ -43,13 +43,13 @@ export function parseCalendar(json: unknown): CalEvent[] {
 const currenciesOf = (pair: string) => (pair.startsWith('XA') ? ['USD'] : isCrypto(pair) ? ['USD', pair.slice(0, 3)] : [pair.slice(0, 3), pair.slice(3, 6)]);
 
 /** Why a NEW trade on `pair` must wait right now (null = fine). Pure. */
-export function newsBlock(pair: string, now: number, events: readonly CalEvent[], windowMin = 30): string | null {
+export function newsBlock(pair: string, now: number, events: readonly CalEvent[], windowMin = 30, holidaysOnly = false): string | null {
   const ccys = currenciesOf(pair);
   const day = (t: number) => new Date(t).toISOString().slice(0, 10);
   for (const e of events) {
     if (!ccys.includes(e.ccy)) continue;
     const speech = e.impact === 'Medium' && /speaks|testif|press conference|remarks|statement/i.test(e.title);
-    if ((e.impact === 'High' || speech) && Math.abs(e.t - now) <= windowMin * 60_000) return `${e.ccy} ${speech ? 'speech' : 'news'}: ${e.title}`;
+    if (!holidaysOnly && (e.impact === 'High' || speech) && Math.abs(e.t - now) <= windowMin * 60_000) return `${e.ccy} ${speech ? 'speech' : 'news'}: ${e.title}`;
     if (e.impact === 'Holiday' && day(e.t) === day(now) && !isCrypto(pair)) return `${e.ccy} bank holiday: ${e.title}`;
   }
   return null;
@@ -229,7 +229,9 @@ export class ForexCalendar {
     const last = this.events.length ? this.events[this.events.length - 1]!.t : 0;
     return last < now || now - this.fetchedAt > 8 * 86_400_000;
   }
-  blockFor(pair: string, now = Date.now()): string | null {
+  /** v26.4: `newsTrader` (a news strategy) only waits for bank holidays — releases and speeches are its signal */
+  blockFor(pair: string, now = Date.now(), newsTrader = false): string | null {
+    if (newsTrader) return newsBlock(pair, now, this.events, 30, true);
     return newsBlock(pair, now, this.events) ?? (this.blind(now) ? blindNewsBlock(pair, now) : null);
   }
   /** v15: what's coming up for a pair (the bot's plan). */

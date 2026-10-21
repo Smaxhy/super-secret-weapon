@@ -24,6 +24,7 @@ import { parsePnlRow, pnlRowOf, type PnlRow } from './pnl';
 import { liveFeed } from './live-feed';
 import { lockedStop, lockPlan, PROFIT_LOCK, type LockPlan } from './profit-lock';
 import { FINANCING, rollsBetween, swapGain } from './financing';
+import { tradesNews } from './strategies';
 
 const log = moduleLogger('forex-practice');
 /** 'me' = the owner's own practice account, 'bot' = the forex auto-bot, 'cbot' (v22.1) = the coin auto-bot */
@@ -1377,7 +1378,7 @@ export class Practice {
    * the charts this call manages (the hourly lab passes 1h + 4h, the fast lab 15m or 1m), so one never closes the
    * other's trades; `report` collects what it saw for the bot's plan.
    */
-  async syncBot(labOpen: LabOpenTrade[], blockFor: (pair: string) => string | null = () => null, atr1h: Record<string, number> = {}, opts: { scope?: readonly string[]; report?: SyncReport; pairsSeen?: ReadonlySet<string>; heat?: HeatLive | null; acct?: 'bot' | 'cbot'; labDone?: ReadonlySet<string> } = {}): Promise<string[]> {
+  async syncBot(labOpen: LabOpenTrade[], blockFor: (pair: string, strategy?: string) => string | null = () => null, atr1h: Record<string, number> = {}, opts: { scope?: readonly string[]; report?: SyncReport; pairsSeen?: ReadonlySet<string>; heat?: HeatLive | null; acct?: 'bot' | 'cbot'; labDone?: ReadonlySet<string> } = {}): Promise<string[]> {
     const inScope = (ref: string | undefined) => !opts.scope || opts.scope.includes(tfOfRef(ref));
     const rep = opts.report;
     return this.serial(async () => {
@@ -1643,7 +1644,8 @@ export class Practice {
             ? 'daily rollover (20:45–23:15 UTC): spreads are wide'
             : ck.sinceOpenMin < 120
               ? 'the week just opened: spreads are still wide'
-              : blockFor(t.pair) ?? (qs && priceShock(qs.bars, atr1h[t.pair] ?? 0) ? 'price shock: unusually big move in the last 15 min' : null);
+              : // v26.4: a news strategy trades the shock — the price-shock pause is for everyone else
+                blockFor(t.pair, t.strategy) ?? (!tradesNews(t.strategy) && qs && priceShock(qs.bars, atr1h[t.pair] ?? 0) ? 'price shock: unusually big move in the last 15 min' : null);
         if (why) {
           note(`${t.pair}:${why}`, `waited on ${t.pair} (${t.strategy}): ${why}`);
           skip(t, why, true);
