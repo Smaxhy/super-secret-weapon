@@ -758,6 +758,24 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.4 Monte Carlo, per-market results, NY sessions, market-only edges (Oct 21, owner: "implement Monte Carlo; remove
+strategies that clearly don't work, I don't want it flooded; test certain strategies on certain markets, results might vary;
+in Strategies a tab for each currency with its results, by time frame and NY time")
+`src/forex/montecarlo.ts` (pure, seeded mulberry32): `monteCarlo(rs)` (400 bootstrap reshuffles: pProfit, p5 / p50 R a trade,
+ddR95 = 1-in-20 worst drop over 100 trades, streak95), `ddPctAt`, `sessionOf` / `bySession` (New York time: Asia 18–03, London
+03–08, NY open 08–12, NY afternoon 12–18, by entry), `marketCells` (one row's finished trades per market: purged first-70% /
+unseen split like statsOf, Monte Carlo on the unseen part (300 sims), sessions), `MARKET_EDGE` + `cellPass` (30+ unseen,
++0.1R, PF 1.3+, 20+ trades before the line and positive there, MC ≥ 95% — stricter than the row floor because ~1,800
+market × strategy × chart tries get graded). Row (built in evaluateTf, so both labs): `mc`, `markets`, `sess`, `dead` (lost
+before AND after the line with 30+ trades each and no market passes on its own). Row floor `profitFloor.minMcP` 0.9.
+Chooser: `planChosen(…, cell)` → a strategy that passes `cellPass` on a market trades THERE even when its pooled row isn't
+chosen (focus + market plan + learner drop still apply); hourly `rowFor` / `cellFor`, fast `followRows` include rows with a
+passing cell. Dashboard: `components/FxMarketResults.tsx` (MarketResults, McBadge, McBlock, SessionStrip, dashboard copies of
+cellPass / ddPctAt); Strategies page: market tabs (focus ★ first, remembered `fx.mkt`), dead rows folded ("Show the N that
+clearly don't work"), "MC N%" badge per row, drawer = Monte Carlo block (worst drop at the chosen risk %) + NY-session strip;
+a market tab lists every strategy × chart on that market with its own unseen record, MC, sessions, "Edge on <market>" /
+"Doesn't work here" (both halves negative, folded). Verified by rendering (scratchpad shots/strat27.mjs, phone + desktop).
+Report grows ~100–150 KB (cells). tests/forex-montecarlo (4).
 ## v27.3 focus markets (Oct 21, owner: "focus more on XAU/USD gold, Nasdaq 100 and 500, USD/JPY and EUR/USD")
 `FX_CONFIG.focus` {mode 'only' | 'prefer', markets [XAUUSD, NDXUSD, SPXUSD, USDJPY, EURUSD]} (lab.ts). `focusOk(pair)` is checked
 first inside `planChosen` (hourly botTrades + labOpen, fast `isChosen`): 'only' = the forex bot opens new trades on these five

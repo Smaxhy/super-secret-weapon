@@ -28,6 +28,7 @@ import { stratFactorFromVerdict, volFactor } from './portfolio';
 import { clockFor, marketClock } from './calendar';
 import { newSyncReport, type LabOpenTrade } from './practice';
 import { withEnd } from './mtf';
+import { cellPass } from './montecarlo';
 import { FX_CONFIG, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, focusPrio, pickedOnInSample, planChosen, plannedStrategies, prevPicks, profitFloor, signalIndex, slimTrade, soloWait, toLabTrade, tradeKey, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
 import type { HmmModel } from './hmm';
 import { agreeCount, boostFor, gradeConviction, maxConfirmations, tierOf, type ConvictionReport, type ConvRow } from './conviction';
@@ -483,7 +484,7 @@ export class FastLab {
       const practice = this.lab.practice;
       const heldIds = new Set(((await practice?.heldRefs(this.lab.acct).catch(() => [] as string[])) ?? []).filter((r) => r.split(':')[1] === tf).map((r) => r.split(':')[0]!));
       const planned = plannedStrategies();
-      const followRows = rowsTf.filter((r) => keep.has(`${r.id}:${r.tf}`) || heldIds.has(r.id) || planned.has(r.id));
+      const followRows = rowsTf.filter((r) => keep.has(`${r.id}:${r.tf}`) || heldIds.has(r.id) || planned.has(r.id) || !!r.markets?.some(cellPass)); // v27.4: + market-only edges
       const labOpen: LabOpenTrade[] = [];
       const openKeys: Record<string, number> = {};
       const byPair: FastFiring['byPair'] = {};
@@ -524,7 +525,7 @@ export class FastLab {
           if (!s) continue;
           // v18.7: fast charts manage what the bot still holds but open nothing unless switched on
           // v27.2: the market plan decides per market (NAS100 → Judas swing only)
-          const isChosen = (FX_CONFIG.botFastCharts || (this.lab.universe === 'crypto' && FX_CONFIG.botFastChartsCrypto) || FX_CONFIG.botFastStrategies.includes(row.id)) && planChosen(row.id, inst.id, keep.has(`${row.id}:${tf}`), row.pairs?.find((x) => x.pair === inst.id), rec.dropped.includes(`${row.id}:${tf}`));
+          const isChosen = (FX_CONFIG.botFastCharts || (this.lab.universe === 'crypto' && FX_CONFIG.botFastChartsCrypto) || FX_CONFIG.botFastStrategies.includes(row.id)) && planChosen(row.id, inst.id, keep.has(`${row.id}:${tf}`), row.pairs?.find((x) => x.pair === inst.id), rec.dropped.includes(`${row.id}:${tf}`), row.markets?.find((c) => c.pair === inst.id));
           const sigs = signalsFor(se.ctx, s).map((sg, i) => applyExit(sg, row.exit ?? 'designed', se.ctx, i));
           for (const t of simulate(inst, tf, se.ctx, s.id, sigs, allowFor(row.filter ?? 'none', se.env, styleOf(s)))) {
             if (t.reason !== 'open') {

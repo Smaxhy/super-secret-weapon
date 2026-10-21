@@ -28,13 +28,14 @@ import { ENTRY_SHORT, EXIT_SHORT, FILTER_SHORT, MoodCard, StrengthCard, TrendArr
 import { Badge, Button, Card, Chip, Drawer, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Sparkline, Stack, StatTile, useStored } from '../components/ui';
 import { apiBase, inCrypto, wsBase } from '../lib/ws';
 import { digitsOf, usdPriced } from '../lib/markets';
+import { MarketResults, McBadge, McBlock, SessionStrip, type MarketCell, type McResult } from '../components/FxMarketResults';
 
 interface RStats { n: number; winPct: number; avgR: number; medianR: number; pf: number | null; totalR: number; maxDdR: number }
 interface Risk { riskPct: number; finalX: number; avgWeekPct: number; medianWeekPct: number; greenWeeksPct: number; bigWeeksPct: number; bestWeekPct: number; worstWeekPct: number; maxDdPct: number; blown: boolean; medianLeverage: number; weeks: number }
 interface VariantRow { filter: FilterKind; inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number }
 interface ExitVariantRow extends Omit<VariantRow, 'filter'> { exit: ExitKind }
 interface EntryVariantRow { entry: EntryKind; inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number; outTotalR: number }
-interface RowT { id: string; name: string; family: string; desc: string; tf: string; filter?: FilterKind; variants?: VariantRow[]; exit?: ExitKind; exitVariants?: ExitVariantRow[]; entryVariants?: EntryVariantRow[]; entry?: EntryKind; fin?: { inAvgR: number; outAvgR: number; known: boolean }; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string; luck?: { pctl: number; twinsP90: number; twinPassPct: number }; stats?: RowStat }
+interface RowT { id: string; name: string; family: string; desc: string; tf: string; filter?: FilterKind; variants?: VariantRow[]; exit?: ExitKind; exitVariants?: ExitVariantRow[]; entryVariants?: EntryVariantRow[]; entry?: EntryKind; fin?: { inAvgR: number; outAvgR: number; known: boolean }; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string; luck?: { pctl: number; twinsP90: number; twinPassPct: number }; stats?: RowStat; mc?: McResult | null; markets?: MarketCell[]; sess?: Array<[number, number]>; dead?: boolean }
 interface Trade { strategy: string; tf: string; pair: string; side: 1 | -1; entryT: number; exitT: number; entry: number; exit: number; r: number; reason: string; stop: number; stop0: number; target: number | null }
 interface MarketNow { id: string; label: string; price: number; t: number; change24hPct: number; closes: number[]; trend: 'up' | 'down' | 'flat'; rsi: number; atrPips: number; firing: Array<{ id: string; name: string; tf: string; side: 1 | -1; allowed?: boolean; why?: string | null }>; openPaper: number; bars: number[][]; drawings: ChartDrawings; mtf?: { h1: number; h4: number; d1: number }; strength?: { base: string; quote: string; baseScore: number | null; quoteScore: number | null; gap: number | null }; risk?: number; heat?: Heatmap }
 interface HeatLevel { price: number; kind: 'round' | 'half' | 'swing' | 'yesterday' | 'expiry'; label: string; weight: number; distAtr: number }
@@ -46,6 +47,8 @@ interface FastFeed { id: string; tf: '15m' | '1m'; bars: number; firstT: number 
 interface FastReport { at: number; durationMs: number; feed: FastFeed[]; spans: Record<'15m' | '1m', { from: number | null; to: number | null; oosFrom: number | null; markets: number }>; rows: RowT[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string }
 interface Data { running: boolean; last: Report | null; fast?: FastReport | null }
 
+/** v27.3 focus markets (FX_CONFIG.focus on the bot) — their tabs come first */
+const FOCUS = ['XAUUSD', 'NDXUSD', 'SPXUSD', 'USDJPY', 'EURUSD'];
 const signed = (x: number, dp = 1) => `${x >= 0 ? '+' : ''}${x.toFixed(dp)}`;
 const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink-2');
 const day = (t: number | null) => (t ? new Date(t).toISOString().slice(0, 10) : '—');
@@ -296,7 +299,20 @@ function Strategies({ r }: { r: Report }) {
   const [tf, setTf] = useStored<'all' | '1m' | '15m' | '1h' | '4h'>('fx.tf', 'all', ['all', '15m', '1h', '4h']);
   const [risk, setRisk] = useStored<'0.5' | '1' | '2' | '5'>('fx.risk', '1', ['0.5', '1', '2', '5']);
   const [open, setOpen] = useState<RowT | null>(null);
-  const rows = useMemo(() => r.rows.filter((x) => tf === 'all' || x.tf === tf), [r, tf]);
+  // v27.4: one tab per market (focus markets first), and the strategies that clearly don't work folded away
+  const mkts = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const m of r.markets ?? []) seen.set(m.id, m.label);
+    for (const x of r.rows) for (const c of x.markets ?? []) if (!seen.has(c.pair)) seen.set(c.pair, c.pair);
+    const ids = [...seen.keys()].sort((a, b) => Number(FOCUS.includes(b)) - Number(FOCUS.includes(a)) || FOCUS.indexOf(a) - FOCUS.indexOf(b));
+    return ids.map((id) => ({ id, label: seen.get(id)! }));
+  }, [r]);
+  const [mkt, setMkt] = useStored<string>('fx.mkt', 'all');
+  const [showDead, setShowDead] = useState(false);
+  const curMkt = mkt === 'all' || mkts.some((m) => m.id === mkt) ? mkt : 'all';
+  const tfRows = useMemo(() => r.rows.filter((x) => tf === 'all' || x.tf === tf), [r, tf]);
+  const deadN = tfRows.filter((x) => x.dead).length;
+  const rows = showDead ? tfRows : tfRows.filter((x) => !x.dead);
   const ri = (x: RowT) => x.risk.find((k) => String(k.riskPct) === risk) ?? x.risk[1]!;
   return (
     <Card
@@ -313,6 +329,21 @@ function Strategies({ r }: { r: Report }) {
           <Chip key={k} active={risk === k} onClick={() => setRisk(k)}>{k}%</Chip>
         ))}
       </div>
+      <div className="-mt-1 flex gap-1.5 overflow-x-auto px-4 pb-3 sm:px-5" role="tablist" aria-label="Market">
+        <Chip active={curMkt === 'all'} onClick={() => setMkt('all')}>All markets</Chip>
+        {mkts.map((m) => (
+          <Chip key={m.id} active={curMkt === m.id} onClick={() => setMkt(m.id)}>{FOCUS.includes(m.id) ? '★ ' : ''}{m.label}</Chip>
+        ))}
+      </div>
+      {deadN > 0 && (
+        <div className="px-4 pb-2 text-xs text-muted sm:px-5">
+          <button type="button" className="font-semibold text-accent-text" onClick={() => setShowDead((v) => !v)}>{showDead ? 'Hide' : 'Show'} the {deadN} that clearly don't work</button>{' '}
+          (lost before and after the 70/30 line and on no market on their own — never traded)
+        </div>
+      )}
+      {curMkt !== 'all' ? (
+        <MarketResults rows={tfRows} pair={curMkt} label={mkts.find((m) => m.id === curMkt)?.label ?? curMkt} showDead={showDead} onOpen={(id, t) => setOpen(r.rows.find((x) => x.id === id && x.tf === t) ?? null)} />
+      ) : (
       <ul className="divide-y divide-line border-t border-line">
         {rows.map((x) => {
           const k = ri(x);
@@ -330,6 +361,7 @@ function Strategies({ r }: { r: Report }) {
                     <Badge tone={VERDICT[x.verdict].tone}>{VERDICT[x.verdict].label}</Badge>
                     {x.luck && <Badge tone={x.luck.pctl >= 90 ? 'up' : 'neutral'} title="where its unseen result falls among 20 copies with the same exits that fire at random times">beats {Math.round(x.luck.pctl / 5)} of 20 random</Badge>}
                     {x.entry && x.entry !== 'market' && <Badge tone="accent" title="its tested way in is a resting order (picked on the first 70% only): the bot places a limit instead of entering at the next open">{ENTRY_SHORT[x.entry]}</Badge>}
+                    <McBadge p={x.mc?.pProfit} />
                     {x.stats && <Badge tone={x.stats.dsr >= 0.95 ? 'up' : x.stats.dsr >= 0.5 ? 'neutral' : 'warn'} title={`deflated Sharpe: the chance its unseen edge is real given every row graded on the same data (Sharpe ${x.stats.sr} a trade vs ${x.stats.srStar} for the best no-edge row)`}>real {Math.round(x.stats.dsr * 100)}%</Badge>}
                   </div>
                   <div className="mt-0.5 truncate text-xs text-muted">
@@ -356,19 +388,27 @@ function Strategies({ r }: { r: Report }) {
           );
         })}
       </ul>
+      )}
       <Drawer open={!!open} onClose={() => setOpen(null)} title={open ? `${open.name} · ${open.tf}` : ''} subtitle={open?.desc} wide>
-        {open && <Detail x={open} />}
+        {open && <Detail x={open} riskPct={Number(risk)} />}
       </Drawer>
     </Card>
   );
 }
 
-function Detail({ x }: { x: RowT }) {
+function Detail({ x, riskPct = 1 }: { x: RowT; riskPct?: number }) {
   return (
     <Stack>
       <p className={`rounded-xl border p-3 text-sm ${x.verdict === 'edge' ? 'border-good/40 bg-good/5 text-ink' : 'border-line bg-surface-2/40 text-ink-2'}`}>
         <span className="font-semibold">{VERDICT[x.verdict].label}:</span> {x.why}
       </p>
+      <McBlock mc={x.mc} riskPct={riskPct} />
+      {x.sess && (
+        <div>
+          <div className="mb-1 text-xs font-semibold text-muted">By session (New York time, all markets, all trades)</div>
+          <SessionStrip sess={x.sess} />
+        </div>
+      )}
       <div className="grid grid-cols-3 gap-3">
         <StatTile compact label="All" value={`${signed(x.all.avgR, 2)}R`} sub={`${x.all.n} · PF ${x.all.pf ?? '∞'}`} tone={x.all.avgR > 0 ? 'up' : 'down'} />
         <StatTile compact label="First 70%" value={`${signed(x.inSample.avgR, 2)}R`} sub={`${x.inSample.n} · PF ${x.inSample.pf ?? '∞'}`} tone={x.inSample.avgR > 0 ? 'up' : 'down'} />

@@ -37,6 +37,7 @@ import { buildCtx, to4h, type Ctx } from './ta';
 import { drawingsFor, type Drawings } from './drawings';
 import { applyDesks, buildDesks, type MarketDesk } from './desks';
 import { ledgerRows } from './practice';
+import { bySession, cellPass, marketCells, monteCarlo, seedOf, type MarketCell, type McResult } from './montecarlo';
 import { INSTRUMENTS, MOOD_SYMBOLS, STRENGTH_PAIRS, TF_MIN, type Bar, type Instrument, type Signal, type Timeframe, type Trade, isCrypto, isFutures } from './types';
 import { buildStrength, gapSeries, scoreAt, strengthNow, type StrengthBook, type StrengthNow } from './strength';
 import { buildStretch, crowdPxSeries, type StretchBook } from './stretch';
@@ -129,7 +130,7 @@ export const FX_CONFIG = {
    * Oct 21 VPS read: the coin desk traded 24 rows, 18 of them at unseen PF 1.02–1.18 (−$71 in a day on three stops); the
    * ICT and always-on rows were all losing on unseen data (judas_swing 1h −0.45R, amd_daily 1h −0.18R, tsmom −0.16R).
    * Same numbers as the quality bar's first four checks; the random / luck-twin checks stay in 'quality' mode only. */
-  profitFloor: { on: true, minN: 30, minAvgR: 0.05, minPf: 1.2 },
+  profitFloor: { on: true, minN: 30, minAvgR: 0.05, minPf: 1.2, /** v27.4: ≥ 90% of Monte Carlo reshuffles of its unseen trades still made money */ minMcP: 0.9 },
   /** v27.2 (owner: "only do our Judas swing thing on NAS100 as well; I want specific strategies for specific charts"):
    * market → the ONLY strategies the bot may trade there. A listed strategy trades on its listed market even when its
    * pooled row (all markets together) is not chosen, judged instead on its record on THAT market: off once that record
@@ -186,6 +187,14 @@ export interface Row {
   /** edge / maybe / no */
   verdict: 'edge' | 'maybe' | 'no';
   why: string;
+  /** v27.4: Monte Carlo of its unseen trades (montecarlo.ts) */
+  mc?: McResult | null;
+  /** v27.4: the same strategy × chart on each market on its own (unseen record, Monte Carlo, NY sessions) */
+  markets?: MarketCell[];
+  /** v27.4: all its trades by New York session [n, avg R]: Asia / London / NY open / NY afternoon */
+  sess?: Array<[number, number]>;
+  /** v27.4: clearly doesn't work — lost before AND after the 70/30 line (30+ trades each) and on no market on its own */
+  dead?: boolean;
   /** v20.4: does it clear the quality bar the bot trades on in strict 'quality' mode (and why not) */
   quality?: { ok: boolean; why: string };
   /** v17 luck meter: where its unseen R falls among 20 random-timing copies (weekend job; same filter + exit only) */
@@ -560,7 +569,7 @@ export function qualityPass(row: Pick<Row, 'id' | 'inSample' | 'outSample' | 'al
 }
 
 /** v27.1 pure: does a row clear the profit floor (FX_CONFIG.profitFloor)? A row without stats (old report) passes. */
-export function profitFloor(row: Partial<Pick<Row, 'inSample' | 'outSample'>>): { ok: boolean; why: string } {
+export function profitFloor(row: Partial<Pick<Row, 'inSample' | 'outSample' | 'mc'>>): { ok: boolean; why: string } {
   const f = FX_CONFIG.profitFloor;
   const o = row.outSample;
   const i = row.inSample;
@@ -569,15 +578,17 @@ export function profitFloor(row: Partial<Pick<Row, 'inSample' | 'outSample'>>): 
   if (!(o.avgR >= f.minAvgR)) return { ok: false, why: `unseen ${o.avgR}R a trade (needs ${f.minAvgR}R+)` };
   if ((o.pf ?? 99) < f.minPf) return { ok: false, why: `unseen profit factor ${o.pf} (needs ${f.minPf}+)` };
   if (!(i.avgR > 0)) return { ok: false, why: `lost before the 70/30 line (${i.avgR}R a trade)` };
+  if (row.mc && row.mc.pProfit < f.minMcP) return { ok: false, why: `Monte Carlo: only ${Math.round(row.mc.pProfit * 100)}% of reshuffles made money (needs ${Math.round(f.minMcP * 100)}%)` };
   return { ok: true, why: '' };
 }
 
 /** v27.2 pure: may the bot open `strategy` on `pair`? `rowChosen` = the normal chooser's answer for its strategy × chart row,
  * `rec` = that row's tested record on this market, `dropped` = the learner took the row off. */
-export function planChosen(strategy: string, pair: string, rowChosen: boolean, rec: { n: number; pf: number | null } | undefined, dropped = false): boolean {
+export function planChosen(strategy: string, pair: string, rowChosen: boolean, rec: { n: number; pf: number | null } | undefined, dropped = false, cell?: MarketCell | null): boolean {
   if (!focusOk(pair)) return false;
   const plan = FX_CONFIG.marketPlan[pair];
-  if (!plan) return rowChosen;
+  // v27.4: a strategy that proved itself on THIS market on its own (cellPass) trades here even when its pooled row doesn't
+  if (!plan) return rowChosen || (!dropped && cellPass(cell));
   if (!plan.includes(strategy) || dropped) return false;
   const l = FX_CONFIG.planLosing;
   return !(rec && rec.n >= l.minN && (rec.pf ?? 99) < l.pf);
@@ -1055,6 +1066,14 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
       tradesPerWeek: Math.round((doneR.length / o.weeks) * 10) / 10,
       risk: FX_CONFIG.riskLevelsPct.map((r) => equityCurve(doneR, r, FX_CONFIG.maxLeverage)),
       pairs: vR.perPair.sort((a, b) => b.totalR - a.totalR).map((x) => ({ pair: x.pair, n: x.n, winPct: x.winPct, pf: x.pf, totalR: x.totalR })) as Row['pairs'],
+      ...(() => {
+        // v27.4: Monte Carlo + every market on its own + New York sessions
+        const key = `${s.id}:${tf}`;
+        const markets = marketCells(doneR, o.oosFrom, key);
+        const mc = monteCarlo(doneR.filter((t) => t.entryT >= o.oosFrom).map((t) => t.r), seedOf(key));
+        const dead = s.id !== 'random' && chR.inSample.n >= 30 && chR.outSample.n >= 30 && chR.inSample.avgR < 0 && chR.outSample.avgR < 0 && !markets.some(cellPass);
+        return { mc, markets, sess: bySession(doneR), ...(dead ? { dead: true } : {}) };
+      })(),
       verdict: 'no',
       why: '',
       ...(noLock ? { noLock } : {}),
@@ -2071,8 +2090,13 @@ export class ForexLab {
     const rowOf = new Map(chosenRows.map((x) => [`${x.id}:${x.tf}`, x]));
     // v27.2: a strategy the market plan assigns to a market is handled with its own row there even when not chosen
     const allRowOf = new Map(rows.map((x) => [`${x.id}:${x.tf}`, x]));
-    const rowFor = (t: { strategy: string; tf: string; pair: string }) => rowOf.get(`${t.strategy}:${t.tf}`) ?? (FX_CONFIG.marketPlan[t.pair]?.includes(t.strategy) ? allRowOf.get(`${t.strategy}:${t.tf}`) : undefined);
-    this.labOpen = Object.fromEntries(open.filter((t) => planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), rowFor(t)?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`))).map((t) => [`${t.strategy}:${t.tf}:${t.pair}`, t.entryT]));
+    const rowFor = (t: { strategy: string; tf: string; pair: string }) => {
+      const k = `${t.strategy}:${t.tf}`;
+      const any = allRowOf.get(k);
+      return rowOf.get(k) ?? (FX_CONFIG.marketPlan[t.pair]?.includes(t.strategy) || cellPass(any?.markets?.find((c) => c.pair === t.pair)) ? any : undefined);
+    };
+    const cellFor = (t: { strategy: string; tf: string; pair: string }) => allRowOf.get(`${t.strategy}:${t.tf}`)?.markets?.find((c) => c.pair === t.pair);
+    this.labOpen = Object.fromEntries(open.filter((t) => planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), rowFor(t)?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t))).map((t) => [`${t.strategy}:${t.tf}:${t.pair}`, t.entryT]));
     // v17: how often each filter input was known on the first 70% of each series (for `missingInput`)
     const covCache = new Map<Series, ReturnType<typeof filterCoverage>>();
     const coverageOf = (se: Series) => {
@@ -2127,7 +2151,7 @@ export class ForexLab {
         soloWait: soloWait(t, open, TF_MIN[t.tf as Timeframe] ?? 60),
         agree,
         marketRec,
-        chosen: planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`)),
+        chosen: planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t)),
         sizeF,
         prio: focusPrio(t.pair, row ? row.all.avgR : -1),
         dataWait,
