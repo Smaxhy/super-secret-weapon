@@ -137,3 +137,15 @@ describe('v27.11 owner trial: Judas swing on the Nasdaq hourly at a quarter size
     expect(planChosen('judas_swing', 'NDXUSD', false, { n: 172, pf: 0.89 }, true, null, '1h')).toBe(false);
   });
 });
+
+describe('v27.12 owner trials on every forex market: month-end flow 1h + pin bar 4h at a quarter size', () => {
+  it('trade on any forex market, never on a coin, not on another chart', async () => {
+    const { planChosen, ownerTrialOf } = await import('../src/forex/lab');
+    expect(ownerTrialOf('month_end_flow', '1h', 'EURUSD')?.sizeF).toBe(0.25);
+    expect(ownerTrialOf('pin_bar', '4h', 'GBPJPY')?.sizeF).toBe(0.25);
+    expect(planChosen('pin_bar', 'RUTUSD', false, undefined, false, null, '4h')).toBe(true);
+    expect(planChosen('pin_bar', 'BTCUSD', false, undefined, false, null, '4h')).toBe(false);
+    expect(planChosen('pin_bar', 'EURUSD', false, undefined, false, null, '1h')).toBe(false);
+    expect(planChosen('month_end_flow', 'USDJPY', false, undefined, true, null, '1h')).toBe(false); // learner dropped it
+  });
+});

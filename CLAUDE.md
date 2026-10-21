@@ -758,6 +758,13 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.12 month-end flow + pin bar as quarter-size trials (Oct 21, owner: "add month end and pin bar")
+VPS read 15:33 UTC (bced1fa): closest rows to the profit floor = month_end_flow:1h (21 unseen, +0.80R, PF 7.11, 86% won,
+first part +0.27R, MC 1.00) and pin_bar:4h (26, +0.42R, PF 2.63, first part +0.11R, MC 0.97) — both fail only n ≥ 30.
+`FX_CONFIG.ownerTrials` + {pair '*', month_end_flow, 1h, 0.25} and {pair '*', pin_bar, 4h, 0.25}: '*' = every forex-desk
+market, never a coin (`ownerTrialOf`); for '*' trials the losing-record-on-this-market wait still applies (only the one-market
+Judas trial forces `marketRec.ok`). Also seen: coin bot −$134 today on 13 trades, 5 correlated BTC / XRP longs at max mode —
+owner offered a same-direction cap / lower coin risk, not decided. Test in forex-profit-floor (+1).
 ## v27.11 Judas swing back on the Nasdaq hourly at a quarter size (Oct 21, owner chose "B")
 Owner saw a Judas swing on the Nasdaq that wasn't taken. VPS read 14:23 UTC: judas_swing 1h 'no' (unseen 295 / −0.23R / PF 0.61),
 NDX record 172 trades / PF 0.89 / −8.9R → the v27.2 plan's losing rule switched it off there; the 15m row has 5 NDX trades

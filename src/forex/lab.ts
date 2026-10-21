@@ -142,7 +142,13 @@ export const FX_CONFIG = {
    * chart × market that trades whatever its tested record says (profit floor, the market plan's losing-record rule and the
    * losing-record wait are skipped), at `sizeF` of the normal size. The judge / checks / news / caps still apply, and the
    * learner can still drop it on the bot's own record. */
-  ownerTrials: [{ pair: 'NDXUSD', strategy: 'judas_swing', tf: '1h', sizeF: 0.25 }] as Array<{ pair: string; strategy: string; tf: string; sizeF: number }>,
+  ownerTrials: [
+    { pair: 'NDXUSD', strategy: 'judas_swing', tf: '1h', sizeF: 0.25 },
+    // v27.12 (owner: "add month end and pin bar"): both halves profitable, Monte Carlo 97–100%, only short of 30 unseen
+    // trades (21 / 26). '*' = every forex-desk market (never a coin); unlike a one-market trial the losing-record wait stays.
+    { pair: '*', strategy: 'month_end_flow', tf: '1h', sizeF: 0.25 },
+    { pair: '*', strategy: 'pin_bar', tf: '4h', sizeF: 0.25 },
+  ] as Array<{ pair: string; strategy: string; tf: string; sizeF: number }>,
   /** v27.3 (owner: "focus more on XAU/USD gold, Nasdaq 100 and 500, USD/JPY and EUR/USD"): the forex desk's focus markets.
    * 'only' = the bot opens new trades on these alone (every other market stays tested and shown, held trades keep their
    * stops); 'prefer' = every market trades, these get first pick when the caps are full. They always sort first in the
@@ -616,7 +622,8 @@ export function planChosen(strategy: string, pair: string, rowChosen: boolean, r
   return !(rec && rec.n >= l.minN && (rec.pf ?? 99) < l.pf);
 }
 /** v27.11: the owner's trial for this strategy × chart × market, if any */
-export const ownerTrialOf = (strategy: string, tf: string, pair: string) => FX_CONFIG.ownerTrials.find((x) => x.strategy === strategy && x.tf === tf && x.pair === pair);
+export const ownerTrialOf = (strategy: string, tf: string, pair: string) =>
+  FX_CONFIG.ownerTrials.find((x) => x.strategy === strategy && x.tf === tf && (x.pair === pair || (x.pair === '*' && !isCrypto(pair))));
 /** v27.10 pure: per market, the strategy × chart rows that proved themselves there on their own (full or trial bar) */
 export function provenCells(rows: ReadonlyArray<Pick<Row, 'id' | 'tf' | 'markets'>>): Record<string, string[]> {
   const out: Record<string, string[]> = {};
@@ -2222,7 +2229,7 @@ export class ForexLab {
         const pr = row.pairs.find((x) => x.pair === t.pair);
         const m = FX_CONFIG.strict.market;
         if (!pr) return { n: 0, pf: null, totalR: 0, ok: true };
-        return { n: pr.n, pf: pr.pf, totalR: pr.totalR, ok: !!owned || !(pr.n >= m.minN && (pr.pf ?? 99) < m.losingPf) };
+        return { n: pr.n, pf: pr.pf, totalR: pr.totalR, ok: (!!owned && owned.pair !== '*') || !(pr.n >= m.minN && (pr.pf ?? 99) < m.losingPf) };
       })();
       return toLabTrade(t, {
         order,
