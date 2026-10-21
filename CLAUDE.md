@@ -758,6 +758,16 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v26.2 "+$10 then sold for $1" (Oct 21, owner; USDJPY fib_pullback 4h long, entry 158.222, closed 00:06 UTC on 'signal')
+VPS read: gross ≈ +$7.19, venue fee $5.81 → booked +$1.38 (+$1.24 swap banked) — the profit lock never armed. Two causes:
+(1) the open P&L on screen didn't count the fee charged at the close → `view()` now subtracts `feeUsd(...)` from every open
+position's P&L (equity / margin level too), so the screen shows what closing now would book. (2) The first run after the
+fee deploy re-picked filters / exits, the lab's trade vanished, and `syncBot` read "lab trade missing" as the strategy's exit.
+Now `RunOutput.doneKeys` (hourly: lab paper trades that ENDED in the last 7 days) / fast `labDone` (its simulated closed
+trades + `report.paper.recent`) → `syncBot(…, { labDone })`: a held trade missing from the open list AND not in labDone is
+kept on its own stop / target / profit lock (one bot-log line "a re-test changed its strategy's rules…") until
+`BOT.orphanMaxBars` 30 candles of its chart since it opened, then closed as before. No labDone passed → old behaviour.
+tests/forex-v26-2 (5). 1,364 tests.
 ## v26.1 Hyperliquid backup prices + Dukascopy's firewall named (Oct 21, owner: "build all the rest too besides the lean rule
 changes")
 From the GitHub safety review (no new npm packages added — both use the `ws` client the bot already has):
@@ -782,8 +792,7 @@ aren't like 25k tho")
 entry ÷ stop distance → engine `finish` subtracts it from every trade's R (`SimOpts.venueFees`, default on: lab, fast lab,
 honest test, luck twins, judge rows all see it → ONE re-pick event after deploy; some Maybe rows may turn 'no' = fewer
 trades); practice `closePos` / `closePart` take `feeUsd(inst, margin, leverage)` (open + close of the closed size) out of
-`pnlUsd` and store `ClosedPractice.feeUsd` (all accounts; the open fee is charged at the close, so equity during a trade is
-overstated by half the fee). Rates came from search extracts of docs.gains.trade (host unreachable from the sandbox; a
+`pnlUsd` and store `ClosedPractice.feeUsd` (all accounts; charged at the close — since v26.2 the open P&L already shows it). Rates came from search extracts of docs.gains.trade (host unreachable from the sandbox; a
 DefiLlama snapshot showed 0.02 maker / 0.05 taker for EUR/USD + XAU in June) — re-check before going live. NOT modelled:
 gTrade borrowing / funding fees (financing stands in) and open price impact. Bot sizing: position = equity × risk% ÷ stop%
 (margin = that ÷ leverage, capped at 25% of free margin) → at max mode ≈ $10–25k positions on forex majors, which the owner

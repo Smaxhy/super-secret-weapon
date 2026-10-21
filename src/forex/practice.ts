@@ -72,6 +72,9 @@ export const BOT = {
   /** v18.7 (owner: "wait it out, then adjust"): after a strategy closes a trade on a market, the same strategy may not
    * re-enter that market for this many candles of its chart (3 h on the hourly, 12 h on the 4-hour) */
   reentryCooldownBars: 3,
+  /** v26.2: a held trade whose lab trade vanished WITHOUT finishing (a re-test changed the strategy's filter / exit) is kept
+   * and run by its own stop / target / profit lock — closed after this many candles of its chart if nothing else ends it */
+  orphanMaxBars: 30,
 };
 
 /** v18.7: minutes until the same strategy may trade the same market again after `closed`, or 0 when it may now */
@@ -378,7 +381,9 @@ export function view(a: PracticeAccount, mids: Record<string, number>, halves: R
   const positions = a.open.map((p) => {
     const mid = mids[p.pair] ?? p.entry;
     const px = exitPx(p, mid, halves[p.pair]);
-    const pl = pnlUsd(p, px, mids);
+    // v26.2 (owner: "it was up $10 then sold for $1"): the open P&L already counts the venue fee the close will charge, so
+    // the number on screen is what closing now would really book
+    const pl = pnlUsd(p, px, mids) - feeUsd(instrument(p.pair) ?? { id: p.pair, kind: 'fx' }, p.marginUsd, p.leverage);
     // v17.9: USD per 1.0 move of the exit price (the dashboard moves P&L with live ticks between refreshes)
     const h = instrument(p.pair)?.pip ?? 0.0001;
     const pnlPerPx = (pnlUsd(p, px + h, mids) - pnlUsd(p, px - h, mids)) / (2 * h);
@@ -1372,7 +1377,7 @@ export class Practice {
    * the charts this call manages (the hourly lab passes 1h + 4h, the fast lab 15m or 1m), so one never closes the
    * other's trades; `report` collects what it saw for the bot's plan.
    */
-  async syncBot(labOpen: LabOpenTrade[], blockFor: (pair: string) => string | null = () => null, atr1h: Record<string, number> = {}, opts: { scope?: readonly string[]; report?: SyncReport; pairsSeen?: ReadonlySet<string>; heat?: HeatLive | null; acct?: 'bot' | 'cbot' } = {}): Promise<string[]> {
+  async syncBot(labOpen: LabOpenTrade[], blockFor: (pair: string) => string | null = () => null, atr1h: Record<string, number> = {}, opts: { scope?: readonly string[]; report?: SyncReport; pairsSeen?: ReadonlySet<string>; heat?: HeatLive | null; acct?: 'bot' | 'cbot'; labDone?: ReadonlySet<string> } = {}): Promise<string[]> {
     const inScope = (ref: string | undefined) => !opts.scope || opts.scope.includes(tfOfRef(ref));
     const rep = opts.report;
     return this.serial(async () => {
@@ -1424,6 +1429,19 @@ export class Practice {
             continue;
           }
           this.noted.delete(`kept:${p.ref}`);
+          // v26.2: the lab's trade is gone but it never FINISHED there (a re-test after an update changed the strategy's
+          // filter / exit, so the signal no longer exists) → not a real exit: keep it on its own stop / target / lock
+          if (opts.labDone && !opts.labDone.has(p.ref)) {
+            const barMs = (TF_MIN[(p.tf ?? tfOfRef(p.ref)) as Timeframe] ?? 60) * 60_000;
+            if (Date.now() - p.openedAt < BOT.orphanMaxBars * barMs) {
+              if (!this.noted.has(`orphan:${p.ref}`)) {
+                this.noted.add(`orphan:${p.ref}`);
+                events.push(`kept ${p.pair} (${p.strategy}): a re-test changed its strategy's rules, but its own trade didn't end — its stop, target and profit lock run it`);
+              }
+              continue;
+            }
+          }
+          this.noted.delete(`orphan:${p.ref}`);
           const px = pxNow(p.pair, p.side);
           if (px === null) {
             if (!p.closePending) {

@@ -28,7 +28,7 @@ import { stratFactorFromVerdict, volFactor } from './portfolio';
 import { clockFor, marketClock } from './calendar';
 import { newSyncReport, type LabOpenTrade } from './practice';
 import { withEnd } from './mtf';
-import { FX_CONFIG, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, pickedOnInSample, prevPicks, signalIndex, slimTrade, soloWait, toLabTrade, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
+import { FX_CONFIG, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, pickedOnInSample, prevPicks, signalIndex, slimTrade, soloWait, toLabTrade, tradeKey, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
 import type { HmmModel } from './hmm';
 import { agreeCount, boostFor, gradeConviction, maxConfirmations, tierOf, type ConvictionReport, type ConvRow } from './conviction';
 
@@ -488,6 +488,8 @@ export class FastLab {
       let newest = 0;
       /** v17: markets this pass really looked at (enough candles, the newest one recent) — a held trade on any other market is kept, not closed */
       const pairsSeen = new Set<string>();
+      /** v26.2: lab trades that really ended lately — a held trade missing from the open list but not here is kept */
+      const labDone = new Set<string>((this.report?.paper.recent ?? []).map(tradeKey));
       /** v17: how far behind each market's candles are (a lagging market gets no new trades) */
       const ages: Record<string, DataAge> = {};
       for (const inst of this.insts) {
@@ -522,7 +524,10 @@ export class FastLab {
           const isChosen = (FX_CONFIG.botFastCharts || (this.lab.universe === 'crypto' && FX_CONFIG.botFastChartsCrypto) || FX_CONFIG.botFastStrategies.includes(row.id)) && keep.has(`${row.id}:${tf}`);
           const sigs = signalsFor(se.ctx, s).map((sg, i) => applyExit(sg, row.exit ?? 'designed', se.ctx, i));
           for (const t of simulate(inst, tf, se.ctx, s.id, sigs, allowFor(row.filter ?? 'none', se.env, styleOf(s)))) {
-            if (t.reason !== 'open') continue;
+            if (t.reason !== 'open') {
+              if (t.exitT >= now - 7 * 86_400_000) labDone.add(tradeKey(t));
+              continue;
+            }
             openKeys[`${t.strategy}:${tf}:${t.pair}`] = t.entryT;
             const sizeF = stratFactorFromVerdict(row.verdict) * volFactor(t.volRatio) * (rec.proven.has(`${s.id}:${tf}`) ? 1.15 : 1) * (rec.down[`${s.id}:${tf}`] ?? 1);
             // v15.2: how many market checks back it, and the size that earns (only once proven on this chart)
@@ -558,7 +563,7 @@ export class FastLab {
       const bookAge = now - book.at;
       const bookWait = bookAge > FRESH.bookMaxAgeMs ? `the hourly market read (bigger charts, strength, mood) is ${Math.round(bookAge / 3_600_000)} h old: no new ${tf} trades` : null;
       const ev = await practice
-        .syncBot(labOpen, (pair) => bookWait ?? staleReason(ages[pair], now) ?? this.lab.calendar?.blockFor(pair) ?? this.lab.headlines?.blockFor(pair) ?? null, this.lab.atr1h, { scope: [tf], report: sync, pairsSeen, heat: this.lab.heatNow, acct: this.lab.acct })
+        .syncBot(labOpen, (pair) => bookWait ?? staleReason(ages[pair], now) ?? this.lab.calendar?.blockFor(pair) ?? this.lab.headlines?.blockFor(pair) ?? null, this.lab.atr1h, { scope: [tf], report: sync, pairsSeen, heat: this.lab.heatNow, acct: this.lab.acct, labDone })
         .catch((err: Error) => [`bot sync (${tf}) failed: ${err.message}`]);
       this.lab.lastSync[tf] = sync;
       this.lab.logBot(ev);

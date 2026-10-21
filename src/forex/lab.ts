@@ -473,6 +473,9 @@ export interface RunOutput {
   report: FxReport;
   botTrades: LabOpenTrade[];
   pairsSeen: string[];
+  /** v26.2: identities of lab trades that really ENDED in the last 7 days — a held bot trade missing from the open list
+   * but not here vanished because a re-test changed its rules, and is kept on its own stop / target */
+  doneKeys?: string[];
   chosen: string[];
   dropped: string[];
   firing: { signals: number; chosen: number };
@@ -2086,6 +2089,7 @@ export class ForexLab {
       report,
       botTrades,
       pairsSeen: series.filter((se) => se.tf === '1h' && se.ctx.bars.length && se.ctx.bars[se.ctx.bars.length - 1]!.t + 4 * 3_600_000 >= Date.now()).map((se) => se.inst.id),
+      doneKeys: recent.filter((t) => t.exitT >= Date.now() - 7 * 86_400_000).map(tradeKey),
       chosen: [...chosen],
       dropped: rec.dropped,
       firing: { signals: firing.length, chosen: firing.filter((f) => f.chosen && f.allowed).length },
@@ -2128,7 +2132,8 @@ export class ForexLab {
         (pair) => staleReason(this.dataAge[pair], Date.now()) ?? this.calendar?.blockFor(pair) ?? this.headlines?.blockFor(pair) ?? null,
         this.atr1h,
         // v17: a held trade on a market with no fresh hourly candles this run is kept (the lab couldn't see it end)
-        { scope: FX_CONFIG.timeframes, report: sync, heat: this.heatNow, pairsSeen: new Set(out.pairsSeen), acct: this.acct },
+        // v26.2: a held trade whose lab trade vanished without ending (a re-test changed its rules) is kept
+        { scope: FX_CONFIG.timeframes, report: sync, heat: this.heatNow, pairsSeen: new Set(out.pairsSeen), acct: this.acct, labDone: out.doneKeys ? new Set(out.doneKeys) : undefined },
       )
       .catch((err: Error) => [`bot sync failed: ${err.message}`]);
     this.lastSync['1h'] = sync;
