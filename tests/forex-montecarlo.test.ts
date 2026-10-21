@@ -56,7 +56,8 @@ describe('v27.4 Monte Carlo', () => {
     expect(planChosen('pin_bar', 'USDJPY', false, undefined, false, cell)).toBe(true);
     expect(planChosen('pin_bar', 'USDJPY', false, undefined, true, cell)).toBe(false); // the learner dropped it
     expect(planChosen('pin_bar', 'USDJPY', false, undefined, false, { ...cell, mcP: 0.8 })).toBe(false); // v27.9: 0.85–0.95 on a focus market = a half-size trial
-    expect(planChosen('pin_bar', 'GBPUSD', false, undefined, false, { ...cell, pair: 'GBPUSD' })).toBe(false); // not a focus market
+    expect(planChosen('pin_bar', 'GBPUSD', false, undefined, false, { ...cell, pair: 'GBPUSD' })).toBe(true); // v27.10: proven there → past the focus list
+    expect(planChosen('pin_bar', 'GBPUSD', true, undefined, false, null)).toBe(false); // unproven: not a focus market
     const st = (n: number, avgR: number, pf: number) => ({ n, winPct: 50, avgR, medianR: 0, pf, totalR: n * avgR, maxDdR: 0 });
     const row = { inSample: st(100, 0.1, 1.3), outSample: st(60, 0.1, 1.3) };
     expect(profitFloor({ ...row, mc: { n: 60, pProfit: 0.85, p5AvgR: -0.1, p50AvgR: 0.1, ddR95: 10, streak95: 6 } }).why).toMatch(/Monte Carlo/);

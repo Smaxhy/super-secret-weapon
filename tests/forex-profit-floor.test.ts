@@ -96,7 +96,7 @@ describe('v27.7 strongest vs weakest currencies join the focus list', () => {
 
 describe('v27.9 trial bar on the focus markets (gold)', () => {
   const cell = (o: Partial<import('../src/forex/montecarlo').MarketCell> = {}) => ({ pair: 'XAUUSD', inN: 15, inAvgR: 0.04, n: 26, avgR: 0.12, pf: 1.4, winPct: 45, mcP: 0.9, mcP5: -0.05, sess: [], ...o });
-  it('a strategy that clears the looser bar on gold trades there (not on a non-focus market), at half size', async () => {
+  it('a strategy that clears the looser bar on gold trades there (not on a coin), at half size', async () => {
     const { planChosen, focusTrial } = await import('../src/forex/lab');
     const { cellPass, cellTry } = await import('../src/forex/montecarlo');
     expect(cellPass(cell())).toBe(false); // 26 unseen trades: short of the full market bar
@@ -104,9 +104,25 @@ describe('v27.9 trial bar on the focus markets (gold)', () => {
     expect(focusTrial('XAUUSD', cell())).toBe(true);
     expect(planChosen('cci_break', 'XAUUSD', false, undefined, false, cell())).toBe(true);
     expect(planChosen('cci_break', 'XAUUSD', false, undefined, true, cell())).toBe(false); // the learner dropped it
-    expect(focusTrial('GBPUSD', cell({ pair: 'GBPUSD' }))).toBe(false); // not a fixed focus market
+    expect(focusTrial('BTCUSD', cell({ pair: 'BTCUSD' }))).toBe(false); // coins keep the full bar
     expect(focusTrial('XAUUSD', cell({ inAvgR: -0.08 }))).toBe(false); // lost before the line (psar_adx on gold)
     expect(focusTrial('XAUUSD', cell({ mcP: 0.7 }))).toBe(false);
     expect(focusTrial('XAUUSD', cell({ n: 40, inN: 25, mcP: 0.97 }))).toBe(false); // clears the full bar → full size, not a trial
+  });
+});
+
+describe('v27.10 a strategy proven on a market trades there past the focus list and the market plan', () => {
+  const cell = (pair: string, o: Partial<import('../src/forex/montecarlo').MarketCell> = {}) => ({ pair, inN: 186, inAvgR: 0.05, n: 106, avgR: 0.19, pf: 2.47, winPct: 62, mcP: 1, mcP5: 0.1, sess: [], ...o });
+  it('Russell 2000 (not a focus market) and Nasdaq 100 (Judas-only plan) open to pivot_bounce 4h; others stay shut', async () => {
+    const { planChosen, provenCells, focusOk } = await import('../src/forex/lab');
+    expect(focusOk('RUTUSD')).toBe(false);
+    expect(planChosen('pivot_bounce', 'RUTUSD', true, undefined, false, cell('RUTUSD'))).toBe(true);
+    expect(planChosen('pivot_bounce', 'RUTUSD', true, undefined, false, cell('RUTUSD', { mcP: 0.5 }))).toBe(false); // unproven there: focus rule
+    expect(planChosen('pivot_bounce', 'DJIUSD', false, undefined, false, cell('DJIUSD', { n: 84, avgR: 0.11, pf: 1.66, mcP: 0.9 }))).toBe(true); // trial
+    expect(planChosen('pivot_bounce', 'NDXUSD', true, undefined, false, cell('NDXUSD'))).toBe(true);
+    expect(planChosen('pivot_bounce', 'NDXUSD', true, undefined, true, cell('NDXUSD'))).toBe(false); // the learner dropped it
+    expect(planChosen('ema_cross', 'NDXUSD', true, undefined, false, null)).toBe(false); // plan still rules unproven ones
+    expect(planChosen('judas_swing', 'NDXUSD', false, undefined)).toBe(true);
+    expect(provenCells([{ id: 'pivot_bounce', tf: '4h', markets: [cell('RUTUSD'), cell('EURUSD', { mcP: 0.5 })] }, { id: 'random', tf: '1h', markets: [cell('RUTUSD')] }])).toEqual({ RUTUSD: ['pivot_bounce:4h'] });
   });
 });

@@ -43,6 +43,8 @@ export interface PlanInputs {
   marketPlan?: Record<string, string[]>;
   /** v27.3: focus markets (FX_CONFIG.focus): 'only' = no new trades elsewhere; always listed first */
   focus?: { mode: 'only' | 'prefer'; markets: string[] };
+  /** v27.10: per market, the strategy:chart rows proven there on their own — they trade past the focus list / market plan */
+  proven?: Record<string, string[]>;
   /** v22.1 fix: which desk's markets this plan is for (unset = every instrument, the pre-v22 behaviour) */
   universe?: 'fx' | 'crypto';
   names: Record<string, string>;
@@ -323,10 +325,11 @@ export function buildPlan(x: PlanInputs): BotPlan {
       const k = `${f.id}:${f.tf}`;
       const note = syncNotes.get(`${f.id}:${f.tf}:${inst.id}`);
       const fo = x.focus;
-      if (fo?.mode === 'only' && fo.markets.length && !isCrypto(inst.id) && !fo.markets.includes(inst.id)) return { tf: f.tf, name: f.name, side: f.side, verdict: `not a focus market (the bot trades ${fo.markets.map((id) => instrument(id)?.label ?? id).join(', ')})`, tone: 'no' };
+      const pr = !!x.proven?.[inst.id]?.includes(k);
+      if (!pr && fo?.mode === 'only' && fo.markets.length && !isCrypto(inst.id) && !fo.markets.includes(inst.id)) return { tf: f.tf, name: f.name, side: f.side, verdict: `not a focus market (the bot trades ${fo.markets.map((id) => instrument(id)?.label ?? id).join(', ')})`, tone: 'no' };
       const only = x.marketPlan?.[inst.id];
-      if (only && !only.includes(f.id)) return { tf: f.tf, name: f.name, side: f.side, verdict: `not on this market's list (${inst.label} trades only ${only.join(', ')})`, tone: 'no' };
-      if (!only && !chosen.has(k)) return { tf: f.tf, name: f.name, side: f.side, verdict: 'not one it trades (no edge on unseen data)', tone: 'no' };
+      if (only && !only.includes(f.id) && !pr) return { tf: f.tf, name: f.name, side: f.side, verdict: `not on this market's list (${inst.label} trades only ${only.join(', ')})`, tone: 'no' };
+      if (!only && !chosen.has(k) && !pr) return { tf: f.tf, name: f.name, side: f.side, verdict: 'not one it trades (no edge on unseen data)', tone: 'no' };
       if ((f.tf === '1m' || f.tf === '15m') && !x.fastCharts && !x.fastStrategies?.includes(f.id)) return { tf: f.tf, name: f.name, side: f.side, verdict: 'lab only: the bot trades the hourly and 4-hour charts', tone: 'no' };
       if (!f.allowed) return { tf: f.tf, name: f.name, side: f.side, verdict: `held back: ${f.why}`, tone: 'no' };
       if (heldKey.has(`${f.id}:${f.tf}:${inst.id}`)) return { tf: f.tf, name: f.name, side: f.side, verdict: 'in the trade', tone: 'go' };
@@ -391,7 +394,7 @@ export function buildPlan(x: PlanInputs): BotPlan {
     let plan: string;
     if (status === 'trading') plan = headline;
     else if (!ck.open) plan = 'Market closed: nothing to do until it opens.';
-    else if (x.focus?.mode === 'only' && x.focus.markets.length && !isCrypto(inst.id) && !x.focus.markets.includes(inst.id)) plan = 'Not a focus market: the lab keeps testing it and shows it here, but the bot opens no new trades on it.';
+    else if (!x.proven?.[inst.id]?.length && x.focus?.mode === 'only' && x.focus.markets.length && !isCrypto(inst.id) && !x.focus.markets.includes(inst.id)) plan = 'Not a focus market: the lab keeps testing it and shows it here, but the bot opens no new trades on it.';
     else if (!nChosen) plan = `Nothing to wait for: no strategy ${x.strict?.mode === 'quality' ? 'clears the quality bar' : 'has passed the unseen exam'} yet, so it will not trade here until one does.`;
     else if (status === 'waiting') {
       const w = wanted[0]!;

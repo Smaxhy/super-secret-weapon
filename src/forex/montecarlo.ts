@@ -174,7 +174,7 @@ export function cellPass(c: MarketCell | undefined | null): boolean {
 
 /**
  * v27.9 (owner: "look at gold, it has a lot of good trades; if a chart has good strategies, use them"): a looser TRIAL bar
- * for the owner's fixed focus markets only (gold, Nasdaq, S&P, USD/JPY, EUR/USD). Fewer trades are enough (20 unseen, 10
+ * on the forex desk's markets (v27.9 the focus list, v27.10 every one; coins keep the full bar). Fewer trades are enough (20 unseen, 10
  * before the line) but it must still have made money on both sides of the 70/30 line and in 85% of reshuffles. A strategy
  * that clears only this bar trades there at `FX_CONFIG.focusTry.sizeF` of the normal size.
  */

@@ -149,8 +149,10 @@ export const FX_CONFIG = {
      * the `top` strongest currencies against one of the `top` weakest, with a strength gap ≥ `minGap`, join the list */
     strong: { on: true, top: 2, minGap: 0.6 },
   },
-  /** v27.9 (owner: "gold has a lot of good trades; if a chart has good strategies, use them"): on the fixed focus markets a
-   * strategy that clears the looser trial bar there (`cellTry`, montecarlo.ts) trades at `sizeF` of the normal size */
+  /** v27.9 (owner: "gold has a lot of good trades; if a chart has good strategies, use them"): a strategy that clears the
+   * looser trial bar on a market (`cellTry`, montecarlo.ts) trades there at `sizeF` of the normal size. v27.10 ("check all
+   * other charts too"): every forex-desk market, not only the focus list; coins keep the full bar (they have 20 full-bar
+   * cells already). */
   focusTry: { on: true, sizeF: 0.5 },
   confluenceBars: 2,
   /** walk-forward: re-pick every month from the trades closed in the previous N months */
@@ -594,19 +596,32 @@ export function profitFloor(row: Partial<Pick<Row, 'inSample' | 'outSample' | 'm
 /** v27.2 pure: may the bot open `strategy` on `pair`? `rowChosen` = the normal chooser's answer for its strategy × chart row,
  * `rec` = that row's tested record on this market, `dropped` = the learner took the row off. */
 export function planChosen(strategy: string, pair: string, rowChosen: boolean, rec: { n: number; pf: number | null } | undefined, dropped = false, cell?: MarketCell | null): boolean {
+  if (dropped) return false;
+  // v27.4: a strategy that proved itself on THIS market on its own (cellPass) trades here even when its pooled row doesn't;
+  // v27.9: the looser trial bar is enough (at a smaller size, see `focusTrial`); v27.10 (owner: "if a chart has good
+  // strategies use them"): such a strategy also trades past the focus list and next to a market plan's own strategies
+  const proven = cellPass(cell) || focusTrial(pair, cell);
+  if (proven) return true;
   if (!focusOk(pair)) return false;
   const plan = FX_CONFIG.marketPlan[pair];
-  // v27.4: a strategy that proved itself on THIS market on its own (cellPass) trades here even when its pooled row doesn't
-  // v27.9: on a fixed focus market the looser trial bar is enough (at a smaller size, see `focusTrial`)
-  if (!plan) return rowChosen || (!dropped && (cellPass(cell) || focusTrial(pair, cell)));
-  if (!plan.includes(strategy) || dropped) return false;
+  if (!plan) return rowChosen;
+  if (!plan.includes(strategy)) return false;
   const l = FX_CONFIG.planLosing;
   return !(rec && rec.n >= l.minN && (rec.pf ?? 99) < l.pf);
 }
-/** v27.9 pure: a trial trade — the owner's fixed focus market, the strategy clears the trial bar there but not the full
- * market bar (callers size it at `FX_CONFIG.focusTry.sizeF` when its row isn't chosen anyway). */
+/** v27.10 pure: per market, the strategy × chart rows that proved themselves there on their own (full or trial bar) */
+export function provenCells(rows: ReadonlyArray<Pick<Row, 'id' | 'tf' | 'markets'>>): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const r of rows) {
+    if (r.id === 'random') continue;
+    for (const c of r.markets ?? []) if (cellPass(c) || focusTrial(c.pair, c)) (out[c.pair] ??= []).push(`${r.id}:${r.tf}`);
+  }
+  return out;
+}
+/** v27.9 pure: a trial trade — a forex-desk market (v27.10: any, was the focus list), the strategy clears the trial bar
+ * there but not the full market bar (callers size it at `FX_CONFIG.focusTry.sizeF` when its row isn't chosen anyway). */
 export function focusTrial(pair: string, cell: MarketCell | undefined | null): boolean {
-  return FX_CONFIG.focusTry.on && FX_CONFIG.focus.markets.includes(pair) && !cellPass(cell) && cellTry(cell);
+  return FX_CONFIG.focusTry.on && !isCrypto(pair) && !cellPass(cell) && cellTry(cell);
 }
 /** v27.7 pure: traded currency pairs of a strongest-vs-weakest currency (the strength meter's own top / bottom). */
 export function strongPairs(s: Pick<StrengthNow, 'ccys'> | null | undefined, insts: readonly Instrument[] = INSTRUMENTS): string[] {
@@ -1223,6 +1238,8 @@ export class ForexLab {
   runs: RunNote[] = [];
   /** v15: strategy:chart combinations the bot trades (hourly check) */
   chosen: string[] = [];
+  /** v27.10: per market, the strategy:chart rows proven there on their own (from the newest report), for the plan */
+  proven: Record<string, string[]> = {};
   /** v15: open trades of the strategies the bot trades (`strategy:tf:pair` → entry time), for the plan */
   labOpen: Record<string, number> = {};
   /** v15: the latest market cards and mood, kept in memory for the bot's plan */
@@ -1265,6 +1282,7 @@ export class ForexLab {
           this.marketsNow = r.markets ?? [];
           this.moodNow = r.mood ?? null;
           if (this.universe === 'fx' && r.strength) setStrongFocus(r.strength);
+          this.proven = provenCells(r.rows ?? []);
           this.atr1h = Object.fromEntries(this.marketsNow.map((m) => [m.id, m.atrPips * (INSTRUMENTS.find((i) => i.id === m.id)?.pip ?? 0)]));
         }
       })
@@ -2233,6 +2251,7 @@ export class ForexLab {
   async syncFrom(out: RunOutput): Promise<void> {
     // v27.7: a run in the worker child set its own focus list; the parent (bot account, plan) takes it from the report
     if (this.universe === 'fx' && out.report.strength) setStrongFocus(out.report.strength);
+    this.proven = provenCells(out.report.rows ?? []);
     // v18: the practice accounts book overnight financing from the same policy rates the lab tests with
     if (this.practice) this.practice.carryFor = (pair, t) => carryAt(this.book?.macro ?? null, pair, t);
     if (!this.practice) return;

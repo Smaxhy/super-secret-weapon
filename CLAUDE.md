@@ -758,6 +758,19 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.10 every chart checked: proven strategies trade where they proved themselves (Oct 21, owner: "check all other charts too")
+VPS read 12:32 UTC (9adcad0), per market (strict = `cellPass`, trial = `cellTry`): FOREX strict = NDX pivot_bounce:4h (106
+unseen, +0.19R, PF 2.47) and RUT pivot_bounce:4h (108, +0.19R, PF 2.40); trial = DJI pivot_bounce:4h (84, +0.11R, PF 1.66),
+NDX weekend_gap:1h (22, +0.49R), gold cci_break:1h / round_break:4h; every currency pair 0 on both bars (best near-misses:
+SPX pivot_bounce:4h fails Monte Carlo only (0.84), USDCAD pdh_pdl:1h first part exactly 0). CRYPTO 20 strict cells (BTC 5,
+XRP 5, ETH 3, SOL 3, DOGE 3, LINK 1; ADA / AVAX 0; news_drift:1h strict on BTC / ETH / SOL / XRP, pivot_bounce:4h on BTC / SOL /
+XRP / LINK) + 44 trial cells. Before this, RUT / DJI were shut by the focus list and NDX by the Judas-only market plan.
+Changed: `planChosen` → a strategy proven on THAT market (cellPass or `focusTrial`) trades there first, past the focus list and
+next to a market plan's own strategies (the learner's drop still wins); unproven strategies keep the old focus / plan rules.
+`focusTrial` = every forex-desk market (was the focus list), never a coin (coins have 20 full-bar cells; the trial bar would add
+44 thin ones). `provenCells(rows)` → `ForexLab.proven` (set in syncFrom + from the stored report at start) → plan
+`PlanInputs.proven` (no "not a focus market" / "not on this market's list" for them). Dashboard trial badge on every forex
+market tab. Tests in forex-profit-floor (+1), forex-montecarlo expectation updated.
 ## v27.9 trial bar on the focus markets (Oct 21, owner: "look at gold 5%, it has a lot of good trades; if a chart has good
 strategies I want you to use them")
 VPS read 12:26 UTC (9adcad0, risk mode turbo, chosen = pivot_bounce:4h only): 85 of 99 rows have gold trades; NONE clears the

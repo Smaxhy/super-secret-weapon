@@ -191,6 +191,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
               fastStrategies: FX_CONFIG.botFastStrategies,
               marketPlan: FX_CONFIG.marketPlan,
               focus: { mode: FX_CONFIG.focus.mode, markets: focusMarkets() },
+              proven: fx.proven,
               universe: fx.universe,
               strict: { mode: FX_CONFIG.strict.mode, minAgree: FX_CONFIG.strict.minAgree },
               names: Object.fromEntries(STRATEGIES.map((x) => [x.id, x.name])),
