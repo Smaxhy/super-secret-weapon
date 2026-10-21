@@ -758,6 +758,17 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.1 profit floor: the less profitable strategies are off (Oct 21, owner: "remove less profitable bots")
+VPS read 10:58 UTC: forex chosen = carry_trend:4h only (unseen 153 / 0.01R / PF 1.05; 98 of 99 rows 'no' after the fee re-pick);
+every ICT / always-on row losing on unseen data (judas_swing 1h −0.45R PF 0.39, amd_daily 1h −0.18R, tsmom 1h −0.16R, fix_flow
+−0.05R); coin desk 24 chosen rows, 18 at unseen PF 1.02–1.18 → −$71.53 today on 3 stops (trendline_break 1h ×2, mss_sweep 15m).
+`FX_CONFIG.profitFloor` {on, minN 30, minAvgR 0.05, minPf 1.2} + `profitFloor(row)` (lab.ts, pure; = the quality bar's first
+four checks): EVERY live row must clear it whatever put it on the list (verdict, botAlways, ownerLive, rolling picker), both
+desks, hourly chooser + fast `chosenOf`. Expected after deploy: forex 0 chosen rows (carry_trend fails) → the bot waits and logs
+"no strategy clears the profit floor"; coin desk ≈ 6 rows (rsi_dip 4h, news_fade 1h, news_drift 1h, mss_sweep 4h,
+momentum_bar 1h, fib_pullback 4h). Also fixed the v25 precedence slip in the hourly chooser (`ownerLive.has(x.id) || mode ===
+'edge' ? …` read as `(a || b) ? …`, so the ICT picks never got in on 1h / 4h). Held trades are kept on their own stops (v26.2).
+Switch off: `profitFloor.on = false`. tests/forex-profit-floor (3).
 ## v27 US stock indices on the forex desk (Oct 21, owner: "I want it to trade Nasdaq too, Nasdaq 100 etc")
 `INSTRUMENTS` + kind **'index'**: NDXUSD Nasdaq 100 (NQ=F), SPXUSD S&P 500 (ES=F), DJIUSD Dow 30 (YM=F), RUTUSD Russell 2000
 (RTY=F) — Yahoo hourly CME futures, 730 days, graded by the forex lab like every market (18 markets; nothing trades one until

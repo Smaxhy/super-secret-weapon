@@ -123,6 +123,13 @@ export const FX_CONFIG = {
    * strategy (any, tested or not; never the random yardstick) has a signal the SAME way on the SAME market within
    * `confluenceBars` candles of its chart; alone → the trade waits (shadow book kind 'solo'). */
   needsConfluence: ['fib_pullback'] as string[],
+  /** v27.1 (owner: "remove the less profitable bots"): a floor EVERY live row must clear, whatever got it onto the list
+   * (Edge / Maybe verdict, the always-on four, the owner's ICT picks, the rolling picker), both desks, every chart:
+   * 30+ unseen trades, ≥ 0.05R a trade and profit factor ≥ 1.2 on them, and positive before the 70/30 line too.
+   * Oct 21 VPS read: the coin desk traded 24 rows, 18 of them at unseen PF 1.02–1.18 (−$71 in a day on three stops); the
+   * ICT and always-on rows were all losing on unseen data (judas_swing 1h −0.45R, amd_daily 1h −0.18R, tsmom −0.16R).
+   * Same numbers as the quality bar's first four checks; the random / luck-twin checks stay in 'quality' mode only. */
+  profitFloor: { on: true, minN: 30, minAvgR: 0.05, minPf: 1.2 },
   confluenceBars: 2,
   /** walk-forward: re-pick every month from the trades closed in the previous N months */
   walkForward: { lookbackMonths: 6, minN: 15, minAvgR: 0.05, minPf: 1.15 },
@@ -538,6 +545,19 @@ export function qualityPass(row: Pick<Row, 'id' | 'inSample' | 'outSample' | 'al
   if (randomAvgR !== null && row.all.avgR < randomAvgR) return { ok: false, why: `random timing did better over all trades (${randomAvgR}R vs ${row.all.avgR}R)` };
   if (row.luck && Number.isFinite(row.luck.twinsP90) && o.avgR <= row.luck.twinsP90) return { ok: false, why: `its luck twins did as well (their top 10%: ${row.luck.twinsP90}R vs ${o.avgR}R)` };
   return { ok: true, why: `unseen ${o.n} trades, ${o.avgR}R a trade, PF ${o.pf ?? '∞'}; positive before the split too; beats random and its luck twins` };
+}
+
+/** v27.1 pure: does a row clear the profit floor (FX_CONFIG.profitFloor)? A row without stats (old report) passes. */
+export function profitFloor(row: Partial<Pick<Row, 'inSample' | 'outSample'>>): { ok: boolean; why: string } {
+  const f = FX_CONFIG.profitFloor;
+  const o = row.outSample;
+  const i = row.inSample;
+  if (!f.on || !o || !i) return { ok: true, why: '' };
+  if (o.n < f.minN) return { ok: false, why: `only ${o.n} unseen trades (needs ${f.minN})` };
+  if (!(o.avgR >= f.minAvgR)) return { ok: false, why: `unseen ${o.avgR}R a trade (needs ${f.minAvgR}R+)` };
+  if ((o.pf ?? 99) < f.minPf) return { ok: false, why: `unseen profit factor ${o.pf} (needs ${f.minPf}+)` };
+  if (!(i.avgR > 0)) return { ok: false, why: `lost before the 70/30 line (${i.avgR}R a trade)` };
+  return { ok: true, why: '' };
 }
 
 /** Pure: does a strategy's first-70% record earn it a place in the bot (the honest whole-bot test)? */
@@ -1887,8 +1907,9 @@ export class ForexLab {
     const mode = FX_CONFIG.strict.mode;
     const strict = mode !== 'off';
     const ownerLive = this.universe === 'fx' ? new Set(FX_CONFIG.ownerLive) : new Set<string>();
-    const chosenRows = rows.filter((x) => x.id !== 'random' && !(this.universe === 'crypto' && NOT_FOR_CRYPTO.has(x.id)) && !rec.dropped.includes(`${x.id}:${x.tf}`) && (ownerLive.has(x.id) || mode === 'edge' ? x.verdict === 'edge' : mode === 'quality' ? !!x.quality?.ok : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`))));
+    const chosenRows = rows.filter((x) => x.id !== 'random' && !(this.universe === 'crypto' && NOT_FOR_CRYPTO.has(x.id)) && !rec.dropped.includes(`${x.id}:${x.tf}`) && profitFloor(x).ok && (ownerLive.has(x.id) || (mode === 'edge' ? x.verdict === 'edge' : mode === 'quality' ? !!x.quality?.ok : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`)))));
     // v20.1 strict mode: say once per hour-of-change why the list is empty (the owner reads the Decisions log)
+    if (!strict && !chosenRows.length && this.chosen.length) this.logBot(['no strategy clears the profit floor right now (30+ unseen trades, 0.05R+ a trade, profit factor 1.2+) — the bot waits']);
     if (strict && !chosenRows.length && this.chosen.length) this.logBot([mode === 'edge' ? 'strict mode: no strategy has passed the unseen exam right now — the bot waits (nothing is traded until one earns Edge)' : 'strict mode: no strategy clears the quality bar right now — the bot waits']);
     for (const p of rolling?.thisWeek.paused ?? []) {
       const k = `${p.key}:paused`;

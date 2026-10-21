@@ -245,7 +245,7 @@ describe('v25 owner rules: ICT live, Fibonacci never alone', () => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(new URL('../src/forex/lab.ts', import.meta.url), 'utf8');
     expect(src).toMatch(/this\.universe === 'fx' \? new Set\(FX_CONFIG\.ownerLive\)/);
-    expect(src).toMatch(/ownerLive\.has\(x\.id\) \|\| mode === 'edge'/);
+    expect(src).toMatch(/profitFloor\(x\)\.ok && \(ownerLive\.has\(x\.id\) \|\| \(mode === 'edge'/); // v27.1: the floor first
   });
 
   it('fib_pullback waits alone and trades next to a second setup the same way', async () => {

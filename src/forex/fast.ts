@@ -28,7 +28,7 @@ import { stratFactorFromVerdict, volFactor } from './portfolio';
 import { clockFor, marketClock } from './calendar';
 import { newSyncReport, type LabOpenTrade } from './practice';
 import { withEnd } from './mtf';
-import { FX_CONFIG, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, pickedOnInSample, prevPicks, signalIndex, slimTrade, soloWait, toLabTrade, tradeKey, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
+import { FX_CONFIG, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, pickedOnInSample, prevPicks, profitFloor, signalIndex, slimTrade, soloWait, toLabTrade, tradeKey, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
 import type { HmmModel } from './hmm';
 import { agreeCount, boostFor, gradeConviction, maxConfirmations, tierOf, type ConvictionReport, type ConvRow } from './conviction';
 
@@ -168,9 +168,10 @@ export const DEFAULT_FAST_SOURCE: FastSource = {
   },
 };
 
-/** The fast-chart strategies the bot trades: passed on unseen data, not dropped for losing in its account. Pure. */
-export const chosenOf = (rows: ReadonlyArray<Pick<Row, 'id' | 'tf' | 'verdict'>>, dropped: readonly string[], ownerLive: readonly string[] = []) =>
-  rows.filter((r) => r.id !== 'random' && (r.verdict !== 'no' || ownerLive.includes(r.id)) && !dropped.includes(`${r.id}:${r.tf}`)).map((r) => `${r.id}:${r.tf}`);
+/** The fast-chart strategies the bot trades: passed on unseen data, clear the profit floor (v27.1), not dropped for losing
+ * in its account. Pure. */
+export const chosenOf = (rows: ReadonlyArray<Pick<Row, 'id' | 'tf' | 'verdict'> & Partial<Pick<Row, 'inSample' | 'outSample'>>>, dropped: readonly string[], ownerLive: readonly string[] = []) =>
+  rows.filter((r) => r.id !== 'random' && (r.verdict !== 'no' || ownerLive.includes(r.id)) && profitFloor(r).ok && !dropped.includes(`${r.id}:${r.tf}`)).map((r) => `${r.id}:${r.tf}`);
 
 /** v17: filter-input coverage of one tested series on its first 70% (bars before `oosFrom`, as the hourly lab measures it). Pure. */
 export function testedCoverage(se: Pick<Series, 'ctx' | 'env'>, oosFrom: number): FilterCoverage {
