@@ -758,6 +758,13 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.7 the strongest currencies back on the focus list (Oct 21, owner: "add the strongest currencies also back on the list")
+`FX_CONFIG.focus.strong` {on, top 2, minGap 0.6} + `strongPairs(strengthNow)` (lab.ts, pure): traded FX pairs that put one of
+the 2 strongest currencies of the strength meter against one of the 2 weakest, gap ≥ 0.6 → `setStrongFocus` (module set
+`strongFocus`, rebuilt each hourly run in computeRun (fx lab only), in `syncFrom` from the report (worker runs) and at start
+from the stored report). `focusOk` / `focusPrio` accept them; `focusMarkets()` = fixed five + this hour's strong pairs →
+`/api/forex/bot` plan `focus`. Owner's screenshot (GBP +0.52, CAD +0.48 … JPY −0.33, USD −0.67) → GBPUSD, GBPJPY, USDCAD.
+Direction is left to the strategies / strength check. Test in forex-profit-floor (+1).
 ## v27.6 VIX = expected volatility (Oct 21, owner: "look at the VIX index so you can see the expected volatility")
 The VIX (^VIX, already a mood input since v13, only as its 24 h change) is now read as a level. mood.ts: `MoodBook.vixLvl` /
 `vixRank` (rank among the previous ≤ 252 daily closes of days that ended before the hour's day, ≥ 60 needed — causal),

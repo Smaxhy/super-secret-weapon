@@ -25,7 +25,7 @@ import { RISK_MODES, isRiskMode, ledgerSummary, limitsFor, pnlUsd, riskSummary }
 import { buildPlan } from '../forex/plan';
 import { whyNoTrades } from '../forex/why';
 import { shadowSummary, type ShadowSummary, type ShadowTrade } from '../forex/shadow';
-import { FX_CONFIG } from '../forex/lab';
+import { FX_CONFIG, focusMarkets } from '../forex/lab';
 import { botStatus, dayTrades, parsePnlQuery, pnlReport } from '../forex/pnl';
 import { STRATEGIES } from '../forex/strategies';
 import { moneyMap } from '../learner/money-map';
@@ -190,7 +190,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
               fastCharts: FX_CONFIG.botFastCharts || (fx.universe === 'crypto' && FX_CONFIG.botFastChartsCrypto),
               fastStrategies: FX_CONFIG.botFastStrategies,
               marketPlan: FX_CONFIG.marketPlan,
-              focus: FX_CONFIG.focus,
+              focus: { mode: FX_CONFIG.focus.mode, markets: focusMarkets() },
               universe: fx.universe,
               strict: { mode: FX_CONFIG.strict.mode, minAgree: FX_CONFIG.strict.minAgree },
               names: Object.fromEntries(STRATEGIES.map((x) => [x.id, x.name])),

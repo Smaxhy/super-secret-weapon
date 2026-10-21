@@ -75,3 +75,21 @@ describe('v27.3 focus markets', () => {
     }
   });
 });
+
+describe('v27.7 strongest vs weakest currencies join the focus list', () => {
+  // the owner's screenshot, Oct 21: GBP +0.52, CAD +0.48, NZD +0.44, AUD +0.36, CHF +0.09, EUR −0.08, JPY −0.33, USD −0.67
+  const now = { ccys: [['GBP', 0.52], ['CAD', 0.48], ['NZD', 0.44], ['AUD', 0.36], ['CHF', 0.09], ['EUR', -0.08], ['JPY', -0.33], ['USD', -0.67]].map(([ccy, score]) => ({ ccy: ccy as string, score: score as number, today: 0, week: 0 })) };
+  it('adds the traded pairs of a top-2 currency against a bottom-2 one, and the bot may trade them', async () => {
+    const { strongPairs, setStrongFocus, focusMarkets, focusOk } = await import('../src/forex/lab');
+    expect(strongPairs(now).sort()).toEqual(['GBPJPY', 'GBPUSD', 'USDCAD']);
+    setStrongFocus(now);
+    try {
+      expect(focusOk('GBPUSD')).toBe(true);
+      expect(focusOk('AUDUSD')).toBe(false); // AUD is not top-2
+      expect(focusMarkets()).toEqual(['XAUUSD', 'NDXUSD', 'SPXUSD', 'USDJPY', 'EURUSD', 'GBPUSD', 'USDCAD', 'GBPJPY']);
+    } finally {
+      setStrongFocus(null);
+    }
+    expect(focusOk('GBPUSD')).toBe(false);
+  });
+});

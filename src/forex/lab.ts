@@ -142,7 +142,13 @@ export const FX_CONFIG = {
    * 'only' = the bot opens new trades on these alone (every other market stays tested and shown, held trades keep their
    * stops); 'prefer' = every market trades, these get first pick when the caps are full. They always sort first in the
    * plan. Coins (their own desk) are never affected. */
-  focus: { mode: 'only' as 'only' | 'prefer', markets: ['XAUUSD', 'NDXUSD', 'SPXUSD', 'USDJPY', 'EURUSD'] },
+  focus: {
+    mode: 'only' as 'only' | 'prefer',
+    markets: ['XAUUSD', 'NDXUSD', 'SPXUSD', 'USDJPY', 'EURUSD'],
+    /** v27.7 (owner: "add the strongest currencies back on the list"): every hour, traded currency pairs that put one of
+     * the `top` strongest currencies against one of the `top` weakest, with a strength gap ≥ `minGap`, join the list */
+    strong: { on: true, top: 2, minGap: 0.6 },
+  },
   confluenceBars: 2,
   /** walk-forward: re-pick every month from the trades closed in the previous N months */
   walkForward: { lookbackMonths: 6, minN: 15, minAvgR: 0.05, minPf: 1.15 },
@@ -593,13 +599,40 @@ export function planChosen(strategy: string, pair: string, rowChosen: boolean, r
   const l = FX_CONFIG.planLosing;
   return !(rec && rec.n >= l.minN && (rec.pf ?? 99) < l.pf);
 }
+/** v27.7 pure: traded currency pairs of a strongest-vs-weakest currency (the strength meter's own top / bottom). */
+export function strongPairs(s: Pick<StrengthNow, 'ccys'> | null | undefined, insts: readonly Instrument[] = INSTRUMENTS): string[] {
+  const f = FX_CONFIG.focus.strong;
+  if (!f.on || !s?.ccys?.length || s.ccys.length < 2 * f.top) return [];
+  const sorted = [...s.ccys].sort((a, b) => b.score - a.score);
+  const top = new Set(sorted.slice(0, f.top).map((c) => c.ccy));
+  const bottom = new Set(sorted.slice(-f.top).map((c) => c.ccy));
+  const score = new Map(sorted.map((c) => [c.ccy, c.score]));
+  return insts
+    .filter((i) => i.kind === 'fx')
+    .filter((i) => {
+      const b = i.id.slice(0, 3);
+      const q = i.id.slice(3, 6);
+      const pairUp = (top.has(b) && bottom.has(q)) || (bottom.has(b) && top.has(q));
+      return pairUp && Math.abs((score.get(b) ?? 0) - (score.get(q) ?? 0)) >= f.minGap;
+    })
+    .map((i) => i.id);
+}
+/** v27.7: this hour's strongest-vs-weakest pairs (set by the forex lab from its strength meter) */
+const strongFocus = new Set<string>();
+export function setStrongFocus(s: Pick<StrengthNow, 'ccys'> | null | undefined): void {
+  strongFocus.clear();
+  for (const p of strongPairs(s)) strongFocus.add(p);
+}
+/** v27.7: the focus list right now — the owner's fixed markets + this hour's strongest-vs-weakest pairs */
+export const focusMarkets = (): string[] => [...FX_CONFIG.focus.markets, ...[...strongFocus].filter((p) => !FX_CONFIG.focus.markets.includes(p))];
+
 /** v27.3 pure: may the bot open a new trade on this market under the focus list? Coins: always (their own desk). */
 export function focusOk(pair: string): boolean {
   const f = FX_CONFIG.focus;
-  return f.mode !== 'only' || !f.markets.length || isCrypto(pair) || f.markets.includes(pair);
+  return f.mode !== 'only' || !f.markets.length || isCrypto(pair) || f.markets.includes(pair) || strongFocus.has(pair);
 }
 /** v27.3: first pick when the caps are full — a focus market's trade ranks ahead of any other */
-export const focusPrio = (pair: string, prio: number) => (FX_CONFIG.focus.markets.includes(pair) ? prio + 10 : prio);
+export const focusPrio = (pair: string, prio: number) => (FX_CONFIG.focus.markets.includes(pair) || strongFocus.has(pair) ? prio + 10 : prio);
 
 /** v27.2: strategies the market plan assigns somewhere (the fast chart follows their rows even when not chosen). */
 export const plannedStrategies = () => new Set(Object.values(FX_CONFIG.marketPlan).flat());
@@ -1222,6 +1255,7 @@ export class ForexLab {
         if (r && !this.marketsNow.length) {
           this.marketsNow = r.markets ?? [];
           this.moodNow = r.mood ?? null;
+          if (this.universe === 'fx' && r.strength) setStrongFocus(r.strength);
           this.atr1h = Object.fromEntries(this.marketsNow.map((m) => [m.id, m.atrPips * (INSTRUMENTS.find((i) => i.id === m.id)?.pip ?? 0)]));
         }
       })
@@ -1590,6 +1624,7 @@ export class ForexLab {
       if (!refresh) feed.push({ id: p.id, role: 'strength', bars: b.length, firstT: b[0]?.t ?? null, lastT: b[b.length - 1]?.t ?? null, error: null });
     }
     const strength = buildStrength(strengthInput);
+    if (this.universe === 'fx') setStrongFocus(strengthNow(strength)); // v27.7
     await yieldNow();
     const moodInput: Partial<Record<(typeof MOOD_SYMBOLS)[number]['id'], Bar[]>> = {};
     for (const m of MOOD_SYMBOLS) {
@@ -2184,6 +2219,8 @@ export class ForexLab {
 
   /** The bot account follows the run: opens / manages / closes its trades (always in this process). */
   async syncFrom(out: RunOutput): Promise<void> {
+    // v27.7: a run in the worker child set its own focus list; the parent (bot account, plan) takes it from the report
+    if (this.universe === 'fx' && out.report.strength) setStrongFocus(out.report.strength);
     // v18: the practice accounts book overnight financing from the same policy rates the lab tests with
     if (this.practice) this.practice.carryFor = (pair, t) => carryAt(this.book?.macro ?? null, pair, t);
     if (!this.practice) return;
