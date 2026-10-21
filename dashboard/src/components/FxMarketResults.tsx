@@ -12,6 +12,8 @@ export const SESSIONS = ['Asia', 'London', 'NY open', 'NY pm'] as const;
 const SESSION_HELP = 'New York time: Asia 18:00–03:00, London 03:00–08:00, NY open 08:00–12:00, NY afternoon 12:00–18:00';
 /** same bar as the bot's `cellPass` (montecarlo.ts MARKET_EDGE) */
 export const cellPass = (c: MarketCell | undefined | null) => !!c && c.n >= 30 && c.avgR >= 0.1 && (c.pf ?? 99) >= 1.3 && c.inN >= 20 && c.inAvgR > 0 && (c.mcP ?? 0) >= 0.95;
+/** v27.9: the looser trial bar for the owner's focus markets (montecarlo.ts MARKET_TRY) — trades there at half size */
+export const cellTry = (c: MarketCell | undefined | null) => !!c && c.n >= 20 && c.avgR >= 0.05 && (c.pf ?? 99) >= 1.15 && c.inN >= 10 && c.inAvgR > 0 && (c.mcP ?? 0) >= 0.85;
 /** clearly doesn't work on this market: lost before and after the 70/30 line */
 export const cellDead = (c: MarketCell) => c.inN >= 15 && c.n >= 15 && c.inAvgR < 0 && c.avgR < 0;
 /** a drop of D R at r% risk a trade, as % of the account */
@@ -45,22 +47,25 @@ export function SessionStrip({ sess }: { sess?: Array<[number, number]> }) {
 }
 
 /** Every strategy × chart on one market, best first; the ones that clearly don't work there are folded away. */
-export function MarketResults({ rows, pair, label, showDead, onOpen }: { rows: CellRow[]; pair: string; label: string; showDead: boolean; onOpen: (id: string, tf: string) => void }) {
+export function MarketResults({ rows, pair, label, showDead, onOpen, focus = false }: { rows: CellRow[]; pair: string; label: string; showDead: boolean; onOpen: (id: string, tf: string) => void; focus?: boolean }) {
   const cells = rows
     .filter((x) => x.id !== 'random')
     .flatMap((x) => {
       const c = x.markets?.find((m) => m.pair === pair);
       return c ? [{ x, c }] : [];
     })
-    .sort((a, b) => Number(cellPass(b.c)) - Number(cellPass(a.c)) || b.c.n * b.c.avgR - a.c.n * a.c.avgR);
+    .sort((a, b) => Number(cellPass(b.c)) - Number(cellPass(a.c)) || Number(focus && cellTry(b.c)) - Number(focus && cellTry(a.c)) || b.c.n * b.c.avgR - a.c.n * a.c.avgR);
   const dead = cells.filter((k) => cellDead(k.c));
   const shown = showDead ? cells : cells.filter((k) => !cellDead(k.c));
   const passing = cells.filter((k) => cellPass(k.c)).length;
+  const trials = focus ? cells.filter((k) => !cellPass(k.c) && cellTry(k.c)).length : 0;
   if (!cells.length) return <p className="px-4 pb-4 text-sm text-muted sm:px-5">No tested trades on {label} yet — the lab adds it at its next hourly run.</p>;
   return (
     <div>
       <p className="px-4 pb-2 text-xs text-muted sm:px-5">
-        {passing ? `${passing} strateg${passing === 1 ? 'y has' : 'ies have'} an edge on ${label} on its own` : `Nothing has an edge on ${label} on its own yet`} (30+ unseen trades, +0.1R a trade, PF 1.3+, profitable before the line too, Monte Carlo 95%+). {dead.length && !showDead ? `${dead.length} that clearly don't work here are hidden.` : ''}
+        {passing ? `${passing} strateg${passing === 1 ? 'y has' : 'ies have'} an edge on ${label} on its own` : `Nothing has an edge on ${label} on its own yet`} (30+ unseen trades, +0.1R a trade, PF 1.3+, profitable before the line too, Monte Carlo 95%+).{' '}
+        {trials ? `${trials} more trade${trials === 1 ? 's' : ''} here at half size on the trial bar for focus markets (20+ unseen trades, +0.05R, PF 1.15+, profitable before the line, Monte Carlo 85%+). ` : ''}
+        {dead.length && !showDead ? `${dead.length} that clearly don't work here are hidden.` : ''}
       </p>
       <ul className="divide-y divide-line border-t border-line">
         {shown.map(({ x, c }) => {
@@ -72,6 +77,7 @@ export function MarketResults({ rows, pair, label, showDead, onOpen }: { rows: C
                   <span className="font-medium text-ink">{x.name}</span>
                   <Badge tone="neutral">{x.tf}</Badge>
                   {pass && <Badge tone="up">Edge on {label}</Badge>}
+                  {!pass && focus && cellTry(c) && <Badge tone="warn" title="Trial bar for a focus market: the bot trades it here at half size">Trial on {label} · half size</Badge>}
                   {cellDead(c) && <Badge tone="neutral">Doesn't work here</Badge>}
                   <McBadge p={c.mcP} />
                 </div>

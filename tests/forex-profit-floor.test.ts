@@ -93,3 +93,20 @@ describe('v27.7 strongest vs weakest currencies join the focus list', () => {
     expect(focusOk('GBPUSD')).toBe(false);
   });
 });
+
+describe('v27.9 trial bar on the focus markets (gold)', () => {
+  const cell = (o: Partial<import('../src/forex/montecarlo').MarketCell> = {}) => ({ pair: 'XAUUSD', inN: 15, inAvgR: 0.04, n: 26, avgR: 0.12, pf: 1.4, winPct: 45, mcP: 0.9, mcP5: -0.05, sess: [], ...o });
+  it('a strategy that clears the looser bar on gold trades there (not on a non-focus market), at half size', async () => {
+    const { planChosen, focusTrial } = await import('../src/forex/lab');
+    const { cellPass, cellTry } = await import('../src/forex/montecarlo');
+    expect(cellPass(cell())).toBe(false); // 26 unseen trades: short of the full market bar
+    expect(cellTry(cell())).toBe(true);
+    expect(focusTrial('XAUUSD', cell())).toBe(true);
+    expect(planChosen('cci_break', 'XAUUSD', false, undefined, false, cell())).toBe(true);
+    expect(planChosen('cci_break', 'XAUUSD', false, undefined, true, cell())).toBe(false); // the learner dropped it
+    expect(focusTrial('GBPUSD', cell({ pair: 'GBPUSD' }))).toBe(false); // not a fixed focus market
+    expect(focusTrial('XAUUSD', cell({ inAvgR: -0.08 }))).toBe(false); // lost before the line (psar_adx on gold)
+    expect(focusTrial('XAUUSD', cell({ mcP: 0.7 }))).toBe(false);
+    expect(focusTrial('XAUUSD', cell({ n: 40, inN: 25, mcP: 0.97 }))).toBe(false); // clears the full bar → full size, not a trial
+  });
+});

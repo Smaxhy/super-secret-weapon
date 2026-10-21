@@ -171,3 +171,16 @@ export function cellPass(c: MarketCell | undefined | null): boolean {
   const e = MARKET_EDGE;
   return c.n >= e.minN && c.avgR >= e.minAvgR && (c.pf ?? 99) >= e.minPf && c.inN >= e.minInN && c.inAvgR > 0 && (c.mcP ?? 0) >= e.minMcP;
 }
+
+/**
+ * v27.9 (owner: "look at gold, it has a lot of good trades; if a chart has good strategies, use them"): a looser TRIAL bar
+ * for the owner's fixed focus markets only (gold, Nasdaq, S&P, USD/JPY, EUR/USD). Fewer trades are enough (20 unseen, 10
+ * before the line) but it must still have made money on both sides of the 70/30 line and in 85% of reshuffles. A strategy
+ * that clears only this bar trades there at `FX_CONFIG.focusTry.sizeF` of the normal size.
+ */
+export const MARKET_TRY = { minN: 20, minAvgR: 0.05, minPf: 1.15, minInN: 10, minMcP: 0.85 };
+export function cellTry(c: MarketCell | undefined | null): boolean {
+  if (!c) return false;
+  const e = MARKET_TRY;
+  return c.n >= e.minN && c.avgR >= e.minAvgR && (c.pf ?? 99) >= e.minPf && c.inN >= e.minInN && c.inAvgR > 0 && (c.mcP ?? 0) >= e.minMcP;
+}

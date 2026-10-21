@@ -335,7 +335,7 @@ function Strategies({ r }: { r: Report }) {
         </div>
       )}
       {curMkt !== 'all' ? (
-        <MarketResults rows={tfRows} pair={curMkt} label={mkts.find((m) => m.id === curMkt)?.label ?? curMkt} showDead={showDead} onOpen={(id, t) => setOpen(r.rows.find((x) => x.id === id && x.tf === t) ?? null)} />
+        <MarketResults rows={tfRows} pair={curMkt} label={mkts.find((m) => m.id === curMkt)?.label ?? curMkt} showDead={showDead} focus={FOCUS.includes(curMkt)} onOpen={(id, t) => setOpen(r.rows.find((x) => x.id === id && x.tf === t) ?? null)} />
       ) : (
       <ul className="divide-y divide-line border-t border-line">
         {rows.map((x) => {

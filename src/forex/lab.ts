@@ -37,7 +37,7 @@ import { buildCtx, to4h, type Ctx } from './ta';
 import { drawingsFor, type Drawings } from './drawings';
 import { applyDesks, buildDesks, type MarketDesk } from './desks';
 import { ledgerRows } from './practice';
-import { bySession, cellPass, marketCells, monteCarlo, seedOf, type MarketCell, type McResult } from './montecarlo';
+import { bySession, cellPass, cellTry, marketCells, monteCarlo, seedOf, type MarketCell, type McResult } from './montecarlo';
 import { INSTRUMENTS, MOOD_SYMBOLS, STRENGTH_PAIRS, TF_MIN, type Bar, type Instrument, type Signal, type Timeframe, type Trade, isCrypto, isFutures } from './types';
 import { buildStrength, gapSeries, scoreAt, strengthNow, type StrengthBook, type StrengthNow } from './strength';
 import { buildStretch, crowdPxSeries, type StretchBook } from './stretch';
@@ -149,6 +149,9 @@ export const FX_CONFIG = {
      * the `top` strongest currencies against one of the `top` weakest, with a strength gap ≥ `minGap`, join the list */
     strong: { on: true, top: 2, minGap: 0.6 },
   },
+  /** v27.9 (owner: "gold has a lot of good trades; if a chart has good strategies, use them"): on the fixed focus markets a
+   * strategy that clears the looser trial bar there (`cellTry`, montecarlo.ts) trades at `sizeF` of the normal size */
+  focusTry: { on: true, sizeF: 0.5 },
   confluenceBars: 2,
   /** walk-forward: re-pick every month from the trades closed in the previous N months */
   walkForward: { lookbackMonths: 6, minN: 15, minAvgR: 0.05, minPf: 1.15 },
@@ -594,10 +597,16 @@ export function planChosen(strategy: string, pair: string, rowChosen: boolean, r
   if (!focusOk(pair)) return false;
   const plan = FX_CONFIG.marketPlan[pair];
   // v27.4: a strategy that proved itself on THIS market on its own (cellPass) trades here even when its pooled row doesn't
-  if (!plan) return rowChosen || (!dropped && cellPass(cell));
+  // v27.9: on a fixed focus market the looser trial bar is enough (at a smaller size, see `focusTrial`)
+  if (!plan) return rowChosen || (!dropped && (cellPass(cell) || focusTrial(pair, cell)));
   if (!plan.includes(strategy) || dropped) return false;
   const l = FX_CONFIG.planLosing;
   return !(rec && rec.n >= l.minN && (rec.pf ?? 99) < l.pf);
+}
+/** v27.9 pure: a trial trade — the owner's fixed focus market, the strategy clears the trial bar there but not the full
+ * market bar (callers size it at `FX_CONFIG.focusTry.sizeF` when its row isn't chosen anyway). */
+export function focusTrial(pair: string, cell: MarketCell | undefined | null): boolean {
+  return FX_CONFIG.focusTry.on && FX_CONFIG.focus.markets.includes(pair) && !cellPass(cell) && cellTry(cell);
 }
 /** v27.7 pure: traded currency pairs of a strongest-vs-weakest currency (the strength meter's own top / bottom). */
 export function strongPairs(s: Pick<StrengthNow, 'ccys'> | null | undefined, insts: readonly Instrument[] = INSTRUMENTS): string[] {
@@ -1105,7 +1114,7 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
         const key = `${s.id}:${tf}`;
         const markets = marketCells(doneR, o.oosFrom, key);
         const mc = monteCarlo(doneR.filter((t) => t.entryT >= o.oosFrom).map((t) => t.r), seedOf(key));
-        const dead = s.id !== 'random' && chR.inSample.n >= 30 && chR.outSample.n >= 30 && chR.inSample.avgR < 0 && chR.outSample.avgR < 0 && !markets.some(cellPass);
+        const dead = s.id !== 'random' && chR.inSample.n >= 30 && chR.outSample.n >= 30 && chR.inSample.avgR < 0 && chR.outSample.avgR < 0 && !markets.some((c) => cellPass(c) || focusTrial(c.pair, c));
         return { mc, markets, sess: bySession(doneR), ...(dead ? { dead: true } : {}) };
       })(),
       verdict: 'no',
@@ -2130,7 +2139,8 @@ export class ForexLab {
     const rowFor = (t: { strategy: string; tf: string; pair: string }) => {
       const k = `${t.strategy}:${t.tf}`;
       const any = allRowOf.get(k);
-      return rowOf.get(k) ?? (FX_CONFIG.marketPlan[t.pair]?.includes(t.strategy) || cellPass(any?.markets?.find((c) => c.pair === t.pair)) ? any : undefined);
+      const c = any?.markets?.find((m) => m.pair === t.pair);
+      return rowOf.get(k) ?? (FX_CONFIG.marketPlan[t.pair]?.includes(t.strategy) || cellPass(c) || focusTrial(t.pair, c) ? any : undefined);
     };
     const cellFor = (t: { strategy: string; tf: string; pair: string }) => allRowOf.get(`${t.strategy}:${t.tf}`)?.markets?.find((c) => c.pair === t.pair);
     this.labOpen = Object.fromEntries(open.filter((t) => planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), rowFor(t)?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t))).map((t) => [`${t.strategy}:${t.tf}:${t.pair}`, t.entryT]));
@@ -2149,7 +2159,9 @@ export class ForexLab {
     const botTrades: LabOpenTrade[] = open.map((t) => {
       const row = rowFor(t);
       // v27.6: × the VIX size brake (0.75× at VIX 25+, 0.5× at 35+)
-      const sizeF = (rollLive ? rollSizes[`${t.strategy}:${t.tf}`] ?? 0.6 : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1) * vixBrake;
+      // v27.9: a trial trade on a focus market (its row not chosen, only the trial bar cleared there) → the trial size
+      const trial = !chosen.has(`${t.strategy}:${t.tf}`) && focusTrial(t.pair, cellFor(t));
+      const sizeF = (trial ? FX_CONFIG.focusTry.sizeF : rollLive ? rollSizes[`${t.strategy}:${t.tf}`] ?? 0.6 : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1) * vixBrake;
       const x = judgeX.get(tradeKey(t));
       const jv = judgeModel && x ? judgeView(judgeModel, x) : null;
       const p = jv?.p ?? null;

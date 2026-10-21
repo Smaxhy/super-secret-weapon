@@ -758,6 +758,20 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.9 trial bar on the focus markets (Oct 21, owner: "look at gold 5%, it has a lot of good trades; if a chart has good
+strategies I want you to use them")
+VPS read 12:26 UTC (9adcad0, risk mode turbo, chosen = pivot_bounce:4h only): 85 of 99 rows have gold trades; NONE clears the
+strict market bar (`cellPass`); on a looser bar only `cci_break:1h` (26 unseen gold trades) and `round_break:4h` (20) pass;
+the best-looking one, `psar_adx:1h` (43 unseen, +0.25R, PF 1.89), LOST before the 70/30 line (−0.08R) → stays out. The
+"5%" numbers on the page are the pooled row at 5% risk (every market), and most rows' worst drop there is ~90%. Built:
+`MARKET_TRY` + `cellTry` (montecarlo.ts: 20+ unseen, +0.05R, PF 1.15+, 10+ trades before the line and profitable there,
+Monte Carlo 85%+), `FX_CONFIG.focusTry` {on, sizeF 0.5} + `focusTrial(pair, cell)` (lab.ts: only the FIXED focus markets —
+gold, NDX, SPX, USDJPY, EURUSD — clears the trial bar but not `cellPass`) → `planChosen` lets it trade there; hourly
+`botTrades` sizes it at 0.5 (× vol / learner / VIX as usual) when its row isn't chosen; a row with a trial cell is not
+"dead". The learner can still drop it; the losing-record / judge / checks gates still apply. Fast charts unchanged (15m
+trades only the ICT session rules). Dashboard market tab: "Trial on <market> · half size" badge + count line
+(`cellTry` copy, `MarketResults focus`). Switch off: `focusTry.on = false`. Tests in forex-profit-floor (+1); forex-montecarlo
+expectation updated (mcP 0.9 on USDJPY is now a trial).
 ## v27.8 run past the target + home / menu cleanup (Oct 21, owner: "if you're taking a trade you're allowed to go higher than
 your TP, just set a tight trailing SL"; "remove why-no-trades from the middle of my screen, raise the chart under the P&L, not
 what it's watching, and remove trade by hand")
