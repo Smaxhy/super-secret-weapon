@@ -143,6 +143,11 @@ export const ICT = {
   mssBars: 6,
   /** a sweep must reach this far past the range (in ATRs) — a wick a fraction of a pip over it is noise */
   sweepAtr: 0.05,
+  /** v27.14 IFVG: how many candles back the opposing gap may sit; the inversion candle's body in ATRs */
+  ifvgLook: 12,
+  ifvgBodyAtr: 1.0,
+  /** v27.14 FVG CE: how far back the gap that gets inverted may sit */
+  ceInvLook: 20,
 } as const;
 
 interface SessionRange {
@@ -265,6 +270,106 @@ export function mssSignal(c: Ctx, i: number): Signal | null {
     let sweepHi = -Infinity;
     for (let j = i - ICT.mssBars; j <= i; j++) sweepHi = Math.max(sweepHi, c.bars[j]!.h);
     if (sweepHi > hi.p) return levelSig(c, i, -1, sweepHi + 0.1 * a, 2);
+  }
+  return null;
+}
+
+/**
+ * Prices seen from one side: for a short everything is mirrored (high ↔ −low), so each rule below is written once,
+ * as the long, and `side` turns it into the short.
+ */
+function sided(c: Ctx, side: 1 | -1) {
+  const B = c.bars;
+  return {
+    h: (j: number) => (side > 0 ? B[j]!.h : -B[j]!.l),
+    l: (j: number) => (side > 0 ? B[j]!.l : -B[j]!.h),
+    o: (j: number) => side * B[j]!.o,
+    c: (j: number) => side * B[j]!.c,
+  };
+}
+
+/**
+ * v27.14 (owner's friend's long): IFVG + CISD + displacement. A gap AGAINST the trade (bearish fair-value gap for a
+ * long) formed in the last 12 candles while the price ran down and took out the lows before it (a sweep). Then one
+ * candle with a real body (≥ 1 ATR) closes above the gap's top — the gap is inverted — and above the open of the
+ * down-candles that made the low (change in state of delivery). Only the first close through counts. Stop under the
+ * low of the move, 2R (the engine lets a winner run past it on a trailing stop). Pure, causal.
+ */
+export function ifvgSignal(c: Ctx, i: number): Signal | null {
+  const a = c.atr14[i]!;
+  if (!ok(a) || a <= 0 || i < ICT.sweepLook + ICT.ifvgLook + 4) return null;
+  for (const side of [1, -1] as const) {
+    const p = sided(c, side);
+    if (!(p.c(i) > p.o(i)) || Math.abs(p.c(i) - p.o(i)) < ICT.ifvgBodyAtr * a) continue;
+    for (let k = i - 1; k >= i - ICT.ifvgLook && k >= ICT.sweepLook + 2; k--) {
+      // a gap against the trade: candle k−2's low sits above candle k's high, made by a falling candle k−1
+      const top = p.l(k - 2);
+      const bot = p.h(k);
+      if (!(top > bot) || !(p.c(k - 1) < p.o(k - 1))) continue;
+      if (!(p.c(i) > top)) continue;
+      let first = true;
+      for (let j = k + 1; j < i; j++) if (p.c(j) > top) first = false;
+      if (!first) break; // the nearest gap was inverted earlier — this close is not the first one
+      // the move into the low took out the lows before the gap (liquidity)
+      let lowBefore = Infinity;
+      for (let j = k - 2 - ICT.sweepLook; j < k - 2; j++) lowBefore = Math.min(lowBefore, p.l(j));
+      let low = Infinity;
+      let lowAt = k;
+      for (let j = k - 2; j < i; j++) if (p.l(j) < low) { low = p.l(j); lowAt = j; }
+      if (!(low < lowBefore)) break;
+      // CISD: close above the open of the run of falling candles that delivered the low
+      let m = lowAt;
+      while (m > 0 && p.c(m) >= p.o(m)) m--;
+      while (m > 0 && p.c(m - 1) < p.o(m - 1)) m--;
+      if (!(p.c(i) > p.o(m))) break;
+      return levelSig(c, i, side, side * (low - 0.1 * a), 2);
+    }
+  }
+  return null;
+}
+
+/**
+ * v27.14 (owner's friend's short): inversion, then the retrace into the CE. A displacement candle (body ≥ 1.2 ATR)
+ * closes through the far side of a gap that was still holding (a bullish gap broken down = inverted) and leaves its
+ * own gap the other way. Within 6 candles the price comes back to that new gap's middle (consequent encroachment)
+ * and closes back on the trade's side of it → enter. Stop past the gap's far edge (or the retrace high), 2R. A gap
+ * the price closes through is dead; only the first touch of the middle counts. Written as the long; mirrored. Pure.
+ */
+export function fvgCeSignal(c: Ctx, i: number): Signal | null {
+  const a = c.atr14[i]!;
+  if (!ok(a) || a <= 0 || i < ICT.ceInvLook + ICT.fvgValidBars + 6) return null;
+  for (const side of [1, -1] as const) {
+    const p = sided(c, side);
+    for (let k = i - 1; k >= i - ICT.fvgValidBars; k--) {
+      const d = k - 1;
+      // the displacement candle k−1 rises and leaves a gap: candle k−2's high under candle k's low
+      if (!(p.c(d) > p.o(d)) || p.c(d) - p.o(d) < ICT.fvgBodyAtr * c.atr14[d]!) continue;
+      const bot = p.h(k - 2);
+      const top = p.l(k);
+      if (!(top > bot)) continue;
+      // it inverted a gap the other way: a bearish gap (q−2 low over q high) still unbroken until d, whose top d closed above
+      let inverted = false;
+      for (let q = k - 3; q >= k - 2 - ICT.ceInvLook && q >= 2 && !inverted; q--) {
+        const gTop = p.l(q - 2);
+        const gBot = p.h(q);
+        if (!(gTop > gBot) || !(p.c(d) > gTop)) continue;
+        let held = true;
+        for (let j = q + 1; j < d; j++) if (p.c(j) > gTop) held = false;
+        inverted = held;
+      }
+      if (!inverted) continue;
+      const ce = (top + bot) / 2;
+      let dead = false;
+      let touched = false;
+      for (let j = k + 1; j <= i; j++) {
+        if (p.c(j) < bot) dead = true;
+        if (j < i && p.l(j) <= ce) touched = true;
+      }
+      if (dead || touched || !(p.l(i) <= ce && p.c(i) > ce)) continue;
+      let low = bot;
+      for (let j = k + 1; j <= i; j++) low = Math.min(low, p.l(j));
+      return levelSig(c, i, side, side * (low - 0.1 * a), 2);
+    }
   }
   return null;
 }
@@ -1354,6 +1459,26 @@ export const STRATEGIES: Strategy[] = [
     desc: 'ICT: the price dips under an old confirmed swing low (takes the stops there) and within 6 candles closes above the last lower swing high — the structure has shifted. Buy; stop under the sweep low, 2R. Mirrored for shorts. Any chart, any market.',
     signal(c, i) {
       return mssSignal(c, i);
+    },
+  },
+  {
+    id: 'ifvg_cisd',
+    name: 'Inverted gap + change of delivery (IFVG + CISD)',
+    family: 'ict',
+    style: 'revert',
+    desc: 'ICT, the trade your friend took long: the price runs down through the recent lows (takes the liquidity), leaving a bearish fair-value gap. Then one strong candle (body ≥ 1 ATR) closes above that gap (the gap is inverted) and above the open of the down-candles that made the low (change in state of delivery). Buy at that close; stop under the low, 2R, then a trailing stop lets it run. Mirrored for shorts. Any chart, any market.',
+    signal(c, i) {
+      return ifvgSignal(c, i);
+    },
+  },
+  {
+    id: 'fvg_ce',
+    name: 'Inversion, then retrace to the gap middle (FVG CE)',
+    family: 'ict',
+    style: 'pullback',
+    desc: 'ICT, the trade your friend took short: a strong candle (body ≥ 1.2 ATR) breaks through a gap that was holding (inverts it) and leaves its own gap. Within 6 candles the price comes back to the middle of that new gap (consequent encroachment) and closes back away from it → enter with the move. Stop past the gap / retrace extreme, 2R, then a trailing stop. Mirrored. Any chart, any market.',
+    signal(c, i) {
+      return fvgCeSignal(c, i);
     },
   },
   // ── control ──

@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.14 the friend's two ICT trades as lab strategies (Oct 21, owner's annotated chart: "a friend of mine took it, he's profitable")
+Chart: long = filled a 30m FVG, then IFVG + CISD + good displacement, TP the previous week's high; short = a 5m gap inverted,
+retrace into the CE (middle) of the new 5m gap, initial TP the swing low, stopped at the trailed high. strategies.ts (family
+'ict', any chart / market, written once as the long and mirrored through `sided`): **`ifvg_cisd`** (`ifvgSignal`: a gap against
+the trade in the last `ICT.ifvgLook` 12 candles, the move into the low swept the 10 candles before it, then one candle with body
+≥ `ifvgBodyAtr` 1 ATR closes above the gap's top (first close through only) AND above the open of the down-run that made the low
+(CISD) → stop under the low, 2R) and **`fvg_ce`** (`fvgCeSignal`: a displacement candle (≥ 1.2 ATR) closes through a gap that
+had held for up to `ceInvLook` 20 candles (inversion) and leaves its own gap; within 6 candles the first touch of that gap's
+middle that closes back away → enter; a close through the gap = dead; stop under the retrace low / gap, 2R). NOT owner-live:
+graded like every row and they trade only where the lab finds they work (profit floor / per-market tiers, v27.10–v27.13).
+The run-past-target trailing stop (v27.8) stands in for "TP at PWH / trail". The higher-chart "filled the 30m FVG" context is
+left to the filter lab (mtf). tests/forex-ifvg (5).
 ## v27.13 use what works, on every forex market (Oct 21, owner: "the +42R on the Russell counts all its tested trades, so use the
 strategies that worked … use what works actively and trade actively")
 New tier `workTrial(pair, cell, rec)` (lab.ts, `FX_CONFIG.workTry` {on, sizeF 0.5, minN 30, minPf 1.2, minTotalR 5, minOosN 10}):
