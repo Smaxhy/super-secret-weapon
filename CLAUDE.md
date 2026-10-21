@@ -758,6 +758,16 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.13 use what works, on every forex market (Oct 21, owner: "the +42R on the Russell counts all its tested trades, so use the
+strategies that worked … use what works actively and trade actively")
+New tier `workTrial(pair, cell, rec)` (lab.ts, `FX_CONFIG.workTry` {on, sizeF 0.5, minN 30, minPf 1.2, minTotalR 5, minOosN 10}):
+a strategy × chart whose ALL tested trades on that forex market (`Row.pairs` record: n, pf, totalR) show 30+ trades, PF 1.2+ and
++5R, with 10+ unseen trades there whose average isn't negative, and which clears neither `cellPass` nor `cellTry`, trades there at
+half size (× vol / learner / VIX as usual). Never a coin. `planChosen` counts it as proven (past the focus list and any market plan;
+the learner's drop still wins); `provenCells` / plan messages / `rowFor` / the dead check include it. **`FX_CONFIG.marketPlan` = {}**
+(was NDX Judas-only): the Nasdaq trades every strategy that works there; the v27.11 owner trial keeps Judas on NDX 1h. Weaker than
+the unseen-only bars (the all-trades record includes the first 70% the rows were picked on) — owner's call, half size for that
+reason; judge it on the bot's R ledger / shadow book. Switch off: `workTry.on = false`. Test in forex-profit-floor (+1).
 ## v27.12 month-end flow + pin bar as quarter-size trials (Oct 21, owner: "add month end and pin bar")
 VPS read 15:33 UTC (bced1fa): closest rows to the profit floor = month_end_flow:1h (21 unseen, +0.80R, PF 7.11, 86% won,
 first part +0.27R, MC 1.00) and pin_bar:4h (26, +0.42R, PF 2.63, first part +0.11R, MC 0.97) — both fail only n ≥ 30.

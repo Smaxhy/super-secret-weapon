@@ -39,7 +39,8 @@ describe('v27.1 profit floor', () => {
 describe('v27.2 market plan: specific strategies for specific markets', () => {
   it('NAS100 trades only Judas swing, judged on its own NAS100 record', async () => {
     const { planChosen, plannedStrategies } = await import('../src/forex/lab');
-    expect(FX_CONFIG.marketPlan.NDXUSD).toEqual(['judas_swing']);
+    const keep = FX_CONFIG.marketPlan;
+    FX_CONFIG.marketPlan = { NDXUSD: ['judas_swing'] }; // v27.13: empty by default; the mechanism stays
     expect(plannedStrategies().has('judas_swing')).toBe(true);
     expect(planChosen('judas_swing', 'NDXUSD', false, undefined)).toBe(true); // pooled row not chosen: still trades here
     expect(planChosen('judas_swing', 'NDXUSD', false, { n: 40, pf: 1.3 })).toBe(true);
@@ -49,6 +50,7 @@ describe('v27.2 market plan: specific strategies for specific markets', () => {
     expect(planChosen('ema_cross', 'NDXUSD', true, { n: 100, pf: 2 })).toBe(false); // not on NAS100's list
     expect(planChosen('ema_cross', 'EURUSD', true, undefined)).toBe(true); // other markets: the normal chooser
     expect(planChosen('judas_swing', 'EURUSD', false, undefined)).toBe(false);
+    FX_CONFIG.marketPlan = keep;
   });
 
   it('the plan view says why a signal on a listed market is not traded', async () => {
@@ -114,7 +116,9 @@ describe('v27.9 trial bar on the focus markets (gold)', () => {
 describe('v27.10 a strategy proven on a market trades there past the focus list and the market plan', () => {
   const cell = (pair: string, o: Partial<import('../src/forex/montecarlo').MarketCell> = {}) => ({ pair, inN: 186, inAvgR: 0.05, n: 106, avgR: 0.19, pf: 2.47, winPct: 62, mcP: 1, mcP5: 0.1, sess: [], ...o });
   it('Russell 2000 (not a focus market) and Nasdaq 100 (Judas-only plan) open to pivot_bounce 4h; others stay shut', async () => {
-    const { planChosen, provenCells, focusOk } = await import('../src/forex/lab');
+    const { planChosen, provenCells, focusOk, FX_CONFIG } = await import('../src/forex/lab');
+    const keep = FX_CONFIG.marketPlan;
+    FX_CONFIG.marketPlan = { NDXUSD: ['judas_swing'] };
     expect(focusOk('RUTUSD')).toBe(false);
     expect(planChosen('pivot_bounce', 'RUTUSD', true, undefined, false, cell('RUTUSD'))).toBe(true);
     expect(planChosen('pivot_bounce', 'RUTUSD', true, undefined, false, cell('RUTUSD', { mcP: 0.5 }))).toBe(false); // unproven there: focus rule
@@ -123,6 +127,7 @@ describe('v27.10 a strategy proven on a market trades there past the focus list 
     expect(planChosen('pivot_bounce', 'NDXUSD', true, undefined, true, cell('NDXUSD'))).toBe(false); // the learner dropped it
     expect(planChosen('ema_cross', 'NDXUSD', true, undefined, false, null)).toBe(false); // plan still rules unproven ones
     expect(planChosen('judas_swing', 'NDXUSD', false, undefined)).toBe(true);
+    FX_CONFIG.marketPlan = keep;
     expect(provenCells([{ id: 'pivot_bounce', tf: '4h', markets: [cell('RUTUSD'), cell('EURUSD', { mcP: 0.5 })] }, { id: 'random', tf: '1h', markets: [cell('RUTUSD')] }])).toEqual({ RUTUSD: ['pivot_bounce:4h'] });
   });
 });
@@ -147,5 +152,21 @@ describe('v27.12 owner trials on every forex market: month-end flow 1h + pin bar
     expect(planChosen('pin_bar', 'BTCUSD', false, undefined, false, null, '4h')).toBe(false);
     expect(planChosen('pin_bar', 'EURUSD', false, undefined, false, null, '1h')).toBe(false);
     expect(planChosen('month_end_flow', 'USDJPY', false, undefined, true, null, '1h')).toBe(false); // learner dropped it
+  });
+});
+
+describe('v27.13 a strategy that works on a market across all its tested trades trades there at half size', () => {
+  const cell = (o: Partial<import('../src/forex/montecarlo').MarketCell> = {}) => ({ pair: 'RUTUSD', inN: 40, inAvgR: -0.05, n: 15, avgR: 0.04, pf: 1.1, winPct: 50, mcP: 0.6, mcP5: -0.2, sess: [], ...o });
+  it('needs 30+ trades, PF 1.2+, +5R and an unseen part that is not losing; never a coin', async () => {
+    const { planChosen, workTrial, FX_CONFIG } = await import('../src/forex/lab');
+    const rec = { n: 120, pf: 1.6, totalR: 42 };
+    expect(workTrial('RUTUSD', cell(), rec)).toBe(true);
+    expect(planChosen('pin_bar', 'RUTUSD', false, rec, false, cell(), '1h')).toBe(true);
+    expect(workTrial('RUTUSD', cell({ avgR: -0.02 }), rec)).toBe(false); // losing on unseen trades
+    expect(workTrial('RUTUSD', cell(), { n: 120, pf: 1.1, totalR: 42 })).toBe(false);
+    expect(workTrial('RUTUSD', cell(), { n: 120, pf: 1.6, totalR: 3 })).toBe(false);
+    expect(workTrial('BTCUSD', cell({ pair: 'BTCUSD' }), rec)).toBe(false);
+    expect(planChosen('pin_bar', 'RUTUSD', false, rec, true, cell(), '1h')).toBe(false); // learner dropped it
+    expect(FX_CONFIG.marketPlan).toEqual({}); // the Nasdaq trades everything that works there
   });
 });

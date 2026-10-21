@@ -136,7 +136,8 @@ export const FX_CONFIG = {
    * pooled row (all markets together) is not chosen, judged instead on its record on THAT market: off once that record
    * holds `planLosing.minN`+ tested trades with profit factor under `planLosing.pf`. The learner's dropped list still
    * applies. Markets not listed keep the normal chooser. */
-  marketPlan: { NDXUSD: ['judas_swing'] } as Record<string, string[]>,
+  // v27.13: empty — the Nasdaq trades everything that works there; Judas swing keeps its owner trial (`ownerTrials`)
+  marketPlan: {} as Record<string, string[]>,
   planLosing: { minN: 20, pf: 1.0 },
   /** v27.11 (owner: "B" = Judas swing back on the Nasdaq, hourly, at a quarter size, to build a real record): a strategy ×
    * chart × market that trades whatever its tested record says (profit floor, the market plan's losing-record rule and the
@@ -165,6 +166,10 @@ export const FX_CONFIG = {
    * other charts too"): every forex-desk market, not only the focus list; coins keep the full bar (they have 20 full-bar
    * cells already). */
   focusTry: { on: true, sizeF: 0.5 },
+  /** v27.13 (owner: "use the strategies that worked — the +42R — trade actively, I want results"): a strategy whose ALL tested
+   * trades on a forex-desk market made money (30+ trades, PF 1.2+, +5R or more) and that is not losing on that market's
+   * unseen trades (10+, avg ≥ 0) trades there at `sizeF`. The learner still drops it once the bot's own trades lose. */
+  workTry: { on: true, sizeF: 0.5, minN: 30, minPf: 1.2, minTotalR: 5, minOosN: 10 },
   confluenceBars: 2,
   /** walk-forward: re-pick every month from the trades closed in the previous N months */
   walkForward: { lookbackMonths: 6, minN: 15, minAvgR: 0.05, minPf: 1.15 },
@@ -606,13 +611,13 @@ export function profitFloor(row: Partial<Pick<Row, 'inSample' | 'outSample' | 'm
 
 /** v27.2 pure: may the bot open `strategy` on `pair`? `rowChosen` = the normal chooser's answer for its strategy × chart row,
  * `rec` = that row's tested record on this market, `dropped` = the learner took the row off. */
-export function planChosen(strategy: string, pair: string, rowChosen: boolean, rec: { n: number; pf: number | null } | undefined, dropped = false, cell?: MarketCell | null, tf?: string): boolean {
+export function planChosen(strategy: string, pair: string, rowChosen: boolean, rec: { n: number; pf: number | null; totalR?: number } | undefined, dropped = false, cell?: MarketCell | null, tf?: string): boolean {
   if (dropped) return false;
   if (tf && ownerTrialOf(strategy, tf, pair)) return true; // v27.11
   // v27.4: a strategy that proved itself on THIS market on its own (cellPass) trades here even when its pooled row doesn't;
   // v27.9: the looser trial bar is enough (at a smaller size, see `focusTrial`); v27.10 (owner: "if a chart has good
   // strategies use them"): such a strategy also trades past the focus list and next to a market plan's own strategies
-  const proven = cellPass(cell) || focusTrial(pair, cell);
+  const proven = cellPass(cell) || focusTrial(pair, cell) || workTrial(pair, cell, rec);
   if (proven) return true;
   if (!focusOk(pair)) return false;
   const plan = FX_CONFIG.marketPlan[pair];
@@ -625,16 +630,23 @@ export function planChosen(strategy: string, pair: string, rowChosen: boolean, r
 export const ownerTrialOf = (strategy: string, tf: string, pair: string) =>
   FX_CONFIG.ownerTrials.find((x) => x.strategy === strategy && x.tf === tf && (x.pair === pair || (x.pair === '*' && !isCrypto(pair))));
 /** v27.10 pure: per market, the strategy × chart rows that proved themselves there on their own (full or trial bar) */
-export function provenCells(rows: ReadonlyArray<Pick<Row, 'id' | 'tf' | 'markets'>>): Record<string, string[]> {
+export function provenCells(rows: ReadonlyArray<Pick<Row, 'id' | 'tf' | 'markets'> & { pairs?: Row['pairs'] }>): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   for (const r of rows) {
     if (r.id === 'random') continue;
-    for (const c of r.markets ?? []) if (cellPass(c) || focusTrial(c.pair, c)) (out[c.pair] ??= []).push(`${r.id}:${r.tf}`);
+    for (const c of r.markets ?? []) if (cellPass(c) || focusTrial(c.pair, c) || workTrial(c.pair, c, r.pairs?.find((p) => p.pair === c.pair))) (out[c.pair] ??= []).push(`${r.id}:${r.tf}`);
   }
   return out;
 }
 /** v27.9 pure: a trial trade — a forex-desk market (v27.10: any, was the focus list), the strategy clears the trial bar
  * there but not the full market bar (callers size it at `FX_CONFIG.focusTry.sizeF` when its row isn't chosen anyway). */
+/** v27.13 pure: works on this forex-desk market across ALL its tested trades (`rec` = the row's record there) and isn't losing
+ * on the unseen part; passes neither bigger bar. Callers size it at `FX_CONFIG.workTry.sizeF` when its row isn't chosen. */
+export function workTrial(pair: string, cell: MarketCell | undefined | null, rec: { n: number; pf: number | null; totalR?: number } | undefined | null): boolean {
+  const w = FX_CONFIG.workTry;
+  if (!w.on || isCrypto(pair) || !rec || !cell || cellPass(cell) || cellTry(cell)) return false;
+  return rec.n >= w.minN && (rec.pf ?? 99) >= w.minPf && (rec.totalR ?? 0) >= w.minTotalR && cell.n >= w.minOosN && cell.avgR >= 0;
+}
 export function focusTrial(pair: string, cell: MarketCell | undefined | null): boolean {
   return FX_CONFIG.focusTry.on && !isCrypto(pair) && !cellPass(cell) && cellTry(cell);
 }
@@ -1144,7 +1156,7 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
         const key = `${s.id}:${tf}`;
         const markets = marketCells(doneR, o.oosFrom, key);
         const mc = monteCarlo(doneR.filter((t) => t.entryT >= o.oosFrom).map((t) => t.r), seedOf(key));
-        const dead = s.id !== 'random' && chR.inSample.n >= 30 && chR.outSample.n >= 30 && chR.inSample.avgR < 0 && chR.outSample.avgR < 0 && !markets.some((c) => cellPass(c) || focusTrial(c.pair, c));
+        const dead = s.id !== 'random' && chR.inSample.n >= 30 && chR.outSample.n >= 30 && chR.inSample.avgR < 0 && chR.outSample.avgR < 0 && !markets.some((c) => cellPass(c) || focusTrial(c.pair, c) || workTrial(c.pair, c, vR.perPair.find((p) => p.pair === c.pair)));
         return { mc, markets, sess: bySession(doneR), ...(dead ? { dead: true } : {}) };
       })(),
       verdict: 'no',
@@ -2173,7 +2185,7 @@ export class ForexLab {
       const k = `${t.strategy}:${t.tf}`;
       const any = allRowOf.get(k);
       const c = any?.markets?.find((m) => m.pair === t.pair);
-      return rowOf.get(k) ?? (FX_CONFIG.marketPlan[t.pair]?.includes(t.strategy) || ownerTrialOf(t.strategy, t.tf, t.pair) || cellPass(c) || focusTrial(t.pair, c) ? any : undefined);
+      return rowOf.get(k) ?? (FX_CONFIG.marketPlan[t.pair]?.includes(t.strategy) || ownerTrialOf(t.strategy, t.tf, t.pair) || cellPass(c) || focusTrial(t.pair, c) || workTrial(t.pair, c, any?.pairs.find((p) => p.pair === t.pair)) ? any : undefined);
     };
     const cellFor = (t: { strategy: string; tf: string; pair: string }) => allRowOf.get(`${t.strategy}:${t.tf}`)?.markets?.find((c) => c.pair === t.pair);
     this.labOpen = Object.fromEntries(open.filter((t) => planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), rowFor(t)?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf)).map((t) => [`${t.strategy}:${t.tf}:${t.pair}`, t.entryT]));
@@ -2194,9 +2206,11 @@ export class ForexLab {
       // v27.6: × the VIX size brake (0.75× at VIX 25+, 0.5× at 35+)
       // v27.9: a trial trade on a focus market (its row not chosen, only the trial bar cleared there) → the trial size
       const trial = !chosen.has(`${t.strategy}:${t.tf}`) && focusTrial(t.pair, cellFor(t));
+      // v27.13: works on this market across all its tested trades → the work size
+      const work = !chosen.has(`${t.strategy}:${t.tf}`) && workTrial(t.pair, cellFor(t), row?.pairs.find((p) => p.pair === t.pair));
       // v27.11: the owner's trial (Judas swing on the Nasdaq) → its own size
       const owned = ownerTrialOf(t.strategy, t.tf, t.pair);
-      const sizeF = (owned ? owned.sizeF : trial ? FX_CONFIG.focusTry.sizeF : rollLive ? rollSizes[`${t.strategy}:${t.tf}`] ?? 0.6 : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1) * vixBrake;
+      const sizeF = (owned ? owned.sizeF : trial ? FX_CONFIG.focusTry.sizeF : work ? FX_CONFIG.workTry.sizeF : rollLive ? rollSizes[`${t.strategy}:${t.tf}`] ?? 0.6 : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1) * vixBrake;
       const x = judgeX.get(tradeKey(t));
       const jv = judgeModel && x ? judgeView(judgeModel, x) : null;
       const p = jv?.p ?? null;
