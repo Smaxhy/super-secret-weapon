@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v26.3 charts that don't glitch (Oct 21, owner's screenshot: "fix the charts, they often bug a lot")
+Seen on the control-room big screen: trendlines ran off the plot over the price labels / time axis (their ends were clamped
+to the edge separately, which also bent them), stopped half a candle short of the newest one, a moving 1 px "scanline"
+crossed the whole screen like a stray price line, and the screen hopped between markets on every refresh. Fixes:
+`MarketChart` — `cleanBars` (drops candles with a missing / NaN price, sorts, one per time, widens a high / low that
+misses the body; a bad candle used to blank the whole SVG), a `clipPath` (`useId`) around everything drawn on the plot,
+trendlines as polylines through each candle's centre to the right edge (`linePoints`), hover index guarded. `useWidth`
+= a callback ref (with `.current`) that re-observes when its element mounts later — charts inside a toggle / drawer /
+loading state (Trade by hand "Bot's view", Markets drawer, active trade) stayed blank forever before; one width read per
+frame, ±2 px jitter ignored. ControlRoom: scanline removed (CSS `cr-scan` gone); the automatic market on screen sticks
+(`autoRef`) until a trade opens elsewhere or its market disappears. Verified by rendering (shots `chart26.mjs`).
+tests/fx-chart-fixes (2).
 ## v26.2 "+$10 then sold for $1" (Oct 21, owner; USDJPY fib_pullback 4h long, entry 158.222, closed 00:06 UTC on 'signal')
 VPS read: gross ≈ +$7.19, venue fee $5.81 → booked +$1.38 (+$1.24 swap banked) — the profit lock never armed. Two causes:
 (1) the open P&L on screen didn't count the fee charged at the close → `view()` now subtracts `feeUsd(...)` from every open

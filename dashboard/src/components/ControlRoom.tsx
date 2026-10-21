@@ -151,7 +151,13 @@ export function useControlRoomData(): CRData {
   // the market on the big screen: the owner's pick, else the first open trade, else the closest setup, else the first market
   const [picked, setPicked] = useState<string | null>(null);
   const closest = useMemo(() => (plan?.markets ?? []).flatMap((m) => m.signals.filter((s) => s.tone === 'wait').map((s) => ({ m, s }))), [plan]);
-  const focus = picked ?? positions[0]?.pair ?? closest[0]?.m.id ?? markets[0]?.id ?? null;
+  // v26.3: the automatic pick sticks — before, the screen hopped to another market every time a refresh reordered the
+  // waiting setups. It moves only for a trade (a new open trade's market) or when its market is gone.
+  const autoRef = useRef<string | null>(null);
+  const tradePair = positions[0]?.pair ?? null;
+  if (tradePair) autoRef.current = tradePair;
+  else if (!autoRef.current || (markets.length && !markets.some((m) => m.id === autoRef.current))) autoRef.current = closest[0]?.m.id ?? markets[0]?.id ?? null;
+  const focus = picked ?? autoRef.current;
   const fm = markets.find((m) => m.id === focus) ?? null;
   const fp = plan?.markets.find((m) => m.id === focus) ?? null;
   const fpos = positions.filter((p) => p.pair === focus);
@@ -378,7 +384,6 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
 
       {/* the big screen */}
       <div className="cr-screen relative mt-4 overflow-hidden rounded-xl border border-line bg-surface-2">
-        <span className="cr-scanline pointer-events-none absolute left-0 right-0 h-px bg-accent/40" aria-hidden="true" />
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
           <span className="text-xs font-semibold text-muted">On screen</span>
           <div className="no-scrollbar flex flex-1 gap-1 overflow-x-auto">

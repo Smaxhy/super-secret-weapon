@@ -433,13 +433,6 @@ textarea::placeholder {
 }
 .cr-web { stroke: var(--accent); stroke-opacity: 0.18; stroke-width: 1.5; }
 .cr-flow { stroke: var(--accent); stroke-opacity: 0.75; stroke-width: 1.5; stroke-dasharray: 5 11; stroke-linecap: round; animation: cr-flow 1.6s linear infinite; }
-@keyframes cr-scan {
-  0% { top: 0; opacity: 0; }
-  8% { opacity: 1; }
-  92% { opacity: 1; }
-  100% { top: 100%; opacity: 0; }
-}
-.cr-scanline { animation: cr-scan 6s linear infinite; z-index: 1; }
 .cr-room { transition: box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease); }
 @media (hover: hover) {
   .cr-room:hover { box-shadow: var(--card-shadow-hover); transform: translateY(-1px); }

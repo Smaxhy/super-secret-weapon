@@ -11,7 +11,7 @@
  * weekend / closed market no longer leaves a big empty gap that squeezes the candles into slivers (a faint dashed line
  * marks the break instead); time labels say the weekday when the day changes and never repeat.
  */
-import { useState } from 'react';
+import { useId, useState } from 'react';
 
 export interface ChartLine { kind: 'support' | 'resistance'; t1: number; p1: number; t2: number; p2: number; pNow: number; touches: number; broken: boolean }
 export interface ChartLevel { kind: 'support' | 'resistance'; price: number; touches: number }
@@ -66,6 +66,41 @@ export function axisLabels(ts: number[], step: number): string[] {
     out.push(out.includes(s) ? '' : s);
   });
   return out;
+}
+
+/** v26.3: only well-formed candles, oldest first, one per time — a candle with a missing / NaN price (a forming bar, a
+ * feed hiccup) used to turn the whole chart into NaN coordinates and draw nothing or garbage. Pure. */
+export function cleanBars(bars: number[][]): number[][] {
+  const ok = bars.filter((b) => Array.isArray(b) && b.length >= 5 && b.slice(0, 5).every((v) => typeof v === 'number' && Number.isFinite(v)) && b[2]! >= b[3]! && b[2]! > 0 && b[3]! > 0);
+  ok.sort((a, b) => a[0]! - b[0]!);
+  const out: number[][] = [];
+  for (const b of ok) {
+    // a high / low that doesn't contain the open / close is widened to it
+    const c = [b[0]!, b[1]!, Math.max(b[1]!, b[2]!, b[4]!), Math.min(b[1]!, b[3]!, b[4]!), b[4]!];
+    if (out.length && out[out.length - 1]![0] === c[0]) out[out.length - 1] = c;
+    else out.push(c);
+  }
+  return out;
+}
+
+/** v26.3: a trendline's points at each candle (from its first point to the plot's right edge), in candle slots: a line
+ * through time bends at a weekend break the same way the candles do. `null` when it starts after the newest candle. Pure. */
+export function linePoints(bars: number[][], l: Pick<ChartLine, 't1' | 'p1' | 't2' | 'p2'>, slot: number): Array<[number, number]> | null {
+  const n = bars.length;
+  if (!n || !(l.t2 !== l.t1)) return null;
+  const slope = (l.p2 - l.p1) / (l.t2 - l.t1);
+  const at = (t: number) => l.p1 + slope * (t - l.t1);
+  const step = barStep(bars);
+  const pts: Array<[number, number]> = [];
+  for (let i = 0; i < n; i++) {
+    const t = bars[i]![0]!;
+    // a candle's centre stands for the middle of its hour; the candle holding the line's first point starts it
+    if (t < l.t1 && !(i + 1 < n && bars[i + 1]![0]! > l.t1)) continue;
+    pts.push([(i + 0.5) * slot, at(Math.max(t + step / 2, l.t1))]);
+  }
+  if (!pts.length) return null;
+  pts.push([n * slot, at(bars[n - 1]![0]! + step)]);
+  return pts.length >= 2 ? pts : null;
 }
 
 /** v17.13: how many of the newest candles fit `width` px at ≥ `minPx` each (a phone shows fewer, wider candles). Pure. */
@@ -123,6 +158,8 @@ export function MarketChart({
   interactive?: boolean;
 }) {
   const [hover, setHover] = useState<number | null>(null);
+  const clipId = `mc${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
+  bars = cleanBars(bars);
   if (bars.length < 2) return <div className="grid h-40 place-items-center text-sm text-muted">No candles yet.</div>;
   const W = Math.max(200, width);
   const padR = tradeLabels ? 72 : PAD_R;
@@ -180,7 +217,7 @@ export function MarketChart({
   const nTicks = Math.max(2, Math.min(6, Math.floor(cw / 90) + 1));
   const tickIdx = timeAxis ? [...new Set(Array.from({ length: nTicks }, (_, k) => Math.round((k * (bars.length - 1)) / (nTicks - 1))))] : [];
   const tickText = axisLabels(tickIdx.map((i) => bars[i]![0]!), step);
-  const hb = hover !== null ? bars[hover] : null;
+  const hb = hover !== null && hover < bars.length ? bars[hover] : null;
   const onMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
     const px = ((e.clientX - r.left) / r.width) * W;
@@ -207,6 +244,12 @@ export function MarketChart({
       {breaks.map((i) => (
         <line key={`br${i}`} x1={i * slot} x2={i * slot} y1={0} y2={H} className="stroke-muted" strokeWidth={1} strokeDasharray="2 4" opacity={0.35} />
       ))}
+      <defs>
+        <clipPath id={clipId}><rect x={0} y={0} width={cw} height={H} /></clipPath>
+      </defs>
+      {/* v26.3: everything drawn on the plot stays inside it (lines that run off the price range used to spill over the
+          price labels and the time axis, or got squashed flat at the edge) */}
+      <g clipPath={`url(#${clipId})`}>
       {show.ranges && drawings?.prevDay && (
         <g>
           {[drawings.prevDay.h, drawings.prevDay.l].filter(near).map((p, k) => (
@@ -246,12 +289,12 @@ export function MarketChart({
         );
       })}
       {show.lines && drawings?.lines.map((l, k) => {
-        // extend the line from its first point to the last bar
-        const slope = (l.p2 - l.p1) / (l.t2 - l.t1);
-        const xa = Math.max(t0, l.t1);
-        const pa = l.p1 + slope * (xa - l.t1);
-        return <line key={k} x1={x(xa)} y1={clipY(pa)} x2={x(t1)} y2={clipY(l.pNow)} stroke={l.kind === 'support' ? '#22c55e' : '#ef4444'} strokeWidth={2} strokeDasharray={l.broken ? '6 4' : undefined} />;
+        // v26.3: through every candle from its first point to the right edge, cut at the plot by the clip
+        const pts = linePoints(bars, l, slot);
+        if (!pts) return null;
+        return <polyline key={k} points={pts.map(([px, pp]) => `${px.toFixed(1)},${y(pp).toFixed(1)}`).join(' ')} fill="none" stroke={l.kind === 'support' ? '#22c55e' : '#ef4444'} strokeWidth={2} strokeLinejoin="round" strokeDasharray={l.broken ? '6 4' : undefined} opacity={0.9} />;
       })}
+      </g>
       {show.trades && trades.map((t, k) => {
         const xe = Math.max(0, x(Math.max(t0, t.entryT)));
         // v17.8: one trade's own chart: lines always visible (see tradeAnchor), faint over the candles before the entry
