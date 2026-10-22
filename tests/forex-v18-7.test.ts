@@ -7,6 +7,8 @@ import { buildPlan } from '../src/forex/plan';
 import { marketClock } from '../src/forex/calendar';
 import { INSTRUMENTS } from '../src/forex/types';
 
+// v27.19 switched botFastCharts on; these tests pin the v18.7 slow-charts-only behaviour
+
 const M = 60_000;
 const H = 60 * M;
 /** a Wednesday 14:00:30 UTC: forex open, not the rollover */
@@ -36,7 +38,8 @@ afterEach(() => vi.useRealTimers());
 
 describe('v18.7 the bot trades the hourly and 4-hour charts only', () => {
   it('is the default', () => {
-    expect(FX_CONFIG.botFastCharts).toBe(false);
+    expect(FX_CONFIG.botFastCharts).toBe(true); // v27.19: the 15m chart trades again
+    FX_CONFIG.botFastCharts = false;
     expect(BOT.reentryCooldownBars).toBe(3);
   });
 

@@ -758,6 +758,20 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.19 forex trades like the coin bot + memecoins practise a lot (Oct 22, owner: "what does crypto do so different… I want forex
+to perform like crypto" → chose "Both"; "make memecoin requirements basic so memecoins can practise A LOT in the background")
+Told plainly: the coin bot trades more because coins are 24/7 and 9 rows + ~20 market cells pass there vs 1 row + ~6 cells on
+forex; its own closes are ~−$220 (the profit was the owner's hand closes), so "more trades" ≠ more money. Changed:
+- `FX_CONFIG.botFastCharts` **true**: forex strategies that cleared the bar on the 15-minute chart trade it (fast.ts
+  `isChosen`; CME indices / metals excluded — `isFutures`, their Yahoo price is ~10 min late). `FX_CONFIG.focus.mode`
+  **'prefer'**: every forex market trades what passed there; the focus markets pick first. Tests that pin the old
+  defaults set them at the file top (forex-v15, forex-montecarlo, forex-profit-floor) or inside the test (ict, v18-7).
+- Memecoin bot (paper, pump.fun) — migration **v58** (create): max 40 positions, score bar 35, safety 40, sellers-in-control
+  70%, owner filters loosened (migrated 25 holders / 3 SOL fees / $15k MC, soon $5k volume / $6k MC, narrative off),
+  holders new pair 5 / soon 20, active wallets soon 12 / migrated 8, chase caps +40% / 1 min, +80% / 3 min, buyers ≥ 45%,
+  entry quality 1 buyer / volume ratio 0.1, learning trades margin 30 / 25 open / 150 an hour / drought 10 min,
+  thin-coin probes 40 an hour. Kept: hard safety fails, rug / bundle / vamp / dumper / deployer guards, sizes, usage
+  budgets. tests in crypto-reset (+1).
 ## v27.18 delayed CME prices no longer block hourly / 4-hour trades (Oct 22, owner: "46 fired · 0 opened like it's NOT trading there")
 VPS read 16:16 UTC (1f9c9fc): 24 h = 29 signals from traded strategies, 2 opened; the main hold-back was "skipped RUTUSD / DJIUSD /
 NDXUSD / XAUUSD: the newest price is 10 min old (this chart needs ≤ 10 min)" — incl. RUTUSD pivot_bounce:4h, a strict-proven

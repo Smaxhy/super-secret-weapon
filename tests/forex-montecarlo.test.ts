@@ -4,6 +4,9 @@ import { MARKET_EDGE, bySession, cellPass, ddPctAt, marketCells, monteCarlo, ses
 import { FX_CONFIG, planChosen, profitFloor } from '../src/forex/lab';
 import type { Trade } from '../src/forex/types';
 
+// v27.19 default is 'prefer'; these tests pin the v27.3 focus-only mode
+FX_CONFIG.focus.mode = 'only';
+
 const H = 3_600_000;
 const NY0 = Date.UTC(2026, 9, 14, 4); // Wed 00:00 New York (EDT)
 const tr = (pair: string, entryT: number, r: number): Trade => ({ pair, entryT, exitT: entryT + H, r, reason: r > 0 ? 'target' : 'stop', strategy: 's', tf: '1h', side: 1, entry: 1, exit: 1, stop: 0.9, stop0: 0.9, target: 1.2 }) as unknown as Trade;

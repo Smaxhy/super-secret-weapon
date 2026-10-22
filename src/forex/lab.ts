@@ -109,8 +109,10 @@ export const FX_CONFIG = {
     market: { minN: 12, losingPf: 0.9 },
   },
   /** v18.7 (owner: "we can't fast trade these charts, they take time"): the bot account trades the 1h + 4h charts only.
-   * The 15m / 1m charts stay lab-tested (Strategies / Lab) but place no bot trades while this is off. */
-  botFastCharts: false,
+   * The 15m / 1m charts stay lab-tested (Strategies / Lab) but place no bot trades while this is off.
+   * v27.19 (owner: "I want forex to perform like crypto"): ON — strategies that cleared the bar on the 15-minute chart trade
+   * it, like the coin bot (CME indices / metals excluded: Yahoo's ~10-min-late price can't serve a 15m trade). */
+  botFastCharts: true,
   /** v23 (owner: "a Judas swing at the New York open… 15:45 / 10 am"): the session rules that only make sense on the
    * quarter-hours may trade the 15-minute chart even while `botFastCharts` is off — they hold for hours (flat by noon /
    * 4 pm New York), not minutes. Still only once they clear the quality bar on that chart. */
@@ -159,7 +161,8 @@ export const FX_CONFIG = {
    * stops); 'prefer' = every market trades, these get first pick when the caps are full. They always sort first in the
    * plan. Coins (their own desk) are never affected. */
   focus: {
-    mode: 'only' as 'only' | 'prefer',
+    /** v27.19 (owner: "perform like crypto"): 'prefer' — every forex market trades what passed there; these pick first */
+    mode: 'prefer' as 'only' | 'prefer',
     markets: ['XAUUSD', 'NDXUSD', 'SPXUSD', 'USDJPY', 'EURUSD'],
     /** v27.7 (owner: "add the strongest currencies back on the list"): every hour, traded currency pairs that put one of
      * the `top` strongest currencies against one of the `top` weakest, with a strength gap ≥ `minGap`, join the list */

@@ -59,6 +59,18 @@ describe('crypto data collector (v17.15)', () => {
       }
       if (!(sec === 'trading' && path[0] === 'maxOpenByStrategy')) expect(node, `${sec}.${path.join('.')}`).not.toBeUndefined();
     }
-    expect(Math.max(...MIGRATIONS.map((x) => x.version))).toBe(57);
+    expect(Math.max(...MIGRATIONS.map((x) => x.version))).toBeGreaterThanOrEqual(57);
+  });
+  it('v58 makes the memecoin bot basic but never touches the hard guards or budgets; every path exists', async () => {
+    const { DEFAULT_CONFIG } = await import('../src/config/default');
+    const m = MIGRATIONS.find((x) => x.version === 58)!;
+    expect(m.create).toBe(true);
+    expect(m.set.some(([s]) => s === 'antiRug' || s === 'usage' || s === 'vamp' || s === 'deployers' || s === 'wallets')).toBe(false);
+    expect(m.set.some(([s, p]) => s === 'trading' && p[0] === 'maxPositionSol')).toBe(false);
+    for (const [sec, path] of m.set) {
+      let node: unknown = (DEFAULT_CONFIG as unknown as Record<string, unknown>)[sec];
+      for (const k of path) node = (node as Record<string, unknown>)[k];
+      expect(node, `${sec}.${path.join('.')}`).not.toBeUndefined();
+    }
   });
 });

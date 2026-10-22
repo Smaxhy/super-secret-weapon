@@ -18,6 +18,9 @@ import { INSTRUMENTS, type Bar, type Signal, isCrypto } from '../src/forex/types
 import type { RStats } from '../src/forex/engine';
 import { VENUE_FEES } from '../src/forex/venue-fees';
 
+// v27.19 switched botFastCharts on; these tests pin the v18.7 default (off)
+FX_CONFIG.botFastCharts = false;
+
 // v27.8: these tests pin the exit AT the target (the run-past-target trail is tested in forex-run-past-tp)
 DEFAULT_SIM.runPastTarget = false;
 // v26: these tests pin exact R / USD numbers of other features — the venue fee is tested on its own (forex-venue-fees)

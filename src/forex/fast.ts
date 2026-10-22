@@ -21,7 +21,7 @@ import { loadOanda, oandaCandles, oandaReady } from './oanda';
 import { signalsFor, simulate, WARMUP } from './engine';
 import { STRATEGIES, runsOn, strategyById, styleOf, tradesNews } from './strategies';
 import { to4h } from './ta';
-import { TF_MIN, type Bar, type Instrument, type Trade } from './types';
+import { TF_MIN, isFutures, type Bar, type Instrument, type Trade } from './types';
 import { allowFor, blockReason, filterCoverage, missingInput } from './filters';
 import { applyExit } from './exits';
 import { stratFactorFromVerdict, volFactor } from './portfolio';
@@ -526,7 +526,7 @@ export class FastLab {
           if (!s) continue;
           // v18.7: fast charts manage what the bot still holds but open nothing unless switched on
           // v27.2: the market plan decides per market (NAS100 → Judas swing only)
-          const isChosen = (FX_CONFIG.botFastCharts || (this.lab.universe === 'crypto' && FX_CONFIG.botFastChartsCrypto) || FX_CONFIG.botFastStrategies.includes(row.id)) && planChosen(row.id, inst.id, keep.has(`${row.id}:${tf}`), row.pairs?.find((x) => x.pair === inst.id), rec.dropped.includes(`${row.id}:${tf}`), row.markets?.find((c) => c.pair === inst.id), tf);
+          const isChosen = ((FX_CONFIG.botFastCharts && !isFutures(inst.id)) || (this.lab.universe === 'crypto' && FX_CONFIG.botFastChartsCrypto) || FX_CONFIG.botFastStrategies.includes(row.id)) && planChosen(row.id, inst.id, keep.has(`${row.id}:${tf}`), row.pairs?.find((x) => x.pair === inst.id), rec.dropped.includes(`${row.id}:${tf}`), row.markets?.find((c) => c.pair === inst.id), tf);
           const sigs = signalsFor(se.ctx, s).map((sg, i) => applyExit(sg, row.exit ?? 'designed', se.ctx, i));
           for (const t of simulate(inst, tf, se.ctx, s.id, sigs, allowFor(row.filter ?? 'none', se.env, styleOf(s)))) {
             if (t.reason !== 'open') {

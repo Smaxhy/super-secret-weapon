@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { FX_CONFIG, profitFloor } from '../src/forex/lab';
 import { chosenOf } from '../src/forex/fast';
 
+// v27.19 default is 'prefer'; these tests pin the v27.3 focus-only mode
+FX_CONFIG.focus.mode = 'only';
+
 const st = (n: number, avgR: number, pf: number | null) => ({ n, winPct: 50, avgR, medianR: 0, pf, totalR: n * avgR, maxDdR: 0 });
 const row = (id: string, verdict: 'edge' | 'maybe' | 'no', out: ReturnType<typeof st>, inS = st(100, 0.1, 1.3)) => ({ id, tf: '15m', verdict, outSample: out, inSample: inS });
 

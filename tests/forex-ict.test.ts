@@ -193,7 +193,7 @@ describe('wiring', () => {
     expect(strategyById('fvg_entry')!.charts).toBeUndefined();
   });
   it('the ICT session rules may trade the 15-minute chart while botFastCharts is off, and the plan says so', () => {
-    expect(FX_CONFIG.botFastCharts).toBe(false);
+    FX_CONFIG.botFastCharts = false; // v27.19 default is on; this pins the off case
     expect(FX_CONFIG.botFastStrategies).toContain('judas_swing');
     const base = {
       now: nyT(9, 46),
