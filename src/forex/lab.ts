@@ -106,7 +106,7 @@ export const FX_CONFIG = {
     /** v20.4 / v24.1: a strategy stays off a market where its own tested record there is a LOSING one (12+ trades,
      * profit factor under 0.9). Was "only a winning one (PF 1.1+)", which also refused every market with a thin or
      * break-even record — half the chosen rows' markets. */
-    market: { minN: 12, losingPf: 0.9 },
+    market: { minN: 12, losingPf: 0.9, badN: 5, badPf: 0.6, cellMinN: 4 },
   },
   /** v18.7 (owner: "we can't fast trade these charts, they take time"): the bot account trades the 1h + 4h charts only.
    * The 15m / 1m charts stay lab-tested (Strategies / Lab) but place no bot trades while this is off.
@@ -632,6 +632,21 @@ export function planChosen(strategy: string, pair: string, rowChosen: boolean, r
   if (!plan.includes(strategy)) return false;
   const l = FX_CONFIG.planLosing;
   return !(rec && rec.n >= l.minN && (rec.pf ?? 99) < l.pf);
+}
+/**
+ * v20.4 / v24.1 / v27.21 pure: the strategy's own tested record on THIS market for one trade — not ok (the trade waits)
+ * when it is a losing one: 12+ trades at PF < 0.9, or 5+ at PF < 0.6 (clearly losing), or — unless it proved itself
+ * here (cellPass / trial bars) — its unseen trades here (4+) lose on average. v27.21 (owner: "stupid crypto trades"):
+ * three coin mss_sweep 15m shorts lost −$79 on coins where that rule had PF 0.06–0.62; the 15m chart never had this check.
+ */
+export function marketRecOf(rec: { n: number; pf: number | null; totalR: number } | undefined, cell: MarketCell | null | undefined, ownerTrial = false): NonNullable<LabOpenTrade['marketRec']> {
+  const m = FX_CONFIG.strict.market;
+  const n = rec?.n ?? 0;
+  const pf = rec?.pf ?? null;
+  const losing = !!rec && ((n >= m.minN && (pf ?? 99) < m.losingPf) || (n >= m.badN && (pf ?? 99) < m.badPf));
+  const proven = cellPass(cell) || (!!cell && (focusTrial(cell.pair, cell) || workTrial(cell.pair, cell, rec)));
+  const cellLosing = !proven && !!cell && cell.n >= m.cellMinN && cell.avgR < 0;
+  return { n, pf, totalR: rec?.totalR ?? 0, ok: ownerTrial || !(losing || cellLosing) };
 }
 /** v27.11: the owner's trial for this strategy × chart × market, if any */
 export const ownerTrialOf = (strategy: string, tf: string, pair: string) =>
@@ -2245,13 +2260,7 @@ export class ForexLab {
       // v20.1: how many market checks stand behind the trade at its signal close (strict mode needs `need` of them)
       const agree = { n: openAgree.get(tradeKey(t)) ?? 0, of: maxConfirmations(t.tf, false), need: FX_CONFIG.strict.minAgree };
       // v20.4 / v24.1: the strategy's own tested record on THIS market — a losing record here → the trade waits
-      const marketRec = ((): LabOpenTrade['marketRec'] => {
-        if (!row) return null;
-        const pr = row.pairs.find((x) => x.pair === t.pair);
-        const m = FX_CONFIG.strict.market;
-        if (!pr) return { n: 0, pf: null, totalR: 0, ok: true };
-        return { n: pr.n, pf: pr.pf, totalR: pr.totalR, ok: (!!owned && owned.pair !== '*') || !(pr.n >= m.minN && (pr.pf ?? 99) < m.losingPf) };
-      })();
+      const marketRec = row ? marketRecOf(row.pairs.find((x) => x.pair === t.pair), cellFor(t), !!owned && owned.pair !== '*') : null;
       return toLabTrade(t, {
         order,
         soloWait: soloWait(t, open, TF_MIN[t.tf as Timeframe] ?? 60),

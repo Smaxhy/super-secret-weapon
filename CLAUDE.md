@@ -758,6 +758,16 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.21 losing-market check on the 15-minute chart too (Oct 22, owner: "stupid crypto trades, is it rushing — check if the
+latest losers are justifiable")
+VPS read of the coin bot's 12 latest losers (−$322, 11 of 12 full −1R stops): 9 came from strategies proven on that coin
+(strict cells, e.g. pivot_bounce:4h SOL 188 unseen +0.16R PF 2.19) and, where visible, the lab lost the same trade → normal
+losses. NOT justified: 3 mss_sweep:15m shorts (BTC / ETH / DOGE, −$79) on coins where that rule's record was PF 0.06–0.62 —
+the fast lab never set `marketRec`, so the losing-market wait only existed on 1h / 4h. Entries were not rushed (1h / 4h open
+4–7 min after the close: the lab run; 15m ≈ 45 s). Now `marketRecOf(rec, cell, ownerTrial)` (lab.ts, pure) is used by both
+labs: losing = 12+ trades at PF < 0.9 (as before) OR 5+ at PF < 0.6 OR — unless the strategy proved itself on that market
+(cellPass / trial bars) — 4+ unseen trades there with a negative average (`strict.market` {badN 5, badPf 0.6, cellMinN 4}).
+tests/forex-market-rec (3).
 ## v27.20 coin bot: no trade loses more than $20; memecoins buy again (Oct 22, owner: "memecoins barely buy, also make the SL
 on crypto much stricter, not past $20")
 - **Loss cap** (practice.ts): `BOT.maxLossUsdByAcct` {cbot: 20} → `PracticeAccount.maxLossUsd` (set by syncBot). Size stays the
