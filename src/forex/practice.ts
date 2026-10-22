@@ -73,8 +73,8 @@ export const BOT = {
   /** v27.18: Yahoo's CME futures (indices, metals) arrive ~10 min late but often don't declare it (exchangeDataDelayedBy 0) —
    * an hourly / 4-hour trade on one may use this much delay on top of the limit when the feed declares none */
   futuresDelayMs: 15 * 60_000,
-  /** v27.20: the most a single trade may lose, per account (the coin bot: $20) */
-  maxLossUsdByAcct: { cbot: 20 } as Partial<Record<string, number>>,
+  /** v27.20: the most a single trade may lose, per account (the coin bot: $20; v27.22 the forex bot too) */
+  maxLossUsdByAcct: { cbot: 20, bot: 20 } as Partial<Record<string, number>>,
   /** v18.7 (owner: "wait it out, then adjust"): after a strategy closes a trade on a market, the same strategy may not
    * re-enter that market for this many candles of its chart (3 h on the hourly, 12 h on the 4-hour) */
   reentryCooldownBars: 3,

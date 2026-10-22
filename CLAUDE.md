@@ -758,6 +758,8 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.22 the forex bot gets the $20 loss cap too (Oct 22, owner: "does forex not have a stoploss? … the SL also for forex
+past 20") — `BOT.maxLossUsdByAcct` {cbot: 20, bot: 20}: same stop pull-in as v27.20, size unchanged. tests/forex-loss-cap.
 ## v27.21 losing-market check on the 15-minute chart too (Oct 22, owner: "stupid crypto trades, is it rushing — check if the
 latest losers are justifiable")
 VPS read of the coin bot's 12 latest losers (−$322, 11 of 12 full −1R stops): 9 came from strategies proven on that coin
