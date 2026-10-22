@@ -6,12 +6,12 @@ import type { Bar } from '../src/forex/types';
 
 const H = 3_600_000;
 const D1 = Date.UTC(2026, 9, 12);
-/** yesterday: 24 hourly candles swinging 100…110 (high 111, low 99, close 104) */
+/** yesterday: 24 hourly candles swinging 100…110 (high 111, low 99, close 100) */
 function yesterday(): Bar[] {
   const out: Bar[] = [];
   for (let k = 0; k < 24; k++) {
     const base = 100 + (k % 11);
-    out.push({ t: D1 + k * H, o: base, h: base + 1, l: base - 1, c: k === 23 ? 104 : base + 0.3 });
+    out.push({ t: D1 + k * H, o: base, h: base + 1, l: base - 1, c: k === 23 ? 100 : base + 0.3 });
   }
   return out;
 }
@@ -21,7 +21,7 @@ const piv = () => {
   const l = Math.min(...y.map((b) => b.l));
   const c = y[y.length - 1]!.c;
   const p = (h + l + c) / 3;
-  return { h, l, c, p, s1: 2 * p - h, r1: 2 * p - l };
+  return { h, l, c, p, s1: 2 * p - h, r1: 2 * p - l, mid: (h + l) / 2, s3: l - 2 * (h - p) };
 };
 
 describe('pivot ladder', () => {
@@ -56,5 +56,24 @@ describe('pivot ladder', () => {
     expect(strategyById('pivot_ladder')?.family).toBe('reversion');
     expect(runsOn(strategyById('pivot_ladder')!, '15m', 'NDXUSD')).toBe(true);
     expect(runsOn(strategyById('pivot_ladder')!, '4h', 'EURUSD')).toBe(true);
+  });
+  it('v27.17: also the middle of yesterday\'s range and S3', () => {
+    const { mid, s3, h } = piv();
+    const D2 = D1 + 24 * H;
+    const atMid = [...yesterday(),
+      { t: D2, o: mid + 1, h: mid + 1.2, l: mid + 0.4, c: mid + 0.6 },
+      { t: D2 + H, o: mid + 0.6, h: mid + 0.8, l: mid - 0.2, c: mid + 0.3 }];
+    const c1 = buildCtx(atMid, 60, 'NDXUSD');
+    const s1 = pivotLadderSignal(c1, atMid.length - 1)!;
+    expect(s1?.side).toBe(1);
+    expect(s1.target).toBe(h);
+    expect(s1.stop).toBeCloseTo(mid - LADDER.stopAtr * c1.atr14[atMid.length - 1]!, 6);
+    const atS3 = [...yesterday(),
+      { t: D2, o: s3 + 2.3, h: s3 + 2.8, l: s3 + 0.8, c: s3 + 1.3 },
+      { t: D2 + H, o: s3 + 1.3, h: s3 + 1.5, l: s3 - 0.4, c: s3 + 0.3 }];
+    const c3 = buildCtx(atS3, 60, 'NDXUSD');
+    const sig3 = pivotLadderSignal(c3, atS3.length - 1)!;
+    expect(sig3?.side).toBe(1);
+    expect(sig3.stop).toBeCloseTo(s3 - LADDER.stopAtr * c3.atr14[atS3.length - 1]!, 6);
   });
 });

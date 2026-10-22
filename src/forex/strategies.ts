@@ -383,6 +383,8 @@ export const LADDER = { stopAtr: 0.5, minR: 1.5 };
  * DOWN into a support (P, S1 or S2 under the previous close, the previous candle still above it), trades through it and
  * closes back above → buy, stop ½ ATR under the level, target yesterday's HIGH (needs ≥ 1.5R of room). Short mirrored with
  * P / R1 / R2 and yesterday's LOW. The highest support touched wins. Pure, causal (yesterday is a finished day).
+ * v27.17 (the owner's second level list: 29,813.75 ≈ the middle of yesterday's range, (29,601.25) ≈ S3): also the 50% of
+ * yesterday's range (both sides) and S3 = L − 2(H−P) / R3 = H + 2(P−L).
  */
 export function pivotLadderSignal(c: Ctx, i: number): Signal | null {
   const d = c.prevDay[i];
@@ -392,7 +394,8 @@ export function pivotLadderSignal(c: Ctx, i: number): Signal | null {
   const rng = d.h - d.l;
   const b = c.bars[i]!;
   const pb = c.bars[i - 1]!;
-  const longs = [pv, 2 * pv - d.h, pv - rng].sort((x, y) => y - x);
+  const mid = (d.h + d.l) / 2;
+  const longs = [pv, mid, 2 * pv - d.h, pv - rng, d.l - 2 * (d.h - pv)].sort((x, y) => y - x);
   for (const lv of longs) {
     if (pb.l > lv && b.l <= lv && b.c > lv && d.h > b.c) {
       const s = levelSig(c, i, 1, lv - LADDER.stopAtr * a, null);
@@ -400,7 +403,7 @@ export function pivotLadderSignal(c: Ctx, i: number): Signal | null {
       return null;
     }
   }
-  const shorts = [pv, 2 * pv - d.l, pv + rng].sort((x, y) => x - y);
+  const shorts = [pv, mid, 2 * pv - d.l, pv + rng, d.h + 2 * (pv - d.l)].sort((x, y) => x - y);
   for (const lv of shorts) {
     if (pb.h < lv && b.h >= lv && b.c < lv && d.l < b.c) {
       const s = levelSig(c, i, -1, lv + LADDER.stopAtr * a, null);
@@ -722,7 +725,7 @@ export const STRATEGIES: Strategy[] = [
     id: 'pivot_ladder',
     name: 'Pivot ladder: buy the day\'s pivot levels, aim for yesterday\'s high',
     family: 'reversion',
-    desc: 'The daily pivot levels from yesterday\'s high / low / close (P, S1, S2 under the price; P, R1, R2 above). Price comes down into a support level, pokes through and closes back above it → buy with a tight stop ½ ATR under the level, target yesterday\'s high (needs at least 1.5R of room), then a trailing stop. Mirrored for shorts toward yesterday\'s low. The trade your friend took on the Nasdaq.',
+    desc: 'The daily pivot levels from yesterday\'s high / low / close (P, S1, S2, S3 under the price; P, R1, R2, R3 above) plus the middle of yesterday\'s range. Price comes down into a support level, pokes through and closes back above it → buy with a tight stop ½ ATR under the level, target yesterday\'s high (needs at least 1.5R of room), then a trailing stop. Mirrored for shorts toward yesterday\'s low. The trade your friend took on the Nasdaq.',
     signal(c, i) {
       return pivotLadderSignal(c, i);
     },

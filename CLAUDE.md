@@ -758,6 +758,12 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.17 pivot ladder: + middle of yesterday's range + S3 / R3 (Oct 22, owner's second level list 29,813.75 / 29,770.75 /
+29,664.25 / (29,601.25): "more signs make forex trade more and better")
+Those are the range middle ((H + L) ÷ 2 ≈ 29,812.6), S1, S2 and S3 = L − 2(H − P) ≈ 29,599.5 from the same day as v27.16.
+`pivotLadderSignal` now also buys / sells the middle of yesterday's range (both sides) and S3 / R3 = H + 2(P − L); same entry,
+½ ATR stop, yesterday's high / low target, 1.5R minimum room. It stays one lab row (`pivot_ladder`), graded like every row.
+tests/forex-pivot-ladder (+1).
 ## v27.16 pivot ladder — the friend's MNQ trades (Oct 22, owner's 1-minute MNQ chart + level list "another trade taken today")
 The owner's levels 30,004.75 / 29,941.59 / 29,834.50 / 29,770.75 / 29,664.50 are the classic daily pivots R2 / R1 / P / S1 / S2
 (yesterday H ≈ 29,898, L ≈ 29,727 — also in the list; 29,792.75 unexplained); the friend bought at P / S1 / 29,792.75 with ~10-pt
