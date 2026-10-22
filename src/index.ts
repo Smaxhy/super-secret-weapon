@@ -460,6 +460,17 @@ async function main(): Promise<void> {
     await practice.bookAdjust('cbot', [row('adjust-mss-1021', Date.UTC(2026, 9, 21, 13, 0, 1), -79.37), row('adjust-mss-today', Date.now(), 79.37)]);
     cryptoLab.logBot(['coin bot: the $79.37 from the struck mss_sweep losses now shows on today\'s P&L (correction rows)']);
   });
+  // v27.22 (owner: "take away the trade that's −60 right now, don't make it count"): the forex NZDUSD pivot_bounce 4h long
+  // that opened before the forex bot had the $20 cap is struck as if it never happened (and never re-opened)
+  await oneTimeUpgrade('v27.22-undo-nzd-pivot', async () => {
+    const since = Date.UTC(2026, 9, 22, 18);
+    const nzd = (p: { pair: string; strategy?: string | null; side: number; openedAt: number }) => p.pair === 'NZDUSD' && p.strategy === 'pivot_bounce' && p.side === 1 && p.openedAt >= since;
+    const label = 'forex bot: the NZDUSD pivot_bounce trade opened before the $20 cap';
+    // still open → strike it; already closed (the cap deploy can close it at market first) → strike the close
+    const lines = [await practice.undoPositions('bot', nzd, label), await practice.undoClosed('bot', nzd, label)];
+    forex.logBot(lines);
+    log.info({ lines }, 'forex bot: NZDUSD trade struck');
+  });
   // v20.1 (owner: "revert all current active trades"): every open bot trade is struck as if it never happened, once
   await oneTimeUpgrade('v20.1-revert-open', async () => {
     const line = await practice.undoOpen('bot');

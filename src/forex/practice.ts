@@ -285,6 +285,8 @@ export interface PracticeAccount {
   riskMode?: RiskMode;
   /** v17: finished bot trades in R per strategy and chart (newest 60, ≤ 120 days) */
   ledger?: Record<string, LedgerRow[]>;
+  /** v27.22: lab trades (refs) the owner had struck — the bot never opens them again (newest 50) */
+  skipRefs?: string[];
   /** v17.11: the owner's profit lock on this account's trades (missing = on) */
   profitLock?: boolean;
   /** v27.20 (owner: "make the SL on crypto much stricter, not past $20"): no trade on this account may lose more than this
@@ -508,7 +510,27 @@ export function undoClosed(a: PracticeAccount, pick: (c: ClosedPractice) => bool
     if (lg) a.ledger![key] = lg.filter((r) => !(r[0] === c.closedAt && (!c.ref || r[3] === c.ref)));
   }
   if (a.peakUsd !== undefined) a.peakUsd = usd > 0 ? Math.max(a.balanceUsd, a.peakUsd - usd) : Math.max(a.peakUsd, a.balanceUsd);
+  const refs = main.map((c) => c.ref).filter((r): r is string => !!r);
+  if (refs.length) a.skipRefs = [...(a.skipRefs ?? []), ...refs].slice(-50); // v27.22: never re-opened
   return { ids: gone.map((c) => c.id), usd };
+}
+
+/**
+ * v27.22 (owner: "take away the trade that's −60, don't make it count"): strike chosen OPEN positions (+ their parts and
+ * booked rolls) as if they never happened, and remember their refs so the bot never opens that signal again. Pure.
+ */
+export function undoPositions(a: PracticeAccount, pick: (p: PracticePosition) => boolean): { ids: string[]; usd: number; refs: string[] } {
+  const gone = a.open.filter(pick);
+  const ids = gone.map((p) => p.id);
+  const partOf = (c: { id: string }) => ids.some((id) => c.id === id || c.id.startsWith(`${id}-part`));
+  const usd = Math.round(gone.reduce((n, p) => n + (p.bankedUsd ?? 0), 0) * 100) / 100;
+  a.closed = a.closed.filter((c) => !partOf(c));
+  a.open = a.open.filter((p) => !pick(p));
+  a.balanceUsd = Math.round((a.balanceUsd - usd) * 100) / 100;
+  if (a.peakUsd !== undefined && usd > 0) a.peakUsd = Math.max(a.balanceUsd, a.peakUsd - usd);
+  const refs = gone.map((p) => p.ref).filter((r): r is string => !!r);
+  if (refs.length) a.skipRefs = [...(a.skipRefs ?? []), ...refs].slice(-50);
+  return { ids, usd, refs };
 }
 
 /**
@@ -1632,7 +1654,8 @@ export class Practice {
         perTf.set(tfOfRef(p.ref), (perTf.get(tfOfRef(p.ref)) ?? 0) + 1);
       }
       const fresh = (t: LabOpenTrade) => Date.now() - t.entryT <= (BOT.freshMsByTf[t.tf ?? tfOfRef(t.ref)] ?? BOT.freshMs);
-      const candidates = labOpen.filter((t) => t.chosen && !held.has(t.ref) && fresh(t)).sort((x, y) => (y.prio ?? 0) - (x.prio ?? 0));
+      const struck = new Set(a.skipRefs ?? []); // v27.22: struck by the owner
+      const candidates = labOpen.filter((t) => t.chosen && !held.has(t.ref) && !struck.has(t.ref) && fresh(t)).sort((x, y) => (y.prio ?? 0) - (x.prio ?? 0));
       if (rep) {
         rep.at = Date.now();
         rep.candidates += candidates.length;
@@ -2009,6 +2032,29 @@ export class Practice {
       }
       await this.save(a, acct);
       return `open trades struck from the ${acct} account as if they never happened: ${r.open} position${r.open === 1 ? '' : 's'}, ${r.parts} part${r.parts === 1 ? '' : 's'} (${r.usd >= 0 ? '−' : '+'}$${Math.abs(r.usd).toFixed(2)} taken back out), ${r.orders} resting order${r.orders === 1 ? '' : 's'}, ${r.paused} weekend pause${r.paused === 1 ? '' : 's'} — balance now $${a.balanceUsd.toFixed(2)}`;
+    });
+  }
+
+  /** v27.22: strike chosen open positions (+ their P&L-log parts) as if they never happened; the signal is never re-opened. */
+  async undoPositions(acct: AcctId, pick: (p: PracticePosition) => boolean, label: string): Promise<string> {
+    return this.serial(async () => {
+      const a = await this.load(acct);
+      const r = undoPositions(a, pick);
+      if (this.pnlLogs() && r.ids.length) {
+        const key = pnlKey(acct);
+        const raw = await this.redis.lrange(key, 0, -1);
+        const keep = raw.filter((x) => {
+          const row = parsePnlRow(x);
+          return row !== null && !r.ids.some((id) => row.id === id || row.id.startsWith(`${id}-part`));
+        });
+        const m = this.redis.multi().del(key);
+        if (keep.length) m.rpush(key, ...keep);
+        await m.exec();
+        this.pnlReady.add(acct);
+        this.pnlDirty(acct);
+      }
+      await this.save(a, acct);
+      return `${label}: ${r.ids.length} open trade${r.ids.length === 1 ? '' : 's'} struck${r.usd ? ` (${r.usd >= 0 ? '−' : '+'}$${Math.abs(r.usd).toFixed(2)} booked rolls taken back)` : ''} — balance now $${a.balanceUsd.toFixed(2)}`;
     });
   }
 

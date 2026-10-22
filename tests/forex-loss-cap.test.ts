@@ -46,3 +46,18 @@ describe('per-trade USD loss cap', () => {
     expect(b.closed[0]!.pnlUsd).toBeCloseTo(-20, 1);
   });
 });
+
+import { undoPositions } from '../src/forex/practice';
+
+describe('v27.22 undoPositions', () => {
+  it('strikes the picked open trade, takes its booked rolls back and remembers its signal', () => {
+    const a = newAccount(1000);
+    a.open = [{ ...long(), id: 'x', pair: 'NZDUSD', strategy: 'pivot_bounce', ref: 'pivot_bounce:4h:NZDUSD:1', bankedUsd: 1.5 }, { ...long(), id: 'y' }];
+    a.balanceUsd = 1001.5;
+    const r = undoPositions(a, (p) => p.pair === 'NZDUSD');
+    expect(r.ids).toEqual(['x']);
+    expect(a.open.map((p) => p.id)).toEqual(['y']);
+    expect(a.balanceUsd).toBe(1000);
+    expect(a.skipRefs).toEqual(['pivot_bounce:4h:NZDUSD:1']);
+  });
+});

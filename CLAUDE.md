@@ -760,6 +760,11 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 
 ## v27.22 the forex bot gets the $20 loss cap too (Oct 22, owner: "does forex not have a stoploss? … the SL also for forex
 past 20") — `BOT.maxLossUsdByAcct` {cbot: 20, bot: 20}: same stop pull-in as v27.20, size unchanged. tests/forex-loss-cap.
+Then (owner: "take away the trade that's −60 right now, don't make it count"): the open forex NZDUSD pivot_bounce:4h long
+(opened ~20:05 UTC before the cap, −$63, $82 at its stop) is struck once (`oneTimeUpgrade('v27.22-undo-nzd-pivot')`):
+`undoPositions(a, pick)` (open positions + parts + booked rolls) and, in case the cap closed it at market first,
+`undoClosed` too; both add the trade's ref to `PracticeAccount.skipRefs` (newest 50) and `syncBot` never opens a struck
+ref again (else the still-fresh lab trade would be re-opened). tests in forex-loss-cap (+1).
 ## v27.21 losing-market check on the 15-minute chart too (Oct 22, owner: "stupid crypto trades, is it rushing — check if the
 latest losers are justifiable")
 VPS read of the coin bot's 12 latest losers (−$322, 11 of 12 full −1R stops): 9 came from strategies proven on that coin
