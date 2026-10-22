@@ -374,6 +374,43 @@ export function fvgCeSignal(c: Ctx, i: number): Signal | null {
   return null;
 }
 
+/** v27.16 pivot ladder: how tight the stop sits past the level (ATRs) and the least room to the target (R) */
+export const LADDER = { stopAtr: 0.5, minR: 1.5 };
+/**
+ * v27.16 (owner's friend's MNQ trades, Oct 22: three longs bought at the day's pivot levels — P 29,834.50, S1 29,770.75 and
+ * a level between — each with a ~10-point stop, all aiming at yesterday's high ~29,899). The classic daily pivots from
+ * yesterday's high / low / close: P = (H+L+C)/3, S1 = 2P−H, S2 = P−(H−L), R1 = 2P−L, R2 = P+(H−L). Long: the candle comes
+ * DOWN into a support (P, S1 or S2 under the previous close, the previous candle still above it), trades through it and
+ * closes back above → buy, stop ½ ATR under the level, target yesterday's HIGH (needs ≥ 1.5R of room). Short mirrored with
+ * P / R1 / R2 and yesterday's LOW. The highest support touched wins. Pure, causal (yesterday is a finished day).
+ */
+export function pivotLadderSignal(c: Ctx, i: number): Signal | null {
+  const d = c.prevDay[i];
+  const a = c.atr14[i]!;
+  if (!d || i < 1 || !ok(a) || a <= 0) return null;
+  const pv = (d.h + d.l + d.c) / 3;
+  const rng = d.h - d.l;
+  const b = c.bars[i]!;
+  const pb = c.bars[i - 1]!;
+  const longs = [pv, 2 * pv - d.h, pv - rng].sort((x, y) => y - x);
+  for (const lv of longs) {
+    if (pb.l > lv && b.l <= lv && b.c > lv && d.h > b.c) {
+      const s = levelSig(c, i, 1, lv - LADDER.stopAtr * a, null);
+      if (s && (d.h - b.c) >= LADDER.minR * (b.c - s.stop)) return { ...s, target: d.h };
+      return null;
+    }
+  }
+  const shorts = [pv, 2 * pv - d.l, pv + rng].sort((x, y) => x - y);
+  for (const lv of shorts) {
+    if (pb.h < lv && b.h >= lv && b.c < lv && d.l < b.c) {
+      const s = levelSig(c, i, -1, lv + LADDER.stopAtr * a, null);
+      if (s && (b.c - d.l) >= LADDER.minR * (s.stop - b.c)) return { ...s, target: d.l };
+      return null;
+    }
+  }
+  return null;
+}
+
 /** v16: crosses of closely linked currencies — where a stretched price tends to come back (the stat-arb candidates) */
 export const STAT_ARB_PAIRS = ['EURGBP', 'AUDNZD', 'EURCHF'];
 /** v16: the "big figure" step of a market: 100 pips for FX (1.1700, 150.00), $10 for gold, $0.50 for silver */
@@ -679,6 +716,15 @@ export const STRATEGIES: Strategy[] = [
       if (c.close[i - 1]! < lower[i - 1]! && c.close[i]! > lower[i]!) return atrSig(c, i, 1, 1.5, null, { exitWhen: 'midBand', maxBars: 30 });
       if (c.close[i - 1]! > upper[i - 1]! && c.close[i]! < upper[i]!) return atrSig(c, i, -1, 1.5, null, { exitWhen: 'midBand', maxBars: 30 });
       return null;
+    },
+  },
+  {
+    id: 'pivot_ladder',
+    name: 'Pivot ladder: buy the day\'s pivot levels, aim for yesterday\'s high',
+    family: 'reversion',
+    desc: 'The daily pivot levels from yesterday\'s high / low / close (P, S1, S2 under the price; P, R1, R2 above). Price comes down into a support level, pokes through and closes back above it → buy with a tight stop ½ ATR under the level, target yesterday\'s high (needs at least 1.5R of room), then a trailing stop. Mirrored for shorts toward yesterday\'s low. The trade your friend took on the Nasdaq.',
+    signal(c, i) {
+      return pivotLadderSignal(c, i);
     },
   },
   {

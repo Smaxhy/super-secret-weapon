@@ -758,6 +758,15 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.16 pivot ladder — the friend's MNQ trades (Oct 22, owner's 1-minute MNQ chart + level list "another trade taken today")
+The owner's levels 30,004.75 / 29,941.59 / 29,834.50 / 29,770.75 / 29,664.50 are the classic daily pivots R2 / R1 / P / S1 / S2
+(yesterday H ≈ 29,898, L ≈ 29,727 — also in the list; 29,792.75 unexplained); the friend bought at P / S1 / 29,792.75 with ~10-pt
+stops, all targeting ~29,899 = yesterday's high. strategies.ts **`pivot_ladder`** (`pivotLadderSignal`, `LADDER` {stopAtr 0.5,
+minR 1.5}, family reversion, every chart / market): the candle comes down into P / S1 / S2 (previous candle still above it),
+trades through and closes back above → long, stop ½ ATR under the level, target yesterday's HIGH if ≥ 1.5R away; shorts mirrored
+with P / R1 / R2 → yesterday's LOW. Days = UTC days like `pivot_bounce` (CME's 17:00 NY session would shift the levels a little).
+Graded like every row; trades only where the lab finds it works. 1-minute isn't a bot chart (v18.8) and Yahoo's index price is
+~10 min delayed, so the 15m Nasdaq version can't open live (v27.2 note). tests/forex-pivot-ladder (2).
 ## v27.15 the untested market-checks gate is off (Oct 21 22:45 UTC, owner: "all these strategies and skills but not one trade")
 VPS read (4ab2943): 26.7 h without a forex open; 24 h = 80 checks, 2,579 signals, 3 from traded strategies, 0 opened; the only
 waits were SPXUSD pivot_bounce 4h shorts "only 0 of 3 market checks agree"; the other chosen-strategy signals (USDJPY / NZDUSD
