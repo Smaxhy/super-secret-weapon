@@ -488,6 +488,30 @@ export function undoChart(a: PracticeAccount, tf: string): { closed: number; usd
 }
 
 /**
+ * v27.21 (owner: "if it was a bug revert the last 3 losses"): strike chosen CLOSED trades (+ their parts) from an account
+ * as if they never happened — their USD back out of the balance, their rows in the bot's record (`stats`) and R ledger.
+ * Returns the ids (their P&L-log rows must go too) and the USD removed. Mutates `a`. Pure.
+ */
+export function undoClosed(a: PracticeAccount, pick: (c: ClosedPractice) => boolean): { ids: string[]; usd: number } {
+  const main = a.closed.filter(pick);
+  const ids = main.map((c) => c.id);
+  const isGone = (c: { id: string }) => ids.some((id) => c.id === id || c.id.startsWith(`${id}-part`));
+  const gone = a.closed.filter(isGone);
+  const usd = Math.round(gone.reduce((n, c) => n + c.pnlUsd, 0) * 100) / 100;
+  a.closed = a.closed.filter((c) => !isGone(c));
+  a.balanceUsd = Math.round((a.balanceUsd - usd) * 100) / 100;
+  for (const c of main) {
+    const key = `${c.strategy ?? 'bot'}:${c.tf ?? (c.ref ? tfOfRef(c.ref) : '')}`;
+    const st = a.stats?.[key];
+    if (st) a.stats![key] = st.filter(([t]) => t !== c.closedAt);
+    const lg = a.ledger?.[key];
+    if (lg) a.ledger![key] = lg.filter((r) => !(r[0] === c.closedAt && (!c.ref || r[3] === c.ref)));
+  }
+  if (a.peakUsd !== undefined) a.peakUsd = usd > 0 ? Math.max(a.balanceUsd, a.peakUsd - usd) : Math.max(a.peakUsd, a.balanceUsd);
+  return { ids: gone.map((c) => c.id), usd };
+}
+
+/**
  * v20.1 (owner: "revert all current active trades"): strike every OPEN trade from an account as if it never happened —
  * the positions, their parts already taken (USD back out of the balance), their overnight rolls, resting orders and
  * weekend pauses. Closed trades stay. Returns what was removed + the ids whose P&L-log rows must go. Mutates `a`. Pure.
@@ -1927,6 +1951,30 @@ export class Practice {
       }
       await this.save(a, acct);
       return `${tf} chart struck from the ${acct} account: ${r.closed} closed trade${r.closed === 1 ? '' : 's'} (${r.usd >= 0 ? '−' : '+'}$${Math.abs(r.usd).toFixed(2)} taken back out), ${r.open} open, ${r.orders} resting order${r.orders === 1 ? '' : 's'} removed — balance now $${a.balanceUsd.toFixed(2)}`;
+    });
+  }
+
+  /** v27.21: strike chosen closed trades from an account (+ the durable P&L log) as if they never happened. */
+  async undoClosed(acct: AcctId, pick: (c: ClosedPractice) => boolean, label: string): Promise<string> {
+    return this.serial(async () => {
+      const a = await this.load(acct);
+      const r = undoClosed(a, pick);
+      if (this.pnlLogs() && r.ids.length) {
+        const key = pnlKey(acct);
+        const raw = await this.redis.lrange(key, 0, -1);
+        const gone = new Set(r.ids);
+        const keep = raw.filter((x) => {
+          const row = parsePnlRow(x);
+          return row !== null && !gone.has(row.id);
+        });
+        const m = this.redis.multi().del(key);
+        if (keep.length) m.rpush(key, ...keep);
+        await m.exec();
+        this.pnlReady.add(acct);
+        this.pnlDirty(acct);
+      }
+      await this.save(a, acct);
+      return `${label}: ${r.ids.length} closed trade${r.ids.length === 1 ? '' : 's'} struck (${r.usd < 0 ? '+' : '−'}$${Math.abs(r.usd).toFixed(2)} back) — balance now $${a.balanceUsd.toFixed(2)}`;
     });
   }
 

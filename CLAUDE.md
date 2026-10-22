@@ -767,7 +767,10 @@ the fast lab never set `marketRec`, so the losing-market wait only existed on 1h
 4–7 min after the close: the lab run; 15m ≈ 45 s). Now `marketRecOf(rec, cell, ownerTrial)` (lab.ts, pure) is used by both
 labs: losing = 12+ trades at PF < 0.9 (as before) OR 5+ at PF < 0.6 OR — unless the strategy proved itself on that market
 (cellPass / trial bars) — 4+ unseen trades there with a negative average (`strict.market` {badN 5, badPf 0.6, cellMinN 4}).
-tests/forex-market-rec (3).
+tests/forex-market-rec (3). Owner: "revert the last 3 losses if it was a bug" → `undoClosed(a, pick)` (practice.ts, pure:
+closed rows + their parts, balance, `stats`, R ledger) + `Practice.undoClosed(acct, pick, label)` (also the P&L log), run
+once at start (`oneTimeUpgrade('v27.21-undo-mss-15m')`): cbot, mss_sweep 15m, BTC / ETH / DOGE, closed Oct 21 00–14 UTC,
+losses only → bot-log line with the USD put back. tests/forex-market-rec (+1).
 ## v27.20 coin bot: no trade loses more than $20; memecoins buy again (Oct 22, owner: "memecoins barely buy, also make the SL
 on crypto much stricter, not past $20")
 - **Loss cap** (practice.ts): `BOT.maxLossUsdByAcct` {cbot: 20} → `PracticeAccount.maxLossUsd` (set by syncBot). Size stays the

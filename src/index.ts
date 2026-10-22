@@ -443,6 +443,16 @@ async function main(): Promise<void> {
     forex.logBot([line]);
     log.info({ line }, 'forex bot: 1-minute trades struck');
   });
+  // v27.21 (owner: "if it was a bug revert the last 3 losses"): the three coin mss_sweep 15m shorts the missing
+  // losing-market check let through on Oct 21 (BTC / ETH / DOGE, −$79) are struck from the coin bot once
+  await oneTimeUpgrade('v27.21-undo-mss-15m', async () => {
+    const from = Date.UTC(2026, 9, 21, 0);
+    const to = Date.UTC(2026, 9, 21, 14);
+    const pairs = new Set(['BTCUSD', 'ETHUSD', 'DOGEUSD']);
+    const line = await practice.undoClosed('cbot', (c) => c.strategy === 'mss_sweep' && (c.tf ?? '') === '15m' && pairs.has(c.pair) && c.closedAt >= from && c.closedAt < to && c.pnlUsd < 0, 'coin bot: the 3 mss_sweep 15m losses a missing check let through');
+    cryptoLab.logBot([line]);
+    log.info({ line }, 'coin bot: mss_sweep losses struck');
+  });
   // v20.1 (owner: "revert all current active trades"): every open bot trade is struck as if it never happened, once
   await oneTimeUpgrade('v20.1-revert-open', async () => {
     const line = await practice.undoOpen('bot');

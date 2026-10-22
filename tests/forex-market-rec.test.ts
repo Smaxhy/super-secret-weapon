@@ -30,3 +30,26 @@ describe('v27.21 losing record on a market', () => {
     expect(marketRecOf({ n: 46, pf: 0.95, totalR: -1 }, null).ok).toBe(true);
   });
 });
+
+import { undoClosed } from '../src/forex/practice';
+
+describe('v27.21 undoClosed', () => {
+  it('strikes chosen losses: balance, record and ledger', () => {
+    const c = (id: string, strategy: string, pnlUsd: number, closedAt: number) => ({ id, pair: 'BTCUSD', side: -1, units: 1, entry: 1, exit: 1, marginUsd: 1, leverage: 1, stop: null, target: null, openedAt: closedAt - 1, closedAt, pnlUsd, reason: 'stop', strategy, tf: '15m', ref: `${strategy}:15m:BTCUSD:${closedAt}` });
+    const a = {
+      balanceUsd: 900, peakUsd: 1000,
+      closed: [c('a', 'mss_sweep', -30, 10), c('b', 'donchian20', -20, 11), c('a-part1', 'mss_sweep', 5, 9)],
+      stats: { 'mss_sweep:15m': [[10, -25]], 'donchian20:15m': [[11, -20]] },
+      ledger: { 'mss_sweep:15m': [[10, -25, -1, 'mss_sweep:15m:BTCUSD:10', 0]] },
+    } as never;
+    const r = undoClosed(a, (x) => x.strategy === 'mss_sweep' && x.pnlUsd < 0);
+    expect(r.ids.sort()).toEqual(['a', 'a-part1']);
+    expect(r.usd).toBe(-25);
+    const acc = a as unknown as { balanceUsd: number; closed: Array<{ id: string }>; stats: Record<string, unknown[]>; ledger: Record<string, unknown[]> };
+    expect(acc.balanceUsd).toBe(925);
+    expect(acc.closed.map((x) => x.id)).toEqual(['b']);
+    expect(acc.stats['mss_sweep:15m']).toEqual([]);
+    expect(acc.ledger['mss_sweep:15m']).toEqual([]);
+    expect(acc.stats['donchian20:15m']).toHaveLength(1);
+  });
+});
