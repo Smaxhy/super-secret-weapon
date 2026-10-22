@@ -760,10 +760,11 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 
 ## v27.20 coin bot: no trade loses more than $20; memecoins buy again (Oct 22, owner: "memecoins barely buy, also make the SL
 on crypto much stricter, not past $20")
-- **Loss cap** (practice.ts): `BOT.maxLossUsdByAcct` {cbot: 20} → `PracticeAccount.maxLossUsd` (set by syncBot). New coin trades
-  are sized so their stop loses ≤ 90% of it (`BOT.maxLossSizeShare`; the strategy's stop stays where it was tested, the size
-  shrinks). `tick`: any open trade whose stop would lose more gets the stop pulled in to the $20 loss (never loosened);
-  one already past it closes at the market. Gaps can still fill a little past. The forex bot has no cap. tests/forex-loss-cap (3).
+- **Loss cap** (practice.ts): `BOT.maxLossUsdByAcct` {cbot: 20} → `PracticeAccount.maxLossUsd` (set by syncBot). Size stays the
+  risk mode's (owner, after a first version shrank the size: "no smaller trades, still turbo, just a tighter SL"). `tick`: any
+  trade whose stop would lose more than $20 gets the stop pulled in to the $20 loss (never loosened) — at turbo that is roughly
+  a quarter of the tested stop distance, so more stop-outs than the backtest; one already past it closes at the market. Gaps
+  can still fill a little past. The forex bot has no cap. tests/forex-loss-cap (3).
 - **Memecoins** (VPS 16:51 UTC: 0 buys in 55 h; 467 coins / h; all 14 Migration rule-passes refused by **Sniper mode, ON again**
   although v54 / v57 had set it off — changed from Controls or another path, not traced; curve / SOON coins stopped by bundlers
   > 18%, safety hard fails, liquidity < 5 SOL, too few active wallets, curve outside 70–90%; 81% of checkpoints still waiting

@@ -75,8 +75,6 @@ export const BOT = {
   futuresDelayMs: 15 * 60_000,
   /** v27.20: the most a single trade may lose, per account (the coin bot: $20) */
   maxLossUsdByAcct: { cbot: 20 } as Partial<Record<string, number>>,
-  /** v27.20: new trades are sized to lose this share of the cap at their stop (room for slippage on the way out) */
-  maxLossSizeShare: 0.9,
   /** v18.7 (owner: "wait it out, then adjust"): after a strategy closes a trade on a market, the same strategy may not
    * re-enter that market for this many candles of its chart (3 h on the hourly, 12 h on the 4-hour) */
   reentryCooldownBars: 3,
@@ -290,8 +288,8 @@ export interface PracticeAccount {
   /** v17.11: the owner's profit lock on this account's trades (missing = on) */
   profitLock?: boolean;
   /** v27.20 (owner: "make the SL on crypto much stricter, not past $20"): no trade on this account may lose more than this
-   * many USD — new trades are sized so their stop loses ≤ `BOT.maxLossSizeShare` of it, and every open trade's stop is
-   * pulled in to this loss (never loosened). Set by syncBot from `BOT.maxLossUsdByAcct`. */
+   * many USD — the size stays the risk mode's (owner: "still turbo, just a tighter SL"); every trade's stop is pulled in
+   * to this loss (never loosened). Set by syncBot from `BOT.maxLossUsdByAcct`. */
   maxLossUsd?: number;
   /** v18.4: bot account — resting limit orders waiting to fill */
   orders?: RestingOrder[];
@@ -1759,8 +1757,6 @@ export class Practice {
             riskPct = room;
           }
         }
-        // v27.20: a per-account loss cap in USD (the coin bot: $20) — the trade is sized so its stop loses no more
-        if (a.maxLossUsd && v.equityUsd > 0) riskPct = Math.min(riskPct, ((a.maxLossUsd * BOT.maxLossSizeShare) / v.equityUsd) * 100);
         const notional = (v.equityUsd * riskPct) / 100 / (dist / entry);
         let margin = notional / lev;
         margin = Math.min(margin, v.freeMarginUsd * SIZING.marginShare);
