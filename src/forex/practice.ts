@@ -13,7 +13,7 @@ import { feeds } from './feeds';
 import { dkQuote } from './dukascopy';
 import { HEAT, maxRiskUnder, topCorrelated, type CorrBook } from './risk';
 import { oandaCandles, oandaPrices, oandaReady, loadOanda, type Granularity } from './oanda';
-import { INSTRUMENTS, TF_MIN, instrument, isCrypto, maxLeverageFor, type Bar, type Instrument, type Timeframe } from './types';
+import { INSTRUMENTS, TF_MIN, instrument, isCrypto, isFutures, maxLeverageFor, type Bar, type Instrument, type Timeframe } from './types';
 import { clockFor, marketClock } from './calendar';
 import { priceShock } from './headlines';
 import { spreadMultAt } from './spreads';
@@ -70,6 +70,9 @@ export const BOT = {
   maxEntryDriftR: 0.3,
   /** v17: the price a new bot trade opens on may be at most this old, per chart (a 1-minute trade needs a fresh price) */
   quoteAgeMsByTf: { '1m': 2 * 60_000, '15m': 5 * 60_000, '1h': 10 * 60_000, '4h': 10 * 60_000 } as Record<string, number>,
+  /** v27.18: Yahoo's CME futures (indices, metals) arrive ~10 min late but often don't declare it (exchangeDataDelayedBy 0) —
+   * an hourly / 4-hour trade on one may use this much delay on top of the limit when the feed declares none */
+  futuresDelayMs: 15 * 60_000,
   /** v18.7 (owner: "wait it out, then adjust"): after a strategy closes a trade on a market, the same strategy may not
    * re-enter that market for this many candles of its chart (3 h on the hourly, 12 h on the 4-hour) */
   reentryCooldownBars: 3,
@@ -1323,8 +1326,9 @@ export class Practice {
       if (!quote) return { ok: false, error: 'no price right now (market closed or feed down)' };
       if (quote.stale) return { ok: false, error: 'the price feed failed just now (only an older price): not opening on it' };
       if (quote.tradeable === false || quoteAge(quote, Date.now()) > 30 * 60_000) return { ok: false, error: 'market is closed right now (forex: Sunday 22:00 – Friday 22:00 UTC)' };
-      const allowed = req.maxQuoteAgeMs === undefined ? Infinity : req.maxQuoteAgeMs + (req.feedDelayOk ? quote.delayMs ?? 0 : 0);
-      if (quoteAge(quote, Date.now()) > allowed) return { ok: false, error: `the newest price is ${Math.round(quoteAge(quote, Date.now()) / 60_000)} min old${quote.delayMs ? ` (${Math.round(quote.delayMs / 60_000)}-min delayed feed)` : ''} (this chart needs ≤ ${Math.round((req.maxQuoteAgeMs ?? 0) / 60_000)} min)` };
+      const delay = Math.max(quote.delayMs ?? 0, isFutures(inst.id) ? BOT.futuresDelayMs : 0);
+      const allowed = req.maxQuoteAgeMs === undefined ? Infinity : req.maxQuoteAgeMs + (req.feedDelayOk ? delay : 0);
+      if (quoteAge(quote, Date.now()) > allowed) return { ok: false, error: `the newest price is ${Math.round(quoteAge(quote, Date.now()) / 60_000)} min old${delay ? ` (${Math.round(delay / 60_000)}-min delayed feed)` : ''} (this chart needs ≤ ${Math.round((req.maxQuoteAgeMs ?? 0) / 60_000)} min)` };
       const mids: Record<string, number> = {};
       for (const x of Object.values(q)) mids[x.id] = x.mid;
       const v = view(a, mids, { [inst.id]: (quote.ask - quote.bid) / 2 });

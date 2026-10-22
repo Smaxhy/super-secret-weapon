@@ -758,6 +758,14 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.18 delayed CME prices no longer block hourly / 4-hour trades (Oct 22, owner: "46 fired · 0 opened like it's NOT trading there")
+VPS read 16:16 UTC (1f9c9fc): 24 h = 29 signals from traded strategies, 2 opened; the main hold-back was "skipped RUTUSD / DJIUSD /
+NDXUSD / XAUUSD: the newest price is 10 min old (this chart needs ≤ 10 min)" — incl. RUTUSD pivot_bounce:4h, a strict-proven
+cell, twice. Yahoo's CME futures (indices + metals) are ~10 min late but the chart meta declares no delay
+(`exchangeDataDelayedBy` 0), so v17's `feedDelayOk` added nothing. `BOT.futuresDelayMs` 15 min: `openIn` uses
+max(declared delay, 15 min on `isFutures` markets) for hourly / 4-hour trades (`feedDelayOk`); 15m / 1m and currency pairs
+unchanged. ("46 fired" on the home = every strategy's signals on that close; the 1h run had 3 from strategies it trades.)
+tests in forex-v17 (+1).
 ## v27.17 pivot ladder: + middle of yesterday's range + S3 / R3 (Oct 22, owner's second level list 29,813.75 / 29,770.75 /
 29,664.25 / (29,601.25): "more signs make forex trade more and better")
 Those are the range middle ((H + L) ÷ 2 ≈ 29,812.6), S1, S2 and S3 = L − 2(H − P) ≈ 29,599.5 from the same day as v27.16.
