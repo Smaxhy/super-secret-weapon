@@ -1954,6 +1954,17 @@ export class Practice {
     });
   }
 
+  /** v27.21: add correction rows (reason 'adjust') to an account's P&L log — money moved between days; the balance is
+   * not touched (the rows must sum to 0 or match a balance change made elsewhere). */
+  async bookAdjust(acct: AcctId, rows: PnlRow[]): Promise<void> {
+    if (!this.pnlLogs() || !rows.length) return;
+    await this.serial(async () => {
+      await this.seedPnl(acct);
+      await this.redis.rpush(pnlKey(acct), ...rows.map((r) => JSON.stringify(r)));
+      this.pnlDirty(acct);
+    });
+  }
+
   /** v27.21: strike chosen closed trades from an account (+ the durable P&L log) as if they never happened. */
   async undoClosed(acct: AcctId, pick: (c: ClosedPractice) => boolean, label: string): Promise<string> {
     return this.serial(async () => {

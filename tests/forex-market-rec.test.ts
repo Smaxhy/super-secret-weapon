@@ -53,3 +53,15 @@ describe('v27.21 undoClosed', () => {
     expect(acc.stats['donchian20:15m']).toHaveLength(1);
   });
 });
+
+import { dailyPnl, type PnlRow } from '../src/forex/pnl';
+
+describe('v27.21 correction rows', () => {
+  it('move money between days without counting as trades', () => {
+    const r = (id: string, t: number, usd: number, reason: string): PnlRow => ({ id, t, usd, pair: 'BTCUSD', side: -1, strategy: 'mss_sweep', tf: '15m', reason, entry: 0, exit: 0, openedAt: null });
+    const d1 = Date.UTC(2026, 9, 21, 13);
+    const d2 = Date.UTC(2026, 9, 22, 19);
+    const days = dailyPnl([r('a', d1, 10, 'target'), r('adj1', d1 + 1, -79.37, 'adjust'), r('adj2', d2, 79.37, 'adjust')]);
+    expect(days.map((d) => [d.day, d.pnlUsd, d.trades, d.wins])).toEqual([['2026-10-21', -69.37, 1, 1], ['2026-10-22', 79.37, 0, 0]]);
+  });
+});

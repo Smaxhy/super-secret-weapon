@@ -771,6 +771,9 @@ tests/forex-market-rec (3). Owner: "revert the last 3 losses if it was a bug" �
 closed rows + their parts, balance, `stats`, R ledger) + `Practice.undoClosed(acct, pick, label)` (also the P&L log), run
 once at start (`oneTimeUpgrade('v27.21-undo-mss-15m')`): cbot, mss_sweep 15m, BTC / ETH / DOGE, closed Oct 21 00–14 UTC,
 losses only → bot-log line with the USD put back. tests/forex-market-rec (+1).
+Then (owner: "needs to be added onto the PnL"): the $79.37 shows on TODAY — P&L-log correction rows (reason 'adjust',
+`isTrade` false, dashboard "correction"; `Practice.bookAdjust`), once (`v27.21-mss-credit-today`): Oct 21 −79.37, today
++79.37 → Oct 21 back to its old total, today +79.37; balance and all-time unchanged.
 ## v27.20 coin bot: no trade loses more than $20; memecoins buy again (Oct 22, owner: "memecoins barely buy, also make the SL
 on crypto much stricter, not past $20")
 - **Loss cap** (practice.ts): `BOT.maxLossUsdByAcct` {cbot: 20} → `PracticeAccount.maxLossUsd` (set by syncBot). Size stays the

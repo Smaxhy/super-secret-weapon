@@ -453,6 +453,13 @@ async function main(): Promise<void> {
     cryptoLab.logBot([line]);
     log.info({ line }, 'coin bot: mss_sweep losses struck');
   });
+  // v27.21 (owner: "needs to be added onto the PnL"): the $79.37 those three struck losses gave back shows on TODAY's P&L,
+  // not on Oct 21 — two correction rows (Oct 21 −79.37, today +79.37); balance and all-time unchanged
+  await oneTimeUpgrade('v27.21-mss-credit-today', async () => {
+    const row = (id: string, t: number, usd: number) => ({ id, t, usd, pair: 'BTCUSD', side: -1 as const, strategy: 'mss_sweep', tf: '15m', reason: 'adjust', entry: 0, exit: 0, openedAt: null });
+    await practice.bookAdjust('cbot', [row('adjust-mss-1021', Date.UTC(2026, 9, 21, 13, 0, 1), -79.37), row('adjust-mss-today', Date.now(), 79.37)]);
+    cryptoLab.logBot(['coin bot: the $79.37 from the struck mss_sweep losses now shows on today\'s P&L (correction rows)']);
+  });
   // v20.1 (owner: "revert all current active trades"): every open bot trade is struck as if it never happened, once
   await oneTimeUpgrade('v20.1-revert-open', async () => {
     const line = await practice.undoOpen('bot');

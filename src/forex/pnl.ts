@@ -118,7 +118,8 @@ export function parsePnlRow(raw: string): PnlRow | null {
 export const clampTz = (tz: number) => (Number.isFinite(tz) ? Math.max(-840, Math.min(840, Math.round(tz))) : 0);
 /** Viewer-local calendar day (YYYY-MM-DD) of a time. */
 export const localDayOf = (t: number, tzOffsetMin = 0) => new Date(t - clampTz(tzOffsetMin) * 60_000).toISOString().slice(0, 10);
-export const isTrade = (r: Pick<PnlRow, 'reason'>) => r.reason !== 'partial';
+/** v27.21: 'adjust' = a correction row (money moved between days by the owner's say), never a trade */
+export const isTrade = (r: Pick<PnlRow, 'reason'>) => r.reason !== 'partial' && r.reason !== 'adjust';
 /** `abc-part`, `abc-part2` → `abc` (the position the part was taken from) */
 const baseId = (id: string) => id.replace(/-part\d*$/, '');
 

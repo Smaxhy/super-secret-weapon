@@ -313,7 +313,7 @@ function DayTrades({ day, sum, acct, tz, onClose }: { day: string; sum: Day | un
                     <span className="min-w-0 truncate text-xs text-muted">{t.name ?? 'by hand'}{t.tf ? ` (${t.tf})` : ''}</span>
                   </div>
                   <div className="tabular mt-0.5 text-xs text-muted">
-                    {t.entry.toFixed(fxDigits(t.pair))} → {t.exit.toFixed(fxDigits(t.pair))} · {t.partial ? 'part taken' : REASON[t.reason] ?? t.reason} · {new Date(t.closedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {t.entry.toFixed(fxDigits(t.pair))} → {t.exit.toFixed(fxDigits(t.pair))} · {t.reason === 'adjust' ? 'correction' : t.partial ? 'part taken' : REASON[t.reason] ?? t.reason} · {new Date(t.closedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </div>
                 </div>
                 <span className={`tabular shrink-0 text-sm font-semibold ${fxTone(t.pnlUsd)}`}>{fxUsd(t.pnlUsd, true)}</span>
