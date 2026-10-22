@@ -73,6 +73,10 @@ export const BOT = {
   /** v27.18: Yahoo's CME futures (indices, metals) arrive ~10 min late but often don't declare it (exchangeDataDelayedBy 0) —
    * an hourly / 4-hour trade on one may use this much delay on top of the limit when the feed declares none */
   futuresDelayMs: 15 * 60_000,
+  /** v27.20: the most a single trade may lose, per account (the coin bot: $20) */
+  maxLossUsdByAcct: { cbot: 20 } as Partial<Record<string, number>>,
+  /** v27.20: new trades are sized to lose this share of the cap at their stop (room for slippage on the way out) */
+  maxLossSizeShare: 0.9,
   /** v18.7 (owner: "wait it out, then adjust"): after a strategy closes a trade on a market, the same strategy may not
    * re-enter that market for this many candles of its chart (3 h on the hourly, 12 h on the 4-hour) */
   reentryCooldownBars: 3,
@@ -285,6 +289,10 @@ export interface PracticeAccount {
   ledger?: Record<string, LedgerRow[]>;
   /** v17.11: the owner's profit lock on this account's trades (missing = on) */
   profitLock?: boolean;
+  /** v27.20 (owner: "make the SL on crypto much stricter, not past $20"): no trade on this account may lose more than this
+   * many USD — new trades are sized so their stop loses ≤ `BOT.maxLossSizeShare` of it, and every open trade's stop is
+   * pulled in to this loss (never loosened). Set by syncBot from `BOT.maxLossUsdByAcct`. */
+  maxLossUsd?: number;
   /** v18.4: bot account — resting limit orders waiting to fill */
   orders?: RestingOrder[];
   open: PracticePosition[];
@@ -641,6 +649,27 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
             a.balanceUsd = Math.round((a.balanceUsd + sw) * 100) / 100;
             events.push(`${p.pair} financing ${sw > 0 ? '+' : '−'}$${Math.abs(sw).toFixed(2)} (${rolls.reduce((n, r) => n + r.days, 0)} ${rolls.length === 1 && rolls[0]!.days === 1 ? 'night' : 'nights'})`);
           } else if (mv) mv.moved = true;
+        }
+      }
+    }
+    // v27.20: the account's loss cap in USD — the stop is pulled in so this trade can't lose more (never loosened);
+    // already past it → closed at the market now
+    if (a.maxLossUsd && a.maxLossUsd > 0 && !q.stale) {
+      const per = pnlUsd({ pair: p.pair, side: p.side, units: p.units, entry: p.entry }, p.entry + p.side, mids);
+      if (per > 0) {
+        const capStop = p.entry - (p.side * a.maxLossUsd) / per;
+        if (p.stop === null || (p.side === 1 ? capStop > p.stop : capStop < p.stop)) {
+          const exitNow = p.side === 1 ? q.bid : q.ask;
+          if (p.side === 1 ? exitNow <= capStop : exitNow >= capStop) {
+            closePos(a, p, exitNow, mids, 'stop', now);
+            events.push(`${p.pair} closed: it reached the $${a.maxLossUsd} loss cap`);
+            continue;
+          }
+          p.stop = capStop;
+          const lastT = q.bars.length ? q.bars[q.bars.length - 1]![0] : now;
+          p.stopMovedT = lastT;
+          if (mv) mv.moved = true;
+          events.push(`${p.pair} stop pulled in to the $${a.maxLossUsd} loss cap (${capStop.toPrecision(6)})`);
         }
       }
     }
@@ -1391,6 +1420,11 @@ export class Practice {
       const acct: AcctId = opts.acct ?? 'bot'; // v22.1: the forex bot or the coin bot
       const a = await this.load(acct);
       const L = limitsFor(a.riskMode);
+      const capUsd = BOT.maxLossUsdByAcct[acct];
+      if ((a.maxLossUsd ?? undefined) !== capUsd) {
+        if (capUsd) a.maxLossUsd = capUsd;
+        else delete a.maxLossUsd;
+      }
       const events: string[] = [];
       const byRef = new Map(labOpen.map((t) => [t.ref, t]));
       const q = await this.quotes(this.neededIds(a, [...new Set(labOpen.map((t) => t.pair))]), 10_000);
@@ -1725,6 +1759,8 @@ export class Practice {
             riskPct = room;
           }
         }
+        // v27.20: a per-account loss cap in USD (the coin bot: $20) — the trade is sized so its stop loses no more
+        if (a.maxLossUsd && v.equityUsd > 0) riskPct = Math.min(riskPct, ((a.maxLossUsd * BOT.maxLossSizeShare) / v.equityUsd) * 100);
         const notional = (v.equityUsd * riskPct) / 100 / (dist / entry);
         let margin = notional / lev;
         margin = Math.min(margin, v.freeMarginUsd * SIZING.marginShare);

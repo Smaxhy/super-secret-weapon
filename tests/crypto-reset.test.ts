@@ -61,6 +61,18 @@ describe('crypto data collector (v17.15)', () => {
     }
     expect(Math.max(...MIGRATIONS.map((x) => x.version))).toBeGreaterThanOrEqual(57);
   });
+  it('v59 switches Sniper mode off again and loosens the bundler / liquidity / holder / curve rules; every path exists', async () => {
+    const { DEFAULT_CONFIG } = await import('../src/config/default');
+    const m = MIGRATIONS.find((x) => x.version === 59)!;
+    expect(m.create).toBe(true);
+    expect(m.set.find(([s, p]) => s === 'sniper' && p[0] === 'enabled')?.[2]).toBe(false);
+    expect(m.set.some(([s]) => s === 'antiRug' || s === 'usage' || s === 'vamp')).toBe(false);
+    for (const [sec, path] of m.set) {
+      let node: unknown = (DEFAULT_CONFIG as unknown as Record<string, unknown>)[sec];
+      for (const k of path) node = (node as Record<string, unknown>)[k];
+      expect(node, `${sec}.${path.join('.')}`).not.toBeUndefined();
+    }
+  });
   it('v58 makes the memecoin bot basic but never touches the hard guards or budgets; every path exists', async () => {
     const { DEFAULT_CONFIG } = await import('../src/config/default');
     const m = MIGRATIONS.find((x) => x.version === 58)!;

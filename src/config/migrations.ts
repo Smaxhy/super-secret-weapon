@@ -853,6 +853,20 @@ export const MIGRATIONS: ConfigMigration[] = [
       ['explore', ['thinCoin', 'maxPerHour'], 40],
     ],
   },
+  {
+    version: 59,
+    note: 'v27.20 (owner: "memecoins barely buy"; VPS 16:51 UTC: 0 buys in 55 h, 467 checked / h — every Migration rule-pass refused by Sniper mode, which was ON again; curve / SOON coins stopped by bundlers > 18%, liquidity < 5 SOL, SOON curve 70–90%, migrated holders < 40): Sniper mode off, bundlers 25% (half size up to 35%), liquidity 2 SOL, migrated holders 20, SOON curve 50–95%. Hard safety fails and the rug / bundle / vamp guards stay',
+    create: true,
+    set: [
+      ['sniper', ['enabled'], false],
+      ['entry', ['maxBundlePct'], 25],
+      ['entry', ['riskyEntry', 'maxBundlePct'], 35],
+      ['entry', ['minLiquiditySol'], 2],
+      ['entry', ['minHoldersMigration'], 20],
+      ['focus', ['soon', 'minCurvePct'], 50],
+      ['focus', ['soon', 'maxCurvePct'], 95],
+    ],
+  },
 ];
 
 /** BotConfig row: the time the current strategy version went live (learning that reads our own trades starts here). */

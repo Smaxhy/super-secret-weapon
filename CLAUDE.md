@@ -758,6 +758,17 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.20 coin bot: no trade loses more than $20; memecoins buy again (Oct 22, owner: "memecoins barely buy, also make the SL
+on crypto much stricter, not past $20")
+- **Loss cap** (practice.ts): `BOT.maxLossUsdByAcct` {cbot: 20} → `PracticeAccount.maxLossUsd` (set by syncBot). New coin trades
+  are sized so their stop loses ≤ 90% of it (`BOT.maxLossSizeShare`; the strategy's stop stays where it was tested, the size
+  shrinks). `tick`: any open trade whose stop would lose more gets the stop pulled in to the $20 loss (never loosened);
+  one already past it closes at the market. Gaps can still fill a little past. The forex bot has no cap. tests/forex-loss-cap (3).
+- **Memecoins** (VPS 16:51 UTC: 0 buys in 55 h; 467 coins / h; all 14 Migration rule-passes refused by **Sniper mode, ON again**
+  although v54 / v57 had set it off — changed from Controls or another path, not traced; curve / SOON coins stopped by bundlers
+  > 18%, safety hard fails, liquidity < 5 SOL, too few active wallets, curve outside 70–90%; 81% of checkpoints still waiting
+  for their safety check = the throughput limit, left as is). Migration **v59** (create): `sniper.enabled` false, bundlers 25%
+  (half size ≤ 35%), liquidity 2 SOL, migrated holders 20, SOON curve 50–95%. Hard safety fails / rug / bundle / vamp guards stay.
 ## v27.19 forex trades like the coin bot + memecoins practise a lot (Oct 22, owner: "what does crypto do so different… I want forex
 to perform like crypto" → chose "Both"; "make memecoin requirements basic so memecoins can practise A LOT in the background")
 Told plainly: the coin bot trades more because coins are 24/7 and 9 rows + ~20 market cells pass there vs 1 row + ~6 cells on
