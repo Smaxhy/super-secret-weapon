@@ -14,7 +14,9 @@ import { startMarketMood } from './learner/market-mood';
 import { startApi } from './api/server';
 import { env, redactUrl, rpcEndpoints } from './config/env';
 import { bus } from './lib/bus';
-import { weeklyLog, weekText } from './forex/pnl';
+import { mondayOf, weeklyLog, weekText } from './forex/pnl';
+import { chosenAt, WeekendReview, type WeekendDeskDef } from './forex/weekend';
+import { staleReason } from './forex/freshness';
 import { getConfig, startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
 import { DEFAULT_CONFIG } from './config/default';
 import { markStrategySince, oneTimeUpgrade, runConfigMigrations } from './config/migrations';
@@ -62,16 +64,16 @@ import { getSolUsd } from './lib/sol-price';
 import { DipWatcher } from './executor/dip-watcher';
 import { StrategyLab } from './learner/strategy-lab';
 import { Tournament } from './learner/tournament';
-import { ForexLab } from './forex/lab';
+import { ForexLab, FX_CHOSEN_HIST } from './forex/lab';
 import { feeds as fxFeeds } from './forex/feeds';
 import { FastLab } from './forex/fast';
-import { Practice } from './forex/practice';
+import { ledgerRows, Practice } from './forex/practice';
 import { loadPythConf, pythConf, pythKey, pythLive, setPythConf, testPythKey } from './forex/pyth';
 import { yahooLive } from './forex/yahoo-live';
 import { coinbaseLive } from './forex/coinbase';
 import { hyperliquidLive } from './forex/hyperliquid';
 import { startLivePush } from './forex/live-push';
-import { ForexCalendar } from './forex/calendar';
+import { ForexCalendar, marketClock } from './forex/calendar';
 import { ForexHeadlines } from './forex/headlines';
 import { TradeAi } from './forex/trade-ai';
 import { TradeWatch } from './forex/trade-watch';
@@ -438,6 +440,63 @@ async function main(): Promise<void> {
   cryptoLab.start();
   const fastCrypto = new FastLab(redis, cryptoLab);
   fastCrypto.start();
+  // v27.32 (owner: "recap the past week and think how to improve all weekend, be ready Monday"): the weekend review per desk
+  const deskOf = (lab: ForexLab): WeekendDeskDef => ({
+    universe: lab.universe,
+    k: lab.k,
+    gather: async (now) => {
+      const [report, account, pnl, lossRaw, shadowRaw, histRaw] = await Promise.all([
+        lab.last(),
+        practice.rawAccount(lab.acct).catch(() => null),
+        practice.pnlRows(lab.acct).catch(() => []),
+        redis.get(lab.k('fx:lossrev')).catch(() => null),
+        redis.get(lab.k('fx:shadow')).catch(() => null),
+        redis.lrange(lab.k(FX_CHOSEN_HIST), 0, 499).catch(() => [] as string[]),
+      ]);
+      if (!report) return null;
+      const js = <T,>(raw: string | null, d: T): T => {
+        try {
+          return raw ? (JSON.parse(raw) as T) : d;
+        } catch {
+          return d;
+        }
+      };
+      const weeks = weeklyLog(pnl, 0, {}, 4);
+      const monday = mondayOf(new Date(now).toISOString().slice(0, 10));
+      const prevMonday = new Date(Date.parse(`${monday}T00:00:00Z`) - 7 * 86_400_000).toISOString().slice(0, 10);
+      const hist = histRaw.map((h) => js<{ t: number; keys: string[] } | null>(h, null)).filter((h): h is { t: number; keys: string[] } => !!h && Array.isArray(h.keys));
+      const equity = account ? await practice.snapshot(lab.acct).then((x) => x.account.equityUsd).catch(() => account.balanceUsd) : null;
+      const ran = report.at ?? null;
+      return {
+        universe: lab.universe,
+        now,
+        week: weeks.find((w) => w.week === monday) ?? null,
+        prevWeek: weeks.find((w) => w.week === prevMonday) ?? null,
+        ledger: account ? ledgerRows(account) : [],
+        rows: report.rows ?? [],
+        chosen: lab.chosen,
+        chosenAtStart: chosenAt(hist, Date.parse(`${monday}T00:00:00Z`)),
+        proven: lab.proven,
+        dropped: lab.dropped,
+        losses: js(lossRaw, []),
+        shadow: js(shadowRaw, []),
+        events: fxCalendar.get().events,
+        ready: {
+          labRanAt: ran,
+          labError: lab.lastError?.msg ?? null,
+          staleMarkets: Object.values(lab.dataAge).filter((a) => staleReason(a, now)).map((a) => a.id),
+          openPositions: account?.open.length ?? 0,
+          riskMode: account?.riskMode ?? 'normal',
+          equityUsd: equity,
+          opensInMin: null,
+        },
+      };
+    },
+  });
+  const weekendReview = new WeekendReview(redis, [deskOf(forex), deskOf(cryptoLab)], marketClock, (universe, text, ok) =>
+    bus.publish({ type: 'fxTrade', data: { kind: 'ready', pair: '', side: 1, pnlUsd: 0, reason: text, acct: universe === 'fx' ? 'bot' : 'cbot', ok } }),
+  );
+  weekendReview.start();
   // v18.8 (owner): the two 1-minute trades never happened — strike every 1-minute trade from the bot account once
   await oneTimeUpgrade('v18.8-undo-1m', async () => {
     const line = await practice.undoChart('bot', '1m');
@@ -905,7 +964,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament, meme: memeReader, forex, fastFx, crypto: cryptoLab, fastCrypto, practice, fxCalendar, fxNews, tradeWatch }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament, meme: memeReader, forex, fastFx, crypto: cryptoLab, fastCrypto, practice, fxCalendar, fxNews, tradeWatch, weekendReview }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -1009,6 +1068,7 @@ async function main(): Promise<void> {
     clearInterval(statsTimer);
     clearInterval(pushTimer);
     clearInterval(weekPush);
+    weekendReview.stop();
     const force = setTimeout(() => process.exit(1), 15_000); // don't hang forever
     try {
       await api?.close();

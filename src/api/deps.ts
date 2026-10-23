@@ -1,4 +1,5 @@
 /** What the API routes need from the running bot. */
+import type { WeekendReview } from '../forex/weekend';
 import type { SellManager } from '../executor/sell-manager';
 import type { Executor } from '../executor/types';
 import type { LiveState } from '../scanner/live-state';
@@ -78,6 +79,8 @@ export interface ApiDeps {
   fxNews?: ForexHeadlines | null;
   /** v17.14: the live read + AI read of every open forex trade. */
   tradeWatch?: TradeWatch | null;
+  /** v27.32: the weekend review (recap + Monday readiness) per desk */
+  weekendReview?: WeekendReview | null;
 }
 
 /** Classify a token for the live feed colour code. */

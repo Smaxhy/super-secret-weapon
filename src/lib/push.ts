@@ -32,7 +32,7 @@ export interface PushSettings {
   fxClose: boolean;
   /** v27.30: a bot (forex or coin) opened a trade */
   fxOpen: boolean;
-  /** v27.30: Monday's summary of last week (forex + coin bot) */
+  /** v27.30: Monday's summary of last week (forex + coin bot); v27.32 also Sunday's "ready for Monday" line */
   fxWeek: boolean;
 }
 export const DEFAULT_PUSH_SETTINGS: PushSettings = { profitClose: true, minProfitSol: 0, lossClose: false, takeProfit: false, fxGood: true, fxClose: true, fxOpen: true, fxWeek: true };
@@ -53,6 +53,8 @@ export function fxMessageFor(n: Extract<BusEvent, { type: 'fxTrade' }>['data'], 
   const who = n.acct === 'bot' ? 'Forex bot' : n.acct === 'cbot' ? 'Coin bot' : 'Your trade';
   const dir = n.side === 1 ? 'long' : 'short';
   const url = n.acct === 'bot' ? '/forex/bot' : n.acct === 'cbot' ? '/crypto/bot' : '/forex/practice';
+  // v27.32: the Sunday "ready for Monday" line rides the weekly-summary switch
+  if (n.kind === 'ready') return s.fxWeek ? { title: n.ok === false ? `⚠️ ${who} not ready for Monday` : `✅ ${who} ready for Monday`, body: (n.reason ?? '').replace(/^\S+ (Forex|Coin) bot (NOT )?ready for Monday — /, ''), url, tag: `fx-ready-${n.acct}` } : null;
   if (n.kind === 'week') return s.fxWeek ? { title: `📒 ${who} last week ${fxUsd(n.pnlUsd)}`, body: n.reason ?? '', url, tag: `fx-week-${n.acct}` } : null;
   const pair = n.pair.length === 6 ? `${n.pair.slice(0, 3)}/${n.pair.slice(3)}` : n.pair;
   const safe = typeof n.stopPnlUsd === 'number' ? ` — even if it turns, it closes ${fxUsd(n.stopPnlUsd)}` : '';

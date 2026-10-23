@@ -758,6 +758,26 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.32 weekend review: recap the week, get ready for Monday (Oct 23, owner: "recap everything from the past week and think
+how it can improve itself all weekend so it's fully prepared Monday; use the weekend as a hyper-learning experience")
+`src/forex/weekend.ts`: `buildRecap` (pure) per desk from what the bot already records — this week's P&L log (weeklyLog, UTC,
+vs last week), live vs tested per strategy:chart (R ledger this week vs the row's unseen avg R; `worse` / `better` at ±0.5R
+with 3+ trades), chosen list at the week's start (`chosenAt` on `fx:chosen:hist`) vs now, the loss review this week (normal /
+avoidable + causes), the shadow book's refusals this week per reason with the lab's R (what each hold-back rule cost / saved),
+near misses (`missingFor`: rows positive on unseen data but not live + per-market cells within 2 checks of `cellPass`, each
+with what it still misses), next week's High-impact news (coins: USD only), plain-words `lessons`, and a READINESS checklist
+(lab report < 2.5 h old and no lab error, no stale markets, something proven live — "nothing passes" only waits, account
+readable + risk mode, forex: no trade left open over the weekend). `WeekendReview` (index.ts, every 15 min): while it's the
+weekend for the desk (`isWeekendFor`: forex market closed / coins UTC Sat–Sun) rebuilds the recap every `WEEKEND.everyHours`
+4 → Redis `fx:weekend` / `cm:weekend` {recap, ai} + `fx:weekend:hist` (12); ONE Claude review a UTC day per desk
+(`AI_WEEKEND_MODEL` → `AI_MODEL` → claude-sonnet-5-5, `aiBudgetUsd` 0.3/day in `fx:weekend:spend:<day>` + `ai:spend:<day>`,
+`AI_WEEKEND=off` disables; summary / went well / went wrong / ideas for the lab to TEST / watch Monday); `readyPushMin` 90 min
+before forex opens on Sunday → FxNotice kind 'ready' (`ok`) once per desk (`fx:readypush:<day>` NX), push rides the `fxWeek`
+switch. API GET `/api/<desk>/weekend` {review, history}, POST `/weekend/run` (builds now, any day). Dashboard Trades page
+`components/FxWeekend.tsx` `WeekendCard` (under the Today brief): headline, checklist, lessons, AI review, details (money,
+live vs tested, held back, closest to live, big news). DISPLAY ONLY: nothing changes a rule, size or the chosen list — the
+lab's hourly re-test (it runs on weekends too) + the weekend luck meter + the restricted learner remain the only things that
+change what trades. tests/forex-weekend (5).
 ## v27.31 forex keeps pivot_bounce where it proved itself + the crypto "today" fix (Oct 23, owner: "forex may still use daily
 pivot R1 / S1, it's performing too; I just want it to use what definitely works"; screenshot: crypto home "Account $1056,
 −$67.01 today" next to "Today $0.00")

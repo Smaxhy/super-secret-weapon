@@ -283,6 +283,31 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         riskModes: RISK_MODES,
       };
     });
+    // v27.32: the weekend review — last week's recap, what to test, and the Monday readiness checklist
+    secured.get(`${U.base}/weekend`, async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      const w = deps.weekendReview;
+      if (!w) return { review: null, history: [] };
+      const hist = await redis.lrange(K('fx:weekend:hist'), 0, 11).catch(() => [] as string[]);
+      return {
+        review: await w.get(K),
+        history: hist.flatMap((h) => {
+          try {
+            return [JSON.parse(h) as unknown];
+          } catch {
+            return [];
+          }
+        }),
+      };
+    });
+    secured.post(`${U.base}/weekend/run`, async (_req, reply) => {
+      if (!deps.weekendReview) {
+        reply.code(503);
+        return { ok: false, error: 'weekend review not running' };
+      }
+      void deps.weekendReview.tick(Date.now(), true).catch(() => undefined);
+      return { ok: true };
+    });
     secured.get(`${U.base}/bot/status`, async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
       return botStatus(deps.practice ? (await deps.practice.snapshot(U.acct)).account : null, fxNames());

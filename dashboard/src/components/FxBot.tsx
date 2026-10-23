@@ -20,6 +20,7 @@ import { Icon } from './Icon';
 import { LiveBadge, LivePrice } from './LivePrice';
 import { Badge, Button, Card, Empty, Row, Rows, Stack, StatTile, Tabs, Timeline, useTab } from './ui';
 import { AdvancedFold, FxBrief } from './FxBrief';
+import { WeekendCard } from './FxWeekend';
 import { ConvictionCard, DeskCard, PortfolioCard, RiskCard, RollingCard, SniperCard, type ConvictionReport, type DeskReport, type JudgeReport, type Ledger, type PortfolioReport, type RiskSummary, type RollReport, type SniperReport } from './FxInsights';
 import { apiBase, botAcct } from '../lib/ws';
 import { digitsOf } from '../lib/markets';
@@ -96,6 +97,7 @@ export function FxBot() {
       <BotHero plan={plan} a={a ?? null} loaded={!!data} selectedId={selected?.id ?? null} onPick={pick} reads={reads.data} />
       {positions.length > 0 && <FxActiveTrade positions={positions} selectedId={selected?.id ?? null} onSelect={setSel} plan={plan?.trades ?? []} onClose={(id) => void close(id)} reads={reads.data} onReadsChanged={() => void reads.reload()} />}
       <FxBrief why={data?.why ?? null} plan={plan} riskMode={data?.riskMode ?? 'normal'} modes={data?.riskModes} equityUsd={a?.equityUsd ?? null} orders={a?.orders ?? []} names={data?.names} labError={data?.labError ?? null} planError={data?.planError ?? null} loadError={error} />
+      <WeekendCard />
       <FxPnl acct={botAcct()} fallback={tiles} />
       <RiskModeCard mode={data?.riskMode ?? 'normal'} modes={data?.riskModes} portfolio={data?.portfolio ?? null} onChange={() => void reload()} />
       <MarketsCard plan={plan} />
