@@ -7,7 +7,7 @@ import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 import { Card } from './ui';
 
-interface Settings { profitClose: boolean; minProfitSol: number; lossClose: boolean; takeProfit: boolean; /** v17.12 forex */ fxGood?: boolean; fxClose?: boolean }
+interface Settings { profitClose: boolean; minProfitSol: number; lossClose: boolean; takeProfit: boolean; /** v17.12 forex */ fxGood?: boolean; fxClose?: boolean; /** v27.30 */ fxOpen?: boolean; fxWeek?: boolean }
 interface PushInfo { publicKey: string; subscribers: number; settings: Settings }
 
 const toKey = (b64: string) => {
@@ -135,6 +135,8 @@ export function Notifications() {
             <Toggle label="A trade closes at a loss" checked={s.lossClose} onChange={(v) => void setSetting({ lossClose: v })} />
             <Toggle label="Forex: a trade is doing really well (profit locked, two thirds of the way to its target)" checked={s.fxGood !== false} onChange={(v) => void setSetting({ fxGood: v })} />
             <Toggle label="Forex: a trade closes in profit" checked={s.fxClose !== false} onChange={(v) => void setSetting({ fxClose: v })} />
+            <Toggle label="Forex & coin bot: a trade opens (side, strategy, stop and target in $)" checked={s.fxOpen !== false} onChange={(v) => void setSetting({ fxOpen: v })} />
+            <Toggle label="Forex & coin bot: Monday summary of last week" checked={s.fxWeek !== false} onChange={(v) => void setSetting({ fxWeek: v })} />
             <label className="flex items-center justify-between gap-3 text-ink-2">
               <span>Only profits of at least</span>
               <span className="flex items-center gap-1">

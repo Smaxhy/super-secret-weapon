@@ -39,7 +39,7 @@ import { buildCtx, to4h, type Ctx } from './ta';
 import { drawingsFor, type Drawings } from './drawings';
 import { applyDesks, buildDesks, type MarketDesk } from './desks';
 import { ledgerRows } from './practice';
-import { bySession, cellPass, cellTry, marketCells, monteCarlo, seedOf, type MarketCell, type McResult } from './montecarlo';
+import { bySession, sessionOf, cellPass, cellTry, marketCells, monteCarlo, seedOf, type MarketCell, type McResult } from './montecarlo';
 import { INSTRUMENTS, MOOD_SYMBOLS, STRENGTH_PAIRS, TF_MIN, type Bar, type Instrument, type Signal, type Timeframe, type Trade, isCrypto, isFutures } from './types';
 import { buildStrength, gapSeries, scoreAt, strengthNow, type StrengthBook, type StrengthNow } from './strength';
 import { buildStretch, crowdPxSeries, type StretchBook } from './stretch';
@@ -143,6 +143,11 @@ export const FX_CONFIG = {
    * always-on rows, per-market trial cells, rolling picker or desk trades. A row that earns Edge goes live by itself; one
    * that loses it stops opening. `on: false` = the v27.26 setup. */
   provenOnly: { on: true, riskPct: 20 },
+  /** v27.30 (owner: "make it skip the charts it loses on"): per strategy × chart, the New York sessions and markets where
+   * its FIRST 70% lost (8+ trades there, average R below 0) are left out — of its record, its unseen grade and live
+   * trading. Picked on the first 70% only, so the unseen part still grades it honestly. Skipped only while what is left
+   * keeps ≥ 60% of the first-70% trades (a strategy that loses everywhere isn't rescued by slicing it). */
+  skipLosers: { on: true, minN: 8, keepShare: 0.6 },
   /** v27.1 (owner: "remove the less profitable bots"): a floor EVERY live row must clear, whatever got it onto the list
    * (Edge / Maybe verdict, the always-on four, the owner's ICT picks, the rolling picker), both desks, every chart:
    * 30+ unseen trades, ≥ 0.05R a trade and profit factor ≥ 1.2 on them, and positive before the 70/30 line too.
@@ -240,6 +245,9 @@ export interface Row {
   markets?: MarketCell[];
   /** v27.4: all its trades by New York session [n, avg R]: Asia / London / NY open / NY afternoon */
   sess?: Array<[number, number]>;
+  /** v27.30: sessions (0 Asia, 1 London, 2 NY open, 3 NY afternoon) and markets its first 70% lost on — left out of its
+   * record and live trading (`losingSlices`); `cut` = the trades left out [first 70%, unseen] */
+  skip?: { sessions: number[]; pairs: string[]; cut: [number, number] };
   /** v27.4: clearly doesn't work — lost before AND after the 70/30 line (30+ trades each) and on no market on its own */
   dead?: boolean;
   /** v20.4: does it clear the quality bar the bot trades on in strict 'quality' mode (and why not) */
@@ -663,6 +671,30 @@ export function marketRecOf(rec: { n: number; pf: number | null; totalR: number 
   const cellLosing = !proven && !!cell && cell.n >= m.cellMinN && cell.avgR < 0;
   return { n, pf, totalR: rec?.totalR ?? 0, ok: ownerTrial || !(losing || cellLosing) };
 }
+/** v27.30 pure: the sessions (montecarlo.ts `sessionOf`) and markets where a row's FIRST 70% (finished before `oosFrom`)
+ * lost money on 8+ trades — empty when nothing qualifies or skipping them would drop more than 40% of those trades. */
+export function losingSlices(done: readonly Trade[], oosFrom: number, cfg = FX_CONFIG.skipLosers): { sessions: number[]; pairs: string[] } {
+  const inS = done.filter((t) => t.reason !== 'open' && t.exitT < oosFrom);
+  const group = (key: (t: Trade) => string) => {
+    const m = new Map<string, { n: number; sum: number }>();
+    for (const t of inS) {
+      const k = key(t);
+      const g = m.get(k) ?? { n: 0, sum: 0 };
+      g.n++;
+      g.sum += t.r;
+      m.set(k, g);
+    }
+    return [...m.entries()].filter(([, g]) => g.n >= cfg.minN && g.sum / g.n < 0).map(([k]) => k);
+  };
+  const sessions = group((t) => String(sessionOf(t.entryT))).map(Number).sort();
+  const pairs = group((t) => t.pair).sort();
+  if (!sessions.length && !pairs.length) return { sessions, pairs };
+  const kept = inS.filter((t) => !pairs.includes(t.pair) && !sessions.includes(sessionOf(t.entryT))).length;
+  return kept >= cfg.keepShare * inS.length ? { sessions, pairs } : { sessions: [], pairs: [] };
+}
+/** v27.30 pure: is this trade in a slice its row skips? */
+export const inSkipped = (skip: { sessions: number[]; pairs: string[] } | null | undefined, t: Pick<Trade, 'pair' | 'entryT'>) =>
+  !!skip && (skip.pairs.includes(t.pair) || skip.sessions.includes(sessionOf(t.entryT)));
 /** v27.26 pure: may this desk's bot trade this strategy × chart at all (`FX_CONFIG.only`; an empty list = every row)? */
 export function onlyOk(universe: 'fx' | 'crypto', strategy: string, tf: string): boolean {
   const list = FX_CONFIG.only[universe];
@@ -1172,10 +1204,25 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
     // the resting order the bot should place (a limit sim can't know yet whether that order fills).
     const entry: EntryKind = s.id !== 'random' && FX_CONFIG.liveEntries && entryVariants ? chooseEntry(entryVariants, prev?.n) : 'market';
     const eb = entry !== 'market' ? byEntry.get(entry) : undefined;
-    const chR = eb ? statsOf(eb.trades, o.oosFrom) : ch;
-    const vR = eb ? { trades: [...eb.trades, ...v.trades.filter((t) => t.reason === 'open')], perPair: eb.perPair } : v;
-    const doneR = eb ? eb.trades.filter((t) => t.reason !== 'open') : done;
+    let chR = eb ? statsOf(eb.trades, o.oosFrom) : ch;
+    let vR = eb ? { trades: [...eb.trades, ...v.trades.filter((t) => t.reason === 'open')], perPair: eb.perPair } : v;
+    let doneR = eb ? eb.trades.filter((t) => t.reason !== 'open') : done;
     byEntry.clear();
+    // v27.30: leave out the sessions / markets its first 70% lost on — the record, the unseen grade, the paper trades and
+    // the open trades the bot is handed all lose them (picked on the first 70% only)
+    let skip: Row['skip'];
+    if (s.id !== 'random' && FX_CONFIG.skipLosers.on) {
+      const sl = losingSlices(doneR, o.oosFrom);
+      if (sl.sessions.length || sl.pairs.length) {
+        const cut = doneR.filter((t) => inSkipped(sl, t));
+        skip = { ...sl, cut: [cut.filter((t) => t.exitT < o.oosFrom).length, cut.filter((t) => t.entryT >= o.oosFrom).length] };
+        const keep = (t: Trade) => !inSkipped(sl, t);
+        const trades = vR.trades.filter(keep);
+        vR = { trades, perPair: vR.perPair.filter((p) => !sl.pairs.includes(p.pair)).map((p) => ({ pair: p.pair, ...rStats(trades.filter((t) => t.pair === p.pair)) })) };
+        doneR = doneR.filter(keep);
+        chR = statsOf(trades, o.oosFrom);
+      }
+    }
     // v18: the financing share of the chosen variant's R (same split as statsOf)
     const finOf = (ts: readonly Trade[]) => (ts.length ? ts.reduce((a, t) => a + (t.fin ?? 0), 0) / ts.length : 0);
     const fin = s.id === 'random' ? undefined : { inAvgR: finOf(doneR.filter((t) => t.exitT < o.oosFrom)), outAvgR: finOf(doneR.filter((t) => t.entryT >= o.oosFrom)), known: doneR.some((t) => t.fin !== undefined) };
@@ -1206,6 +1253,7 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
       })(),
       verdict: 'no',
       why: '',
+      ...(skip ? { skip } : {}),
       ...(noLock ? { noLock } : {}),
       ...(entryVariants ? { entryVariants } : {}),
       ...(fin ? { fin } : {}),

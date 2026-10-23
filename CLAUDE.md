@@ -758,6 +758,24 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.30 trade-open alerts, weekly log, skip the slices it loses on (Oct 23, owner: "a notification when it enters a trade,
+a weekly log, and make it skip charts it loses on"; VPS 16:08 UTC: coin rsi_dip 4h by NY session over all 106 trades = Asia
+50 / +0.50R, London 19 / −0.24R, NY open 11 / +0.17R, NY afternoon 26 / +0.10R; Asia positive on 7 of 8 coins, London
+negative on 5; the report holds no per-trade list, so no weekday / side split)
+- **Skip losers** (`FX_CONFIG.skipLosers` {on, minN 8, keepShare 0.6}, lab.ts `losingSlices` / `inSkipped`): in
+  `evaluateTf` (both labs), after the filter / exit / entry picks, the New York sessions (montecarlo `sessionOf`) and the
+  markets where the row's FIRST 70% lost on 8+ trades are cut from its trades — record, unseen grade (verdict / Edge),
+  paper trades, per-market stats and the open trades handed to the bot — unless that leaves < 60% of the first-70% trades.
+  `Row.skip` {sessions, pairs, cut [first, unseen]}; Strategies drawer line "Skips where it lost before the test line".
+  Every row is re-graded → one re-pick event. The luck twins don't skip (their yardstick is a little easier).
+- **Trade-open alerts**: `FxNotice.kind` 'open' (+ `tf`, `targetPnlUsd`, `riskPct`), raised in `openIn` for bot trades
+  (they carry a lab ref; a weekend re-open alerts again); push.ts `fxOpen` (default on) → "📈 Coin bot sold XRP/USD —
+  rsi_dip 4h · stop −$200 · target +$400 (20% of the account at risk)". Owner's own trades never alert. Labels now Forex bot /
+  Coin bot / Your trade; taps open /forex/bot or /crypto/bot.
+- **Weekly log**: pnl.ts `mondayOf`, `weeklyLog` (Monday-start weeks in the viewer's clock, newest first, ≤ 26: money,
+  trades, wins, best / worst, per strategy, per market), `weekText`; `PnlReport.weeks` → FxPnl card "Weekly log" (tap a
+  week). index.ts `weekPush`: Mondays after 00:05 UTC, last week's line per bot once (`fx:weekpush:<acct>:<monday>` NX) →
+  FxNotice 'week' → push setting `fxWeek` (default on). Controls → Alerts has both toggles. tests/forex-v27-30 (5).
 ## v27.29 coin bot today struck (Oct 23, owner: "only trade rsi, revert the results from today, keep everything else in the lab
 unless profitable") — the chooser already does the rest (v27.27 provenOnly: only Edge rows; today that is coin rsi_dip:4h).
 One-time `v27.29-undo-coin-oct23` (index.ts): `undoClosed('cbot', not rsi_dip, closed Oct 23 UTC)` (balance, stats, R ledger,

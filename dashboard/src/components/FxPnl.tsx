@@ -14,7 +14,8 @@ import { Badge, Card, Empty, Skeleton } from './ui';
 
 interface Period { pnlUsd: number; trades: number; wins: number }
 interface Day { day: string; pnlUsd: number; trades: number; wins: number; bestUsd: number | null; worstUsd: number | null; byStrategy: Array<{ strategy: string; name: string; tf: string | null; trades: number; pnlUsd: number }> }
-export interface PnlData { acct: 'bot' | 'me' | 'cbot'; startUsd: number; equityUsd: number; openPnlUsd: number; since: number | null; periods: { today: Period; week: Period; month: Period; all: Period }; days: Day[]; curve: Array<[number, number]> }
+interface Week { week: string; pnlUsd: number; trades: number; wins: number; bestUsd: number | null; worstUsd: number | null; byStrategy: Day['byStrategy']; byPair: Array<{ pair: string; trades: number; pnlUsd: number }> }
+export interface PnlData { acct: 'bot' | 'me' | 'cbot'; startUsd: number; equityUsd: number; openPnlUsd: number; since: number | null; periods: { today: Period; week: Period; month: Period; all: Period }; days: Day[]; curve: Array<[number, number]>; /** v27.30 */ weeks?: Week[] }
 interface DayTrade { id: string; pair: string; side: 1 | -1; strategy: string | null; name: string | null; tf: string | null; entry: number; exit: number; pnlUsd: number; reason: string; openedAt: number | null; closedAt: number; partial: boolean }
 
 const WEEK = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
@@ -85,7 +86,62 @@ export function FxPnl({ acct = 'bot', fallback = null }: { acct?: 'bot' | 'me' |
           </div>
         </div>
       )}
+      {!!d.weeks?.length && <WeeklyLog weeks={d.weeks} />}
     </Card>
+  );
+}
+
+/** v27.30 (owner: "a weekly log"): one row per week, newest first; tap a week for its strategies and markets */
+function WeeklyLog({ weeks }: { weeks: Week[] }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const fmt = (day: string) => new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  return (
+    <div className="mt-5">
+      <div className="mb-1 text-xs font-semibold text-muted">Weekly log</div>
+      <ul className="divide-y divide-line rounded-xl border border-line">
+        {weeks.map((w) => {
+          const end = new Date(new Date(`${w.week}T00:00:00Z`).getTime() + 6 * 86_400_000).toISOString().slice(0, 10);
+          const isOpen = open === w.week;
+          return (
+            <li key={w.week}>
+              <button type="button" onClick={() => setOpen(isOpen ? null : w.week)} aria-expanded={isOpen} className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left text-sm">
+                <span className="text-ink">
+                  {fmt(w.week)} – {fmt(end)}
+                  <span className="ml-2 text-xs text-muted">
+                    {w.trades} trade{w.trades === 1 ? '' : 's'}
+                    {w.trades ? ` · ${Math.round((w.wins / w.trades) * 100)}% won` : ''}
+                  </span>
+                </span>
+                <span className={`font-semibold tabular ${fxTone(w.pnlUsd)}`}>{fxUsd(w.pnlUsd, true)}</span>
+              </button>
+              {isOpen && (
+                <div className="grid gap-3 px-3 pb-3 text-xs sm:grid-cols-2">
+                  <div>
+                    <div className="mb-1 font-semibold text-muted">By strategy</div>
+                    {w.byStrategy.map((x) => (
+                      <div key={`${x.strategy}:${x.tf}`} className="flex justify-between gap-2 text-ink-2">
+                        <span>{x.name}{x.tf ? ` ${x.tf}` : ''} · {x.trades}</span>
+                        <span className={`tabular ${fxTone(x.pnlUsd)}`}>{fxUsd(x.pnlUsd, true)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div>
+                    <div className="mb-1 font-semibold text-muted">By market</div>
+                    {w.byPair.map((x) => (
+                      <div key={x.pair} className="flex justify-between gap-2 text-ink-2">
+                        <span>{x.pair} · {x.trades}</span>
+                        <span className={`tabular ${fxTone(x.pnlUsd)}`}>{fxUsd(x.pnlUsd, true)}</span>
+                      </div>
+                    ))}
+                    {w.bestUsd !== null && <div className="mt-1 text-muted">Best {fxUsd(w.bestUsd, true)} · worst {fxUsd(w.worstUsd ?? 0, true)}</div>}
+                  </div>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 

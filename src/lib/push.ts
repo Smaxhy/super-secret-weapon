@@ -30,8 +30,12 @@ export interface PushSettings {
   fxGood: boolean;
   /** v17.12 forex: a trade closed in profit (losses follow `lossClose`) */
   fxClose: boolean;
+  /** v27.30: a bot (forex or coin) opened a trade */
+  fxOpen: boolean;
+  /** v27.30: Monday's summary of last week (forex + coin bot) */
+  fxWeek: boolean;
 }
-export const DEFAULT_PUSH_SETTINGS: PushSettings = { profitClose: true, minProfitSol: 0, lossClose: false, takeProfit: false, fxGood: true, fxClose: true };
+export const DEFAULT_PUSH_SETTINGS: PushSettings = { profitClose: true, minProfitSol: 0, lossClose: false, takeProfit: false, fxGood: true, fxClose: true, fxOpen: true, fxWeek: true };
 
 export interface PushMessage {
   title: string;
@@ -46,11 +50,20 @@ const FX_WHY: Record<string, string> = { stop: 'its stop', target: 'its target',
 
 /** v17.12 Pure: the notification for a forex trade event, or null when the owner doesn't want it. */
 export function fxMessageFor(n: Extract<BusEvent, { type: 'fxTrade' }>['data'], s: PushSettings): PushMessage | null {
-  const who = n.acct === 'bot' ? 'Bot' : 'Your trade';
+  const who = n.acct === 'bot' ? 'Forex bot' : n.acct === 'cbot' ? 'Coin bot' : 'Your trade';
   const dir = n.side === 1 ? 'long' : 'short';
-  const url = n.acct === 'bot' ? '/forex' : '/forex/practice';
+  const url = n.acct === 'bot' ? '/forex/bot' : n.acct === 'cbot' ? '/crypto/bot' : '/forex/practice';
+  if (n.kind === 'week') return s.fxWeek ? { title: `📒 ${who} last week ${fxUsd(n.pnlUsd)}`, body: n.reason ?? '', url, tag: `fx-week-${n.acct}` } : null;
   const pair = n.pair.length === 6 ? `${n.pair.slice(0, 3)}/${n.pair.slice(3)}` : n.pair;
   const safe = typeof n.stopPnlUsd === 'number' ? ` — even if it turns, it closes ${fxUsd(n.stopPnlUsd)}` : '';
+  if (n.kind === 'open') {
+    if (!s.fxOpen || n.acct === 'me') return null;
+    const name = n.pair.length === 6 ? `${n.pair.slice(0, 3)}/${n.pair.slice(3)}` : n.pair;
+    const risk = typeof n.stopPnlUsd === 'number' ? `stop ${fxUsd(n.stopPnlUsd)}` : 'no stop';
+    const tgt = typeof n.targetPnlUsd === 'number' ? ` · target ${fxUsd(n.targetPnlUsd)}` : '';
+    const pct = typeof n.riskPct === 'number' ? ` (${n.riskPct}% of the account at risk)` : '';
+    return { title: `📈 ${who} ${n.side === 1 ? 'bought' : 'sold'} ${name}`, body: `${n.strategy ?? 'trade'}${n.tf ? ` ${n.tf}` : ''} · ${risk}${tgt}${pct}`, url, tag: `fx-open-${n.acct}-${n.pair}` };
+  }
   if (n.kind === 'lock') return s.fxGood ? { title: `🔒 ${pair} ${fxUsd(n.pnlUsd)} — profit locked`, body: `${who} (${dir}): the stop moved past the entry and now trails the price${safe}.`, url, tag: `fx-${n.acct}-${n.pair}` } : null;
   if (n.kind === 'run') return s.fxGood ? { title: `🚀 ${pair} ${fxUsd(n.pnlUsd)} — two thirds of the way to the target`, body: `${who} (${dir}) is doing really well${safe}.`, url, tag: `fx-${n.acct}-${n.pair}` } : null;
   const why = FX_WHY[n.reason ?? ''] ?? n.reason ?? 'closed';
@@ -137,6 +150,8 @@ export async function saveSettings(patch: Partial<PushSettings>): Promise<PushSe
     takeProfit: typeof patch.takeProfit === 'boolean' ? patch.takeProfit : cur.takeProfit,
     fxGood: typeof patch.fxGood === 'boolean' ? patch.fxGood : cur.fxGood,
     fxClose: typeof patch.fxClose === 'boolean' ? patch.fxClose : cur.fxClose,
+    fxOpen: typeof patch.fxOpen === 'boolean' ? patch.fxOpen : cur.fxOpen,
+    fxWeek: typeof patch.fxWeek === 'boolean' ? patch.fxWeek : cur.fxWeek,
     minProfitSol: Number.isFinite(Number(patch.minProfitSol)) ? Math.max(0, Math.min(100, Number(patch.minProfitSol))) : cur.minProfitSol,
   };
   await redis.set(SETTINGS, JSON.stringify(next));

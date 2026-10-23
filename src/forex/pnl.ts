@@ -55,6 +55,20 @@ export interface PnlReport {
   periods: { today: PnlPeriod; week: PnlPeriod; month: PnlPeriod; all: PnlPeriod };
   days: PnlDay[];
   curve: Array<[number, number]>;
+  /** v27.30: the weekly log, newest week first (≤ 26) */
+  weeks?: PnlWeek[];
+}
+/** v27.30 one week (Monday → Sunday in the viewer's clock) of booked closes */
+export interface PnlWeek {
+  /** Monday, YYYY-MM-DD */
+  week: string;
+  pnlUsd: number;
+  trades: number;
+  wins: number;
+  bestUsd: number | null;
+  worstUsd: number | null;
+  byStrategy: PnlStrategyDay[];
+  byPair: Array<{ pair: string; trades: number; pnlUsd: number }>;
 }
 export interface PnlDayTrade {
   id: string;
@@ -168,6 +182,58 @@ export function dailyPnl(rows: readonly PnlRow[], tzOffsetMin = 0, names: Readon
     }));
 }
 
+/** v27.30: the Monday (YYYY-MM-DD) of a local day. Pure. */
+export const mondayOf = (day: string) => {
+  const d = new Date(`${day}T00:00:00Z`);
+  return new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * 86_400_000).toISOString().slice(0, 10);
+};
+/** v27.30 (owner: "a weekly log"): weeks (viewer-local, Monday start), newest first — money, trades, wins, best / worst,
+ * per strategy and per market. Pure. */
+export function weeklyLog(rows: readonly PnlRow[], tzOffsetMin = 0, names: Readonly<Record<string, string>> = {}, max = 26): PnlWeek[] {
+  const totals = tradeTotals(rows);
+  type W = { pnl: number; trades: number; wins: number; best: number | null; worst: number | null; strat: Map<string, PnlStrategyDay & { raw: number }>; pairs: Map<string, { trades: number; raw: number }> };
+  const weeks = new Map<string, W>();
+  for (const r of rows) {
+    const key = mondayOf(localDayOf(r.t, tzOffsetMin));
+    let w = weeks.get(key);
+    if (!w) weeks.set(key, (w = { pnl: 0, trades: 0, wins: 0, best: null, worst: null, strat: new Map(), pairs: new Map() }));
+    w.pnl += r.usd;
+    const sk = `${r.strategy ?? MANUAL}:${r.tf ?? ''}`;
+    let st = w.strat.get(sk);
+    if (!st) w.strat.set(sk, (st = { strategy: r.strategy ?? MANUAL, name: nameOf(r.strategy, names), tf: r.tf, trades: 0, pnlUsd: 0, raw: 0 }));
+    st.raw += r.usd;
+    let pp = w.pairs.get(r.pair);
+    if (!pp) w.pairs.set(r.pair, (pp = { trades: 0, raw: 0 }));
+    pp.raw += r.usd;
+    if (!isTrade(r)) continue;
+    const tot = totals.get(r.id) ?? r.usd;
+    w.trades++;
+    st.trades++;
+    pp.trades++;
+    if (tot > 0) w.wins++;
+    w.best = w.best === null ? tot : Math.max(w.best, tot);
+    w.worst = w.worst === null ? tot : Math.min(w.worst, tot);
+  }
+  return [...weeks.entries()]
+    .sort(([a], [b]) => (a < b ? 1 : a > b ? -1 : 0))
+    .slice(0, max)
+    .map(([week, w]) => ({
+      week,
+      pnlUsd: cents(w.pnl),
+      trades: w.trades,
+      wins: w.wins,
+      bestUsd: w.best,
+      worstUsd: w.worst,
+      byStrategy: [...w.strat.values()].map(({ raw, ...x }) => ({ ...x, pnlUsd: cents(raw) })).sort((a, b) => b.pnlUsd - a.pnlUsd),
+      byPair: [...w.pairs.entries()].map(([pair, x]) => ({ pair, trades: x.trades, pnlUsd: cents(x.raw) })).sort((a, b) => b.pnlUsd - a.pnlUsd),
+    }));
+}
+/** v27.30: one line for last week's phone summary. Pure. */
+export function weekText(w: PnlWeek): string {
+  const top = w.byStrategy.filter((x) => x.trades > 0).slice(0, 3).map((x) => `${x.name}${x.tf ? ` ${x.tf}` : ''} ${x.pnlUsd >= 0 ? '+' : '−'}$${Math.abs(x.pnlUsd).toFixed(2)}`);
+  return `${w.trades} trade${w.trades === 1 ? '' : 's'}, ${w.wins} won${w.trades ? ` (${Math.round((w.wins / w.trades) * 100)}%)` : ''}${top.length ? ` · ${top.join(', ')}` : ''}`;
+}
+
 /** Today / this week (starts Monday) / this month / everything, in the viewer's clock. Pure. */
 export function periods(rows: readonly PnlRow[], now: number, tzOffsetMin = 0): PnlReport['periods'] {
   const today = localDayOf(now, tzOffsetMin);
@@ -257,6 +323,7 @@ export function pnlReport(acct: 'bot' | 'me' | 'cbot', rows: readonly PnlRow[], 
     periods: periods(rows, now, tzOffsetMin),
     days: dailyPnl(rows, tzOffsetMin, names),
     curve: equityCurve(rows, base, 600),
+    weeks: weeklyLog(rows, tzOffsetMin, names),
   };
 }
 

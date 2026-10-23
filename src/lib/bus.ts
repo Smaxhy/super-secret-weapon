@@ -7,7 +7,8 @@ import { EventEmitter } from 'node:events';
 
 /** v17.12 (forex/practice.ts) */
 export interface FxNotice {
-  kind: 'lock' | 'run' | 'close';
+  /** v27.30: 'open' = a bot trade was opened; 'week' = last week's summary (`reason` carries the text) */
+  kind: 'lock' | 'run' | 'close' | 'open' | 'week';
   pair: string;
   side: 1 | -1;
   /** the trade's P&L now (close: its total, parts taken included) */
@@ -17,6 +18,10 @@ export interface FxNotice {
   /** close: why (stop, target, signal, manual, stop-out) */
   reason?: string;
   strategy?: string | null;
+  /** v27.30 open: its chart, what the target would pay, % of the account at risk */
+  tf?: string | null;
+  targetPnlUsd?: number | null;
+  riskPct?: number | null;
 }
 
 export type BusEvent =

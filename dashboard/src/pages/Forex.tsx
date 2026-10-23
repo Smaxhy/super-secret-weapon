@@ -33,7 +33,7 @@ interface Risk { riskPct: number; finalX: number; avgWeekPct: number; medianWeek
 interface VariantRow { filter: FilterKind; inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number }
 interface ExitVariantRow extends Omit<VariantRow, 'filter'> { exit: ExitKind }
 interface EntryVariantRow { entry: EntryKind; inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number; outTotalR: number }
-interface RowT { id: string; name: string; family: string; desc: string; tf: string; filter?: FilterKind; variants?: VariantRow[]; exit?: ExitKind; exitVariants?: ExitVariantRow[]; entryVariants?: EntryVariantRow[]; entry?: EntryKind; fin?: { inAvgR: number; outAvgR: number; known: boolean }; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string; luck?: { pctl: number; twinsP90: number; twinPassPct: number }; stats?: RowStat; mc?: McResult | null; markets?: MarketCell[]; sess?: Array<[number, number]>; dead?: boolean }
+interface RowT { id: string; name: string; family: string; desc: string; tf: string; filter?: FilterKind; variants?: VariantRow[]; exit?: ExitKind; exitVariants?: ExitVariantRow[]; entryVariants?: EntryVariantRow[]; entry?: EntryKind; fin?: { inAvgR: number; outAvgR: number; known: boolean }; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string; luck?: { pctl: number; twinsP90: number; twinPassPct: number }; stats?: RowStat; mc?: McResult | null; markets?: MarketCell[]; sess?: Array<[number, number]>; dead?: boolean; skip?: { sessions: number[]; pairs: string[]; cut: [number, number] } }
 interface Trade { strategy: string; tf: string; pair: string; side: 1 | -1; entryT: number; exitT: number; entry: number; exit: number; r: number; reason: string; stop: number; stop0: number; target: number | null }
 interface MarketNow { id: string; label: string; price: number; t: number; change24hPct: number; closes: number[]; trend: 'up' | 'down' | 'flat'; rsi: number; atrPips: number; firing: Array<{ id: string; name: string; tf: string; side: 1 | -1; allowed?: boolean; why?: string | null }>; openPaper: number; bars: number[][]; drawings: ChartDrawings; mtf?: { h1: number; h4: number; d1: number }; strength?: { base: string; quote: string; baseScore: number | null; quoteScore: number | null; gap: number | null }; risk?: number; heat?: Heatmap }
 interface HeatLevel { price: number; kind: 'round' | 'half' | 'swing' | 'yesterday' | 'expiry'; label: string; weight: number; distAtr: number }
@@ -401,6 +401,12 @@ function Detail({ x, riskPct = 1 }: { x: RowT; riskPct?: number }) {
           <div className="mb-1 text-xs font-semibold text-muted">By session (New York time, all markets, all trades)</div>
           <SessionStrip sess={x.sess} />
         </div>
+      )}
+      {x.skip && (
+        <p className="rounded-xl border border-line bg-surface-2/40 p-3 text-sm text-ink-2">
+          <span className="font-semibold text-ink">Skips where it lost before the test line:</span>{' '}
+          {[...x.skip.sessions.map((k) => ['Asia', 'London', 'NY open', 'NY afternoon'][k] + ' hours'), ...x.skip.pairs].join(', ')} — {x.skip.cut[0]} earlier and {x.skip.cut[1]} unseen trades left out of its record and live trading.
+        </p>
       )}
       <div className="grid grid-cols-3 gap-3">
         <StatTile compact label="All" value={`${signed(x.all.avgR, 2)}R`} sub={`${x.all.n} · PF ${x.all.pf ?? '∞'}`} tone={x.all.avgR > 0 ? 'up' : 'down'} />

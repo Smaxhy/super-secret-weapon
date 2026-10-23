@@ -14,6 +14,7 @@ import { startMarketMood } from './learner/market-mood';
 import { startApi } from './api/server';
 import { env, redactUrl, rpcEndpoints } from './config/env';
 import { bus } from './lib/bus';
+import { weeklyLog, weekText } from './forex/pnl';
 import { getConfig, startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
 import { DEFAULT_CONFIG } from './config/default';
 import { markStrategySince, oneTimeUpgrade, runConfigMigrations } from './config/migrations';
@@ -908,6 +909,21 @@ async function main(): Promise<void> {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
+  // v27.30 (owner: "a weekly log"): every Monday after 00:05 UTC, last week's summary per bot goes to the phone, once
+  const weekPush = setInterval(async () => {
+    const now = new Date();
+    if (now.getUTCDay() !== 1 || now.getUTCHours() * 60 + now.getUTCMinutes() < 5) return;
+    const lastMonday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - 7 * 86_400_000).toISOString().slice(0, 10);
+    for (const acct of ['bot', 'cbot'] as const) {
+      try {
+        if ((await redis.set(`fx:weekpush:${acct}:${lastMonday}`, '1', 'EX', 14 * 86_400, 'NX')) !== 'OK') continue;
+        const w = weeklyLog(await practice.pnlRows(acct), 0).find((x) => x.week === lastMonday) ?? { week: lastMonday, pnlUsd: 0, trades: 0, wins: 0, bestUsd: null, worstUsd: null, byStrategy: [], byPair: [] };
+        bus.publish({ type: 'fxTrade', data: { kind: 'week', pair: '', side: 1, pnlUsd: w.pnlUsd, reason: weekText(w), acct } });
+      } catch (err) {
+        log.warn({ err: (err as Error).message, acct }, 'weekly summary failed');
+      }
+    }
+  }, 10 * 60_000);
   const pushTimer = setInterval(() => {
     const s = statsOf();
     bus.publish({ type: 'stats', data: { connected: s?.connected ?? false, launches: s?.creates ?? 0, trades: s?.trades ?? 0, tracked: liveState.trackedCount, uptimeSec: Math.round((Date.now() - startedAt) / 1000) } });
@@ -992,6 +1008,7 @@ async function main(): Promise<void> {
     log.info({ signal }, 'shutting down…');
     clearInterval(statsTimer);
     clearInterval(pushTimer);
+    clearInterval(weekPush);
     const force = setTimeout(() => process.exit(1), 15_000); // don't hang forever
     try {
       await api?.close();

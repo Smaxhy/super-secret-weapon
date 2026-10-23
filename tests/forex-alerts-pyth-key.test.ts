@@ -45,8 +45,8 @@ describe('v17.12 trade alerts from the account checks', () => {
     const lock = { acct: 'bot' as const, kind: 'lock' as const, pair: 'EURUSD', side: 1 as const, pnlUsd: 10.4, stopPnlUsd: 3.2 };
     const m = fxMessageFor(lock, DEFAULT_PUSH_SETTINGS)!;
     expect(m.title).toMatch(/EUR\/USD \+\$10\.40 — profit locked/);
-    expect(m.body).toMatch(/Bot \(long\).*\+\$3\.20/);
-    expect(m.url).toBe('/forex');
+    expect(m.body).toMatch(/Forex bot \(long\).*\+\$3\.20/);
+    expect(m.url).toBe('/forex/bot');
     expect(fxMessageFor(lock, { ...DEFAULT_PUSH_SETTINGS, fxGood: false })).toBeNull();
     expect(fxMessageFor({ ...lock, acct: 'me', kind: 'run', pnlUsd: 21 }, DEFAULT_PUSH_SETTINGS)!.title).toMatch(/two thirds/);
     const win = { ...lock, kind: 'close' as const, pnlUsd: 25, reason: 'target' };

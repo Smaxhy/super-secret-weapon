@@ -1476,6 +1476,11 @@ export class Practice {
         ...(req.exitWhen ? { exitWhen: req.exitWhen } : {}),
         ...(req.ref && riskUsd0 > 0 ? { riskUsd0 } : {}),
       });
+      // v27.30 (owner: "a notification when it enters a trade"): bot trades only (they carry a lab ref)
+      if (req.ref) {
+        const pos = { pair: inst.id, side: req.side, units, entry };
+        notice(a, { kind: 'open', pair: inst.id, side: req.side, pnlUsd: 0, stopPnlUsd: stop !== null ? Math.round(pnlUsd(pos, stop, mids) * 100) / 100 : null, targetPnlUsd: target !== null ? Math.round(pnlUsd(pos, target, mids) * 100) / 100 : null, strategy: req.strategy ?? null, tf: req.tf ?? null, riskPct: req.riskPct ?? null });
+      }
       return { ok: true };
     }
   }
