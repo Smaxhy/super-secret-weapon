@@ -12,6 +12,7 @@
  * `fx:portfolio`. Nothing here places a real order.
  */
 import type Redis from 'ioredis';
+import { reviewLosses, type LossReview } from './loss-review';
 import { buildCorrBook, gradeHeat, HEAT, roundedMatrix, type HeatGrade } from './risk';
 import { luckDowngrade, luckFor } from './luck';
 import { learnFromLedger, type LearnKey } from './learner';
@@ -2340,6 +2341,7 @@ export class ForexLab {
     this.logBot(ev);
     // v24: every refused signal goes into the shadow book; finished lab trades grade the older ones
     await this.noteShadows(sync, out.botTrades, out.report.paper.recent);
+    await this.noteLosses(out.report.paper.recent, out.botTrades.map((t) => t.ref));
     this.noteRun({ t: Date.now(), tf: '1h', signals: out.firing.signals, chosen: out.firing.chosen, opened: sync.opened, skipped: sync.skipped.length, waits: sync.waits.length, holding: sync.heldOpen + sync.opened });
     await this.redis.set(this.k('fx:bot:chosen'), JSON.stringify(out.chosen)).catch(() => undefined);
     await this.redis.set(this.k('fx:bot:dropped'), JSON.stringify(out.dropped)).catch(() => undefined);
@@ -2347,6 +2349,33 @@ export class ForexLab {
 
   /** v24 shadow book: the signals the bot account refused (Redis `fx:shadow` / `cm:shadow`), graded by the lab's own
    * finished paper trades. Both labs call it after every sync. */
+  /**
+   * v27.23: grade every losing bot close against the lab's own copy of the trade (loss-review.ts) — normal (the tested
+   * trade lost too) or avoidable (doubled bet, loss cap, worse than the test) — one bot-log line per finished review.
+   */
+  async noteLosses(closedLab: readonly Trade[], labOpenRefs: readonly string[]): Promise<void> {
+    if (!this.practice) return;
+    try {
+      const key = this.k('fx:lossrev');
+      let prev: LossReview[] = [];
+      try {
+        prev = JSON.parse((await this.redis.get(key)) ?? '[]') as LossReview[];
+        if (!Array.isArray(prev)) prev = [];
+      } catch {
+        prev = [];
+      }
+      const a = await this.practice.rawAccount(this.acct);
+      const labDone = new Map(closedLab.filter((t) => t.reason !== 'open').map((t) => [tradeKey(t), t] as const));
+      const { reviews, finished } = reviewLosses(prev, { closed: a.closed, open: a.open, labDone, labOpen: new Set(labOpenRefs), maxLossUsd: a.maxLossUsd, now: Date.now() });
+      await this.redis.set(key, JSON.stringify(reviews));
+      if (finished.length) {
+        this.logBot(finished.map((x) => `loss review: ${x.pair} ${x.strategy ?? ''} ${x.tf ?? ''} ${x.usd.toFixed(2)} USD → ${x.verdict === 'normal' ? 'normal loss' : x.verdict === 'avoidable' ? 'AVOIDABLE' : 'no tested copy'}: ${x.why}${x.fix ? ` — fix: ${x.fix}` : ''}`));
+      }
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'loss review failed');
+    }
+  }
+
   async noteShadows(sync: SyncReport, labOpen: readonly LabOpenTrade[], closed: readonly Trade[]): Promise<void> {
     if (!this.practice) return;
     try {

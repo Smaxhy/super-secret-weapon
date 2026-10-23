@@ -75,6 +75,8 @@ export const BOT = {
   futuresDelayMs: 15 * 60_000,
   /** v27.20: the most a single trade may lose, per account (the coin bot: $20; v27.22 the forex bot too) */
   maxLossUsdByAcct: { cbot: 20, bot: 20 } as Partial<Record<string, number>>,
+  /** v27.23: one open trade (or resting order) per market and direction across all strategies — no doubled bets */
+  onePerMarketSide: true,
   /** v18.7 (owner: "wait it out, then adjust"): after a strategy closes a trade on a market, the same strategy may not
    * re-enter that market for this many candles of its chart (3 h on the hourly, 12 h on the 4-hour) */
   reentryCooldownBars: 3,
@@ -1667,6 +1669,13 @@ export class Practice {
       for (const t of candidates) {
         const sk = stratKey(t.ref);
         const tf = t.tf ?? tfOfRef(t.ref);
+        // v27.23 (owner: "any loss that's not a bug — analyse it and make sure it doesn't happen again"; two strategies bought
+        // LINK on the same candle and both hit their stops): one bet per market and direction at a time
+        if (BOT.onePerMarketSide && [...a.open, ...(a.orders ?? [])].some((p) => p.pair === t.pair && p.side === t.side)) {
+          note(`${t.ref}:dup`, `skipped ${t.pair} (${t.strategy}): already in a ${t.side === 1 ? 'buy' : 'sell'} on ${t.pair}`);
+          skip(t, `already in a ${t.side === 1 ? 'buy' : 'sell'} trade on this market (one bet per market and direction)`);
+          continue;
+        }
         const cool = reentryWait(a.closed, t.strategy, tf, t.pair, Date.now());
         if (cool > 0) {
           note(`${t.ref}:cool`, `waiting on ${t.pair} (${t.strategy}): it just closed a trade here — cooling off ${cool} min`);
@@ -1837,6 +1846,11 @@ export class Practice {
   }
 
   /** v15.3: refs of the bot's open trades (no prices needed). */
+  /** v27.23: the account as stored (read-only — the loss review reads its closed / open trades) */
+  async rawAccount(acct: AcctId = 'bot'): Promise<PracticeAccount> {
+    return this.load(acct);
+  }
+
   async heldRefs(acct: AcctId = 'bot'): Promise<string[]> {
     const a = await this.load(acct);
     return a.open.map((p) => p.ref).filter((r): r is string => !!r);

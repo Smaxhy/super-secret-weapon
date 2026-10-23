@@ -25,6 +25,7 @@ import { RISK_MODES, isRiskMode, ledgerSummary, limitsFor, pnlUsd, riskSummary }
 import { buildPlan } from '../forex/plan';
 import { whyNoTrades } from '../forex/why';
 import { shadowSummary, type ShadowSummary, type ShadowTrade } from '../forex/shadow';
+import { lossSummary, type LossReview } from '../forex/loss-review';
 import { FX_CONFIG, focusMarkets } from '../forex/lab';
 import { botStatus, dayTrades, parsePnlQuery, pnlReport } from '../forex/pnl';
 import { STRATEGIES } from '../forex/strategies';
@@ -242,10 +243,13 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       } catch (err) {
         log.warn({ err: (err as Error).message }, 'shadow summary failed');
       }
+      // v27.23: every losing bot trade graded against its tested copy (normal / avoidable + the fix)
+      const lossReviews = parse<LossReview[]>(await redis.get(K('fx:lossrev')).catch(() => null), []);
       return {
         plan,
         why,
         shadow,
+        losses: lossSummary(Array.isArray(lossReviews) ? lossReviews : []),
         // v20: per-market desks (ranked strategies on that market, today's trades, the learning pick)
         desks: parse<{ at: number; desks: unknown[] } | null>(desksRaw, null),
         // v18.12: why the plan is missing (the Today card says so instead of going quiet)

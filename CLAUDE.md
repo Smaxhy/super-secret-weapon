@@ -758,6 +758,29 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.23 every losing trade gets reviewed + one bet per market and direction (Oct 23, owner: "any time a loss happens
+that's not a bug, analyse it thoroughly and make sure it doesn't happen again"; told plainly: losses can't be stopped,
+only the avoidable kind)
+VPS read 08:25 UTC: since the cap (Oct 22 17:00) the coin bot had 4 cap stops (−$81): on 3 the lab's tested trade hit
+the ORIGINAL stop too (the cap saved $68), 1 (ETH round_break) still open in the lab at −0.29R; 2 of the 4 were the same
+LINK candle bought by news_drift AND momentum_bar (a doubled bet). Owner asked "is the tight SL needed for crypto?" →
+kept: the data says it saves money so far. Built:
+- `BOT.onePerMarketSide` (practice.ts syncBot): no second open trade / resting order on the same market and direction,
+  whatever the strategy → skip "already in a buy trade on this market (one bet per market and direction)". Both desks.
+- `src/forex/loss-review.ts` (pure): `reviewLoss` grades each losing close (not manual / partial / weekend) against the
+  lab's paper trade with the same ref (`tradeKey`): **normal** (the tested trade lost too) / **avoidable** (causes:
+  `doubled` — `doubledWith` finds an overlapping same-market same-side trade; `loss_cap` — a cap stop while the tested
+  trade ended better than −0.5R; `worse_than_test`) / **pending** (tested trade still running) / **unknown** (none after
+  3 days); `capDelta` on cap stops = USD saved (+) / cost (−) vs the tested result at the original size;
+  `reviewLosses` (finished reviews kept, pending re-graded, struck trades dropped), `lossSummary` (counts / USD by
+  verdict and cause, `capSavedUsd`, `capVerdict` "the loss cap is costing money" once 5+ cap stops net negative).
+  `ForexLab.noteLosses(closedLab, labOpenRefs)` after every sync (hourly: `out.report.paper.recent`; fast: its report's)
+  → Redis `fx:lossrev` / `cm:lossrev` (150) + one bot-log line per finished review ("loss review: … → normal loss /
+  AVOIDABLE: … — fix: …"); `Practice.rawAccount(acct)`. `/api/<desk>/bot` → `losses`; Trades page card "Why it lost
+  (loss review)" (`components/FxLosses.tsx`). Avoidable causes map to rules: doubled → the new guard; loss_cap → the cap
+  check above; worse_than_test / repeated normal losses → the restricted learner (halves / drops a losing
+  strategy:chart on the bot's own record). tests/forex-loss-review (5); forex-v17 delayed-feed test now uses a sell for
+  its second EURUSD trade (the guard blocks a second buy).
 ## v27.22 the forex bot gets the $20 loss cap too (Oct 22, owner: "does forex not have a stoploss? … the SL also for forex
 past 20") — `BOT.maxLossUsdByAcct` {cbot: 20, bot: 20}: same stop pull-in as v27.20, size unchanged. tests/forex-loss-cap.
 Then (owner: "take away the trade that's −60 right now, don't make it count"): the open forex NZDUSD pivot_bounce:4h long

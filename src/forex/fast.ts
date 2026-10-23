@@ -575,6 +575,7 @@ export class FastLab {
       this.lab.lastSync[tf] = sync;
       this.lab.logBot(ev);
       await this.lab.noteShadows(sync, labOpen, this.report?.paper.recent ?? []);
+      await this.lab.noteLosses(this.report?.paper.recent ?? [], labOpen.map((t) => t.ref));
       const fired = Object.values(byPair).flat();
       this.lab.noteRun({ t: Date.now(), tf, signals: fired.length, chosen: fired.filter((f) => f.chosen && f.allowed).length, opened: sync.opened, skipped: sync.skipped.length, waits: sync.waits.length, holding: sync.heldOpen + sync.opened });
     } finally {

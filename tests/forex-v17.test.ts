@@ -307,7 +307,7 @@ describe('v17.0 review fixes', () => {
     const lab = { ref: `x:1h:EURUSD:${WED}`, strategy: 'x', tf: '1h', pair: 'EURUSD', side: 1 as const, entryT: WED - 30_000, stop: 1.098, target: 1.104, chosen: true, sizeF: 1, prio: 0.2, judge: null };
     await p.syncBot([lab], () => null, {}, { scope: ['1h', '4h'] });
     expect((JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount).open).toHaveLength(1);
-    const ev = await p.syncBot([{ ...lab, ref: `x:1m:EURUSD:${WED}`, tf: '1m' }], () => null, {}, { scope: ['1m'] });
+    const ev = await p.syncBot([{ ...lab, ref: `x:1m:EURUSD:${WED}`, tf: '1m', side: -1 as const, stop: 1.102, target: 1.096 }], () => null, {}, { scope: ['1m'] });
     expect(ev.join(' ')).toMatch(/delayed feed/);
   });
 
