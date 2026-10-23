@@ -5,19 +5,22 @@
  * - once the price has gone `atFrac` (⅓) of D its way, the stop jumps past the entry: entry + costs + `keepFrac` (10%)
  *   of D, so a stop-out from there still closes in profit (a gap can still fill worse);
  * - from then on the stop trails `gapFrac` (⅓) of D behind the best price reached, and only ever moves with the trade.
- * Example: target +30 → at +10 the stop goes to about +3, at +20 it sits at +10, at +29 at +19.
+ * Example (v27.28 numbers): target +30 → at +4.5 the stop goes to about +1.5, at +20 it sits at +15.5, at +29 at +24.5.
  * The engine simulates it on every backtest / paper trade (so the tested numbers are what the bot does), the bot
  * account and the owner's own trades apply it on live prices every second. Pure.
  */
 
+// v27.28 (owner: "trail its SL VERY tightly once it's in profit"; was ⅓ / ⅓ / 0.1): arms at 15% of the way to the target
+// (+0.3R on a 2R target), locks entry + costs + 5%, then trails 15% of the target distance (0.3R) behind the best price.
+// The engine tests every row with it too, so the strict test grades exactly this exit.
 export const PROFIT_LOCK = {
   on: true,
   /** arms once the price went this share of the way to the target */
-  atFrac: 1 / 3,
+  atFrac: 0.15,
   /** then trails this share of the target distance behind the best price */
-  gapFrac: 1 / 3,
+  gapFrac: 0.15,
   /** profit kept by the first locked stop (share of the target distance), on top of the costs */
-  keepFrac: 0.1,
+  keepFrac: 0.05,
 };
 
 export interface LockPlan {

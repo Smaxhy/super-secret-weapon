@@ -5,6 +5,10 @@ import { newAccount, Practice, tick, type ClosedPractice, type PracticeAccount, 
 import { localDay } from '../src/api/performance-calc';
 import { INSTRUMENTS } from '../src/forex/types';
 import { VENUE_FEES } from '../src/forex/venue-fees';
+import { PROFIT_LOCK } from '../src/forex/profit-lock';
+// v27.28 made the live lock much tighter; this file pins the original ⅓ / ⅓ / 0.1 numbers its examples were written for
+Object.assign(PROFIT_LOCK, { atFrac: 1 / 3, gapFrac: 1 / 3, keepFrac: 0.1 });
+
 // v26: these tests pin exact R / USD numbers of other features — the venue fee is tested on its own (forex-venue-fees)
 VENUE_FEES.on = false;
 

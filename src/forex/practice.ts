@@ -810,7 +810,7 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
         if (arming) {
           p.locked = true;
           p.be = true;
-          events.push(`${p.pair} profit lock: a third of the way to the target, stop moved past the entry`);
+          events.push(`${p.pair} profit lock: in profit, stop moved past the entry (tight trail from here)`);
         }
         if (p.locked) {
           p.lockBest = p.lockBest == null ? best : p.side === 1 ? Math.max(p.lockBest, best) : Math.min(p.lockBest, best);

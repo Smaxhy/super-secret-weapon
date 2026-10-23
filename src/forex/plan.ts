@@ -268,7 +268,7 @@ export function tradeLines(p: PracticePosition & { px: number }, now: number, pn
     out.push(
       p.locked
         ? { k: 'lock', text: `Profit lock on: the stop trails ${pips(pair, L.gap)} pips behind the best price, checked every second, and only ever moves with the trade.`, done: true }
-        : { k: 'lock', text: `Profit lock: at ${fmtPx(pair, L.at)} (${usd(pnlAt(p, L.at))}, a third of the way to the target) the stop jumps past the entry to ${fmtPx(pair, L.to)} (${usd(pnlAt(p, L.to))}), then trails ${pips(pair, L.gap)} pips behind the best price.` },
+        : { k: 'lock', text: `Profit lock: at ${fmtPx(pair, L.at)} (${usd(pnlAt(p, L.at))}, once it is in profit) the stop jumps past the entry to ${fmtPx(pair, L.to)} (${usd(pnlAt(p, L.to))}), then trails ${pips(pair, L.gap)} pips behind the best price.` },
     );
   }
   if (p.beAt != null) out.push({ k: 'be', text: p.be ? 'Stop moved to break-even.' : `At ${fmtPx(pair, p.beAt)} (+1R) the stop moves to the entry price.`, done: !!p.be });

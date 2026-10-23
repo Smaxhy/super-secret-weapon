@@ -758,6 +758,14 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.28 tight trailing stop once in profit (Oct 23, owner: "I need it to trail its SL VERY tightly if it's in profit"; asked
+first what 20% margin at 1:200 would do — told: a 0.5% move against liquidates it, every tested stop is wider, keep risk sizing)
+`PROFIT_LOCK` (profit-lock.ts) ⅓ / ⅓ / 0.1 → **atFrac 0.15, gapFrac 0.15, keepFrac 0.05**: on a 2R target the lock arms at
++0.3R, the stop jumps to entry + costs + 0.1R, then trails 0.3R behind the best price (only tighter). Same object drives the
+engine (every lab row, paper trade, honest test) and both bot accounts → the strict test grades this exit → ONE re-pick event
+after deploy, and rsi_dip:4h may lose its Edge (then the coin bot waits; Lab → "Profit lock" shows with vs without).
+Positions already open keep the plan they armed with. Tests that pin the old numbers set them back at the top (forex-pnl,
+forex-v14, forex-profit-lock); forex-proven-only (+1).
 ## v27.27 only proven strategies trade, both desks, big size (Oct 23, owner: "only trade what actually is profitable on forex
 and crypto with a big big size like rsi dip; everything else keep testing in the lab; if something else ends up doing really
 good I want it on; all strategies that aren't profitable off")

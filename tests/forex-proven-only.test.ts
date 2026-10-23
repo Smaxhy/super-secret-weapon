@@ -62,3 +62,19 @@ describe('v27.27 only proven strategies trade, big size', () => {
     expect(BOT.allIn).toEqual({});
   });
 });
+
+import { lockPlan, lockedStop, PROFIT_LOCK } from '../src/forex/profit-lock';
+
+describe('v27.28 tight trail once in profit (owner: "trail its SL VERY tightly")', () => {
+  it('arms at 15% of the way to the target, locks entry + costs + 5%, then trails 15% of the target distance', () => {
+    expect(PROFIT_LOCK).toMatchObject({ on: true, atFrac: 0.15, gapFrac: 0.15, keepFrac: 0.05 });
+    // long at 100, stop 96 (1R = 4), target 108 (2R): arms at 101.2 (+0.3R), jumps to 100.4, trails 1.2 (0.3R) behind
+    const plan = lockPlan(1, 100, 96, 108, 0)!;
+    expect(plan.at).toBeCloseTo(101.2, 9);
+    expect(plan.to).toBeCloseTo(100.4, 9);
+    expect(plan.gap).toBeCloseTo(1.2, 9);
+    expect(lockedStop(1, plan, 101.2, 96)).toBeCloseTo(100.4, 9);
+    expect(lockedStop(1, plan, 104, 100.4)).toBeCloseTo(102.8, 9);
+    expect(lockedStop(1, plan, 103, 102.8)).toBeCloseTo(102.8, 9); // never loosens
+  });
+});

@@ -12,6 +12,10 @@ import { marketClock } from '../src/forex/calendar';
 import { buildStrength } from '../src/forex/strength';
 import { INSTRUMENTS, type Bar, type Signal } from '../src/forex/types';
 import { VENUE_FEES } from '../src/forex/venue-fees';
+import { PROFIT_LOCK } from '../src/forex/profit-lock';
+// v27.28 made the live lock much tighter; this file pins the original ⅓ / ⅓ / 0.1 numbers its examples were written for
+Object.assign(PROFIT_LOCK, { atFrac: 1 / 3, gapFrac: 1 / 3, keepFrac: 0.1 });
+
 
 // v27.8: these tests pin the exit AT the target (the run-past-target trail is tested in forex-run-past-tp)
 DEFAULT_SIM.runPastTarget = false;
