@@ -77,6 +77,9 @@ export const BOT = {
   maxLossUsdByAcct: { cbot: 20, bot: 20 } as Partial<Record<string, number>>,
   /** v27.23: one open trade (or resting order) per market and direction across all strategies — no doubled bets */
   onePerMarketSide: true,
+  /** v27.24 (owner: "every bot can lose but 4 losses in a row is different"): 3 bot losses in a row → half size until a
+   * win; 4 → no new trades for `pauseHours` after the last one (a safety rule, not graded — like the VIX brake) */
+  streak: { halveAt: 3, pauseAt: 4, pauseHours: 4, factor: 0.5 },
   /** v18.7 (owner: "wait it out, then adjust"): after a strategy closes a trade on a market, the same strategy may not
    * re-enter that market for this many candles of its chart (3 h on the hourly, 12 h on the 4-hour) */
   reentryCooldownBars: 3,
@@ -515,6 +518,20 @@ export function undoClosed(a: PracticeAccount, pick: (c: ClosedPractice) => bool
   const refs = main.map((c) => c.ref).filter((r): r is string => !!r);
   if (refs.length) a.skipRefs = [...(a.skipRefs ?? []), ...refs].slice(-50); // v27.22: never re-opened
   return { ids: gone.map((c) => c.id), usd };
+}
+
+/** v27.24: the account's current run of losing bot trades (newest first; manual closes, parts and weekend legs skipped). Pure. */
+export function lossStreak(closed: readonly ClosedPractice[]): { n: number; lastAt: number | null } {
+  let n = 0;
+  let lastAt: number | null = null;
+  for (const c of closed) {
+    if (c.reason === 'manual' || c.reason === 'partial' || c.reason === 'weekend' || !c.strategy) continue;
+    const total = c.pnlUsd + (c.bankedUsd ?? 0);
+    if (total >= 0) break;
+    n++;
+    lastAt ??= c.closedAt;
+  }
+  return { n, lastAt };
 }
 
 /**
@@ -1666,8 +1683,18 @@ export class Practice {
       const skip = (t: LabOpenTrade, why: string, wait = false) => {
         if (rep) (wait ? rep.waits : rep.skipped).push({ pair: t.pair, strategy: t.strategy, tf: t.tf ?? tfOfRef(t.ref), side: t.side, why });
       };
+      // v27.24: a losing streak slows the bot down (half size from 3 in a row, a pause after 4)
+      const streak = lossStreak(a.closed);
+      const pausedUntil = streak.n >= BOT.streak.pauseAt && streak.lastAt !== null ? streak.lastAt + BOT.streak.pauseHours * 3_600_000 : 0;
+      const streakF = streak.n >= BOT.streak.halveAt ? BOT.streak.factor : 1;
       for (const t of candidates) {
         const sk = stratKey(t.ref);
+        if (Date.now() < pausedUntil) {
+          const w = `${streak.n} losses in a row — no new trades until ${new Date(pausedUntil).toISOString().slice(11, 16)} UTC`;
+          note(`streak:${pausedUntil}`, `waiting: ${w}`);
+          skip(t, w, true);
+          continue;
+        }
         const tf = t.tf ?? tfOfRef(t.ref);
         // v27.23 (owner: "any loss that's not a bug — analyse it and make sure it doesn't happen again"; two strategies bought
         // LINK on the same candle and both hit their stops): one bet per market and direction at a time
@@ -1786,6 +1813,7 @@ export class Practice {
         // v15.6: the risk mode scales the base risk, leverage and every cap together
         const lev = Math.min(maxLeverageFor(t.pair), snipe ? Math.max(SNIPER.leverage, L.leverage) : Math.max(conv?.lev ?? 0, L.leverage)); // v22: coins capped
         let riskPct = snipe ? Math.max(SNIPER.riskPct, L.riskPct) * ddF : clampRisk(L.riskPct, L.riskPct * (t.sizeF ?? 1) * ddF * (conv?.mult ?? 1), conv ? L.convMaxRiskPct / L.riskPct : undefined);
+        if (streakF < 1) riskPct = Math.round(riskPct * streakF * 100) / 100; // v27.24: losing streak → half size
         const exp = currencyExposure(a.open, mids, v.equityUsd);
         const over = snipe ? null : exposureBlock(exp, t.pair, t.side, riskPct, L.ccyCapPct);
         if (over) {

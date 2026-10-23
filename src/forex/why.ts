@@ -30,6 +30,8 @@ export type ReasonKind =
   | 'heat'
   | 'margin'
   | 'resting'
+  | 'streak'
+  | 'doubled'
   | 'other';
 
 const LABEL: Record<ReasonKind, string> = {
@@ -51,12 +53,16 @@ const LABEL: Record<ReasonKind, string> = {
   heat: 'correlated risk was full',
   margin: 'not enough free margin',
   resting: 'it placed a resting pullback / limit order instead of buying at market (the entry lab found that pays better) — it only becomes a trade if the price comes back to it before the order expires',
+  streak: 'a losing streak (4 bot losses in a row) — it pauses a few hours, then trades again at half size until a win',
+  doubled: 'it was already in the same direction on that market (one bet per market and direction)',
   other: 'another check',
 };
 
 /** Which bucket a wait / skip text belongs to. Exported for tests. */
 export function classify(why: string): ReasonKind {
   const w = why.toLowerCase();
+  if (w.includes('losses in a row')) return 'streak';
+  if (w.includes('one bet per market')) return 'doubled';
   if (w.includes('cooling off')) return 'cooldown';
   if (w.includes('slots are full') || w.includes('trades open')) return 'caps';
   if (w.includes('signal judge') && w.includes('missing')) return 'judge_missing';

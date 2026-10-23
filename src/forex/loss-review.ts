@@ -9,7 +9,7 @@
  * Pure: the lab stores the reviews (Redis `fx:lossrev` / `cm:lossrev`) and writes one bot-log line per finished review.
  */
 import type { ClosedPractice, PracticePosition } from './practice';
-import type { Trade } from './types';
+import type { Bar, Trade } from './types';
 
 export type LossVerdict = 'normal' | 'avoidable' | 'pending' | 'unknown';
 export type LossCause = 'tested_loss' | 'doubled' | 'loss_cap' | 'worse_than_test' | 'no_test' | 'test_running';
@@ -32,6 +32,8 @@ export interface LossReview {
   testReason: string | null;
   /** loss-cap stops only: USD the cap saved (+) or cost (−) vs the tested trade's result at the original stop's size */
   capDelta?: number;
+  /** v27.24: what would have turned it into a win, from the price after the entry */
+  win?: WinPath;
   /** plain words */
   why: string;
   /** what stops it happening again (only for avoidable losses) */
@@ -122,7 +124,48 @@ export function reviewLosses(prev: readonly LossReview[], ctx: Parameters<typeof
 }
 
 /** Totals for the API / dashboard: verdict counts, USD by cause, and whether the loss cap pays for itself. Pure. */
+export type WinKind = 'bank_early' | 'tested_stop' | 'wider_stop' | 'later_entry' | 'skip';
+export interface WinPath {
+  kind: WinKind;
+  text: string;
+}
+
+/**
+ * v27.24 (owner: "and how could it have turned into a win"): read the candles from the entry to now and say what would
+ * have won — it was up first (bank it / break-even), the tested stop without the cap would have held, a wider stop or a
+ * later entry would have reached the target, or nothing but skipping it. Pure.
+ */
+export function howToWin(c: Pick<ClosedPractice, 'side' | 'entry' | 'stop' | 'target' | 'units' | 'riskUsd0' | 'openedAt' | 'closedAt'>, bars: readonly Bar[], barMs: number): WinPath | null {
+  const s = c.side === -1 ? -1 : 1;
+  const d0 = c.riskUsd0 && c.units > 0 ? c.riskUsd0 / c.units : c.stop !== null ? Math.abs(c.entry - c.stop) : 0;
+  if (!(d0 > 0)) return null;
+  const target = c.target ?? c.entry + s * 2 * d0;
+  const after = bars.filter((b) => b.t + barMs > c.openedAt);
+  if (!after.length) return null;
+  const fav = (b: Bar) => (s === 1 ? b.h - c.entry : c.entry - b.l);
+  const adv = (b: Bar) => (s === 1 ? c.entry - b.l : b.h - c.entry);
+  const during = after.filter((b) => b.t < c.closedAt);
+  const mfeR = during.length ? Math.max(...during.map(fav)) / d0 : 0;
+  if (mfeR >= 0.5) return { kind: 'bank_early', text: `it was up ${mfeR.toFixed(2)}R first — banking part at +0.5R or moving the stop to break-even there would have made it a win` };
+  let mae = 0;
+  for (const b of after) {
+    mae = Math.max(mae, adv(b));
+    if (s === 1 ? b.h >= target : b.l <= target) {
+      const hrs = Math.max(0, Math.round((b.t - c.openedAt) / 3_600_000));
+      const ratio = mae / d0;
+      if (ratio < 1) return { kind: 'tested_stop', text: `the tested stop (without the loss cap) would have held and the target was hit about ${hrs} h after the entry` };
+      const better = c.entry - s * mae;
+      if (ratio <= 2) return { kind: 'wider_stop', text: `the target was hit about ${hrs} h later, but only a stop ${ratio.toFixed(1)}× the tested one would have survived (same $ risk = a ${Math.round(100 / ratio)}% size trade); entering at ${better.toPrecision(6)} after the dip would have won outright` };
+      return { kind: 'later_entry', text: `the target was hit about ${hrs} h later after a ${ratio.toFixed(1)}R drop first — only waiting and entering near ${better.toPrecision(6)} would have won` };
+    }
+  }
+  const hrs = Math.round((after[after.length - 1]!.t - c.openedAt) / 3_600_000);
+  return { kind: 'skip', text: `nothing would have won it: the target still hasn't been reached ${hrs} h later — the only win was not taking this signal` };
+}
+
 export function lossSummary(reviews: readonly LossReview[]) {
+  const winKinds: Partial<Record<WinKind, number>> = {};
+  for (const x of reviews) if (x.win) winKinds[x.win.kind] = (winKinds[x.win.kind] ?? 0) + 1;
   const capSavedUsd = Math.round(reviews.reduce((n, x) => n + (x.capDelta ?? 0), 0) * 100) / 100;
   const by: Record<LossVerdict, { n: number; usd: number }> = { normal: { n: 0, usd: 0 }, avoidable: { n: 0, usd: 0 }, pending: { n: 0, usd: 0 }, unknown: { n: 0, usd: 0 } };
   const causes: Record<string, { n: number; usd: number }> = {};
@@ -136,6 +179,6 @@ export function lossSummary(reviews: readonly LossReview[]) {
     }
   }
   const capStops = reviews.filter((x) => x.capDelta !== undefined).length;
-  return { by, causes, capSavedUsd, capStops, capVerdict: capStops >= 5 && capSavedUsd < 0 ? 'the loss cap is costing money: its stops cut trades the test kept' : capStops ? 'the loss cap is paying for itself so far' : null, newest: reviews.slice(0, 20) };
+  return { by, causes, winKinds, capSavedUsd, capStops, capVerdict: capStops >= 5 && capSavedUsd < 0 ? 'the loss cap is costing money: its stops cut trades the test kept' : capStops ? 'the loss cap is paying for itself so far' : null, newest: reviews.slice(0, 20) };
 }
 

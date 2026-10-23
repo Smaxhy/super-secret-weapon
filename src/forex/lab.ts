@@ -12,7 +12,8 @@
  * `fx:portfolio`. Nothing here places a real order.
  */
 import type Redis from 'ioredis';
-import { reviewLosses, type LossReview } from './loss-review';
+import { howToWin, reviewLosses, type LossReview } from './loss-review';
+import { confluenceStudy, isTogether, type ConfTrade, type ConfluenceReport } from './confluence';
 import { buildCorrBook, gradeHeat, HEAT, roundedMatrix, type HeatGrade } from './risk';
 import { luckDowngrade, luckFor } from './luck';
 import { learnFromLedger, type LearnKey } from './learner';
@@ -22,7 +23,7 @@ import { dataAgeOf, staleReason, type DataAge } from './freshness';
 import { feeds, type BreakerState, type FeedId, type FeedState, type Provider } from './feeds';
 import { afterLabRun, forkLabRun, heapFor, labWorkerOn, learnerSource, learnerTighten, LAB_WORKER, NO_STREAK, planLabRun, tightenOut, tightenState, type LearnerTighten, type WorkerStreak } from './lab-runner';
 import { moduleLogger } from '../lib/logger';
-import { refreshInstrument, refreshSeries, loadBars, type FeedStatus } from './data';
+import { refreshInstrument, refreshSeries, loadBars, loadFastBars, type FeedStatus } from './data';
 import { refreshCoinSeries } from './coinbase';
 import { gradeShadows, recordShadows, type ShadowTrade } from './shadow';
 import { DK_META, refreshDkTail, installSpreadProfiles, loadDk, refreshDukascopy, stitchHistory, type DkMeta } from './dukascopy';
@@ -1795,6 +1796,8 @@ export class ForexLab {
     const weeks = Math.max(1, (to - from) / (7 * 86_400_000));
     /** v18: every row's closed trades (final variant) for the honest statistics */
     const statInputs: StatInput[] = [];
+    /** v27.24: the picked strategies' finished trades, for the "two strategies agree" (doubling up) test */
+    const confPool: ConfTrade[] = [];
     for (const tf of FX_CONFIG.timeframes) {
       const ev = await evaluateTf(series.filter((se) => se.tf === tf), tf, { oosFrom, since, weeks, prev: prevChosen }, (x) => {
         statInputs.push({ key: x.key, isRandom: x.s.id === 'random', done: x.done });
@@ -1855,6 +1858,7 @@ export class ForexLab {
           x.key,
           x.done.filter((t) => t.entryT >= oosFrom + ROLL.embargoDays * 86_400_000).map((t) => ({ pair: t.pair, side: t.side, entryT: t.entryT, ...(t.keyT !== undefined ? { keyT: t.keyT } : {}), exitT: t.exitT, r: t.r, stopPct: t.stopPct, strategy: t.strategy, tf: t.tf, sizeF: 1, vf: volFactor(t.volRatio) })),
         );
+        if (picked && x.s.id !== 'random') for (const t of x.done) confPool.push({ key: x.key, pair: t.pair, side: t.side, entryT: t.entryT, exitT: t.exitT, r: t.r, barMs: TF_MIN[tf] * 60_000 });
         // whole-bot test: picked on the first 70% only, traded on the unseen 30%
         if (picked) {
           const sf = stratFactorFromStats(x.ch.inSample.avgR, x.ch.inSample.pf);
@@ -2161,6 +2165,9 @@ export class ForexLab {
 
     const edges = rows.filter((r) => r.verdict === 'edge').length;
     const filtered = rows.filter((r) => r.id !== 'random' && r.filter !== 'none').length;
+    // v27.24: does a second strategy firing the same way make a trade win more? (graded first 70% / unseen 30%)
+    const confluence: ConfluenceReport = confluenceStudy(confPool, oosFrom);
+    await this.redis.set(this.k('fx:confluence'), JSON.stringify(confluence)).catch(() => undefined);
     const report: FxReport = {
       at: Date.now(),
       durationMs: Date.now() - t0,
@@ -2233,7 +2240,10 @@ export class ForexLab {
       const work = !chosen.has(`${t.strategy}:${t.tf}`) && workTrial(t.pair, cellFor(t), row?.pairs.find((p) => p.pair === t.pair));
       // v27.11: the owner's trial (Judas swing on the Nasdaq) → its own size
       const owned = ownerTrialOf(t.strategy, t.tf, t.pair);
-      const sizeF = (owned ? owned.sizeF : trial ? FX_CONFIG.focusTry.sizeF : work ? FX_CONFIG.workTry.sizeF : rollLive ? rollSizes[`${t.strategy}:${t.tf}`] ?? 0.6 : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1) * vixBrake;
+      // v27.24: a second chosen strategy fires the same way here within 2 candles and the lab proved that wins more →
+      // one bigger trade (the one-bet-per-market-and-direction rule keeps it to one)
+      const together = confluence.active && isTogether({ key: `${t.strategy}:${t.tf}`, pair: t.pair, side: t.side, entryT: t.entryT, barMs: (TF_MIN[t.tf as Timeframe] ?? 60) * 60_000 }, open.filter((o) => chosen.has(`${o.strategy}:${o.tf}`)).map((o) => ({ key: `${o.strategy}:${o.tf}`, pair: o.pair, side: o.side, entryT: o.entryT })));
+      const sizeF = (owned ? owned.sizeF : trial ? FX_CONFIG.focusTry.sizeF : work ? FX_CONFIG.workTry.sizeF : rollLive ? rollSizes[`${t.strategy}:${t.tf}`] ?? 0.6 : row ? stratFactorFromVerdict(row.verdict) : 1) * volFactor(t.volRatio) * (rec.proven.has(`${t.strategy}:${t.tf}`) ? 1.15 : 1) * (rec.down[`${t.strategy}:${t.tf}`] ?? 1) * vixBrake * (together ? confluence.mult : 1);
       const x = judgeX.get(tradeKey(t));
       const jv = judgeModel && x ? judgeView(judgeModel, x) : null;
       const p = jv?.p ?? null;
@@ -2367,9 +2377,19 @@ export class ForexLab {
       const a = await this.practice.rawAccount(this.acct);
       const labDone = new Map(closedLab.filter((t) => t.reason !== 'open').map((t) => [tradeKey(t), t] as const));
       const { reviews, finished } = reviewLosses(prev, { closed: a.closed, open: a.open, labDone, labOpen: new Set(labOpenRefs), maxLossUsd: a.maxLossUsd, now: Date.now() });
+      // v27.24: what would have won it, read from the candles since the entry (15-minute trades on 15-minute candles)
+      const byId = new Map(a.closed.map((c) => [c.id, c]));
+      for (const x of finished) {
+        const c = byId.get(x.id);
+        if (!c) continue;
+        const fast = x.tf === '15m';
+        const bars = await (fast ? loadFastBars(this.redis, '15m', c.pair) : loadBars(this.redis, c.pair)).catch(() => [] as Bar[]);
+        const w = howToWin(c, bars, fast ? 15 * 60_000 : 3_600_000);
+        if (w) x.win = w;
+      }
       await this.redis.set(key, JSON.stringify(reviews));
       if (finished.length) {
-        this.logBot(finished.map((x) => `loss review: ${x.pair} ${x.strategy ?? ''} ${x.tf ?? ''} ${x.usd.toFixed(2)} USD → ${x.verdict === 'normal' ? 'normal loss' : x.verdict === 'avoidable' ? 'AVOIDABLE' : 'no tested copy'}: ${x.why}${x.fix ? ` — fix: ${x.fix}` : ''}`));
+        this.logBot(finished.map((x) => `loss review: ${x.pair} ${x.strategy ?? ''} ${x.tf ?? ''} ${x.usd.toFixed(2)} USD → ${x.verdict === 'normal' ? 'normal loss' : x.verdict === 'avoidable' ? 'AVOIDABLE' : 'no tested copy'}: ${x.why}${x.fix ? ` — fix: ${x.fix}` : ''}${x.win ? ` — how it could have won: ${x.win.text}` : ''}`));
       }
     } catch (err) {
       log.warn({ err: (err as Error).message }, 'loss review failed');

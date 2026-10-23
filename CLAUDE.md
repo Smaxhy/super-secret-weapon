@@ -758,6 +758,26 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.24 how it could have won, the losing-streak brake, doubling up tested in the lab (Oct 23, owner: "and how to have
+turned it into a win"; "every bot can lose but 4 losses in a row is different"; "if you think doubling up is worth it to
+try in lab then do it")
+- **How it could have won** (loss-review.ts `howToWin(closed, bars, barMs)`, pure): from the candles since the entry
+  (15m trades on 15m candles, else hourly — `loadFastBars` / `loadBars` in `noteLosses`): `bank_early` (it was ≥ +0.5R
+  of the TESTED stop distance before the exit), `tested_stop` (target reached later and the worst dip stayed inside the
+  tested stop — the cap cut it), `wider_stop` (target reached after a dip up to 2× the tested stop; also "entering at X
+  after the dip"), `later_entry` (dip > 2×), `skip` (target never reached). `LossReview.win`, bot-log line "— how it
+  could have won: …", `lossSummary.winKinds`. Display / evidence only — nothing is changed by it automatically.
+- **Losing-streak brake** (practice.ts `BOT.streak` {halveAt 3, pauseAt 4, pauseHours 4, factor 0.5}, `lossStreak(closed)`
+  pure: newest bot closes until a win; manual / partial / weekend skipped): 3+ in a row → every new trade's risk × 0.5
+  until a win; 4+ → no new trades for 4 h after the last loss (wait "N losses in a row — no new trades until HH:MM UTC").
+  Per account (each desk). A safety rule, NOT graded (like the VIX brake). why.ts kinds `streak` / `doubled`.
+- **Doubling up, tested** (`src/forex/confluence.ts`, pure): `isTogether` (another strategy, same market and direction,
+  within `CONFLUENCE.bars` 2 candles) + `confluenceStudy(picked rows' finished trades, oosFrom)` → first-70% / unseen
+  avg R for "together" vs "alone"; `active` only with ≥ 60 unseen together trades, unseen edge ≥ +0.1R AND the first part
+  pointing the same way → `mult` 1.5. Hourly lab: Redis `fx:confluence` / `cm:confluence`, `/api/<desk>/bot`
+  `confluence`; when active a lab open trade with a chosen partner gets sizeF × 1.5 → ONE bigger trade (clampRisk's 1.5×
+  ceiling; the v27.23 one-bet-per-market-and-direction rule stays). 15m charts not included. Card line on the Trades
+  page loss-review card. tests/forex-v27-24 (6).
 ## v27.23 every losing trade gets reviewed + one bet per market and direction (Oct 23, owner: "any time a loss happens
 that's not a bug, analyse it thoroughly and make sure it doesn't happen again"; told plainly: losses can't be stopped,
 only the avoidable kind)
