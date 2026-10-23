@@ -24,7 +24,7 @@ import { FxPnl, type PnlData } from './FxPnl';
 import { useTab } from './ui';
 import type { SystemData } from './SystemHealth';
 import type { JudgeReport, RiskSummary, RollReport, SniperReport } from './FxInsights';
-import { apiBase, botAcct, wsBase } from '../lib/ws';
+import { apiBase, botAcct, inCrypto, wsBase } from '../lib/ws';
 import { digitsOf, usdPriced } from '../lib/markets';
 
 // ── the bot's own data (the same shapes the Auto-bot page reads) ──
@@ -330,7 +330,10 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
   const read = fpos[0] ? reads.find((r) => r.id === fpos[0]!.id) ?? null : null;
   const a = d?.account ?? null;
   const equity = a?.equityUsd ?? null;
-  const dayPnl = a ? a.closed.filter((c) => now - c.closedAt < 86_400_000).reduce((s, c) => s + c.pnlUsd, 0) : 0;
+  // the P&L log's own "today" (the viewer's calendar day, struck trades gone) — the same number as the Today tile; before,
+  // this summed the last 24 hours of closes, so it disagreed with the tile (owner's screenshot: −$67.01 vs $0.00)
+  const midnight = new Date(now).setHours(0, 0, 0, 0);
+  const dayPnl = pnl?.periods ? pnl.periods.today.pnlUsd : a ? a.closed.filter((c) => c.closedAt >= midnight).reduce((s, c) => s + c.pnlUsd, 0) : 0;
   return (
     <div className="card hero-glow card-accent relative overflow-hidden p-4 sm:p-5">
       {/* the mastermind */}
@@ -345,7 +348,7 @@ function Hub({ d, state, next, now, lastRun, open, error, fm, fp, fpos, fx, read
           <span className={`absolute right-1 top-1 h-3 w-3 rounded-full ${open ? 'cr-blink bg-good' : 'bg-muted'}`} aria-hidden="true" />
         </div>
         <div className="min-w-0 flex-1 text-center sm:text-left">
-          <div className="text-xs font-semibold text-muted">Your forex bot, right now</div>
+          <div className="text-xs font-semibold text-muted">{inCrypto() ? 'Your coin bot' : 'Your forex bot'}, right now</div>
           <div className={`text-3xl font-semibold tracking-tight ${state.tone}`} aria-live="polite">{state.word}</div>
           <p className="mt-1 text-sm text-ink-2">{d?.plan?.mode?.line ?? d?.plan?.summary ?? (error ? `Couldn't reach the bot: ${error}` : d?.planError ? `No plan right now: ${d.planError}` : 'Waiting for its first look since the restart.')}</p>
           {d?.plan?.nextLook && <p className="mt-1 text-xs text-muted"><span className="font-semibold text-ink-2">At the next look ({clock(d.plan.nextLook.at)}, {d.plan.nextLook.tf}):</span> {d.plan.nextLook.does}</p>}

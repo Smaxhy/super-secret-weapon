@@ -758,6 +758,17 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.31 forex keeps pivot_bounce where it proved itself + the crypto "today" fix (Oct 23, owner: "forex may still use daily
+pivot R1 / S1, it's performing too; I just want it to use what definitely works"; screenshot: crypto home "Account $1056,
+−$67.01 today" next to "Today $0.00")
+- `FX_CONFIG.provenOnly.cells` {fx true, crypto false}: under provenOnly `planChosen` = Edge row OR the strict per-market bar
+  (`cellPass`: 30+ unseen there, +0.1R, PF 1.3, positive before the line, Monte Carlo 95%) on a forex-desk market. Oct 21
+  VPS: that is pivot_bounce:4h on RUTUSD (108, +0.19R, PF 2.40) and NDXUSD (106, +0.19R, PF 2.47); trial / work bars stay
+  off. Such trades get the same 20% all-in size (shared 20% cap). Coins stay rsi_dip only.
+- ControlRoom hub "Account … today" summed the last 24 h of closes (rolling) — the 4 Oct 22 afternoon closes made −$67.01
+  while the calendar day (P&L log) was $0.00 after the v27.29 strike. Now it shows `pnl.periods.today` (fallback: closes
+  since local midnight). Week = Month = All time on the coin desk is correct: its account started this week (Oct 20) and
+  $1056 = $1000 + $55.81. Hub label says "Your coin bot" on the crypto desk.
 ## v27.30 trade-open alerts, weekly log, skip the slices it loses on (Oct 23, owner: "a notification when it enters a trade,
 a weekly log, and make it skip charts it loses on"; VPS 16:08 UTC: coin rsi_dip 4h by NY session over all 106 trades = Asia
 50 / +0.50R, London 19 / −0.24R, NY open 11 / +0.17R, NY afternoon 26 / +0.10R; Asia positive on 7 of 8 coins, London

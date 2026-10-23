@@ -22,11 +22,16 @@ afterEach(() => vi.useRealTimers());
 
 describe('v27.27 only proven strategies trade, big size', () => {
   it('only Edge rows are chosen; no side doors (per-market cells, owner picks); the per-desk list is empty', () => {
-    expect(FX_CONFIG.provenOnly).toEqual({ on: true, riskPct: 20 });
+    expect(FX_CONFIG.provenOnly).toEqual({ on: true, riskPct: 20, cells: { fx: true, crypto: false } });
     expect(FX_CONFIG.only).toEqual({ fx: [], crypto: [] });
     expect(onlyOk('crypto', 'pivot_bounce', '4h')).toBe(true);
     const cell = { pair: 'RUTUSD', n: 108, avgR: 0.19, pf: 2.4, inN: 60, inAvgR: 0.1, mc: { pProfit: 1 } } as never;
-    expect(planChosen('pivot_bounce', 'RUTUSD', false, undefined, false, cell, '4h')).toBe(false);
+    expect(planChosen('pivot_bounce', 'RUTUSD', false, undefined, false, cell, '4h')).toBe(false); // no Monte Carlo field → not strict
+    // v27.31: a strategy on the strict per-market bar trades that forex market; never a coin
+    const strict = { pair: 'RUTUSD', n: 108, avgR: 0.19, pf: 2.4, winPct: 50, inN: 60, inAvgR: 0.1, mcP: 0.99, mcP5: 0.05 } as never;
+    expect(planChosen('pivot_bounce', 'RUTUSD', false, undefined, false, strict, '4h')).toBe(true);
+    expect(planChosen('pivot_bounce', 'BTCUSD', false, undefined, false, { ...(strict as object), pair: 'BTCUSD' } as never, '4h')).toBe(false);
+    expect(planChosen('pivot_bounce', 'RUTUSD', false, undefined, true, strict, '4h')).toBe(false); // learner drop wins
     expect(planChosen('judas_swing', 'NDXUSD', false, undefined, false, null, '1h')).toBe(false); // the owner trial is off too
     expect(planChosen('rsi_dip', 'BTCUSD', true, undefined, false, null, '4h')).toBe(true);
     expect(planChosen('rsi_dip', 'BTCUSD', true, undefined, true, null, '4h')).toBe(false); // the learner can still drop it

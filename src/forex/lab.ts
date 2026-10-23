@@ -142,7 +142,9 @@ export const FX_CONFIG = {
    * and every such trade risks `riskPct` of the account on its tested stop (all of them together ≤ that). No owner picks,
    * always-on rows, per-market trial cells, rolling picker or desk trades. A row that earns Edge goes live by itself; one
    * that loses it stops opening. `on: false` = the v27.26 setup. */
-  provenOnly: { on: true, riskPct: 20 },
+  provenOnly: { on: true, riskPct: 20, /** v27.31 (owner: "forex may still use the daily pivot R1 / S1, it performs too —
+   * just what definitely works"): per desk, a strategy that clears the STRICT per-market bar (`cellPass`: 30+ unseen
+   * trades there, +0.1R, PF 1.3, positive before the line, Monte Carlo 95%) also trades on THAT market */ cells: { fx: true, crypto: false } },
   /** v27.30 (owner: "make it skip the charts it loses on"): per strategy × chart, the New York sessions and markets where
    * its FIRST 70% lost (8+ trades there, average R below 0) are left out — of its record, its unseen grade and live
    * trading. Picked on the first 70% only, so the unseen part still grades it honestly. Skipped only while what is left
@@ -642,7 +644,8 @@ export function profitFloor(row: Partial<Pick<Row, 'inSample' | 'outSample' | 'm
 export function planChosen(strategy: string, pair: string, rowChosen: boolean, rec: { n: number; pf: number | null; totalR?: number } | undefined, dropped = false, cell?: MarketCell | null, tf?: string): boolean {
   if (dropped) return false;
   if (tf && !onlyOk(isCrypto(pair) ? 'crypto' : 'fx', strategy, tf)) return false; // v27.26
-  if (FX_CONFIG.provenOnly.on) return rowChosen; // v27.27: only the strict-test (Edge) rows, nothing through side doors
+  // v27.27: only the strict-test (Edge) rows; v27.31: + strategies proven on THIS market on the strict market bar (forex)
+  if (FX_CONFIG.provenOnly.on) return rowChosen || (FX_CONFIG.provenOnly.cells[isCrypto(pair) ? 'crypto' : 'fx'] && cellPass(cell));
   if (tf && ownerTrialOf(strategy, tf, pair)) return true; // v27.11
   // v27.4: a strategy that proved itself on THIS market on its own (cellPass) trades here even when its pooled row doesn't;
   // v27.9: the looser trial bar is enough (at a smaller size, see `focusTrial`); v27.10 (owner: "if a chart has good
