@@ -132,6 +132,10 @@ export const FX_CONFIG = {
    * strategy (any, tested or not; never the random yardstick) has a signal the SAME way on the SAME market within
    * `confluenceBars` candles of its chart; alone → the trade waits (shadow book kind 'solo'). */
   needsConfluence: ['fib_pullback'] as string[],
+  /** v27.26 (owner: "I don't need 100 strategies, just 1 that sticks"): when a desk's list is set, its bot trades ONLY these
+   * strategy:chart rows (every other row stays graded and shown; held trades of others run out on their own stops).
+   * Coins: rsi_dip 4h — the only row on either desk that passed the strict test (deflated Sharpe 89%, Oct 23). Empty = off. */
+  only: { fx: [] as string[], crypto: ['rsi_dip:4h'] as string[] },
   /** v27.1 (owner: "remove the less profitable bots"): a floor EVERY live row must clear, whatever got it onto the list
    * (Edge / Maybe verdict, the always-on four, the owner's ICT picks, the rolling picker), both desks, every chart:
    * 30+ unseen trades, ≥ 0.05R a trade and profit factor ≥ 1.2 on them, and positive before the 70/30 line too.
@@ -622,6 +626,7 @@ export function profitFloor(row: Partial<Pick<Row, 'inSample' | 'outSample' | 'm
  * `rec` = that row's tested record on this market, `dropped` = the learner took the row off. */
 export function planChosen(strategy: string, pair: string, rowChosen: boolean, rec: { n: number; pf: number | null; totalR?: number } | undefined, dropped = false, cell?: MarketCell | null, tf?: string): boolean {
   if (dropped) return false;
+  if (tf && !onlyOk(isCrypto(pair) ? 'crypto' : 'fx', strategy, tf)) return false; // v27.26
   if (tf && ownerTrialOf(strategy, tf, pair)) return true; // v27.11
   // v27.4: a strategy that proved itself on THIS market on its own (cellPass) trades here even when its pooled row doesn't;
   // v27.9: the looser trial bar is enough (at a smaller size, see `focusTrial`); v27.10 (owner: "if a chart has good
@@ -649,6 +654,11 @@ export function marketRecOf(rec: { n: number; pf: number | null; totalR: number 
   const proven = cellPass(cell) || (!!cell && (focusTrial(cell.pair, cell) || workTrial(cell.pair, cell, rec)));
   const cellLosing = !proven && !!cell && cell.n >= m.cellMinN && cell.avgR < 0;
   return { n, pf, totalR: rec?.totalR ?? 0, ok: ownerTrial || !(losing || cellLosing) };
+}
+/** v27.26 pure: may this desk's bot trade this strategy × chart at all (`FX_CONFIG.only`; an empty list = every row)? */
+export function onlyOk(universe: 'fx' | 'crypto', strategy: string, tf: string): boolean {
+  const list = FX_CONFIG.only[universe];
+  return !list.length || list.includes(`${strategy}:${tf}`);
 }
 /** v27.11: the owner's trial for this strategy × chart × market, if any */
 export const ownerTrialOf = (strategy: string, tf: string, pair: string) =>
@@ -2076,7 +2086,7 @@ export class ForexLab {
     const mode = FX_CONFIG.strict.mode;
     const strict = mode !== 'off';
     const ownerLive = this.universe === 'fx' ? new Set(FX_CONFIG.ownerLive) : new Set<string>();
-    const chosenRows = rows.filter((x) => x.id !== 'random' && !(this.universe === 'crypto' && NOT_FOR_CRYPTO.has(x.id)) && !rec.dropped.includes(`${x.id}:${x.tf}`) && profitFloor(x).ok && (ownerLive.has(x.id) || (mode === 'edge' ? x.verdict === 'edge' : mode === 'quality' ? !!x.quality?.ok : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`)))));
+    const chosenRows = rows.filter((x) => x.id !== 'random' && onlyOk(this.universe, x.id, x.tf) && !(this.universe === 'crypto' && NOT_FOR_CRYPTO.has(x.id)) && !rec.dropped.includes(`${x.id}:${x.tf}`) && profitFloor(x).ok && (ownerLive.has(x.id) || (mode === 'edge' ? x.verdict === 'edge' : mode === 'quality' ? !!x.quality?.ok : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`)))));
     // v20.1 strict mode: say once per hour-of-change why the list is empty (the owner reads the Decisions log)
     if (!strict && !chosenRows.length && this.chosen.length) this.logBot(['no strategy clears the profit floor right now (30+ unseen trades, 0.05R+ a trade, profit factor 1.2+) — the bot waits']);
     if (strict && !chosenRows.length && this.chosen.length) this.logBot([mode === 'edge' ? 'strict mode: no strategy has passed the unseen exam right now — the bot waits (nothing is traded until one earns Edge)' : 'strict mode: no strategy clears the quality bar right now — the bot waits']);

@@ -75,6 +75,12 @@ export const BOT = {
   futuresDelayMs: 15 * 60_000,
   /** v27.20: the most a single trade may lose, per account (the coin bot: $20; v27.22 the forex bot too) */
   maxLossUsdByAcct: { cbot: 20, bot: 20 } as Partial<Record<string, number>>,
+  /** v27.26 (owner: "if it happens trade it with extreme size, up to 20% of the wallet"): per account, a strategy:chart
+   * that trades at this % of the account at its TESTED stop — past the risk mode, the currency / correlated-risk caps and
+   * the $ loss cap (its stop is the strategy's own). All such trades together never risk more than that %. */
+  allIn: { cbot: { 'rsi_dip:4h': 20 } } as Partial<Record<string, Record<string, number>>>,
+  /** v27.26: an all-in trade may use up to this share of the free margin (normal trades: SIZING.marginShare) */
+  allInMarginShare: 0.9,
   /** v27.23: one open trade (or resting order) per market and direction across all strategies — no doubled bets */
   onePerMarketSide: true,
   /** v27.24 (owner: "every bot can lose but 4 losses in a row is different"): 3 bot losses in a row → half size until a
@@ -202,6 +208,8 @@ export interface PracticePosition {
   sniper?: { votes: number; of: number } | null;
   /** v20: opened by a market desk as its daily learning trade */
   desk?: boolean;
+  /** v27.26: an all-in trade (`BOT.allIn`) — its own tested stop, the account's $ loss cap doesn't pull it in */
+  allIn?: boolean;
   /** bot trades (v15.3): USD already banked by parts taken off (and legs before a weekend pause) */
   bankedUsd?: number;
   /** v17: USD lost if the stop is hit, measured on the real fill when it opened (1 R) */
@@ -719,7 +727,7 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
     }
     // v27.20: the account's loss cap in USD — the stop is pulled in so this trade can't lose more (never loosened);
     // already past it → closed at the market now
-    if (a.maxLossUsd && a.maxLossUsd > 0 && !q.stale) {
+    if (a.maxLossUsd && a.maxLossUsd > 0 && !q.stale && !p.allIn) {
       const per = pnlUsd({ pair: p.pair, side: p.side, units: p.units, entry: p.entry }, p.entry + p.side, mids);
       if (per > 0) {
         const capStop = p.entry - (p.side * a.maxLossUsd) / per;
@@ -1033,7 +1041,7 @@ export interface ExitPlan {
   exitWhen?: string | null;
 }
 
-export interface OpenReq extends ExitPlan { /** v20: a market desk's learning trade */ desk?: boolean; pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; bankedUsd?: number; /** v17: refuse a price older than this (default 30 min) */ maxQuoteAgeMs?: number; /** v17: an hourly / 4-hour trade may use a source's declared delay (Yahoo's metals) on top of the limit */ feedDelayOk?: boolean; /** v17: 1 R of a re-opened trade (else measured on this fill) */ riskUsd0?: number }
+export interface OpenReq extends ExitPlan { /** v20: a market desk's learning trade */ desk?: boolean; /** v27.26 */ allIn?: boolean; pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; bankedUsd?: number; /** v17: refuse a price older than this (default 30 min) */ maxQuoteAgeMs?: number; /** v17: an hourly / 4-hour trade may use a source's declared delay (Yahoo's metals) on top of the limit */ feedDelayOk?: boolean; /** v17: 1 R of a re-opened trade (else measured on this fill) */ riskUsd0?: number }
 
 /** The exit-plan fields of a lab trade, ready for `openIn`. Pure. */
 export function planOf(t: LabOpenTrade): ExitPlan {
@@ -1453,6 +1461,7 @@ export class Practice {
         ...(req.riskPct !== undefined ? { riskPct: req.riskPct } : {}),
         ...(req.conviction ? { conviction: req.conviction } : {}),
         ...(req.desk ? { desk: true } : {}),
+        ...(req.allIn ? { allIn: true } : {}),
         ...(req.sniper ? { sniper: req.sniper } : {}),
         ...(req.bankedUsd ? { bankedUsd: req.bankedUsd } : {}),
         ...(req.beAt != null ? { beAt: req.beAt } : {}),
@@ -1812,12 +1821,19 @@ export class Practice {
         // v16: a proven sniper setup (enough independent checks agree) risks the sniper size — one at a time, never
         // less than the mode's own size, still smaller after a drawdown
         const snipe = t.sniper?.on && !a.open.some((p) => p.sniper) ? t.sniper : null;
+        // v27.26: an all-in strategy risks its own % (minus what other all-in trades already risk), past every cap
+        const allInPct = BOT.allIn[acct]?.[`${t.strategy}:${tf}`];
+        const allInLeft = allInPct ? allInPct - a.open.filter((p) => p.allIn).reduce((s, p) => s + (p.riskPct ?? 0), 0) : 0;
+        if (allInPct && allInLeft < 1) {
+          skip(t, `already ${allInPct}% of the account riding on an all-in trade`, true);
+          continue;
+        }
         // v15.6: the risk mode scales the base risk, leverage and every cap together
-        const lev = Math.min(maxLeverageFor(t.pair), snipe ? Math.max(SNIPER.leverage, L.leverage) : Math.max(conv?.lev ?? 0, L.leverage)); // v22: coins capped
-        let riskPct = snipe ? Math.max(SNIPER.riskPct, L.riskPct) * ddF : clampRisk(L.riskPct, L.riskPct * (t.sizeF ?? 1) * ddF * (conv?.mult ?? 1), conv ? L.convMaxRiskPct / L.riskPct : undefined);
-        if (streakF < 1) riskPct = Math.round(riskPct * streakF * 100) / 100; // v27.24: losing streak → half size
+        const lev = allInPct ? maxLeverageFor(t.pair) : Math.min(maxLeverageFor(t.pair), snipe ? Math.max(SNIPER.leverage, L.leverage) : Math.max(conv?.lev ?? 0, L.leverage)); // v22: coins capped
+        let riskPct = allInPct ? allInLeft : snipe ? Math.max(SNIPER.riskPct, L.riskPct) * ddF : clampRisk(L.riskPct, L.riskPct * (t.sizeF ?? 1) * ddF * (conv?.mult ?? 1), conv ? L.convMaxRiskPct / L.riskPct : undefined);
+        if (streakF < 1 && !allInPct) riskPct = Math.round(riskPct * streakF * 100) / 100; // v27.24: losing streak → half size
         const exp = currencyExposure(a.open, mids, v.equityUsd);
-        const over = snipe ? null : exposureBlock(exp, t.pair, t.side, riskPct, L.ccyCapPct);
+        const over = snipe || allInPct ? null : exposureBlock(exp, t.pair, t.side, riskPct, L.ccyCapPct);
         if (over) {
           note(`${t.ref}:ccy`, `skipped ${t.pair} (${t.strategy}): already ${Math.abs(exp[over] ?? 0).toFixed(1)}% of the account riding on ${over}`);
           skip(t, `already ${Math.abs(exp[over] ?? 0).toFixed(1)}% of the account riding on ${over}`);
@@ -1827,7 +1843,7 @@ export class Practice {
         // after the currency cap at full size (the honest test's order), only once that test showed the cap cuts the
         // drawdown; sniper trades stay outside it, as with the currency cap
         let heatNote = '';
-        if (opts.heat?.active && !snipe && v.equityUsd > 0) {
+        if (opts.heat?.active && !snipe && !allInPct && v.equityUsd > 0) {
           // each open trade counts with the risk it opened with (as in the honest test), not its trailed stop
           const pos = a.open.filter((p) => !p.sniper).map((p) => ({ pair: p.pair, side: p.side, riskPct: p.riskPct ?? (positionRiskUsd(p, mids) / v.equityUsd) * 100 }));
           const room = maxRiskUnder(pos, { pair: t.pair, side: t.side }, L.heatCapPct, opts.heat.book, opts.heat.m);
@@ -1845,7 +1861,7 @@ export class Practice {
         }
         const notional = (v.equityUsd * riskPct) / 100 / (dist / entry);
         let margin = notional / lev;
-        margin = Math.min(margin, v.freeMarginUsd * SIZING.marginShare);
+        margin = Math.min(margin, v.freeMarginUsd * (allInPct ? BOT.allInMarginShare : SIZING.marginShare));
         if (margin < 1) {
           skip(t, 'not enough free margin');
           continue;
@@ -1860,8 +1876,8 @@ export class Practice {
           events.push(`placed a ${resting.kind === 'pullback' ? 'pullback' : 'limit'} order to ${t.side === 1 ? 'buy' : 'sell'} ${t.pair} (${t.strategy}, ${tf}) at ${resting.limit.toPrecision(6)}, good until ${new Date(resting.until).toISOString().slice(11, 16)} UTC, risking ${actual}%${heatNote}`);
           continue;
         }
-        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, desk: !!t.desk, ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}), maxQuoteAgeMs: BOT.quoteAgeMsByTf[tf] ?? 10 * 60_000, feedDelayOk: tf === '1h' || tf === '4h' });
-        const sure = t.desk ? ` — DESK learning trade: ${t.desk.why}` : snipe ? ` — SNIPER: ${snipe.votes} of ${snipe.of} checks agree, risking ${actual}% at ${lev}×` : conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
+        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, desk: !!t.desk, ...(allInPct ? { allIn: true } : {}), ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}), maxQuoteAgeMs: BOT.quoteAgeMsByTf[tf] ?? 10 * 60_000, feedDelayOk: tf === '1h' || tf === '4h' });
+        const sure = allInPct ? ` — ALL-IN (${t.strategy} ${tf}, the one proven strategy): risking ${actual}% at ${lev}× on its tested stop` : t.desk ? ` — DESK learning trade: ${t.desk.why}` : snipe ? ` — SNIPER: ${snipe.votes} of ${snipe.of} checks agree, risking ${actual}% at ${lev}×` : conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
         events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${sure}${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}${heatNote}` : `skipped ${t.pair}: ${r.error}`);
         if (r.ok) {
           perStrategy.set(sk, (perStrategy.get(sk) ?? 0) + 1);

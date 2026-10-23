@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.26 coin bot = ONE strategy, all in (Oct 23, owner: "I don't need 100 strategies, just 1 that sticks… if it happens
+trade it with extreme size up to 20% of the wallet")
+VPS read 15:36 UTC: of every row on both desks only coin `rsi_dip:4h` passes the strict test (46 unseen, +0.41R, PF 2.68,
+deflated Sharpe 89%); every other chosen row 'maybe' with real % ≈ 0; coin 4h RANDOM entries made +0.05R (pivot_bounce 4h
+0.07 barely beats it); the coin bot's own closes −9.1R on 29 trades (every profitable day came from the owner's hand closes).
+`FX_CONFIG.only` {fx [], crypto ['rsi_dip:4h']} + `onlyOk(universe, strategy, tf)` (lab.ts): checked in `planChosen` (by the
+pair's desk), the hourly chooser and fast `chosenOf(…, universe)` → the coin bot opens nothing else (other rows stay graded;
+held trades run out on their own stops). `BOT.allIn` {cbot: {'rsi_dip:4h': 20}} (practice.ts syncBot): such a trade risks
+20% of the account on its TESTED stop (all all-in trades together ≤ 20%), coin leverage cap 20×, up to
+`BOT.allInMarginShare` 90% of free margin, past the risk mode / currency cap / heat cap / streak; `PracticePosition.allIn`
+→ the account's $20 loss cap (`tick`) leaves it alone. Expect ~1–2 coin trades a week. Told plainly: three losers in a row
+≈ −49%. Empty `only.crypto` / `allIn.cbot` = back to the old setup. Forex unchanged. tests/forex-v27-26 (2).
 ## v27.25 no losing-streak brake, only the max loss (Oct 23, owner: "there doesn't have to be a cooling-off system, just a
 max loss system") — `BOT.streak.on` false: no half size after 3 losses, no 4-hour pause after 4; the $20 per-trade loss cap
 (`maxLossUsdByAcct`, both bots) stays. `lossStreak` kept; `on: true` restores it. VPS read 10:00 UTC (590aec1): doubling up
