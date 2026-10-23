@@ -2,7 +2,7 @@
  * testing the rest"): both bots trade only Edge rows (the strict test), at 20% of the account on the tested stop. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type Redis from 'ioredis';
-import { FX_CONFIG, onlyOk, planChosen, toLabTrade } from '../src/forex/lab';
+import { FX_CONFIG, onlyOk, planChosen, provenCells, toLabTrade } from '../src/forex/lab';
 import type { Trade } from '../src/forex/types';
 import { chosenOf } from '../src/forex/fast';
 import { BOT, Practice, newAccount, tick, type PracticeAccount, type Quote } from '../src/forex/practice';
@@ -22,15 +22,15 @@ afterEach(() => vi.useRealTimers());
 
 describe('v27.27 only proven strategies trade, big size', () => {
   it('only Edge rows are chosen; no side doors (per-market cells, owner picks); the per-desk list is empty', () => {
-    expect(FX_CONFIG.provenOnly).toEqual({ on: true, riskPct: 20, cells: { fx: true, crypto: false } });
+    expect(FX_CONFIG.provenOnly).toEqual({ on: true, riskPct: 20, cells: { fx: true, crypto: true }, cellAllIn: { fx: true, crypto: false } });
     expect(FX_CONFIG.only).toEqual({ fx: [], crypto: [] });
     expect(onlyOk('crypto', 'pivot_bounce', '4h')).toBe(true);
     const cell = { pair: 'RUTUSD', n: 108, avgR: 0.19, pf: 2.4, inN: 60, inAvgR: 0.1, mc: { pProfit: 1 } } as never;
     expect(planChosen('pivot_bounce', 'RUTUSD', false, undefined, false, cell, '4h')).toBe(false); // no Monte Carlo field → not strict
-    // v27.31: a strategy on the strict per-market bar trades that forex market; never a coin
+    // v27.31: a strategy on the strict per-market bar trades that forex market; v27.34: coins too (experimental desk)
     const strict = { pair: 'RUTUSD', n: 108, avgR: 0.19, pf: 2.4, winPct: 50, inN: 60, inAvgR: 0.1, mcP: 0.99, mcP5: 0.05 } as never;
     expect(planChosen('pivot_bounce', 'RUTUSD', false, undefined, false, strict, '4h')).toBe(true);
-    expect(planChosen('pivot_bounce', 'BTCUSD', false, undefined, false, { ...(strict as object), pair: 'BTCUSD' } as never, '4h')).toBe(false);
+    expect(planChosen('pivot_bounce', 'BTCUSD', false, undefined, false, { ...(strict as object), pair: 'BTCUSD' } as never, '4h')).toBe(true);
     expect(planChosen('pivot_bounce', 'RUTUSD', false, undefined, true, strict, '4h')).toBe(false); // learner drop wins
     expect(planChosen('judas_swing', 'NDXUSD', false, undefined, false, null, '1h')).toBe(false); // the owner trial is off too
     expect(planChosen('rsi_dip', 'BTCUSD', true, undefined, false, null, '4h')).toBe(true);
@@ -43,6 +43,17 @@ describe('v27.27 only proven strategies trade, big size', () => {
     const t = { strategy: 'rsi_dip', tf: '4h', pair: 'BTCUSD', side: 1, entryT: NOW, keyT: NOW, entry: 100_000, stop: 96_000, target: 108_000 } as unknown as Trade;
     expect(toLabTrade(t, { chosen: true, sizeF: 1, prio: 0, judge: null }).allIn).toBe(20);
     expect(toLabTrade(t, { chosen: false, sizeF: 1, prio: 0, judge: null }).allIn).toBeUndefined();
+    // v27.34: a coin trade live only through its cell practises at the normal size; a forex cell trade stays all-in
+    expect(toLabTrade(t, { chosen: true, rowChosen: false, sizeF: 1, prio: 0, judge: null }).allIn).toBeUndefined();
+    expect(toLabTrade(t, { chosen: true, rowChosen: true, sizeF: 1, prio: 0, judge: null }).allIn).toBe(20);
+    const fx = { ...t, pair: 'RUTUSD' } as Trade;
+    expect(toLabTrade(fx, { chosen: true, rowChosen: false, sizeF: 1, prio: 0, judge: null }).allIn).toBe(20);
+  });
+
+  it('v27.34: per-market cells count as live setups in provenCells only where they trade', () => {
+    const cell = (pair: string) => ({ pair, n: 108, avgR: 0.19, pf: 2.4, winPct: 50, inN: 60, inAvgR: 0.1, mcP: 0.99, mcP5: 0.05, sess: [] });
+    const out = provenCells([{ id: 'news_drift', tf: '1h', markets: [cell('ETHUSD'), cell('RUTUSD'), { ...cell('BTCUSD'), mcP: 0.8 }] }]);
+    expect(out).toEqual({ ETHUSD: ['news_drift:1h'], RUTUSD: ['news_drift:1h'] });
   });
 
   it('a proven coin trade risks 20% on its tested stop and the $20 cap leaves it alone', async () => {

@@ -758,6 +758,17 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.34 coins = experimental practice desk, forex = winners only (Oct 23 ~22:15 UTC, owner: "switch them on, I want crypto
+to be more experimental for now and keep practising while forex is locked on only winnings")
+VPS read 22:04 UTC: coin bot idle since the weekend luck meter (Friday 21:09 run) downgraded rsi_dip:4h to 'no' (its 20 random-
+timing twins' top 10% made 0.242R vs its 0.20R; coin 4h random entries +0.08R — the market drifts up); 0 coin Edge rows, 75 rows
+positive unseen, 94 coin cells on the strict per-market bar (news_drift:1h ETH / SOL / BTC +0.35–0.41R, momentum_bar, bb_squeeze…).
+`FX_CONFIG.provenOnly.cells.crypto` **true** + new `cellAllIn` {fx true, crypto false}: a coin trade that is live only through
+its cell (its row isn't Edge) gets NO all-in size → the coin bot's risk-mode size + the $20 loss cap (practice); Edge rows stay
+20% all-in on both desks; forex unchanged (Edge rows + strict cells, all-in). `toLabTrade(…, { rowChosen })` (hourly: chosen
+has the row; fast: `keep`). `provenCells` under provenOnly = strict cells on desks whose cells trade only (was also trial /
+work bars → the plan listed setups that don't trade). plan.ts counts those per-market setups (`x.proven`, markets of this desk)
+next to the chosen rows → no more "Nothing qualifies yet" while cells trade. tests/forex-proven-only (+1, expectations).
 ## v27.33 the weekend runs itself: stress test, time machine, next-week forecast, warm-up (Oct 23, owner: "make it an
 automated system that all weekend max-extends on preparing for the next weeks"; "look up jakeschincariol trader skill")
 `src/forex/prep.ts` (graded / display only), run by `ForexLab.applyPrep` inside `computeRun` (so also in the worker child)

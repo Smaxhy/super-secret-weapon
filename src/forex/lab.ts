@@ -145,7 +145,10 @@ export const FX_CONFIG = {
    * that loses it stops opening. `on: false` = the v27.26 setup. */
   provenOnly: { on: true, riskPct: 20, /** v27.31 (owner: "forex may still use the daily pivot R1 / S1, it performs too —
    * just what definitely works"): per desk, a strategy that clears the STRICT per-market bar (`cellPass`: 30+ unseen
-   * trades there, +0.1R, PF 1.3, positive before the line, Monte Carlo 95%) also trades on THAT market */ cells: { fx: true, crypto: false } },
+   * trades there, +0.1R, PF 1.3, positive before the line, Monte Carlo 95%) also trades on THAT market. v27.34 (owner: "switch
+   * them on, I want crypto to be more experimental for now and keep practising, while forex is locked on only winners"): coin
+   * cells on too, but a coin trade that is live ONLY through its cell (its row isn't Edge) uses the risk mode's normal size
+   * (+ the $20 loss cap), not the all-in size — `cellAllIn` per desk; Edge rows stay all-in on both desks */ cells: { fx: true, crypto: true }, cellAllIn: { fx: true, crypto: false } },
   /** v27.30 (owner: "make it skip the charts it loses on"): per strategy × chart, the New York sessions and markets where
    * its FIRST 70% lost (8+ trades there, average R below 0) are left out — of its record, its unseen grade and live
    * trading. Picked on the first 70% only, so the unseen part still grades it honestly. Skipped only while what is left
@@ -714,7 +717,12 @@ export function provenCells(rows: ReadonlyArray<Pick<Row, 'id' | 'tf' | 'markets
   const out: Record<string, string[]> = {};
   for (const r of rows) {
     if (r.id === 'random') continue;
-    for (const c of r.markets ?? []) if (cellPass(c) || focusTrial(c.pair, c) || workTrial(c.pair, c, r.pairs?.find((p) => p.pair === c.pair))) (out[c.pair] ??= []).push(`${r.id}:${r.tf}`);
+    for (const c of r.markets ?? []) {
+      // v27.34: while only proven strategies trade, a cell counts only where planChosen lets it trade (strict bar, desk on)
+      const po = FX_CONFIG.provenOnly;
+      const live = po.on ? po.cells[isCrypto(c.pair) ? 'crypto' : 'fx'] && cellPass(c) : cellPass(c) || focusTrial(c.pair, c) || workTrial(c.pair, c, r.pairs?.find((p) => p.pair === c.pair));
+      if (live) (out[c.pair] ??= []).push(`${r.id}:${r.tf}`);
+    }
   }
   return out;
 }
@@ -918,9 +926,11 @@ export function soloWait(t: Pick<Trade, 'strategy' | 'pair' | 'side' | 'entryT'>
   return mate ? null : `${t.strategy} alone — waits for a second setup the same way on this market`;
 }
 
-export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction']; sniper?: LabOpenTrade['sniper']; dataWait?: string | null; soloWait?: string | null; order?: LabOpenTrade['order']; agree?: LabOpenTrade['agree']; marketRec?: LabOpenTrade['marketRec'] }): LabOpenTrade {
-  // v27.27: a chosen trade while only proven strategies trade → the big size
-  const allIn = FX_CONFIG.provenOnly.on && o.chosen ? FX_CONFIG.provenOnly.riskPct : 0;
+export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction']; sniper?: LabOpenTrade['sniper']; dataWait?: string | null; soloWait?: string | null; order?: LabOpenTrade['order']; agree?: LabOpenTrade['agree']; marketRec?: LabOpenTrade['marketRec']; rowChosen?: boolean }): LabOpenTrade {
+  // v27.27: a chosen trade while only proven strategies trade → the big size; v27.34: unless it is live only through its
+  // per-market cell on a desk whose cell trades practise at the normal size (coins)
+  const po = FX_CONFIG.provenOnly;
+  const allIn = po.on && o.chosen && (o.rowChosen !== false || po.cellAllIn[isCrypto(t.pair) ? 'crypto' : 'fx']) ? po.riskPct : 0;
   return {
     ...(allIn ? { allIn } : {}),
     ...(o.order ? { order: o.order } : {}),
@@ -2399,6 +2409,7 @@ export class ForexLab {
         agree,
         marketRec,
         chosen: planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf),
+        rowChosen: chosen.has(`${t.strategy}:${t.tf}`),
         sizeF,
         prio: focusPrio(t.pair, row ? row.all.avgR : -1),
         dataWait,

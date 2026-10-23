@@ -299,7 +299,12 @@ export function buildPlan(x: PlanInputs): BotPlan {
   const { now } = x;
   const chosen = new Set(x.chosen);
   const trading: Record<string, number> = {};
-  for (const k of x.chosen) {
+  // v27.34: the setups that trade only on the markets they proved themselves on count too (else a desk that trades only
+  // per-market cells read "Nothing qualifies yet")
+  const counted = new Set<string>();
+  for (const k of [...x.chosen, ...Object.entries(x.proven ?? {}).filter(([pair]) => x.markets.some((m) => m.id === pair)).flatMap(([, ks]) => ks)]) {
+    if (counted.has(k)) continue;
+    counted.add(k);
     const tf = k.split(':')[1] ?? '';
     trading[tf] = (trading[tf] ?? 0) + 1;
   }
