@@ -471,6 +471,19 @@ async function main(): Promise<void> {
     forex.logBot(lines);
     log.info({ lines }, 'forex bot: NZDUSD trade struck');
   });
+  // v27.29 (owner: "only trade rsi, revert the results from today"): every coin-bot trade closed today (Oct 23 UTC) that
+  // wasn't rsi_dip is struck from the account and the P&L log, and the still-open trades of strategies now off are struck too
+  await oneTimeUpgrade('v27.29-undo-coin-oct23', async () => {
+    const from = Date.UTC(2026, 9, 23, 0);
+    const to = Date.UTC(2026, 9, 24, 0);
+    const label = 'coin bot: today\'s non-rsi_dip results (owner: only rsi_dip trades now)';
+    const lines = [
+      await practice.undoClosed('cbot', (c) => c.strategy !== 'rsi_dip' && c.closedAt >= from && c.closedAt < to, label),
+      await practice.undoPositions('cbot', (p) => p.strategy !== 'rsi_dip', 'coin bot: open trades of strategies that are now off'),
+    ];
+    cryptoLab.logBot(lines);
+    log.info({ lines }, 'coin bot: today struck');
+  });
   // v20.1 (owner: "revert all current active trades"): every open bot trade is struck as if it never happened, once
   await oneTimeUpgrade('v20.1-revert-open', async () => {
     const line = await practice.undoOpen('bot');

@@ -758,6 +758,11 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.29 coin bot today struck (Oct 23, owner: "only trade rsi, revert the results from today, keep everything else in the lab
+unless profitable") — the chooser already does the rest (v27.27 provenOnly: only Edge rows; today that is coin rsi_dip:4h).
+One-time `v27.29-undo-coin-oct23` (index.ts): `undoClosed('cbot', not rsi_dip, closed Oct 23 UTC)` (balance, stats, R ledger,
+P&L log; read 13:34 UTC: 5 trades, −$62.49) + `undoPositions('cbot', not rsi_dip)` (the open DOGE round_break 4h long, −$10.69
+then); their refs go on `skipRefs`. Forex untouched.
 ## v27.28 tight trailing stop once in profit (Oct 23, owner: "I need it to trail its SL VERY tightly if it's in profit"; asked
 first what 20% margin at 1:200 would do — told: a 0.5% move against liquidates it, every tested stop is wider, keep risk sizing)
 `PROFIT_LOCK` (profit-lock.ts) ⅓ / ⅓ / 0.1 → **atFrac 0.15, gapFrac 0.15, keepFrac 0.05**: on a 2R target the lock arms at
