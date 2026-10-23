@@ -758,6 +758,11 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.25 no losing-streak brake, only the max loss (Oct 23, owner: "there doesn't have to be a cooling-off system, just a
+max loss system") — `BOT.streak.on` false: no half size after 3 losses, no 4-hour pause after 4; the $20 per-trade loss cap
+(`maxLossUsdByAcct`, both bots) stays. `lossStreak` kept; `on: true` restores it. VPS read 10:00 UTC (590aec1): doubling up
+ACTIVE on both desks (forex unseen together +0.02R vs alone −0.13R; coins +0.06R vs −0.17R) — the gap is mostly lone
+signals losing; coin cap saved $53 on 3 stops.
 ## v27.24 how it could have won, the losing-streak brake, doubling up tested in the lab (Oct 23, owner: "and how to have
 turned it into a win"; "every bot can lose but 4 losses in a row is different"; "if you think doubling up is worth it to
 try in lab then do it")

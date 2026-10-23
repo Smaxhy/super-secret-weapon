@@ -78,8 +78,10 @@ export const BOT = {
   /** v27.23: one open trade (or resting order) per market and direction across all strategies — no doubled bets */
   onePerMarketSide: true,
   /** v27.24 (owner: "every bot can lose but 4 losses in a row is different"): 3 bot losses in a row → half size until a
-   * win; 4 → no new trades for `pauseHours` after the last one (a safety rule, not graded — like the VIX brake) */
-  streak: { halveAt: 3, pauseAt: 4, pauseHours: 4, factor: 0.5 },
+   * win; 4 → no new trades for `pauseHours` after the last one (a safety rule, not graded — like the VIX brake).
+   * v27.25 OFF (owner: "there doesn't have to be a cooling-off system, just a max loss system") — the per-trade loss
+   * cap (`maxLossUsdByAcct`) is the only loss rule; `on: true` restores the brake */
+  streak: { on: false, halveAt: 3, pauseAt: 4, pauseHours: 4, factor: 0.5 },
   /** v18.7 (owner: "wait it out, then adjust"): after a strategy closes a trade on a market, the same strategy may not
    * re-enter that market for this many candles of its chart (3 h on the hourly, 12 h on the 4-hour) */
   reentryCooldownBars: 3,
@@ -1684,7 +1686,7 @@ export class Practice {
         if (rep) (wait ? rep.waits : rep.skipped).push({ pair: t.pair, strategy: t.strategy, tf: t.tf ?? tfOfRef(t.ref), side: t.side, why });
       };
       // v27.24: a losing streak slows the bot down (half size from 3 in a row, a pause after 4)
-      const streak = lossStreak(a.closed);
+      const streak = BOT.streak.on ? lossStreak(a.closed) : { n: 0, lastAt: null };
       const pausedUntil = streak.n >= BOT.streak.pauseAt && streak.lastAt !== null ? streak.lastAt + BOT.streak.pauseHours * 3_600_000 : 0;
       const streakF = streak.n >= BOT.streak.halveAt ? BOT.streak.factor : 1;
       for (const t of candidates) {

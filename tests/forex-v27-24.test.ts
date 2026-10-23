@@ -29,7 +29,7 @@ describe('v27.24 losing streak', () => {
   it('counts the newest losses until a win, skipping manual closes', () => {
     expect(lossStreak([c(-20, 5), c(-9, 4, 'manual'), c(-20, 3), c(-20, 2), c(-20, 1), c(30, 0)])).toEqual({ n: 4, lastAt: 5 });
     expect(lossStreak([c(10, 5), c(-20, 4)]).n).toBe(0);
-    expect(BOT.streak.pauseAt).toBe(4);
+    expect(BOT.streak.on).toBe(false); // v27.25: owner wants only the per-trade max loss
   });
 });
 
