@@ -758,6 +758,21 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.27 only proven strategies trade, both desks, big size (Oct 23, owner: "only trade what actually is profitable on forex
+and crypto with a big big size like rsi dip; everything else keep testing in the lab; if something else ends up doing really
+good I want it on; all strategies that aren't profitable off")
+`FX_CONFIG.provenOnly` {on true, riskPct 20} (lab.ts) replaces the v27.26 fixed list (`only` now empty, `BOT.allIn` {}):
+- Chooser (hourly + fast `chosenOf`): ONLY rows with verdict 'edge' (the strict test: 30+ unseen trades, both halves
+  positive, PF 1.2+, beats random, luck twins, deflated Sharpe ≥ 50%) that clear the profit floor and aren't dropped by the
+  learner. `planChosen` returns the row's own answer first → no side doors (per-market cells / trial / work bars, owner
+  trials, ownerLive ICT picks, botAlways, rolling picker; desks already study-only). A row that earns Edge goes live by itself;
+  one that loses it stops opening (its open trades run out on their own stops). Empty list → log "only proven strategies
+  trade: none passes the strict test right now — the bot waits".
+- Size: `toLabTrade` sets `LabOpenTrade.allIn` = 20 on every chosen trade → syncBot's v27.26 all-in path (20% of the account
+  on the tested stop, all all-in trades together ≤ 20%, past the mode / currency / heat caps, the $20 cap skips it).
+VPS 15:36 UTC: coins = rsi_dip:4h only (the one Edge row); forex = NOTHING (0 Edge rows; best pivot_bounce:4h real % 0)
+→ the forex bot waits until a row earns Edge. `provenOnly.on = false` = the older choosers (tests that pin those set it at
+the top: forex-ict, forex-montecarlo, forex-profit-floor). tests/forex-proven-only (3, was forex-v27-26).
 ## v27.26 coin bot = ONE strategy, all in (Oct 23, owner: "I don't need 100 strategies, just 1 that sticks… if it happens
 trade it with extreme size up to 20% of the wallet")
 VPS read 15:36 UTC: of every row on both desks only coin `rsi_dip:4h` passes the strict test (46 unseen, +0.41R, PF 2.68,

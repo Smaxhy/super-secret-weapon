@@ -2,6 +2,8 @@
 import { describe, expect, it } from 'vitest';
 import { MARKET_EDGE, bySession, cellPass, ddPctAt, marketCells, monteCarlo, sessionOf, type MarketCell } from '../src/forex/montecarlo';
 import { FX_CONFIG, planChosen, profitFloor } from '../src/forex/lab';
+
+FX_CONFIG.provenOnly.on = false; // v27.27 default: only Edge rows trade; these tests pin the older choosers
 import type { Trade } from '../src/forex/types';
 
 // v27.19 default is 'prefer'; these tests pin the v27.3 focus-only mode

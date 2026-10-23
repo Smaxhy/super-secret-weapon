@@ -1,6 +1,8 @@
 /** v27.1 (owner: "remove the less profitable bots"): every live row must clear the profit floor. */
 import { describe, expect, it } from 'vitest';
 import { FX_CONFIG, profitFloor } from '../src/forex/lab';
+
+FX_CONFIG.provenOnly.on = false; // v27.27 default: only Edge rows trade; these tests pin the older choosers
 import { chosenOf } from '../src/forex/fast';
 
 // v27.19 default is 'prefer'; these tests pin the v27.3 focus-only mode

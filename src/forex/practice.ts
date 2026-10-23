@@ -78,7 +78,7 @@ export const BOT = {
   /** v27.26 (owner: "if it happens trade it with extreme size, up to 20% of the wallet"): per account, a strategy:chart
    * that trades at this % of the account at its TESTED stop — past the risk mode, the currency / correlated-risk caps and
    * the $ loss cap (its stop is the strategy's own). All such trades together never risk more than that %. */
-  allIn: { cbot: { 'rsi_dip:4h': 20 } } as Partial<Record<string, Record<string, number>>>,
+  allIn: {} as Partial<Record<string, Record<string, number>>>,
   /** v27.26: an all-in trade may use up to this share of the free margin (normal trades: SIZING.marginShare) */
   allInMarginShare: 0.9,
   /** v27.23: one open trade (or resting order) per market and direction across all strategies — no doubled bets */
@@ -933,6 +933,8 @@ export interface HeatLive {
 
 /** A lab paper trade as the bot sees it (v14: + the judge's score and the trade's exit rules). */
 export interface LabOpenTrade {
+  /** v27.27: risk this % of the account on the tested stop (a proven strategy while only proven ones trade) */
+  allIn?: number;
   ref: string;
   strategy: string;
   tf?: string;
@@ -1822,7 +1824,7 @@ export class Practice {
         // less than the mode's own size, still smaller after a drawdown
         const snipe = t.sniper?.on && !a.open.some((p) => p.sniper) ? t.sniper : null;
         // v27.26: an all-in strategy risks its own % (minus what other all-in trades already risk), past every cap
-        const allInPct = BOT.allIn[acct]?.[`${t.strategy}:${tf}`];
+        const allInPct = t.allIn || BOT.allIn[acct]?.[`${t.strategy}:${tf}`]; // v27.27: set by the lab on proven trades
         const allInLeft = allInPct ? allInPct - a.open.filter((p) => p.allIn).reduce((s, p) => s + (p.riskPct ?? 0), 0) : 0;
         if (allInPct && allInLeft < 1) {
           skip(t, `already ${allInPct}% of the account riding on an all-in trade`, true);
@@ -1877,7 +1879,7 @@ export class Practice {
           continue;
         }
         const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, desk: !!t.desk, ...(allInPct ? { allIn: true } : {}), ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}), maxQuoteAgeMs: BOT.quoteAgeMsByTf[tf] ?? 10 * 60_000, feedDelayOk: tf === '1h' || tf === '4h' });
-        const sure = allInPct ? ` — ALL-IN (${t.strategy} ${tf}, the one proven strategy): risking ${actual}% at ${lev}× on its tested stop` : t.desk ? ` — DESK learning trade: ${t.desk.why}` : snipe ? ` — SNIPER: ${snipe.votes} of ${snipe.of} checks agree, risking ${actual}% at ${lev}×` : conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
+        const sure = allInPct ? ` — ALL-IN (${t.strategy} ${tf}, a proven strategy): risking ${actual}% at ${lev}× on its tested stop` : t.desk ? ` — DESK learning trade: ${t.desk.why}` : snipe ? ` — SNIPER: ${snipe.votes} of ${snipe.of} checks agree, risking ${actual}% at ${lev}×` : conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
         events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${sure}${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}${heatNote}` : `skipped ${t.pair}: ${r.error}`);
         if (r.ok) {
           perStrategy.set(sk, (perStrategy.get(sk) ?? 0) + 1);

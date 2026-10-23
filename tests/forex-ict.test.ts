@@ -5,6 +5,8 @@ import { ICT, STRATEGIES, fvgSignal, mssSignal, runsOn, sessionRange, strategyBy
 import { nyMinOfDay, nyOffsetMs } from '../src/forex/ny-time';
 import { nyOffsetMs as fromCalendar } from '../src/forex/calendar';
 import { FX_CONFIG } from '../src/forex/lab';
+
+FX_CONFIG.provenOnly.on = false; // v27.27 default: only Edge rows trade; these tests pin the older choosers
 import { buildPlan } from '../src/forex/plan';
 import type { Bar } from '../src/forex/types';
 
@@ -245,7 +247,7 @@ describe('v25 owner rules: ICT live, Fibonacci never alone', () => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(new URL('../src/forex/lab.ts', import.meta.url), 'utf8');
     expect(src).toMatch(/this\.universe === 'fx' \? new Set\(FX_CONFIG\.ownerLive\)/);
-    expect(src).toMatch(/profitFloor\(x\)\.ok && \(ownerLive\.has\(x\.id\) \|\| \(mode === 'edge'/); // v27.1: the floor first
+    expect(src).toMatch(/profitFloor\(x\)\.ok && \(FX_CONFIG\.provenOnly\.on \? x\.verdict === 'edge' : ownerLive\.has\(x\.id\) \|\| \(mode === 'edge'/); // v27.1: the floor first; v27.27: proven-only switch
   });
 
   it('fib_pullback waits alone and trades next to a second setup the same way', async () => {
