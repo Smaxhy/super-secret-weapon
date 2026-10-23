@@ -13,6 +13,10 @@ import { Badge, Button, Card, Row, Rows } from './ui';
 
 interface LiveCheck { key: string; name: string; liveN: number; liveR: number; liveAvgR: number | null; testN: number; testAvgR: number | null; vs: 'in_line' | 'worse' | 'better' | 'too_few' }
 interface NearMiss { key: string; name: string; pair: string | null; n: number; avgR: number; pf: number | null; missing: string[] }
+interface Machine { trades: number; replays: number; targetFirst: number; stopFirst: number; neither: number; replayAvgR: number; realAvgR: number; edgeR: number; targetR: number | null; breakEvenPct: number | null; verdict: string }
+interface PrepRow { key: string; name: string; kind: 'live' | 'cell' | 'near'; pairs: string[]; plateau: { share: number | null; worstAvgR: number | null; fragile: boolean }; machine: Machine | null; unseenN: number; unseenAvgR: number; perWeek: number }
+interface Forecast { tradesPerWeek: number; pGreen: number; medianPct: number; p5Pct: number; p95Pct: number; riskPct: number; medianR: number; p5R: number; p95R: number }
+interface Prep { at: number; ms: number; rows: PrepRow[]; forecast: Forecast | null; notes: string[] }
 interface Recap {
   at: number;
   universe: 'fx' | 'crypto';
@@ -25,11 +29,12 @@ interface Recap {
   heldBack: Array<{ kind: string; label: string; n: number; done: number; totalR: number }>;
   nearMisses: NearMiss[];
   monday: { events: Array<{ t: number; ccy: string; title: string }>; riskMode: string };
-  ready: { ok: boolean; checks: Array<{ ok: boolean; text: string }> };
+  ready: { ok: boolean; checks: Array<{ ok: boolean; text: string; soft?: boolean }> };
   lessons: string[];
+  prep?: Prep | null;
 }
 interface Ai { at: number; summary: string; wentWell: string[]; wentWrong: string[]; ideas: Array<{ idea: string; test: string }>; watchMonday: string[] }
-interface Data { review: { recap: Recap; ai: Ai | null } | null }
+interface Data { review: { recap: Recap; ai: Ai | null; steps?: Array<{ t: number; what: string }> } | null }
 
 const usd = (x: number) => `${x < 0 ? '−' : '+'}$${Math.abs(x).toFixed(2)}`;
 const rTxt = (x: number | null) => (x === null ? '—' : `${x > 0 ? '+' : ''}${x}R`);
@@ -66,6 +71,8 @@ export function WeekendCard() {
     );
   }
   const { recap: r, ai } = rv;
+  const steps = rv.steps ?? [];
+  const pct = (x: number) => `${x > 0 ? '+' : ''}${x}%`;
   return (
     <Card
       accent={weekend}
@@ -77,7 +84,7 @@ export function WeekendCard() {
       <ul className="mb-4 space-y-1.5" aria-label="Ready for Monday">
         {r.ready.checks.map((c) => (
           <li key={c.text} className="flex gap-2 text-sm">
-            <span aria-hidden className={c.ok ? 'text-up' : c.text.startsWith('nothing passes') ? 'text-ink-2' : 'text-down'}>{c.ok ? '✓' : c.text.startsWith('nothing passes') ? '·' : '✗'}</span>
+            <span aria-hidden className={c.ok ? 'text-up' : c.soft || c.text.startsWith('nothing passes') ? 'text-ink-2' : 'text-down'}>{c.ok ? '✓' : c.soft || c.text.startsWith('nothing passes') ? '·' : '✗'}</span>
             <span className="text-ink">{c.text}</span>
           </li>
         ))}
@@ -86,6 +93,22 @@ export function WeekendCard() {
       <ul className="mb-4 list-disc space-y-1 pl-5 text-sm text-ink">
         {r.lessons.map((l) => <li key={l}>{l}</li>)}
       </ul>
+      {r.prep?.forecast && (
+        <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Next week, if it trades like the tested weeks">
+          {[
+            ['Trades a week', `≈ ${r.prep.forecast.tradesPerWeek}`],
+            ['Green week', `${Math.round(r.prep.forecast.pGreen * 100)}%`],
+            ['Typical week', pct(r.prep.forecast.medianPct)],
+            ['Bad week (1 in 20)', pct(r.prep.forecast.p5Pct)],
+          ].map(([k, v]) => (
+            <div key={k} className="rounded-xl bg-surface-2 px-3 py-2">
+              <div className="text-xs text-muted">{k}</div>
+              <div className="text-[15px] font-semibold tabular-nums text-ink">{v}</div>
+            </div>
+          ))}
+          <p className="col-span-2 text-xs text-muted sm:col-span-4">Next week, if the live strategies trade like their tested weeks, at {r.prep.forecast.riskPct}% of the account a trade (4,000 simulated weeks; overlapping trades not capped, so the real swings are a bit smaller).</p>
+        </div>
+      )}
       {ai && (
         <div className="mb-4 rounded-xl bg-surface-2 p-3">
           <h3 className="mb-1 text-xs font-semibold text-muted">AI review</h3>
@@ -127,6 +150,28 @@ export function WeekendCard() {
                   <Row key={h.kind} label={h.label} sub={`${h.n} refused, ${h.done} finished in the lab`} value={<span className={h.totalR > 0 ? 'text-down' : h.totalR < 0 ? 'text-up' : ''} title={h.totalR > 0 ? 'the rule cost this much' : 'the rule saved this much'}>{h.totalR > 0 ? `cost ${rTxt(h.totalR)}` : h.totalR < 0 ? `saved ${rTxt(-h.totalR)}` : '0R'}</span>} />
                 ))}
               </Rows>
+            </section>
+          )}
+          {r.prep && r.prep.rows.length > 0 && (
+            <section>
+              <h3 className="mb-1 text-xs font-semibold text-muted">Weekend stress test</h3>
+              <p className="mb-2 text-xs text-ink-2">Each strategy re-run with its stop and target 25% tighter and wider (does it still make money?) and its real trades replayed on random price paths with the same stop and target (what does its timing add?).</p>
+              <Rows>
+                {r.prep.rows.map((p) => (
+                  <Row
+                    key={`${p.key}:${p.pairs.join(',')}`}
+                    label={<span>{p.name}{p.pairs.length ? ` on ${p.pairs.join(', ')}` : ''} {p.kind === 'near' ? <Badge>not live</Badge> : p.plateau.fragile ? <Badge tone="down">fragile</Badge> : p.plateau.share !== null ? <Badge tone="up">holds up</Badge> : null}</span>}
+                    sub={`${p.plateau.share === null ? 'too few trades to sweep' : `${Math.round(p.plateau.share * 100)}% of nearby settings made money`}${p.machine ? ` · random paths ${rTxt(p.machine.replayAvgR)} vs real ${rTxt(p.machine.realAvgR)} a trade · ${p.machine.verdict}` : ''}`}
+                    value={p.machine ? <span className={p.machine.edgeR > 0 ? 'text-up' : 'text-down'} title="what its timing adds a trade">{rTxt(p.machine.edgeR)}</span> : '—'}
+                  />
+                ))}
+              </Rows>
+            </section>
+          )}
+          {steps.length > 0 && (
+            <section>
+              <h3 className="mb-1 text-xs font-semibold text-muted">What it did this weekend</h3>
+              <ul className="space-y-1 text-sm text-ink">{steps.slice().reverse().map((x) => <li key={`${x.t}${x.what}`}><span className="text-muted">{day(x.t)}</span> · {x.what}</li>)}</ul>
             </section>
           )}
           {r.nearMisses.length > 0 && (

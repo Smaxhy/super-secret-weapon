@@ -64,7 +64,8 @@ import { getSolUsd } from './lib/sol-price';
 import { DipWatcher } from './executor/dip-watcher';
 import { StrategyLab } from './learner/strategy-lab';
 import { Tournament } from './learner/tournament';
-import { ForexLab, FX_CHOSEN_HIST } from './forex/lab';
+import { ForexLab, FX_CHOSEN_HIST, FX_PREP } from './forex/lab';
+import type { PrepReport } from './forex/prep';
 import { feeds as fxFeeds } from './forex/feeds';
 import { FastLab } from './forex/fast';
 import { ledgerRows, Practice } from './forex/practice';
@@ -441,17 +442,23 @@ async function main(): Promise<void> {
   const fastCrypto = new FastLab(redis, cryptoLab);
   fastCrypto.start();
   // v27.32 (owner: "recap the past week and think how to improve all weekend, be ready Monday"): the weekend review per desk
-  const deskOf = (lab: ForexLab): WeekendDeskDef => ({
+  const deskOf = (lab: ForexLab, fast: FastLab): WeekendDeskDef => ({
     universe: lab.universe,
     k: lab.k,
+    // v27.33: before the forex open, fresh prices + a full re-test so Monday's first look starts warm
+    ...(lab.universe === 'fx' ? { warmUp: async () => {
+      await lab.run(true);
+      await fast.evaluate();
+    } } : {}),
     gather: async (now) => {
-      const [report, account, pnl, lossRaw, shadowRaw, histRaw] = await Promise.all([
+      const [report, account, pnl, lossRaw, shadowRaw, histRaw, prepRaw] = await Promise.all([
         lab.last(),
         practice.rawAccount(lab.acct).catch(() => null),
         practice.pnlRows(lab.acct).catch(() => []),
         redis.get(lab.k('fx:lossrev')).catch(() => null),
         redis.get(lab.k('fx:shadow')).catch(() => null),
         redis.lrange(lab.k(FX_CHOSEN_HIST), 0, 499).catch(() => [] as string[]),
+        redis.get(lab.k(FX_PREP)).catch(() => null),
       ]);
       if (!report) return null;
       const js = <T,>(raw: string | null, d: T): T => {
@@ -481,6 +488,7 @@ async function main(): Promise<void> {
         losses: js(lossRaw, []),
         shadow: js(shadowRaw, []),
         events: fxCalendar.get().events,
+        prep: js<PrepReport | null>(prepRaw, null),
         ready: {
           labRanAt: ran,
           labError: lab.lastError?.msg ?? null,
@@ -493,7 +501,7 @@ async function main(): Promise<void> {
       };
     },
   });
-  const weekendReview = new WeekendReview(redis, [deskOf(forex), deskOf(cryptoLab)], marketClock, (universe, text, ok) =>
+  const weekendReview = new WeekendReview(redis, [deskOf(forex, fastFx), deskOf(cryptoLab, fastCrypto)], marketClock, (universe, text, ok) =>
     bus.publish({ type: 'fxTrade', data: { kind: 'ready', pair: '', side: 1, pnlUsd: 0, reason: text, acct: universe === 'fx' ? 'bot' : 'cbot', ok } }),
   );
   weekendReview.start();

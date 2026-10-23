@@ -124,7 +124,8 @@ describe('v27.32 weekend review', () => {
     };
     const pushes: string[] = [];
     let gathered = 0;
-    const desk = { universe: 'fx' as const, k: (x: string) => x, gather: async (now: number) => (gathered++, base({ now, ready: { ...base().ready, labRanAt: now - 20 * 60_000 } })) };
+    let warmed = 0;
+    const desk = { universe: 'fx' as const, k: (x: string) => x, warmUp: async () => void warmed++, gather: async (now: number) => (gathered++, base({ now, ready: { ...base().ready, labRanAt: now - 20 * 60_000 } })) };
     const job = new WeekendReview(redis as never, [desk], marketClock, (_u, text) => pushes.push(text), null);
     await job.tick(Date.parse('2026-10-21T12:00:00Z')); // Wednesday: nothing
     expect(gathered).toBe(0);
@@ -136,9 +137,16 @@ describe('v27.32 weekend review', () => {
     expect(gathered).toBe(1);
     const sunEve = Date.parse('2026-10-25T20:00:00Z'); // forex opens 21:00 UTC (17:00 New York, EST from Nov 1 — EDT here)
     expect(marketClock(sunEve).open).toBe(false);
+    await job.tick(sunEve - 30 * 60_000); // 90 min before the open: warm-up, no push yet
+    expect(warmed).toBe(1);
+    expect(pushes).toHaveLength(0);
     await job.tick(sunEve);
     await job.tick(sunEve + 15 * 60_000);
+    expect(warmed).toBe(1);
     expect(pushes).toHaveLength(1);
+    const steps = (await job.get((x) => x))!.steps!.map((x) => x.what).join(' | ');
+    expect(steps).toMatch(/warm-up before the open/);
+    expect(steps).toMatch(/ready check sent: ready/);
     expect(pushes[0]).toMatch(/^✅ Forex bot ready for Monday/);
     await job.tick(Date.parse('2026-10-21T12:00:00Z'), true); // "Review now" works on a weekday
     expect(gathered).toBeGreaterThan(3);

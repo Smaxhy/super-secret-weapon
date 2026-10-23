@@ -25,6 +25,7 @@ import { moduleLogger } from '../lib/logger';
 import type { CalEvent, MarketClock } from './calendar';
 import type { LossReview } from './loss-review';
 import { mondayOf, type PnlWeek } from './pnl';
+import type { PrepReport } from './prep';
 import type { BotLedgerRow } from './practice';
 import { LEDGER_WHY } from './practice';
 import type { ShadowTrade } from './shadow';
@@ -39,7 +40,9 @@ export const WEEKEND = {
   ai: true,
   aiBudgetUsd: 0.3,
   /** "ready for Monday" push this many minutes before forex opens (Sunday 17:00 New York) */
-  readyPushMin: 90,
+  readyPushMin: 60,
+  /** v27.33: before that, fresh data + a full lab run + the 15-minute test, so Monday's first look starts warm */
+  warmUpMin: 120,
   /** a live strategy whose live avg R is this far under its tested avg R (with 3+ trades) is flagged */
   liveGapR: 0.5,
   /** a hold-back reason whose finished refusals made / lost this many R this week is called out */
@@ -85,6 +88,8 @@ export interface RecapInput {
   losses: readonly LossReview[];
   shadow: readonly ShadowTrade[];
   events: readonly CalEvent[];
+  /** v27.33: the lab's weekend prep (robustness sweep, time machine, next-week forecast), null before it ran */
+  prep?: PrepReport | null;
   ready: {
     labRanAt: number | null;
     labError: string | null;
@@ -131,8 +136,10 @@ export interface WeekendRecap {
   heldBack: Array<{ kind: string; label: string; n: number; done: number; totalR: number }>;
   nearMisses: NearMiss[];
   monday: { events: Array<{ t: number; ccy: string; title: string }>; riskMode: string };
-  ready: { ok: boolean; checks: Array<{ ok: boolean; text: string }> };
+  ready: { ok: boolean; checks: Array<{ ok: boolean; text: string; soft?: boolean }> };
   lessons: string[];
+  /** v27.33: the weekend prep, as stored by the lab */
+  prep: PrepReport | null;
 }
 
 const SHORT: Record<string, string> = {
@@ -292,9 +299,10 @@ export function buildRecap(x: RecapInput): WeekendRecap {
     { ok: rd.staleMarkets.length === 0, text: rd.staleMarkets.length ? `prices lagging on ${rd.staleMarkets.join(', ')}` : 'every market has fresh prices' },
     { ok: liveCount > 0, text: liveCount ? `${liveCount} proven strategy × chart${liveCount === 1 ? '' : 's'} ready to trade` : 'nothing passes the strict test yet — it will wait until something does' },
     { ok: rd.equityUsd !== null, text: rd.equityUsd !== null ? `account readable ($${rd.equityUsd.toFixed(2)}, risk mode ${rd.riskMode})` : 'the bot account could not be read' },
+    { ok: !!x.prep && x.now - x.prep.at < 36 * 3_600_000, soft: true, text: x.prep && x.now - x.prep.at < 36 * 3_600_000 ? `weekend study done (${x.prep.rows.length} strategies stress-tested)` : 'the weekend study has not run yet (it runs while the market is closed)' },
     ...(x.universe === 'fx' ? [{ ok: rd.openPositions === 0, text: rd.openPositions ? `${rd.openPositions} trade${rd.openPositions === 1 ? '' : 's'} still open over the weekend` : 'no trades left open over the weekend' }] : []),
   ];
-  const ready = { ok: checks.every((c) => c.ok || c.text.startsWith('nothing passes')), checks };
+  const ready = { ok: checks.every((c) => c.ok || ('soft' in c && c.soft) || c.text.startsWith('nothing passes')), checks };
 
   // lessons — plain words, each tied to a number above
   const lessons: string[] = [];
@@ -320,13 +328,14 @@ export function buildRecap(x: RecapInput): WeekendRecap {
     const parts = [...r.skip.sessions.map((s) => SESS[s] ?? String(s)), ...r.skip.pairs];
     if (parts.length) lessons.push(`${nameOf(`${r.id}:${r.tf}`)} skips ${parts.join(', ')} (it lost there before the test line).`);
   }
+  if (x.prep) lessons.push(...x.prep.notes);
   if (!liveCount) lessons.push(`Nothing on the ${desk} desk passes the strict test right now — Monday it waits and keeps testing rather than trade on hope.`);
 
   const headline = !ready.ok
-    ? `Not ready for Monday: ${checks.find((c) => !c.ok && !c.text.startsWith('nothing passes'))?.text}`
+    ? `Not ready for Monday: ${checks.find((c) => !c.ok && !('soft' in c && c.soft) && !c.text.startsWith('nothing passes'))?.text}`
     : `${money.trades ? `Week ${usdTxt(money.pnlUsd)} on ${money.trades} trade${money.trades === 1 ? '' : 's'}` : 'No trades this week'} · ${liveCount ? `${liveCount} proven setup${liveCount === 1 ? '' : 's'} ready` : 'nothing proven yet — it waits'}${weekAhead.length ? ` · ${weekAhead.length} big news events ahead` : ''}`;
 
-  return { at: x.now, universe: x.universe, week: monday, headline, money, live, list, losses, heldBack, nearMisses, monday: { events: weekAhead, riskMode: rd.riskMode }, ready, lessons };
+  return { at: x.now, universe: x.universe, week: monday, headline, money, live, list, losses, heldBack, nearMisses, monday: { events: weekAhead, riskMode: rd.riskMode }, ready, lessons, prep: x.prep ?? null };
 }
 
 /** Pure: the keys live at `t` from the chosen history (newest first, `{t, keys}`), null when it doesn't reach back. */
@@ -371,7 +380,9 @@ const AI_SCHEMA = {
 const AI_SYSTEM = `You review one week of a paper-trading bot for its owner, who has some coding knowledge and wants plain words.
 You get the week's recap as JSON: money, each live strategy's live R next to its tested R, losses graded normal / avoidable,
 what each hold-back rule cost or saved (the lab's result for trades the bot refused), the strategies closest to passing the
-strict test and what they miss, next week's big news, and a readiness checklist.
+strict test and what they miss, next week's big news, a readiness checklist, and the weekend stress test (prep): per
+strategy the share of nearby stop / target settings that also made money (plateau; under half = fragile), its real R a
+trade next to the R of random price paths with the same stop and target (what its timing adds), and a next-week forecast.
 Rules: use only the numbers given; one week is a small sample, say so when a conclusion rests on few trades; never suggest
 loosening the strict test, raising size or trading something that hasn't passed it; ideas must be things the lab can TEST
 on its 70/30 split (a filter, an exit, a session, a market), each with how to test it. Short sentences. At most 4 items a list.`;
@@ -391,6 +402,8 @@ export function parseWeekendAi(text: string): Omit<WeekendAi, 'at' | 'model'> | 
 export interface WeekendStore {
   recap: WeekendRecap;
   ai: WeekendAi | null;
+  /** v27.33: what the weekend system did, oldest first (reset each week) */
+  steps?: Array<{ t: number; what: string }>;
 }
 
 /** Reads what a desk needs for its recap (index.ts wires it to the lab, the account, the calendar). */
@@ -401,6 +414,8 @@ export interface WeekendDeskDef {
   /** Redis key prefix mapper (lab.k) */
   k: (key: string) => string;
   gather: GatherRecap;
+  /** v27.33: before the forex open — fresh data + a full lab run (+ the 15-minute test) */
+  warmUp?: () => Promise<void>;
 }
 
 /** The weekend job: every 15 minutes, per desk — recap while it's the weekend, the AI review, the Sunday push. */
@@ -457,28 +472,42 @@ export class WeekendReview {
     const prev = await this.get(d.k);
     const fresh = prev && now - prev.recap.at < WEEKEND.everyHours * 3_600_000;
     let store = prev;
+    const steps = (s: WeekendStore | null, week: string) => (s && s.recap.week === week ? [...(s.steps ?? [])] : []);
+    const save = async (s: WeekendStore, what: string | null) => {
+      if (what) s.steps = [...(s.steps ?? []), { t: now, what }].slice(-40);
+      await this.redis.set(d.k('fx:weekend'), JSON.stringify(s), 'EX', 14 * 86_400);
+    };
     if (!fresh || force) {
       const input = await d.gather(now);
       if (!input) return;
       const recap = buildRecap(input);
       const day = new Date(now).toISOString().slice(0, 10);
-      const keepAi = prev?.ai && new Date(prev.ai.at).toISOString().slice(0, 10) === day ? prev.ai : null;
-      const ai = keepAi ?? (WEEKEND.ai ? await this.review(recap, now) : null) ?? (prev?.ai && prev.recap.week === recap.week ? prev.ai : null);
-      store = { recap, ai };
-      await this.redis.set(d.k('fx:weekend'), JSON.stringify(store), 'EX', 14 * 86_400);
+      // a new AI read each day, and again once the weekend study has landed (the morning read may predate it)
+      const keepAi = prev?.ai && new Date(prev.ai.at).toISOString().slice(0, 10) === day && (!!prev.recap.prep || !recap.prep) ? prev.ai : null;
+      const wrote = keepAi ? null : WEEKEND.ai ? await this.review(recap, now) : null;
+      const ai = keepAi ?? wrote ?? (prev?.ai && prev.recap.week === recap.week ? prev.ai : null);
+      store = { recap, ai, steps: steps(prev, recap.week) };
+      const studied = recap.prep && (!prev?.recap.prep || prev.recap.prep.at !== recap.prep.at) ? ` · new weekend study: ${recap.prep.rows.length} strategies stress-tested` : '';
+      await save(store, `recap rebuilt (${recap.money.trades} trades this week)${studied}${wrote ? ' · AI review written' : ''}`);
       await this.redis.multi().lpush(d.k('fx:weekend:hist'), JSON.stringify({ at: recap.at, week: recap.week, headline: recap.headline, lessons: recap.lessons })).ltrim(d.k('fx:weekend:hist'), 0, 11).exec();
       log.info({ desk: d.universe, headline: recap.headline }, 'weekend recap built');
     }
+    if (!store || clock.open) return;
+    const tag = new Date(now).toISOString().slice(0, 10);
+    // v27.33 warm-up: fresh data + a full lab run (+ the 15-minute test) before the open, once
+    if (d.warmUp && clock.minutesToChange <= WEEKEND.warmUpMin && clock.minutesToChange > WEEKEND.readyPushMin && (await this.redis.set(d.k(`fx:warmup:${tag}`), '1', 'EX', 3 * 86_400, 'NX')) === 'OK') {
+      const t0 = Date.now();
+      await d.warmUp().catch((err: Error) => log.warn({ err: err.message, desk: d.universe }, 'weekend warm-up failed'));
+      await save(store, `warm-up before the open: fresh prices + every strategy re-tested (${Math.round((Date.now() - t0) / 1000)} s)`);
+    }
     // the Sunday push, once per weekend per desk, before forex opens
-    if (store && !clock.open && clock.minutesToChange <= WEEKEND.readyPushMin) {
-      const tag = new Date(now).toISOString().slice(0, 10);
-      if ((await this.redis.set(d.k(`fx:readypush:${tag}`), '1', 'EX', 3 * 86_400, 'NX')) === 'OK') {
-        // rebuild right before the push so the checklist is current
-        const input = await d.gather(now);
-        const recap = input ? buildRecap(input) : store.recap;
-        if (input) await this.redis.set(d.k('fx:weekend'), JSON.stringify({ recap, ai: store.ai }), 'EX', 14 * 86_400);
-        this.notify(d.universe, readyText(recap), recap.ready.ok);
-      }
+    if (clock.minutesToChange <= WEEKEND.readyPushMin && (await this.redis.set(d.k(`fx:readypush:${tag}`), '1', 'EX', 3 * 86_400, 'NX')) === 'OK') {
+      // rebuild right before the push so the checklist is current
+      const input = await d.gather(now);
+      const recap = input ? buildRecap(input) : store.recap;
+      store = { ...store, recap };
+      await save(store, `ready check sent: ${recap.ready.ok ? 'ready' : 'NOT ready'}`);
+      this.notify(d.universe, readyText(recap), recap.ready.ok);
     }
   }
   /** one Claude review of the recap (null without a key, over budget, or on any failure) */

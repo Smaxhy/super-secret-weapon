@@ -758,6 +758,35 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.33 the weekend runs itself: stress test, time machine, next-week forecast, warm-up (Oct 23, owner: "make it an
+automated system that all weekend max-extends on preparing for the next weeks"; "look up jakeschincariol trader skill")
+`src/forex/prep.ts` (graded / display only), run by `ForexLab.applyPrep` inside `computeRun` (so also in the worker child)
+right after the quality pass, only while the desk's market is closed (coins: UTC Sat / Sun), at most every `PREP.everyHours`
+8 (or when the 70/30 line moved) → Redis `fx:prep` / `cm:prep` (`FX_PREP`). Rows studied (≤ `maxRows` 14): live Edge rows
+(+ profit floor), rows with a `cellPass` market on desks whose cells trade (`provenOnly.cells`), then the near misses
+(positive unseen, 10+ trades). Per row `studyRow`: (1) **plateau** — stop × / target × {0.75, 1, 1.25} (`scaleSignal` around
+the signal close, after the row's exit), `plateauOf` = share of the 8 neighbours with 10+ unseen trades that made money;
+< 50% = `fragile`; (2) **time machine** (ported idea from Jake Schincariol's day-trader-skill `trader-timemachine`, MIT):
+`timeMachine(bars, trades, barMin, from, to)` replays each unseen trade 10× (seed 19) on paths bootstrapped from that
+market's candles of the unseen weeks + 60 days before, same slot of the day ± 1 (O/H/L/C as ratios to the previous close,
+weekend gaps left out), stop first when a candle touches both, hold = 2 × the trade's bars (≤ 120) → target first / stop
+first / neither, replay avg R (no costs) vs the real avg R → `edgeR` = what its timing adds; `machineVerdict` = the skill's
+wording on the break-even 1 / (1 + R) (coin flip < 5 pts, leans < 15, strongly; < 30 replays hitting a side = too few;
+> 40% neither said); `poolMachines` across markets; (3) **next week** `weekForecast` (4,000 weeks, Poisson(unseen trades a
+week) per live key, R drawn from its unseen trades, × `provenOnly.riskPct` (20) → % of the account; overlap not capped).
+`prepNotes` → plain lines (fragile / holds up / timing adds / a near miss that looks solid / next week). The weekend
+review (`weekend.ts`) reads `fx:prep` into the recap (`recap.prep`, its notes in `lessons`, a soft "weekend study done"
+check that never fails readiness), re-runs the AI review once the study lands, keeps `steps` (what the weekend system did:
+recap rebuilt, new study, AI review, warm-up, ready check), and **warms up** before the forex open: ≤ `warmUpMin` 120 min
+and > `readyPushMin` (now 60) → `lab.run(true)` + `fastFx.evaluate()` once (`fx:warmup:<day>` NX), then the ready push.
+Dashboard WeekendCard: next-week tiles (trades a week, green-week %, typical / bad week %), "Weekend stress test" rows
+(holds up / fragile / not live, random paths vs real R, verdict), "What it did this weekend". NOT used to switch anything:
+a fragile live row is only flagged. **Jake Schincariol's repos** (`Jakeschincariol/trader-skill`, `day-trader-skill`, MIT,
+Python, read 2026-10-23; no install scripts; only subprocess = pdftotext): US-stock helper skills (13F copycat, Congress
+trades, SEC XBRL, tax lots, rebalance, ORB scanner / close-confirmed entry / or-mid stop / time machine / risk / broker
+tickets). Already in the bot: ORB (`orb_ny`), close-confirmed entries, stops / targets in R, risk caps, news watch, Monte
+Carlo. Taken: the time machine. Not taken: equities-only data (EDGAR, House PTRs), volume confirmation (FX has no volume —
+could be a coin / index filter later). tests/forex-prep (6), forex-weekend (+warm-up).
 ## v27.32 weekend review: recap the week, get ready for Monday (Oct 23, owner: "recap everything from the past week and think
 how it can improve itself all weekend so it's fully prepared Monday; use the weekend as a hyper-learning experience")
 `src/forex/weekend.ts`: `buildRecap` (pure) per desk from what the bot already records — this week's P&L log (weeklyLog, UTC,

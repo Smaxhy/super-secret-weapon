@@ -11,6 +11,7 @@
  * (`book`) are shared with the 15-minute / 1-minute lab (`fast.ts`). Redis `fx:report`, `fx:paper:since`,
  * `fx:portfolio`. Nothing here places a real order.
  */
+import { PREP, prepNotes, studyRow, weekForecast, type PrepReport, type PrepRow, type PrepTarget } from './prep';
 import type Redis from 'ioredis';
 import { howToWin, reviewLosses, type LossReview } from './loss-review';
 import { confluenceStudy, isTogether, type ConfTrade, type ConfluenceReport } from './confluence';
@@ -577,6 +578,8 @@ export const FX_ROLL_NULL = 'fx:roll:null';
 export const FX_CHOSEN_HIST = 'fx:chosen:hist';
 /** v17: the luck meter's last weekend run */
 export const FX_LUCK = 'fx:luck';
+/** v27.33: the weekend prep (robustness sweep, time machine, next-week forecast) */
+export const FX_PREP = 'fx:prep';
 export interface LuckStore {
   at: number;
   oosFrom: number;
@@ -1678,6 +1681,49 @@ export class ForexLab {
     }
   }
 
+  /** v27.33: the weekend prep (prep.ts) — heavy, so only while this desk's market is closed (coins: UTC Saturday / Sunday)
+   * and at most every `PREP.everyHours`; stored in `fx:prep` / `cm:prep` for the weekend review. Display only. */
+  private async applyPrep(rows: Row[], series: readonly Series[], oosFrom: number, to: number, now = Date.now()): Promise<void> {
+    if (!PREP.on) return;
+    const day = new Date(now).getUTCDay();
+    const weekend = this.universe === 'crypto' ? day === 6 || day === 0 : !marketClock(now).open;
+    if (!weekend) return;
+    try {
+      const prev = JSON.parse((await this.redis.get(this.k(FX_PREP))) ?? 'null') as PrepReport | null;
+      if (prev && now - prev.at < PREP.everyHours * 3_600_000 && Math.abs(prev.oosFrom - oosFrom) < 86_400_000) return;
+    } catch {
+      // a bad stored value is rebuilt
+    }
+    const t0 = Date.now();
+    const targets: PrepTarget[] = [];
+    const seen = new Set<string>();
+    const add = (r: Row, kind: PrepTarget['kind'], pairs: string[]) => {
+      const s = strategyById(r.id);
+      const key = `${r.id}:${r.tf}`;
+      if (!s || seen.has(`${key}|${pairs.join(',')}`) || targets.length >= PREP.maxRows) return;
+      seen.add(`${key}|${pairs.join(',')}`);
+      targets.push({ s, key, name: `${r.name} ${r.tf}`, tf: r.tf, filter: r.filter, exit: r.exit, kind, pairs });
+    };
+    const real = rows.filter((r) => r.id !== 'random');
+    for (const r of real) if (r.verdict === 'edge' && profitFloor(r).ok) add(r, 'live', []);
+    if (FX_CONFIG.provenOnly.cells[this.universe]) for (const r of real) {
+      const ps = (r.markets ?? []).filter((c) => cellPass(c)).map((c) => c.pair);
+      if (ps.length && !(r.verdict === 'edge' && profitFloor(r).ok)) add(r, 'cell', ps);
+    }
+    const near = real
+      .filter((r) => r.verdict !== 'edge' && r.outSample.avgR > 0 && r.outSample.n >= 10)
+      .sort((a, b) => b.outSample.avgR * Math.sqrt(b.outSample.n) - a.outSample.avgR * Math.sqrt(a.outSample.n));
+    for (const r of near) add(r, 'near', []);
+    const out: PrepRow[] = [];
+    for (const x of targets) out.push(await studyRow(x, series, oosFrom, to));
+    const riskPct = FX_CONFIG.provenOnly.on ? FX_CONFIG.provenOnly.riskPct : 1;
+    const live = out.filter((r) => r.kind !== 'near');
+    const forecast = weekForecast(live.map((r) => ({ perWeek: r.perWeek, rs: r.unseenRs ?? [] })), riskPct);
+    const report: PrepReport = { at: now, oosFrom, ms: Date.now() - t0, rows: out.map(({ unseenRs: _rs, ...r }) => r), forecast, notes: prepNotes(out, forecast) };
+    await this.redis.set(this.k(FX_PREP), JSON.stringify(report)).catch(() => undefined);
+    log.info({ desk: this.universe, rows: out.length, ms: report.ms }, 'weekend prep done');
+  }
+
   /** v17: append the chosen list to `fx:chosen:hist` when it changed (500 changes kept) — what the bot could trade, when. */
   private async noteChosen(chosen: ReadonlySet<string>): Promise<void> {
     // v17.8: a run in the child leaves it to the parent, which notes the list after its own learner had its say
@@ -1977,6 +2023,8 @@ export class ForexLab {
       const rnd = rows.find((x) => x.id === 'random' && x.tf === r.tf);
       r.quality = qualityPass(r, rnd ? rnd.all.avgR : null);
     }
+    // v27.33 weekend prep: robustness sweep + time machine + next-week forecast on the live / nearly-live rows (weekends only)
+    await this.applyPrep(rows, series, oosFrom, Number.isFinite(to) ? to : Date.now()).catch((err: Error) => log.warn({ err: err.message }, 'weekend prep failed'));
     statInputs.length = 0;
     await yieldNow();
     const filters = summarizeFilters(rows);
