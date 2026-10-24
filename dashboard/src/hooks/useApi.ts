@@ -20,8 +20,18 @@ export function useApi<T>(path: string | null, refreshMs = 0, liveOn: Array<BotE
   const current = useRef(path);
   current.current = path;
 
-  const load = useCallback(async () => {
+  // v27.41: a slow server must not get a second copy of the same request while the first one is still out
+  // (a reload asked for meanwhile, e.g. after a button press, runs once the answer is in)
+  const inFlight = useRef<string | null>(null);
+  const again = useRef(false);
+  const load = useCallback(async (queue = false): Promise<void> => {
     if (!path) return;
+    if (inFlight.current === path) {
+      if (queue) again.current = true; // timer polls are simply skipped
+      return;
+    }
+    inFlight.current = path;
+    again.current = false;
     try {
       const d = await api<T>(path);
       if (current.current !== path) return;
@@ -32,7 +42,12 @@ export function useApi<T>(path: string | null, refreshMs = 0, liveOn: Array<BotE
     } catch (e) {
       if (alive.current) setError((e as Error).message);
     } finally {
+      if (inFlight.current === path) inFlight.current = null;
       if (alive.current) setLoading(false);
+    }
+    if (again.current && alive.current && current.current === path) {
+      again.current = false;
+      return load(true);
     }
   }, [path]);
 
@@ -44,7 +59,7 @@ export function useApi<T>(path: string | null, refreshMs = 0, liveOn: Array<BotE
     const onVisible = () => document.visibilityState === 'visible' && void load();
     document.addEventListener('visibilitychange', onVisible);
     // Paper reset, WebSocket reconnect or bot restart → refetch.
-    const offRefresh = onRefreshAll(() => void load());
+    const offRefresh = onRefreshAll(() => void load(true));
     return () => {
       offRefresh();
       alive.current = false;
@@ -59,11 +74,12 @@ export function useApi<T>(path: string | null, refreshMs = 0, liveOn: Array<BotE
     (e: BotEvent) => {
       if (!key.split(',').includes(e.type)) return;
       if (debounce.current) clearTimeout(debounce.current);
-      debounce.current = setTimeout(() => void load(), 400);
+      debounce.current = setTimeout(() => void load(true), 400);
     },
     [key, load],
   );
   useBotEvents(onEvent);
 
-  return { data, error, loading, reload: load };
+  const reload = useCallback(() => load(true), [load]);
+  return { data, error, loading, reload };
 }

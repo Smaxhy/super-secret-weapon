@@ -758,6 +758,11 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.41 less lag (Oct 24, owner: "the app keeps lagging and not properly responding") — dashboard `useApi`: a timer poll
+is skipped while the same request is still out (a slow server used to get a pile of copies); reloads after a button / event
+queue one re-fetch instead. Server `/api/<desk>/bot` (every open screen polls it every 5 s; it builds the plan, shadow book,
+loss review…) = one build per desk shared for `BOT_CACHE_MS` 3 s, never two builds at once (`botCache`, cleared on a
+risk-mode change). Caddy already gzips the JSON.
 ## v27.40 no daily trade cap (Oct 24, owner: "remove the daily limit") — `SIZING.maxPerDay` 0 (= `BOT.maxTradesPerDay` on
 both bots): no cap live or in the honest test / rolling picker (0 = off in both). The v27.38 code stays; set 5–10 to restore it.
 ## v27.39 world events + central-bank press + chart reading (Oct 24, owner: "look up Fincept Terminal — it scans everything, an

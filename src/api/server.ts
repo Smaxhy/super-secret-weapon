@@ -57,6 +57,8 @@ import { recentChanges } from '../lib/change-log';
 import { redis } from '../lib/redis';
 
 const log = moduleLogger('api');
+/** v27.41: how long one built `/bot` answer is shared by every caller */
+const BOT_CACHE_MS = 3_000;
 
 const bigintSafe = (payload: unknown) => JSON.stringify(payload, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
 
@@ -160,8 +162,26 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         .catch(() => undefined);
       return { ok: true };
     });
+    // v27.41 (owner: "the app keeps lagging"): every open screen polls this every 5 s and building it is heavy (plan,
+    // shadow book, loss review…) → one build per desk serves every caller for BOT_CACHE_MS, never two at once
+    const botCache: { at: number; body: unknown; pending: Promise<unknown> | null } = { at: 0, body: null, pending: null };
     secured.get(`${U.base}/bot`, async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
+      if (botCache.body && Date.now() - botCache.at < BOT_CACHE_MS) return botCache.body;
+      if (!botCache.pending) {
+        botCache.pending = buildBot()
+          .then((b) => {
+            botCache.body = b;
+            botCache.at = Date.now();
+            return b;
+          })
+          .finally(() => {
+            botCache.pending = null;
+          });
+      }
+      return botCache.pending;
+    });
+    const buildBot = async () => {
       const [snap, logRaw, chosenRaw, droppedRaw, portfolioRaw, judgeRaw, convRaw, sniperRaw, rollRaw, deskRaw] = await Promise.all([deps.practice ? deps.practice.snapshot(U.acct) : null, redis.get(K('fx:bot:log')).catch(() => null), redis.get(K('fx:bot:chosen')).catch(() => null), redis.get(K('fx:bot:dropped')).catch(() => null), redis.get(K('fx:portfolio')).catch(() => null), redis.get(K('fx:judge:report')).catch(() => null), redis.get(K('fx:conviction')).catch(() => null), redis.get(K('fx:sniper')).catch(() => null), redis.get(K('fx:roll')).catch(() => null), redis.get(K('fx:desk')).catch(() => null)]);
       const parse = <T,>(x: string | null, d: T): T => {
         try {
@@ -282,7 +302,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         riskMode: snap?.account.riskMode ?? 'normal',
         riskModes: RISK_MODES,
       };
-    });
+    };
     // v27.32: the weekend review — last week's recap, what to test, and the Monday readiness checklist
     secured.get(`${U.base}/weekend`, async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
@@ -324,7 +344,9 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         reply.code(503);
         return { ok: false, error: 'not running' };
       }
-      return { ok: true, mode: await deps.practice.setRiskMode(mode, U.acct) };
+      const set = await deps.practice.setRiskMode(mode, U.acct);
+      botCache.at = 0; // the next read shows the new mode
+      return { ok: true, mode: set };
     });
     }
     // v12.1 forex practice account
