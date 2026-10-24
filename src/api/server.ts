@@ -411,7 +411,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       const c = deps.fxCalendar?.get() ?? { at: 0, events: [] };
       const now = Date.now();
       const heads = (deps.fxNews?.get() ?? []).slice(0, 80);
-      return { at: c.at, clock: marketClock(now), headlines: heads, events: c.events.filter((e) => e.t >= now - 12 * 3_600_000 && e.t <= now + 8 * 86_400_000 && e.impact !== 'Non-Economic') };
+      return { at: c.at, clock: marketClock(now), headlines: heads, world: deps.fxNews?.worldView(now) ?? null, events: c.events.filter((e) => e.t >= now - 12 * 3_600_000 && e.t <= now + 8 * 86_400_000 && e.impact !== 'Non-Economic') };
     });
     // v17: every free data feed's health + how up to date each market's prices are (1h + 15m + 1m)
     // v22.1 fix: one feeds route per desk — the coin desk's data ages were missing (`/api/crypto/feeds` was a 404)

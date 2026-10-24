@@ -217,7 +217,7 @@ function StrengthLine({ m }: { m: MarketNow }) {
 }
 
 function MarketDetail({ m, r }: { m: MarketNow; r: Report }) {
-  const [show, setShow] = useState({ lines: true, levels: true, ranges: true, trades: true });
+  const [show, setShow] = useState({ lines: true, levels: true, ranges: true, trades: true, profile: true, channel: true });
   const trades = r.paper.open.filter((t) => t.pair === m.id && t.tf === '1h');
   const trades4h = r.paper.open.filter((t) => t.pair === m.id && t.tf === '4h');
   const all = [...trades, ...trades4h];
@@ -231,11 +231,13 @@ function MarketDetail({ m, r }: { m: MarketNow; r: Report }) {
         <Chip active={show.levels} onClick={() => toggle('levels')}>Support / resistance</Chip>
         <Chip active={show.ranges} onClick={() => toggle('ranges')}>Yesterday + Asia range</Chip>
         <Chip active={show.trades} onClick={() => toggle('trades')}>Bot trades</Chip>
+        <Chip active={show.profile} onClick={() => toggle('profile')}>Volume profile</Chip>
+        <Chip active={show.channel} onClick={() => toggle('channel')}>Regression channel</Chip>
       </div>
       <div ref={box} className="rounded-xl border border-line bg-surface p-1.5">
         {w > 0 && <MarketChart bars={fitBars(m.bars, w - 14)} drawings={m.drawings} trades={all.map((t) => ({ side: t.side, entryT: t.entryT, entry: t.entry, stop: t.stop, target: t.target, strategy: t.strategy }))} digits={DIGITS(m.id)} show={show} width={w - 14} height={w < 560 ? 320 : 420} timeAxis interactive />}
       </div>
-      <p className="text-xs text-muted">Green lines = support (rising trendline or a floor price kept bouncing off), red = resistance; dashed = broken. Purple dots = yesterday's high / low, blue band = today's Asian session range. Blue line = a bot entry, dashed red / green = its stop / target.</p>
+      <p className="text-xs text-muted">Green lines = support (rising trendline or a floor price kept bouncing off), red = resistance; dashed = broken. Purple dots = yesterday's high / low, blue band = today's Asian session range. Blue line = a bot entry, dashed red / green = its stop / target. Amber = volume profile of the last 96 candles (solid line = the busiest price, POC; shaded = where 70% traded); dashed sky-blue = the 50-candle regression line with its ±2 standard-deviation bands.</p>
       {m.heat && <HeatmapBox m={m} />}
       <div className="grid gap-4 md:grid-cols-2">
         <div>
@@ -257,6 +259,9 @@ function MarketDetail({ m, r }: { m: MarketNow; r: Report }) {
             {m.drawings.levels.map((l, k) => (
               <Row key={`v${k}`} label={l.kind === 'support' ? 'Support level' : 'Resistance level'} sub={`${l.touches} swing points`} value={l.price.toFixed(DIGITS(m.id))} />
             ))}
+            {m.drawings.profile && <Row label={`Volume profile (${m.drawings.profile.byVolume ? 'traded volume' : 'time at price — no volume on this market'})`} sub={`value area ${m.drawings.profile.val.toFixed(DIGITS(m.id))} – ${m.drawings.profile.vah.toFixed(DIGITS(m.id))}${m.drawings.read?.inValue === true ? ' · price inside it (balanced)' : m.drawings.read?.inValue === false ? ' · price outside it (one side in control)' : ''}`} value={`POC ${m.drawings.profile.poc.toFixed(DIGITS(m.id))}`} />}
+            {m.drawings.read?.lrZ != null && <Row label="Regression channel (50 candles)" sub={`${(m.drawings.read.r2 ?? 0) >= 0.6 ? 'clean trend' : (m.drawings.read.r2 ?? 0) < 0.3 ? 'no trend (flat / choppy)' : 'loose trend'} · R² ${m.drawings.read.r2}`} value={`${m.drawings.read.lrZ > 0 ? '+' : ''}${m.drawings.read.lrZ} SD from the line`} />}
+            {m.drawings.read?.cmf != null && <Row label="Order flow (from candles)" sub={`volume ${m.drawings.read.relVol ?? '–'}× normal`} value={<span className={m.drawings.read.cmf > 0.05 ? 'text-up' : m.drawings.read.cmf < -0.05 ? 'text-down' : ''}>{m.drawings.read.cmf > 0.05 ? 'buyers' : m.drawings.read.cmf < -0.05 ? 'sellers' : 'balanced'} {m.drawings.read.cmf > 0 ? '+' : ''}{m.drawings.read.cmf}</span>} />}
             {m.mtf && <Row label="Trend on the bigger charts" sub="1-hour · 4-hour · daily (close and 20 EMA vs the 50 EMA)" value={<TrendArrows mtf={m.mtf} />} />}
             {m.strength && m.strength.quoteScore !== null && <Row label="Currency strength" sub="buy the stronger currency, sell the weaker" value={<span className="text-xs"><StrengthLine m={m} /></span>} />}
             {m.risk !== undefined && r.mood && <Row label="Market mood fit" sub={`buying ${m.label} is ${m.risk > 0.4 ? 'a risk-on trade' : m.risk < -0.4 ? 'a safe-haven trade' : 'mood-neutral'}`} value={<span className={r.mood.label === 'risk-off' ? 'text-down' : r.mood.label === 'risk-on' ? 'text-up' : 'text-muted'}>{r.mood.label}</span>} />}

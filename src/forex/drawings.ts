@@ -4,6 +4,7 @@
  * Pure, causal (only confirmed swings), used for the Markets view.
  */
 import type { Ctx, Swing } from './ta';
+import { FLOW, flowOf } from './flow';
 
 export interface TrendLine {
   kind: 'support' | 'resistance';
@@ -27,6 +28,12 @@ export interface Drawings {
   levels: Level[];
   prevDay: { h: number; l: number } | null;
   asia: { h: number; l: number } | null;
+  /** v27.39: the volume profile of the last 96 candles (time at price where there is no volume) */
+  profile?: { poc: number; vah: number; val: number; byVolume: boolean } | null;
+  /** v27.39: the 50-candle regression line (start → newest candle) and its standard deviation (bands at ±2 SD) */
+  channel?: { t1: number; p1: number; t2: number; p2: number; sd: number; r2: number } | null;
+  /** v27.39: the reading at the newest candle — SDs from the line, money flow (−1…+1) and volume vs normal (null = no volume) */
+  read?: { lrZ: number | null; r2: number | null; cmf: number | null; relVol: number | null; inValue: boolean | null };
 }
 
 function bestLines(c: Ctx, pts: Swing[], kind: TrendLine['kind'], lookback: number): TrendLine[] {
@@ -96,5 +103,25 @@ export function drawingsFor(c: Ctx, lookback = 150): Drawings {
     levels: levels(c, 300),
     prevDay: c.prevDay[n - 1] ? { h: c.prevDay[n - 1]!.h, l: c.prevDay[n - 1]!.l } : null,
     asia: c.asia[n - 1] ?? null,
+    ...flowDrawings(c),
+  };
+}
+
+const r4 = (x: number) => (Number.isFinite(x) ? Number(x.toPrecision(6)) : null);
+/** v27.39: profile, regression channel and the flow reading at the newest candle. Pure. */
+export function flowDrawings(c: Ctx): Pick<Drawings, 'profile' | 'channel' | 'read'> {
+  const n = c.bars.length;
+  if (n < FLOW.lr) return { profile: null, channel: null, read: { lrZ: null, r2: null, cmf: null, relVol: null, inValue: null } };
+  const f = flowOf(c);
+  const last = n - 1;
+  const vp = f.vp(last);
+  const mid = f.lrMid[last]!;
+  const slope = f.lrSlope[last]!;
+  const ok = Number.isFinite(mid) && Number.isFinite(slope);
+  const px = c.close[last]!;
+  return {
+    profile: vp ? { poc: vp.poc, vah: vp.vah, val: vp.val, byVolume: vp.byVolume } : null,
+    channel: ok ? { t1: c.bars[n - FLOW.lr]!.t, p1: mid - slope * (FLOW.lr - 1), t2: c.bars[last]!.t, p2: mid, sd: f.lrSd[last]!, r2: Math.round(f.lrR2[last]! * 100) / 100 } : null,
+    read: { lrZ: r4(Math.round(f.lrZ[last]! * 100) / 100), r2: r4(Math.round(f.lrR2[last]! * 100) / 100), cmf: r4(Math.round(f.cmf[last]! * 100) / 100), relVol: r4(Math.round(f.relVol[last]! * 10) / 10), inValue: vp ? px >= vp.val && px <= vp.vah : null },
   };
 }

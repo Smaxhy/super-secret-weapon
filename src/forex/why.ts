@@ -25,6 +25,7 @@ export type ReasonKind =
   | 'stale_feed'
   | 'clock'
   | 'news'
+  | 'world'
   | 'shock'
   | 'late'
   | 'ccy_cap'
@@ -49,6 +50,7 @@ const LABEL: Record<ReasonKind, string> = {
   stale_feed: 'the price feed was lagging (candles behind) — no new trades on that market',
   clock: 'the market clock (closed, rollover, weekly open / close)',
   news: 'news, a speech or a holiday on one of the currencies',
+  world: 'a world-event alarm (war, oil, shipping, sanctions…) on a market it moves',
   shock: 'a price shock in the last 15 minutes',
   late: 'the price had already run past the entry, stop or target',
   ccy_cap: 'too much of the account already rode on that currency',
@@ -76,6 +78,7 @@ export function classify(why: string): ReasonKind {
   if (w.includes('check has no data') || w.includes('feed missing')) return 'check_data';
   if (w.includes('candles behind') || w.includes('price data for') || w.includes('feed is lagging') || w.includes('no fresh')) return 'stale_feed';
   if (w.includes('market closed') || w.includes('weekly close') || w.includes('rollover') || w.includes('week just opened')) return 'clock';
+  if (w.includes('world event')) return 'world';
   if (w.includes('news') || w.includes('speech') || w.includes('holiday') || w.includes('headline') || w.includes('calendar')) return 'news';
   if (w.includes('price shock')) return 'shock';
   if (w.includes('past its') || w.includes('chasing')) return 'late';
@@ -215,6 +218,7 @@ const HINT: Partial<Record<ReasonKind, string>> = {
   caps: 'Working as designed: raise the risk mode (Risk desk) for more slots.',
   day_cap: 'Working as designed (your rule): at most 10 new trades a day per bot, the best-tested signals first. Resets at 22:00 UTC.',
   news: 'Working as designed: it skips the half hour around high-impact news.',
+  world: 'Working as designed: a burst of war / oil / shipping headlines pauses new trades on the markets they move until 45 min after the last one (News → World events).',
   late: 'The lab filled a bar earlier than the bot saw the price; nothing to fix unless it repeats on every signal.',
   ccy_cap: 'Working as designed: one bet per currency. A higher risk mode raises the cap.',
   clock: 'Working as designed: no new trades in the rollover, the first 2 h of the week or the last 2 h.',

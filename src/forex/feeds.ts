@@ -8,7 +8,7 @@
 import type Redis from 'ioredis';
 
 export type Provider = 'yahoo' | 'yahoo-stream' | 'dukascopy' | 'pyth' | 'oanda' | 'cftc' | 'bis' | 'forexfactory' | 'rss' | 'coinbase' | 'coinbase-stream' | 'hyperliquid-stream' | 'internal';
-export type FeedId = 'yahoo-1h' | 'yahoo-fast' | 'yahoo-quotes' | 'dk-history' | 'dk-quotes' | 'yahoo-live' | 'pyth-live' | 'coinbase-candles' | 'coinbase-live' | 'hyperliquid-live' | 'oanda' | 'cftc' | 'bis' | 'calendar' | 'headlines' | 'lab' | 'fast-lab';
+export type FeedId = 'yahoo-1h' | 'yahoo-fast' | 'yahoo-quotes' | 'dk-history' | 'dk-quotes' | 'yahoo-live' | 'pyth-live' | 'coinbase-candles' | 'coinbase-live' | 'hyperliquid-live' | 'oanda' | 'cftc' | 'bis' | 'calendar' | 'headlines' | 'cb-press' | 'world-news' | 'lab' | 'fast-lab';
 
 export interface FeedState {
   okAt: number | null;
@@ -48,6 +48,8 @@ export const FEED_INFO: Record<FeedId, FeedInfo> = {
   cftc: { label: 'Hedge-fund positioning (CFTC, weekly)', provider: 'cftc', staleMin: 9 * 24 * 60, downMin: 17 * 24 * 60, marketHours: false, affects: 'crowd filter, cot_squeeze, a sniper vote', fallback: 'the last report for up to 17 days, then nothing (those rules go quiet)' },
   bis: { label: 'Central-bank rates (BIS, monthly)', provider: 'bis', staleMin: 45 * 24 * 60, downMin: 100 * 24 * 60, marketHours: false, affects: 'carry: carry_trend, a sniper vote', fallback: 'the last rates for up to 100 days, then nothing (carry rules go quiet)' },
   calendar: { label: 'News calendar (ForexFactory)', provider: 'forexfactory', staleMin: 6 * 60, downMin: 3 * 24 * 60, marketHours: false, affects: 'no bot trades around big news', fallback: 'waits out the usual US release times when the calendar is gone' },
+  'cb-press': { label: 'Central-bank press releases (Fed, ECB, Bank of England)', provider: 'rss', staleMin: 7 * 24 * 60, downMin: 14 * 24 * 60, marketHours: false, affects: 'a policy statement / decision / minutes pauses that currency for 30 minutes', fallback: 'the news calendar + the other headlines' },
+  'world-news': { label: 'World events (Al Jazeera, BBC, Guardian, MEE, France 24, DW, UN, OilPrice)', provider: 'rss', staleMin: 60, downMin: 360, marketHours: false, affects: 'war / oil / shipping / sanctions alarms pause new trades on the markets they move', fallback: 'the normal headline pause + the price-shock check' },
   headlines: { label: 'Live headlines (ForexLive, FXStreet)', provider: 'rss', staleMin: 30, downMin: 180, marketHours: true, affects: 'no bot trades right after a big headline', fallback: 'a stricter price-shock check' },
   lab: { label: 'Hourly test run', provider: 'internal', staleMin: 90, downMin: 180, marketHours: false, affects: 'every hourly decision of the bot', fallback: 'the last report; open trades keep their stops' },
   'fast-lab': { label: '15m / 1m test run', provider: 'internal', staleMin: 90, downMin: 180, marketHours: false, affects: 'which 15m / 1m strategies the bot trades', fallback: 'the last report' },

@@ -758,6 +758,31 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.39 world events + central-bank press + chart reading (Oct 24, owner: "look up Fincept Terminal — it scans everything, an
+oil tanker gets hit, war…"; then "build whatever improves the trading, information and chart reading")
+Fincept Terminal (github.com/Fincept-Corporation/FinceptTerminal, AGPL-3.0 — NO code copied): its maritime / geopolitics
+screens only call Fincept's paid server (`/marine`, `/research/news-events`, Enterprise); taken = its free RSS list and the
+keyword-burst idea.
+- `src/forex/world.ts` (pure): `WORLD_RULES` kinds conflict / energy / shipping / sanctions / disaster / cyber / crash (regex,
+  markets moved, critical words: tanker hit / seized, strait closed, war declared, invasion, refinery hit…), `REGIONS` (Middle
+  East → CAD XAU JPY, Russia/Ukraine → EUR CHF XAU, China/Taiwan → AUD NZD JPY, crypto words → coins…), `worldTag`,
+  `worldAlarms` (`WORLD` {windowMin 60, baseHours 6, minHits 3, minSources 2, burstX 2, holdMin 45}: a burst = 3+ in the
+  last hour from 2+ sources and ≥ 2× the usual hourly count of the 6 hours before, or ONE critical headline; it lasts until
+  45 min after the last headline that was still unusual / critical — a steady stream ends it), `worldBlock`, `marketTags`
+  (also fixes `headlineBlock`: DOGE / LINK / AVAX were cut to 3 letters and never matched), `mergeWorld`.
+- headlines.ts: `WORLD_FEEDS` (Al Jazeera, BBC World, Guardian World, Middle East Eye, France 24, DW (RSS 1.0 — `parseRss`
+  now reads dc:date), UN News, OilPrice) → only world-event headlines kept, Redis `fx:world` (3 days, 400), never in the
+  normal headline list / big-headline pause; `CB_FEEDS` (Fed press_all, ECB press, BoE news) → the normal list tagged with
+  the bank's currency, a statement / decision / minutes / press conference = 'high' (30-min pause). `blockFor` = headline
+  block ?? world block → both labs' syncBot (news traders still exempt) and the plan; every new alarm → `fx:world:hist`
+  (1,000) for grading later; feeds 'cb-press' / 'world-news'; why.ts kind `world`. API `/api/forex/calendar` → `world`
+  {alarms, items}; News page card "World events" (`components/FxWorld.tsx`). NOT graded (no headline history) — a safety
+  pause like the VIX brake.
+- Chart reading: drawings.ts `flowDrawings` → `Drawings.profile` (POC / VAH / VAL, byVolume), `channel` (50-candle
+  regression line + SD), `read` (lrZ, R², CMF, relVol, inValue); MarketChart draws the value area (amber band + POC line)
+  and the channel (dashed sky blue, ±2 SD) on the Markets drawer + control-room big screen (`show.profile` / `show.channel`,
+  default on; toggles in the drawer); "What it sees" rows: volume profile, regression channel, order flow. Verified by
+  rendering (esbuild + Playwright). tests/forex-world (5).
 ## v27.38 max 10 trades a day + a busier weekend study (Oct 24, owner: "max 5–10 trades per day and I want the bot training a
 lot this weekend, I want very profitable stats")
 - `SIZING.maxPerDay` 10 (portfolio.ts) = `BOT.maxTradesPerDay` {bot, cbot} (practice.ts): syncBot opens at most 10 new trades a

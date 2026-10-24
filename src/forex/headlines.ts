@@ -7,6 +7,7 @@
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
 import { feeds } from './feeds';
+import { marketTags, mergeWorld, worldAlarms, worldBlock, worldTag, WORLD, type WorldAlarm, type WorldItem } from './world';
 
 const log = moduleLogger('forex-news');
 const KEY = 'fx:news';
@@ -14,6 +15,27 @@ const KEY = 'fx:news';
  * added. ForexFactory is the calendar feed (calendar.ts). A feed that fails only costs its own items (the others still
  * count); all of them fail → the headline feed shows as failed on Setup → Data feeds. */
 const FEEDS = ['https://www.forexlive.com/feed/news', 'https://www.fxstreet.com/rss/news', 'https://www.dailyfx.com/feeds/market-news', 'https://www.investing.com/rss/news_1.rss'];
+/** v27.39: the central banks' own press releases → the normal headline list, tagged with the bank's currency; a policy
+ * statement / decision / minutes / press conference is a big headline (pauses that currency 30 min like the others). */
+export const CB_FEEDS: Array<{ url: string; ccy: string; name: string }> = [
+  { url: 'https://www.federalreserve.gov/feeds/press_all.xml', ccy: 'USD', name: 'Federal Reserve' },
+  { url: 'https://www.ecb.europa.eu/rss/press.html', ccy: 'EUR', name: 'ECB' },
+  { url: 'https://www.bankofengland.co.uk/rss/news', ccy: 'GBP', name: 'Bank of England' },
+];
+const CB_BIG = /\b(fomc|statement|decision|monetary policy|interest rates?|press conference|minutes|rate (cut|hike)|policy rate|emergency)\b/i;
+/** v27.39: world / energy news (Fincept Terminal's free list) — kept apart, only world-event headlines (world.ts). */
+export const WORLD_FEEDS = [
+  'https://www.aljazeera.com/xml/rss/all.xml',
+  'http://feeds.bbci.co.uk/news/world/rss.xml',
+  'https://www.theguardian.com/world/rss',
+  'https://www.middleeasteye.net/rss',
+  'https://www.france24.com/en/rss',
+  'https://rss.dw.com/rdf/rss-en-all',
+  'https://news.un.org/feed/subscribe/en/news/all/rss.xml',
+  'https://oilprice.com/rss/main',
+];
+const WORLD_KEY = 'fx:world';
+export const WORLD_HIST = 'fx:world:hist';
 
 export interface Headline {
   t: number;
@@ -115,7 +137,8 @@ export function parseRss(xml: string, source: string): Headline[] {
     const it = m[0];
     const title = dec(/<title>([\s\S]*?)<\/title>/i.exec(it)?.[1] ?? '');
     const link = dec(/<link>([\s\S]*?)<\/link>/i.exec(it)?.[1] ?? '');
-    const t = Date.parse(dec(/<pubDate>([\s\S]*?)<\/pubDate>/i.exec(it)?.[1] ?? ''));
+    // v27.39: RSS 1.0 (RDF) feeds date items with dc:date instead of pubDate
+    const t = Date.parse(dec(/<pubDate>([\s\S]*?)<\/pubDate>/i.exec(it)?.[1] ?? /<dc:date>([\s\S]*?)<\/dc:date>/i.exec(it)?.[1] ?? ''));
     if (!title || !Number.isFinite(t)) continue;
     const h: Headline = { t, title, link, source, ...classify(title) };
     // v16: option expiries are listed in the body of these posts
@@ -138,7 +161,7 @@ export function currentExpiries(items: readonly Headline[], now: number): Expiry
 
 /** Why a NEW trade on `pair` should wait because of a recent big headline. Pure. */
 export function headlineBlock(pair: string, now: number, items: readonly Headline[], windowMin = 30): string | null {
-  const ccys = pair.startsWith('XA') ? ['USD', 'XAU'] : [pair.slice(0, 3), pair.slice(3, 6)]; // an index: its own tag + USD // a coin: its own tag + USD
+  const ccys = marketTags(pair); // v27.39: DOGE / LINK / AVAX were cut to 3 letters before and never matched
   for (const h of items) {
     if (h.severity !== 'high' || now - h.t > windowMin * 60_000 || h.t > now + 60_000) continue;
     if (h.ccys.some((c) => ccys.includes(c))) return `headline (${h.why}): ${h.title.slice(0, 80)}`;
@@ -157,6 +180,10 @@ export function priceShock(bars: ReadonlyArray<readonly [number, number, number,
 
 export class ForexHeadlines {
   private items: Headline[] = [];
+  /** v27.39 world-event headlines (world.ts) and the alarms they raise */
+  private world: WorldItem[] = [];
+  private alarms: WorldAlarm[] = [];
+  private recorded = new Set<string>();
   private timer: NodeJS.Timeout | null = null;
   constructor(private readonly redis: Redis) {}
 
@@ -169,6 +196,7 @@ export class ForexHeadlines {
         // refetch
       }
     }
+    await this.loadWorld();
     void this.refresh();
     this.timer = setInterval(() => void this.refresh(), 5 * 60_000);
   }
@@ -182,6 +210,75 @@ export class ForexHeadlines {
     } catch {
       this.items = [];
     }
+    await this.loadWorld();
+  }
+  private async loadWorld(): Promise<void> {
+    try {
+      this.world = JSON.parse((await this.redis.get(WORLD_KEY).catch(() => null)) ?? '[]') as WorldItem[];
+    } catch {
+      this.world = [];
+    }
+    this.alarms = worldAlarms(this.world, Date.now());
+    for (const a of this.alarms) this.recorded.add(`${a.kind}:${a.startedAt}`);
+  }
+
+  private async fetchFeed(url: string): Promise<string> {
+    const res = await fetch(url, { headers: { accept: 'application/rss+xml, application/xml, text/xml', 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64)' }, signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.text();
+  }
+
+  /** v27.39: central-bank press releases (into the headline list) + world news (world-event headlines only). */
+  private async refreshExtra(): Promise<Headline[]> {
+    const cb: Headline[] = [];
+    const cbErr: string[] = [];
+    for (const f of CB_FEEDS) {
+      try {
+        const got = parseRss(await this.fetchFeed(f.url), f.name);
+        if (!got.length) throw new Error('parsed 0 items (feed moved?)');
+        for (const h of got) {
+          const ccys = [...new Set([f.ccy, ...h.ccys])];
+          const big = CB_BIG.exec(h.title);
+          cb.push({ ...h, ccys, severity: big ? 'high' : 'normal', why: big ? `${f.name}: ${big[0].toLowerCase()}` : h.why });
+        }
+      } catch (err) {
+        cbErr.push(`${f.name}: ${(err as Error).message}`);
+      }
+    }
+    if (cb.length) feeds.ok('cb-press', { items: cb.length, asOf: Math.max(...cb.map((h) => h.t)) });
+    else if (cbErr.length) feeds.fail('cb-press', cbErr.join('; '));
+    const fresh: WorldItem[] = [];
+    const wErr: string[] = [];
+    let read = 0;
+    for (const url of WORLD_FEEDS) {
+      try {
+        const got = parseRss(await this.fetchFeed(url), new URL(url).hostname.replace(/^(www|feeds|rss|news)\./, ''));
+        if (!got.length) throw new Error('parsed 0 items (feed moved?)');
+        read++;
+        for (const h of got) {
+          const tag = worldTag(h.title);
+          if (tag.kinds.length) fresh.push({ t: h.t, title: h.title, link: h.link, source: h.source, ...tag });
+        }
+      } catch (err) {
+        wErr.push(`${new URL(url).hostname}: ${(err as Error).message}`);
+      }
+    }
+    if (read) feeds.ok('world-news', { items: fresh.length, asOf: fresh.length ? Math.max(...fresh.map((x) => x.t)) : null });
+    else if (wErr.length) feeds.fail('world-news', wErr.join('; '));
+    if (wErr.length && read) log.warn({ errs: wErr }, 'some world feeds failed');
+    const now = Date.now();
+    this.world = mergeWorld(fresh, this.world, now);
+    this.alarms = worldAlarms(this.world, now);
+    await this.redis.set(WORLD_KEY, JSON.stringify(this.world)).catch(() => undefined);
+    // every new alarm is recorded once, so the lab can grade the pause later
+    for (const a of this.alarms) {
+      const k = `${a.kind}:${a.startedAt}`;
+      if (this.recorded.has(k)) continue;
+      this.recorded.add(k);
+      log.info({ kind: a.kind, markets: a.markets, headline: a.headlines[0]?.title }, 'world event alarm');
+      await this.redis.multi().lpush(WORLD_HIST, JSON.stringify({ kind: a.kind, startedAt: a.startedAt, critical: a.critical, markets: a.markets, count: a.count, title: a.headlines[a.headlines.length - 1]?.title ?? '' })).ltrim(WORLD_HIST, 0, WORLD.histMax - 1).exec().catch(() => undefined);
+    }
+    return cb;
   }
 
   private async refresh(): Promise<void> {
@@ -200,6 +297,7 @@ export class ForexHeadlines {
         log.warn({ url, err: (err as Error).message }, 'headline feed failed');
       }
     }
+    fresh.push(...(await this.refreshExtra().catch((err: Error) => (log.warn({ err: err.message }, 'world / central-bank feeds failed'), [] as Headline[]))));
     if (errs.length && !fresh.length) feeds.fail('headlines', errs.join('; '));
     else if (fresh.length) feeds.ok('headlines', { items: fresh.length, asOf: Math.max(...fresh.map((h) => h.t)) });
     if (errs.length && fresh.length) log.warn({ errs }, 'some headline feeds failed');
@@ -221,7 +319,11 @@ export class ForexHeadlines {
     return this.items;
   }
   blockFor(pair: string, now = Date.now()): string | null {
-    return headlineBlock(pair, now, this.items);
+    return headlineBlock(pair, now, this.items) ?? worldBlock(pair, now, this.alarms);
+  }
+  /** v27.39: world-event headlines (newest first) and the alarms on / ended in the last 6 hours. */
+  worldView(now = Date.now()): { alarms: WorldAlarm[]; items: WorldItem[] } {
+    return { alarms: worldAlarms(this.world, now), items: this.world.slice(0, 60) };
   }
   /** v16: option expiries whose cut is today and not more than an hour past. */
   expiries(now = Date.now()): Expiry[] {

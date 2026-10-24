@@ -15,7 +15,16 @@ import { useId, useState } from 'react';
 
 export interface ChartLine { kind: 'support' | 'resistance'; t1: number; p1: number; t2: number; p2: number; pNow: number; touches: number; broken: boolean }
 export interface ChartLevel { kind: 'support' | 'resistance'; price: number; touches: number }
-export interface ChartDrawings { lines: ChartLine[]; levels: ChartLevel[]; prevDay: { h: number; l: number } | null; asia: { h: number; l: number } | null }
+export interface ChartDrawings {
+  lines: ChartLine[];
+  levels: ChartLevel[];
+  prevDay: { h: number; l: number } | null;
+  asia: { h: number; l: number } | null;
+  /** v27.39 volume profile (POC + 70% value area) and the 50-candle regression channel (±2 SD) */
+  profile?: { poc: number; vah: number; val: number; byVolume: boolean } | null;
+  channel?: { t1: number; p1: number; t2: number; p2: number; sd: number; r2: number } | null;
+  read?: { lrZ: number | null; r2: number | null; cmf: number | null; relVol: number | null; inValue: boolean | null };
+}
 /** v17.8: `stop` may be null (a trade without a stop: no stop line) */
 export interface ChartTrade { side: 1 | -1; entryT: number; entry: number; stop: number | null; target: number | null; strategy: string; /** v17.11: the price that arms the profit lock (until it armed) */ lockAt?: number | null }
 
@@ -149,7 +158,7 @@ export function MarketChart({
   trades?: ChartTrade[];
   digits?: number;
   height?: number;
-  show?: { lines: boolean; levels: boolean; ranges: boolean; trades: boolean };
+  show?: { lines: boolean; levels: boolean; ranges: boolean; trades: boolean; profile?: boolean; channel?: boolean };
   width?: number;
   live?: number | null;
   entryMarker?: boolean;
@@ -260,6 +269,22 @@ export function MarketChart({
       {show.ranges && drawings?.asia && (
         <rect x={0} width={cw} y={y(drawings.asia.h)} height={Math.max(1, y(drawings.asia.l) - y(drawings.asia.h))} fill="#38bdf8" opacity={0.07} />
       )}
+      {show.profile !== false && drawings?.profile && near(drawings.profile.poc) && (
+        <g>
+          <rect x={0} width={cw} y={y(drawings.profile.vah)} height={Math.max(1, y(drawings.profile.val) - y(drawings.profile.vah))} fill="#f59e0b" opacity={0.07} />
+          {[drawings.profile.vah, drawings.profile.val].map((p, k) => <line key={k} x1={0} x2={cw} y1={y(p)} y2={y(p)} stroke="#f59e0b" strokeWidth={1} strokeDasharray="1 3" opacity={0.8} />)}
+          <line x1={0} x2={cw} y1={y(drawings.profile.poc)} y2={y(drawings.profile.poc)} stroke="#f59e0b" strokeWidth={1.5} opacity={0.9} />
+          <text x={4} y={y(drawings.profile.poc) - 3} className="fill-muted text-[10px]" stroke="var(--surface)" strokeWidth={3} paintOrder="stroke">POC</text>
+        </g>
+      )}
+      {show.channel !== false && drawings?.channel && (() => {
+        const ch = drawings.channel;
+        return [0, 2, -2].map((k) => {
+          const pts = linePoints(bars, { t1: ch.t1, p1: ch.p1 + k * ch.sd, t2: ch.t2, p2: ch.p2 + k * ch.sd }, slot);
+          if (!pts) return null;
+          return <polyline key={`ch${k}`} points={pts.map(([px, pp]) => `${px.toFixed(1)},${y(pp).toFixed(1)}`).join(' ')} fill="none" stroke="#38bdf8" strokeWidth={k === 0 ? 1.5 : 1} strokeDasharray={k === 0 ? '6 4' : '2 3'} opacity={k === 0 ? 0.8 : 0.55} />;
+        });
+      })()}
       {show.levels && drawings?.levels.filter((l) => near(l.price)).map((l, k) => (
         <g key={k}>
           <line x1={0} x2={cw} y1={y(l.price)} y2={y(l.price)} stroke={l.kind === 'support' ? '#22c55e' : '#ef4444'} strokeWidth={1 + Math.min(2, l.touches / 3)} strokeDasharray="8 5" opacity={0.55} />

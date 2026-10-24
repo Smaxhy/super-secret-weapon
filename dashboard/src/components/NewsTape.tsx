@@ -14,7 +14,7 @@ import { wsBase } from '../lib/ws';
 export interface NewsEv { t: number; ccy: string; title: string; impact: 'High' | 'Medium' | 'Low' | 'Holiday'; forecast?: string; previous?: string }
 export interface NewsClock { open: boolean; minutesToChange: number; noNewTrades: boolean; flattenNow: boolean; sessions: string[] }
 export interface NewsHead { t: number; title: string; link: string; source: string; ccys: string[]; severity: 'high' | 'normal'; why?: string | null }
-export interface NewsData { at: number; clock?: NewsClock; events: NewsEv[]; headlines?: NewsHead[] }
+export interface NewsData { at: number; clock?: NewsClock; events: NewsEv[]; headlines?: NewsHead[]; world?: import('./FxWorld').WorldView | null }
 
 /** the calendar + headlines, re-read every minute */
 export function useNews(refreshMs = 60_000) {

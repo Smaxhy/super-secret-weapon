@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Badge, Card, Chip, Stack, useStored } from './ui';
 import { Icon } from './Icon';
 import { CcyTag, agoWords, inWords, nextBig, useNews, type NewsEv, type NewsHead } from './NewsTape';
+import { WorldCard } from './FxWorld';
 
 const CCYS = ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'NZD', 'CAD', 'CHF', 'XAU', 'NDX', 'SPX'] as const;
 type Ccy = (typeof CCYS)[number] | 'all';
@@ -122,8 +123,10 @@ export function FxNewsPage() {
         </div>
       </div>
 
+      <WorldCard world={data?.world} now={now} />
+
       {/* the live feed */}
-      <Card title="Live headlines" subtitle="ForexLive and FXStreet, read every 5 minutes. A red dot = the bot treats it as big (central banks, leaders, tariffs, surprises) and holds back on its currencies for half an hour.">
+      <Card title="Live headlines" subtitle="ForexLive, FXStreet, DailyFX, Investing.com and the Fed / ECB / Bank of England press releases, read every 5 minutes. A red dot = the bot treats it as big (central banks, leaders, tariffs, surprises) and holds back on its currencies for half an hour.">
         <div className="no-scrollbar -mx-1 mb-3 flex gap-1.5 overflow-x-auto px-1 pb-1" role="group" aria-label="Filter headlines">
           <Chip active={ccy === 'all'} onClick={() => setCcy('all')}>All</Chip>
           {CCYS.map((c) => <Chip key={c} active={ccy === c} onClick={() => setCcy(c)} count={counts[c] || null}>{c}</Chip>)}
