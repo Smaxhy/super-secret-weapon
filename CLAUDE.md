@@ -758,6 +758,8 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.40 no daily trade cap (Oct 24, owner: "remove the daily limit") — `SIZING.maxPerDay` 0 (= `BOT.maxTradesPerDay` on
+both bots): no cap live or in the honest test / rolling picker (0 = off in both). The v27.38 code stays; set 5–10 to restore it.
 ## v27.39 world events + central-bank press + chart reading (Oct 24, owner: "look up Fincept Terminal — it scans everything, an
 oil tanker gets hit, war…"; then "build whatever improves the trading, information and chart reading")
 Fincept Terminal (github.com/Fincept-Corporation/FinceptTerminal, AGPL-3.0 — NO code copied): its maritime / geopolitics

@@ -17,7 +17,7 @@ describe('v27.38 max trades per day', () => {
     };
     expect(tradesOpenedToday(a, now)).toBe(3); // a, b, c
     expect(BOT.maxTradesPerDay.bot).toBe(SIZING.maxPerDay);
-    expect(SIZING.maxPerDay).toBe(10);
+    expect(SIZING.maxPerDay).toBe(0); // v27.40: no daily cap
   });
 
   it('the honest test takes at most the daily cap', () => {

@@ -24,8 +24,9 @@ export const SIZING = {
   leverage: 30,
   /** one trade may use at most this share of the free margin */
   marginShare: 0.25,
-  /** v27.38 (owner: "max 5–10 trades per day"): new trades per trading day (from 22:00 UTC) — live and in the honest test */
-  maxPerDay: 10,
+  /** v27.38 (owner: "max 5–10 trades per day"): new trades per trading day (from 22:00 UTC) — live and in the honest test.
+   * v27.40 (owner: "remove the daily limit"): 0 = no cap. */
+  maxPerDay: 0,
 };
 
 /** Less risk when the market is far wilder than its normal (ATR now ÷ its 100-bar median). */
