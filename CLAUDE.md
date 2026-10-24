@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.38 max 10 trades a day + a busier weekend study (Oct 24, owner: "max 5–10 trades per day and I want the bot training a
+lot this weekend, I want very profitable stats")
+- `SIZING.maxPerDay` 10 (portfolio.ts) = `BOT.maxTradesPerDay` {bot, cbot} (practice.ts): syncBot opens at most 10 new trades a
+  trading day per bot (day from 22:00 UTC = CEST midnight, `tradingDayStart`; `tradesOpenedToday` counts each ref once — its
+  first opening — so parts / weekend legs / a re-opened paused trade don't count again; resting orders placed today do);
+  best-tested signals first (`prio`), then wait "daily limit reached" (why.ts kind `day_cap`). The honest test /
+  rolling picker (`simulatePortfolio` `maxPerDay`, default the same cap; the "before the upgrade" row null) trade under the
+  same cap → `skipped.day`. Set 5 in `SIZING.maxPerDay` for the strict end of the owner's range.
+- Weekend study busier: `PREP.everyHours` 8 → 4, `maxRows` 14 → 24. With the retired list rebuilt every weekend hour, the
+  luck meter and the hourly re-test, that is the weekend training; told plainly that more training on the same history can
+  only find / keep what passes unseen data, it can't make the stats profitable.
+  tests/forex-daycap (2).
 ## v27.37 the friend's very strict stop + strategies with no promise retired (Oct 24, owner: "his SL is 10 points, make it
 like that, very strict SL"; "remove all strategies which show no promise from the list")
 - exits.ts `STRICT_STOP` / `strictStopDist(pair, px)`: 10 points on the Nasdaq, scaled per market (S&P 2.5, Dow 15, Russell 1.5,

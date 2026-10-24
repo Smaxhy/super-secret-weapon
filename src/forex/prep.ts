@@ -33,8 +33,8 @@ const r3 = (x: number) => Math.round(x * 1000) / 1000;
 
 export const PREP = {
   on: true,
-  /** rebuild at most this often over the weekend */
-  everyHours: 8,
+  /** rebuild at most this often over the weekend (v27.38, owner: "train a lot this weekend": 8 → 4) */
+  everyHours: 4,
   grid: [0.75, 1, 1.25],
   /** a neighbour counts when it has this many unseen trades */
   minN: 10,
@@ -47,8 +47,8 @@ export const PREP = {
   maxReplayBars: 120,
   weeks: 4_000,
   seed: 19,
-  /** rows studied a desk: live ones first, then the closest near misses */
-  maxRows: 14,
+  /** rows studied a desk: live ones first, then the closest near misses (v27.38: 14 → 24) */
+  maxRows: 24,
 };
 
 /** Pure: scale a signal's stop and target distances (from the signal close) by `ms` / `mt`. */

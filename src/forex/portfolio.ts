@@ -24,6 +24,8 @@ export const SIZING = {
   leverage: 30,
   /** one trade may use at most this share of the free margin */
   marginShare: 0.25,
+  /** v27.38 (owner: "max 5–10 trades per day"): new trades per trading day (from 22:00 UTC) — live and in the honest test */
+  maxPerDay: 10,
 };
 
 /** Less risk when the market is far wilder than its normal (ATR now ÷ its 100-bar median). */
@@ -102,13 +104,15 @@ export interface PortfolioOpts {
   mc?: boolean;
   /** v17: correlated-risk cap — a new trade is cut to what fits under `capPct` of combined risk, skipped under `minScale` */
   heat?: { capPct: number; book: CorrBook; minScale: number };
+  /** v27.38: new trades per trading day (undefined = `SIZING.maxPerDay`, null = no cap: the old bot) */
+  maxPerDay?: number | null;
 }
 
 export interface PortfolioResult {
   label: string;
   baseRiskPct: number;
   trades: number;
-  skipped: { full: number; ccy: number; margin: number; strategy: number; heat?: number };
+  skipped: { full: number; ccy: number; margin: number; strategy: number; heat?: number; day?: number };
   finalX: number;
   totalPct: number;
   weeks: number;
@@ -210,6 +214,9 @@ export function simulatePortfolio(trades: readonly PTrade[], o: PortfolioOpts): 
   const open = new Map<PTrade, { riskAbs: number; marginAbs: number }>();
   const perStrategy = new Map<string, number>();
   const skipped: PortfolioResult['skipped'] = { full: 0, ccy: 0, margin: 0, strategy: 0, ...(o.heat ? { heat: 0 } : {}) };
+  const dayCap = o.maxPerDay === undefined ? SIZING.maxPerDay : o.maxPerDay;
+  const perDay = new Map<number, number>();
+  const dayOf = (t: number) => Math.floor((t + 2 * 3_600_000) / 86_400_000);
   let eq = 1;
   let peak = 1;
   let dd = 0;
@@ -223,6 +230,10 @@ export function simulatePortfolio(trades: readonly PTrade[], o: PortfolioOpts): 
       const tr = e.tr;
       if (open.size >= o.maxOpen) {
         skipped.full++;
+        continue;
+      }
+      if (dayCap !== null && dayCap > 0 && (perDay.get(dayOf(tr.entryT)) ?? 0) >= dayCap) {
+        skipped.day = (skipped.day ?? 0) + 1;
         continue;
       }
       const sk = `${tr.strategy}:${tr.tf}`;
@@ -273,6 +284,7 @@ export function simulatePortfolio(trades: readonly PTrade[], o: PortfolioOpts): 
       }
       open.set(tr, { riskAbs, marginAbs });
       perStrategy.set(sk, (perStrategy.get(sk) ?? 0) + 1);
+      perDay.set(dayOf(tr.entryT), (perDay.get(dayOf(tr.entryT)) ?? 0) + 1);
       taken++;
     } else {
       const p = open.get(e.tr);

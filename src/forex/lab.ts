@@ -2173,7 +2173,7 @@ export class ForexLab {
         const lim = m ? { maxOpen: m.maxOpen, leverage: m.leverage, maxPerStrategy: m.maxPerStrategy, ccyCapPct: m.ccyCapPct } : { maxPerStrategy: SIZING.maxPerStrategy, ccyCapPct: SIZING.ccyCapPct * rp };
         return simulatePortfolio(poolNew, { ...base, label: m && m.riskPct !== 1 ? `${rp}% risk (${m.label})` : `${rp}% risk`, baseRiskPct: rp, prioritise: true, ddSizing: true, flatSizing: false, ...lim });
       });
-      const old = simulatePortfolio(poolOld, { ...base, label: 'before the upgrade', baseRiskPct: 1, maxPerStrategy: null, prioritise: false, ccyCapPct: null, ddSizing: false, flatSizing: true });
+      const old = simulatePortfolio(poolOld, { ...base, label: 'before the upgrade', baseRiskPct: 1, maxPerStrategy: null, prioritise: false, ccyCapPct: null, ddSizing: false, flatSizing: true, maxPerDay: null });
       const upgraded = { maxPerStrategy: SIZING.maxPerStrategy, prioritise: true, ccyCapPct: SIZING.ccyCapPct, ddSizing: true, flatSizing: false };
       const judged = judgeModel
         ? simulatePortfolio(

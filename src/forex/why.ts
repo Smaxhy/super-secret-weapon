@@ -15,6 +15,7 @@ export type ReasonKind =
   | 'not_chosen'
   | 'cooldown'
   | 'caps'
+  | 'day_cap'
   | 'judge_missing'
   | 'judge_no'
   | 'agree'
@@ -38,6 +39,7 @@ const LABEL: Record<ReasonKind, string> = {
   not_chosen: 'the signal came from a strategy the bot does not trade (no edge on unseen data)',
   cooldown: 'it had just closed a trade there (cooling off)',
   caps: 'its slots were full (per strategy, per chart or in total)',
+  day_cap: 'the daily trade limit was reached',
   judge_missing: 'the signal judge had a reading missing (a feed is down) — it waits rather than trade blind',
   judge_no: 'the signal judge scored the setup too low',
   agree: 'too few market checks (strength, bigger charts, mood) stood behind the setup',
@@ -61,6 +63,7 @@ const LABEL: Record<ReasonKind, string> = {
 /** Which bucket a wait / skip text belongs to. Exported for tests. */
 export function classify(why: string): ReasonKind {
   const w = why.toLowerCase();
+  if (w.includes('daily limit reached')) return 'day_cap';
   if (w.includes('losses in a row')) return 'streak';
   if (w.includes('one bet per market')) return 'doubled';
   if (w.includes('cooling off')) return 'cooldown';
@@ -210,6 +213,7 @@ const HINT: Partial<Record<ReasonKind, string>> = {
   market_rec: 'Working as designed: a strategy stays off a market where its own tested record there is a losing one (12+ trades, profit factor under 0.9).',
   solo: 'Working as designed (your rule): Fibonacci only trades next to another setup the same way on that market.',
   caps: 'Working as designed: raise the risk mode (Risk desk) for more slots.',
+  day_cap: 'Working as designed (your rule): at most 10 new trades a day per bot, the best-tested signals first. Resets at 22:00 UTC.',
   news: 'Working as designed: it skips the half hour around high-impact news.',
   late: 'The lab filled a bar earlier than the bot saw the price; nothing to fix unless it repeats on every signal.',
   ccy_cap: 'Working as designed: one bet per currency. A higher risk mode raises the cap.',
