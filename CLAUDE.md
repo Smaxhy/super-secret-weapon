@@ -763,6 +763,12 @@ is skipped while the same request is still out (a slow server used to get a pile
 queue one re-fetch instead. Server `/api/<desk>/bot` (every open screen polls it every 5 s; it builds the plan, shadow book,
 loss review…) = one build per desk shared for `BOT_CACHE_MS` 3 s, never two builds at once (`botCache`, cleared on a
 risk-mode change). Caddy already gzips the JSON.
+**The real cause** (VPS latency read 23:06–23:12 UTC): `FX_LAB_WORKER` was not on, so the forex lab (≈ 6 min) and the coin
+lab (≈ 9 min) ran IN the bot process every hour → event loop frozen up to 13.6 s, /api/health timing out at 30 s, /bot 57 s,
+heap 1.05 GB. `labWorkerOn` (lab-runner.ts) is now ON by default when NODE_ENV=production (tests / dev inline;
+`FX_LAB_WORKER=off` forces inline, `on` forces the child anywhere), and `forkLabRun` queues children — one at a time (each
+child's timeout starts on its turn), so the two labs never need 2 × 900 MB at once inside the 2 GB container. The v17.7 /
+v18.5 fallbacks stay (failures → bigger child heap, then a few inline runs). Still in-process: the 15m fast test at :31.
 ## v27.40 no daily trade cap (Oct 24, owner: "remove the daily limit") — `SIZING.maxPerDay` 0 (= `BOT.maxTradesPerDay` on
 both bots): no cap live or in the honest test / rolling picker (0 = off in both). The v27.38 code stays; set 5–10 to restore it.
 ## v27.39 world events + central-bank press + chart reading (Oct 24, owner: "look up Fincept Terminal — it scans everything, an

@@ -200,13 +200,12 @@ describe('v17.2 the hourly run in a child process', () => {
     expect(parent.book!.h1.get('EURUSD')![0]!.c).toBe(1);
     expect(parent.book!.ranks.EURUSD).toBeInstanceOf(Float64Array);
   });
-  it('is off unless FX_LAB_WORKER=on', () => {
-    const prev = process.env.FX_LAB_WORKER;
-    delete process.env.FX_LAB_WORKER;
-    expect(labWorkerOn()).toBe(false);
-    process.env.FX_LAB_WORKER = 'on';
-    expect(labWorkerOn()).toBe(true);
-    if (prev === undefined) delete process.env.FX_LAB_WORKER;
-    else process.env.FX_LAB_WORKER = prev;
+  it('v27.41: on by default in production, off in dev / tests, FX_LAB_WORKER overrides', () => {
+    expect(labWorkerOn({ NODE_ENV: 'production' })).toBe(true);
+    expect(labWorkerOn({ NODE_ENV: 'production', FX_LAB_WORKER: 'off' })).toBe(false);
+    expect(labWorkerOn({ NODE_ENV: 'development' })).toBe(false);
+    expect(labWorkerOn({ NODE_ENV: 'production', VITEST: 'true' })).toBe(false);
+    expect(labWorkerOn({ FX_LAB_WORKER: 'on' })).toBe(true);
+    expect(labWorkerOn()).toBe(false); // this test process
   });
 });

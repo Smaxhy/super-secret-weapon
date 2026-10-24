@@ -75,9 +75,22 @@ export type ForkOutcome =
 /** v17: an error text that means the child ran out of memory (a JS-level heap error the child still caught). Pure. */
 export const memoryError = (e: string) => /heap|out of memory|allocation failed/i.test(e);
 
-export const labWorkerOn = () => process.env.FX_LAB_WORKER === 'on';
+/** v27.41 (owner: "the app keeps lagging"; VPS: the forex lab 6 min + the coin lab 9 min ran in the bot process every hour →
+ * event loop frozen up to 30 s, every API call and price push waited): ON by default in production, `FX_LAB_WORKER=off`
+ * switches it off, `on` forces it anywhere (tests and dev stay inline) */
+export const labWorkerOn = (env: NodeJS.ProcessEnv = process.env) =>
+  env.FX_LAB_WORKER === 'on' || (env.FX_LAB_WORKER !== 'off' && env.NODE_ENV === 'production' && !env.VITEST);
 
+/** v27.41: one lab child at a time (the forex and coin labs fire minutes apart; two children + the bot would not fit the
+ * container's 2 GB) — a run waits for the one before it, its own timeout starts once it gets its turn */
+let childTurn: Promise<unknown> = Promise.resolve();
 export function forkLabRun(refresh: boolean, input: WorkerInput, cfg: Pick<typeof LAB_WORKER, 'heapMb' | 'timeoutMs'> = LAB_WORKER): Promise<ForkOutcome> {
+  const mine = childTurn.then(() => forkOnce(refresh, input, cfg));
+  childTurn = mine.catch(() => undefined);
+  return mine;
+}
+
+function forkOnce(refresh: boolean, input: WorkerInput, cfg: Pick<typeof LAB_WORKER, 'heapMb' | 'timeoutMs'>): Promise<ForkOutcome> {
   const js = path.join(__dirname, 'lab-worker.js');
   const ts = path.join(__dirname, 'lab-worker.ts');
   const useJs = existsSync(js);
