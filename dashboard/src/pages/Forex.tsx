@@ -40,7 +40,7 @@ interface HeatLevel { price: number; kind: 'round' | 'half' | 'swing' | 'yesterd
 interface Heatmap { levels: HeatLevel[]; read: { positioning: number | null; stretch?: number | null; carry: number | null; volF: number | null; hurst: number | null; long: number; short: number; of: number; why: string[] } }
 interface ExtFeeds { dukascopy: { at: number; ids: Record<string, { bars: number; firstT: number | null; lastT: number | null; error: string | null }> } | null; spreadProfiles: string[]; macro: { cot: Array<{ ccy: string; score: number; net: number; asOf: number }>; rates: Array<{ ccy: string; rate: number }>; errors: string[]; at: number | null }; historyFrom: number }
 interface PaperRow { id: string; name: string; tf: string; stats: RStats; risk1: Risk; open: number }
-interface Report { at: number; durationMs: number; feed: Array<{ id: string; role?: 'traded' | 'strength' | 'mood'; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; markets?: MarketNow[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string; strength?: StrengthNow; mood?: MoodNow; filters?: FilterSummary[]; exits?: ExitSummary[]; entries?: EntrySummary[]; financing?: FinancingSummary; lock?: LockSummary; judge?: JudgeReport | null; portfolio?: PortfolioReport | null; news?: NewsStudy | null; extFeeds?: ExtFeeds; honest?: HonestReport }
+interface Report { at: number; durationMs: number; feed: Array<{ id: string; role?: 'traded' | 'strength' | 'mood'; bars: number; firstT: number | null; lastT: number | null; error: string | null }>; from: number | null; to: number | null; oosFrom: number | null; rows: RowT[]; markets?: MarketNow[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string; strength?: StrengthNow; mood?: MoodNow; filters?: FilterSummary[]; exits?: ExitSummary[]; entries?: EntrySummary[]; financing?: FinancingSummary; lock?: LockSummary; judge?: JudgeReport | null; portfolio?: PortfolioReport | null; news?: NewsStudy | null; extFeeds?: ExtFeeds; honest?: HonestReport; retired?: Array<{ id: string; name: string; why: string }> }
 interface FastFeed { id: string; tf: '15m' | '1m'; bars: number; firstT: number | null; lastT: number | null; source: 'oanda' | 'yahoo' | null; error: string | null }
 interface FastReport { at: number; durationMs: number; feed: FastFeed[]; spans: Record<'15m' | '1m', { from: number | null; to: number | null; oosFrom: number | null; markets: number }>; rows: RowT[]; paper: { since: number; rows: PaperRow[]; open: Trade[]; recent: Trade[] }; note: string }
 interface Data { running: boolean; last: Report | null; fast?: FastReport | null }
@@ -302,8 +302,11 @@ function Strategies({ r }: { r: Report }) {
   }, [r]);
   const [mkt, setMkt] = useStored<string>('fx.mkt', 'all');
   const [showDead, setShowDead] = useState(false);
+  const [showRetired, setShowRetired] = useState(false);
   const curMkt = mkt === 'all' || mkts.some((m) => m.id === mkt) ? mkt : 'all';
-  const tfRows = useMemo(() => r.rows.filter((x) => tf === 'all' || x.tf === tf), [r, tf]);
+  // v27.37 retired strategies (no promise on any chart) are off the list; at the weekend they re-run but stay hidden
+  const retiredIds = useMemo(() => new Set((r.retired ?? []).map((x) => x.id)), [r]);
+  const tfRows = useMemo(() => r.rows.filter((x) => (tf === 'all' || x.tf === tf) && !retiredIds.has(x.id)), [r, tf, retiredIds]);
   const deadN = tfRows.filter((x) => x.dead).length;
   const rows = showDead ? tfRows : tfRows.filter((x) => !x.dead);
   const ri = (x: RowT) => x.risk.find((k) => String(k.riskPct) === risk) ?? x.risk[1]!;
@@ -328,6 +331,19 @@ function Strategies({ r }: { r: Report }) {
           <Chip key={m.id} active={curMkt === m.id} onClick={() => setMkt(m.id)}>{FOCUS.includes(m.id) ? '★ ' : ''}{m.label}</Chip>
         ))}
       </div>
+      {(r.retired?.length ?? 0) > 0 && (
+        <div className="px-4 pb-2 text-xs text-muted sm:px-5">
+          <button type="button" className="font-semibold text-accent-text" onClick={() => setShowRetired((v) => !v)}>{showRetired ? 'Hide' : 'Show'} the {r.retired!.length} retired strategies</button>{' '}
+          (no promise on any chart or market — off the list, re-tested every weekend; one that improves comes back by itself)
+          {showRetired && (
+            <ul className="mt-2 space-y-1">
+              {r.retired!.map((x) => (
+                <li key={x.id}><span className="font-medium text-ink-2">{x.name}</span> — {x.why}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {deadN > 0 && (
         <div className="px-4 pb-2 text-xs text-muted sm:px-5">
           <button type="button" className="font-semibold text-accent-text" onClick={() => setShowDead((v) => !v)}>{showDead ? 'Hide' : 'Show'} the {deadN} that clearly don't work</button>{' '}

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { absorptionAt, prevWeekLevels } from '../src/forex/flow';
 import { buildCtx } from '../src/forex/ta';
 import { strategyById } from '../src/forex/strategies';
+import { strictStopDist } from '../src/forex/exits';
 import { blockReason, FILTERS } from '../src/forex/filters';
 import type { Bar } from '../src/forex/types';
 
@@ -44,7 +45,9 @@ describe('v27.36 the friend’s level + absorption entry', () => {
     const i = asia.length - 1;
     const sig = strategyById('asia_absorb')!.signal(c, i)!;
     expect(sig.side).toBe(1);
-    expect(sig.stop).toBeLessThan(98.95);
+    // v27.37 the very strict stop: the tighter of "just past the absorbing candle" and the friend's stop size
+    expect(sig.stop).toBeLessThan(asia[i]!.c);
+    expect(asia[i]!.c - sig.stop).toBeCloseTo(Math.min(asia[i]!.c - (98.95 - 0.1 * c.atr14[i]!), strictStopDist('EURUSD', asia[i]!.c)), 9);
     expect(sig.target!).toBeGreaterThan(asia[i]!.c + 2 * (asia[i]!.c - sig.stop));
     const day = scenario(14); // 10:00 New York
     const cd = buildCtx(day, 60, 'EURUSD');

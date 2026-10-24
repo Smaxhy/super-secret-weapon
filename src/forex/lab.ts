@@ -471,6 +471,8 @@ export interface FxReport {
   dataAge?: DataAge[];
   /** v18: how much of the lab's selection is luck (deflated Sharpe trials, PBO, Reality Check / SPA) */
   honest?: HonestReport;
+  /** v27.37: strategies retired for showing no promise (skipped on weekdays, re-tested every weekend) */
+  retired?: Array<{ id: string; name: string; why: string }>;
   /** v18: the quant desk — the Carver-style vol-targeted forecast system, graded on the unseen 30% */
   desk?: DeskOut | null;
   /** v18: does a limit / pullback / confirmation entry beat entering at the next open? (graded only) */
@@ -1101,12 +1103,69 @@ export interface TfEval {
 }
 
 /**
+ * v27.37 (owner: "remove all strategies which show no promise from the list"): a strategy is RETIRED when, over every chart
+ * it runs on (hourly lab + the 15-minute lab), it has had a fair test (≥ 60 unseen trades in all) and shows no promise
+ * anywhere: no row graded Edge / Maybe, no row with ≥ 10 unseen trades and a positive average, and no market where it
+ * clears the per-market bars (`cellPass` / `cellTry`). Retired strategies are skipped on weekdays (lab rows, the live
+ * "what fired" lists) and re-tested every weekend, when the list is rebuilt — one that improves comes back by itself.
+ */
+export const RETIRE = { on: true, minUnseen: 60, promiseN: 10 };
+export const FX_RETIRED = 'fx:retired';
+export interface RetiredStrategy {
+  id: string;
+  name: string;
+  why: string;
+  /** its rows' unseen Sharpe ratios (still counted as trials by the honest statistics while it is skipped) */
+  sr: number[];
+}
+export interface RetiredStore {
+  at: number;
+  ids: RetiredStrategy[];
+}
+type RetireRow = Pick<Row, 'id' | 'name' | 'tf' | 'verdict' | 'outSample'> & { markets?: MarketCell[]; stats?: { sr: number } };
+/** The strategies that show no promise on any chart (pure). */
+export function noPromise(rows: readonly RetireRow[]): RetiredStrategy[] {
+  const by = new Map<string, RetireRow[]>();
+  for (const r of rows) if (r.id !== 'random') (by.get(r.id) ?? by.set(r.id, []).get(r.id)!).push(r);
+  const out: RetiredStrategy[] = [];
+  for (const [id, rs] of by) {
+    const unseen = rs.reduce((n, r) => n + r.outSample.n, 0);
+    if (unseen < RETIRE.minUnseen) continue;
+    const promise = rs.some((r) => r.verdict !== 'no' || (r.outSample.n >= RETIRE.promiseN && r.outSample.avgR > 0) || (r.markets ?? []).some((c) => cellPass(c) || cellTry(c)));
+    if (promise) continue;
+    const best = [...rs].filter((r) => r.outSample.n > 0).sort((a, b) => b.outSample.avgR - a.outSample.avgR)[0];
+    out.push({
+      id,
+      name: rs[0]!.name,
+      why: `${unseen} unseen trades on ${rs.length} chart${rs.length === 1 ? '' : 's'}, best ${best ? `${best.tf} ${best.outSample.avgR >= 0 ? '+' : ''}${best.outSample.avgR.toFixed(2)}R a trade` : 'none'}; no market where it works on its own`,
+      sr: rs.map((r) => r.stats?.sr).filter((x): x is number => typeof x === 'number' && Number.isFinite(x)),
+    });
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
+}
+/** Is it the weekend for this desk (forex market closed / coins: UTC Saturday + Sunday)? */
+export const deskWeekend = (universe: Universe, now: number): boolean => {
+  const day = new Date(now).getUTCDay();
+  return universe === 'crypto' ? day === 6 || day === 0 : !marketClock(now).open;
+};
+export async function loadRetired(redis: { get(k: string): Promise<string | null> }, key: string): Promise<RetiredStore | null> {
+  const raw = await redis.get(key).catch(() => null);
+  if (!raw) return null;
+  try {
+    const x = JSON.parse(raw) as RetiredStore;
+    return Array.isArray(x?.ids) ? x : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Every strategy on one chart (v15: shared by the hourly lab and the 15m / 1m lab): raw and with each filter, then
  * every exit under the chosen filter — both picked on the FIRST 70% only (`oosFrom`), the owner's trailing
  * take-profit preferred where it tests as well — then each row's verdict against random entries on the same chart,
  * its paper results since `since` and its open trades. `onStrategy` sees each strategy's final variant.
  */
-export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: { oosFrom: number; since: number; weeks: number; prev: Record<string, { f?: FilterKind; e?: ExitKind; n?: EntryKind }> }, onStrategy?: (x: StrategyResult) => void | Promise<void>): Promise<TfEval> {
+export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: { oosFrom: number; since: number; weeks: number; prev: Record<string, { f?: FilterKind; e?: ExitKind; n?: EntryKind }>; skip?: ReadonlySet<string> }, onStrategy?: (x: StrategyResult) => void | Promise<void>): Promise<TfEval> {
   const rows: Row[] = [];
   const paperRows: PaperRow[] = [];
   const open: Trade[] = [];
@@ -1118,7 +1177,7 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
     await yieldNow();
   }
   for (const s of STRATEGIES) {
-    if (!runsOn(s, tf)) continue;
+    if (!runsOn(s, tf) || o.skip?.has(s.id)) continue;
     const style = styleOf(s);
     const key = `${s.id}:${tf}`;
     const prev = o.prev[key];
@@ -1933,8 +1992,12 @@ export class ForexLab {
     const statInputs: StatInput[] = [];
     /** v27.24: the picked strategies' finished trades, for the "two strategies agree" (doubling up) test */
     const confPool: ConfTrade[] = [];
+    // v27.37 retired strategies: skipped on weekdays, all re-tested at the weekend
+    const weekendRun = deskWeekend(this.universe, Date.now());
+    const retiredPrev = await loadRetired(this.redis, this.k(FX_RETIRED));
+    const skip = new Set(RETIRE.on && !weekendRun ? (retiredPrev?.ids ?? []).map((x) => x.id) : []);
     for (const tf of FX_CONFIG.timeframes) {
-      const ev = await evaluateTf(series.filter((se) => se.tf === tf), tf, { oosFrom, since, weeks, prev: prevChosen }, (x) => {
+      const ev = await evaluateTf(series.filter((se) => se.tf === tf), tf, { oosFrom, since, weeks, prev: prevChosen, skip }, (x) => {
         statInputs.push({ key: x.key, isRandom: x.s.id === 'random', done: x.done });
         if (x.s.id === 'random') return;
         // the judge's view of every trade: its context at the signal bar (and the strategy's last 10 results before it)
@@ -2019,7 +2082,7 @@ export class ForexLab {
     // ── v18 honest statistics: deflated Sharpe per row (Edge needs ≥ 50%), PBO + Reality Check / SPA overall ──
     let honest: HonestReport | undefined;
     try {
-      const h = honestStats(statInputs, { from, to, oosFrom });
+      const h = honestStats(statInputs, { from, to, oosFrom, extraSr: (retiredPrev?.ids ?? []).filter((x) => skip.has(x.id)).flatMap((x) => x.sr) });
       let downgraded = 0;
       for (const r of rows) {
         const st = h.rows.get(`${r.id}:${r.tf}`);
@@ -2040,6 +2103,18 @@ export class ForexLab {
       const rnd = rows.find((x) => x.id === 'random' && x.tf === r.tf);
       r.quality = qualityPass(r, rnd ? rnd.all.avgR : null);
     }
+    // v27.37 rebuild the retired list at the weekend, when every strategy ran (15-minute rows from the fast lab's report)
+    let retired = (retiredPrev?.ids ?? []).filter((x) => skip.has(x.id));
+    if (RETIRE.on && weekendRun) {
+      let fastRows: RetireRow[] = [];
+      try {
+        fastRows = (JSON.parse((await this.redis.get(this.k('fx:fast:report')).catch(() => null)) ?? '{}') as { rows?: RetireRow[] }).rows ?? [];
+      } catch {
+        fastRows = [];
+      }
+      retired = noPromise([...rows, ...fastRows]);
+      await this.redis.set(this.k(FX_RETIRED), JSON.stringify({ at: Date.now(), ids: retired } satisfies RetiredStore)).catch(() => undefined);
+    } else if (!RETIRE.on) retired = [];
     // v27.33 weekend prep: robustness sweep + time machine + next-week forecast on the live / nearly-live rows (weekends only)
     await this.applyPrep(rows, series, oosFrom, Number.isFinite(to) ? to : Date.now()).catch((err: Error) => log.warn({ err: err.message }, 'weekend prep failed'));
     statInputs.length = 0;
@@ -2244,7 +2319,7 @@ export class ForexLab {
       const firing: MarketNow['firing'] = [];
       for (const x of series.filter((y) => y.inst.id === inst.id)) {
         for (const s of STRATEGIES) {
-          if (s.id === 'random' || !runsOn(s, x.tf, inst.id)) continue;
+          if (s.id === 'random' || skip.has(s.id) || !runsOn(s, x.tf, inst.id)) continue;
           const sig = s.signal(x.ctx, x.ctx.bars.length - 1);
           if (!sig) continue;
           const f = rows.find((r) => r.id === s.id && r.tf === x.tf)?.filter ?? 'none';
@@ -2307,6 +2382,7 @@ export class ForexLab {
     const confluence: ConfluenceReport = confluenceStudy(confPool, oosFrom);
     await this.redis.set(this.k('fx:confluence'), JSON.stringify(confluence)).catch(() => undefined);
     const report: FxReport = {
+      retired: retired.map(({ id, name, why }) => ({ id, name, why })),
       at: Date.now(),
       durationMs: Date.now() - t0,
       feed,

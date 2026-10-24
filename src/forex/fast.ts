@@ -30,7 +30,7 @@ import { newSyncReport, type LabOpenTrade } from './practice';
 import { withEnd } from './mtf';
 import { cellPass } from './montecarlo';
 import { vixFactor, vixNowOf } from './mood';
-import { FX_CONFIG, onlyOk, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, focusPrio, marketRecOf, pickedOnInSample, planChosen, plannedStrategies, prevPicks, profitFloor, signalIndex, slimTrade, soloWait, toLabTrade, tradeKey, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
+import { FX_CONFIG, FX_RETIRED, RETIRE, deskWeekend, loadRetired, onlyOk, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, focusPrio, marketRecOf, pickedOnInSample, planChosen, plannedStrategies, prevPicks, profitFloor, signalIndex, slimTrade, soloWait, toLabTrade, tradeKey, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
 import type { HmmModel } from './hmm';
 import { agreeCount, boostFor, gradeConviction, maxConfirmations, tierOf, type ConvictionReport, type ConvRow } from './conviction';
 
@@ -213,6 +213,8 @@ export class FastLab {
   /** last full backfill attempt per series (at most one per 6 hours) */
   private backfilledAt = new Map<string, number>();
   private volFilled = new Set<string>();
+  /** v27.37 strategies retired by the hourly lab (skipped on weekdays) */
+  private retired = new Set<string>();
   private bigCache: { at: number; byId: Map<string, { h1: BigChart; h4: BigChart }> } | null = null;
   private oandaOn = false;
   /** one candle pull per chart at a time */
@@ -393,6 +395,8 @@ export class FastLab {
     // v17.8: last test's picks per chart, only while that chart's 70/30 line hasn't moved back (`prevPicks`); the old
     // unstamped format is ignored once (one re-pick after the deploy)
     const prevRaw = await this.redis.get(this.k(FX_FAST_CHOSEN)).catch(() => null);
+    // v27.37 the hourly lab's retired strategies are skipped here too on weekdays (all re-tested at the weekend)
+    this.retired = new Set(RETIRE.on && !deskWeekend(this.lab.universe, Date.now()) ? ((await loadRetired(this.redis, this.k(FX_RETIRED)))?.ids ?? []).map((x) => x.id) : []);
     const rows: Row[] = [];
     const paperRows: PaperRow[] = [];
     const open: Trade[] = [];
@@ -420,7 +424,7 @@ export class FastLab {
       // v15.2: closed trades of the strategies picked on the first 70%, with how many market checks backed them
       const byPair = new Map(series.map((se) => [se.inst.id, se]));
       const conv: ConvRow[] = [];
-      const ev = await evaluateTf(series, tf, { oosFrom, since, weeks: Math.max(0.2, (to - from) / (7 * DAY)), prev: prevPicks(prevRaw, tf, oosFrom) }, (x) => {
+      const ev = await evaluateTf(series, tf, { oosFrom, since, weeks: Math.max(0.2, (to - from) / (7 * DAY)), prev: prevPicks(prevRaw, tf, oosFrom), skip: this.retired }, (x) => {
         if (x.s.id === 'random' || !pickedOnInSample(x.ch.inSample)) return;
         for (const t of x.done) {
           const se = byPair.get(t.pair);
@@ -517,7 +521,7 @@ export class FastLab {
         newest = Math.max(newest, bars[last]!.t);
         const fired: FastFiring['byPair'][string] = [];
         for (const s of STRATEGIES) {
-          if (s.id === 'random' || !runsOn(s, tf, inst.id)) continue;
+          if (s.id === 'random' || this.retired.has(s.id) || !runsOn(s, tf, inst.id)) continue;
           const sig = s.signal(se.ctx, last);
           if (!sig) continue;
           const row = rowsTf.find((r) => r.id === s.id);

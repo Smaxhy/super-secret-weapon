@@ -758,6 +758,22 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.37 the friend's very strict stop + strategies with no promise retired (Oct 24, owner: "his SL is 10 points, make it
+like that, very strict SL"; "remove all strategies which show no promise from the list")
+- exits.ts `STRICT_STOP` / `strictStopDist(pair, px)`: 10 points on the Nasdaq, scaled per market (S&P 2.5, Dow 15, Russell 1.5,
+  gold $1, silver 5¢), 5 pips FX, 0.15% coins, never under 3 spreads. `asia_absorb` / `level_absorb` now use the tighter of
+  "past the absorbing candle" and that stop (targets 2–20R, else 3R); every strategy gets exit variant **'strict'** (stop
+  pulled in to that distance, target unchanged — 13 exit variants), picked on the first 70% like every exit.
+  FEES: the venue fee is a share of the position (gTrade model, `VENUE_FEES`), so on a 10-point NQ stop it costs ≈ 1.7R a
+  trade (S&P 2.5 pts ≈ 1.9R, gold $1 ≈ 4.2R) — told to the owner; tight stops only pay on CME-style per-contract fees.
+- Retirement (lab.ts `RETIRE` {minUnseen 60, promiseN 10}, `noPromise`, `deskWeekend`, `loadRetired`, Redis `fx:retired` /
+  `cm:retired`): a strategy with ≥ 60 unseen trades over all its charts (hourly lab rows + the fast report's 15m rows) and no
+  promise anywhere (no Edge / Maybe row, no row with 10+ unseen trades and a positive average, no market passing
+  `cellPass` / `cellTry`) is retired: skipped on weekdays by both labs (`evaluateTf` `o.skip`, the live "what fired" lists),
+  re-run at the weekend when the list is rebuilt (it comes back by itself). Its rows' unseen Sharpe ratios stay in the
+  honest statistics as trials (`honestStats` `extraSr`). Report `retired` → Strategies page hides those rows ("Show the N
+  retired strategies") and the Lab playbook lists them in one line. `RETIRE.on = false` restores the full list.
+  tests/forex-retire (3); forex-absorb expects the strict stop.
 ## v27.36 the friend's method: Asia open, his level, absorption (Oct 24, owner relayed: "I only trade the Asia open and wait
 until my level is hit; if sellers or buyers get absorbed there I enter; I check every timeframe and enter on the 1m")
 His 9 clips (GC / NQ / ES / YM futures, 1m, TradingView "TradeAxis DOL" draw-on-liquidity targets): entries at a sweep wick,

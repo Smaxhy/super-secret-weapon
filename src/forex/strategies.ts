@@ -8,6 +8,7 @@ import type { Ctx } from './ta';
 import { isCrypto, isFutures, isIndex, type Signal } from './types';
 import { nyOffsetMs } from './ny-time';
 import { absorptionAt, flowOf } from './flow';
+import { strictStopDist } from './exits';
 
 /**
  * v13: a "shock" candle = what a big news release looks like on an hourly chart: range ≥ 2.2× the normal hourly range
@@ -589,7 +590,7 @@ export function ofClimaxSignal(c: Ctx, i: number): Signal | null {
  * (`absorptionAt`) without blowing more than ½ ATR through it → enter at the close; stop just past that candle; target
  * the nearest level on the other side at least 2R away (the draw on liquidity, ≤ 8R), else 3R; flat after a day.
  */
-export const ASIA = { from: 18 * 60, to: 23 * 60, fresh: 12, swingLook: 40, maxSwings: 8, through: 0.5, minR: 2, maxR: 8, fallbackR: 3 };
+export const ASIA = { from: 18 * 60, to: 23 * 60, fresh: 12, swingLook: 40, maxSwings: 8, through: 0.5, minR: 2, maxR: 20, fallbackR: 3 };
 
 /** the friend's levels seen from `side` (sided prices): `near` = support for a long, `far` = the targets above. */
 function friendLevels(c: Ctx, i: number, side: 1 | -1, beforeBar: number): { near: number[]; far: number[] } {
@@ -640,10 +641,12 @@ export function levelAbsorbSignal(c: Ctx, i: number, asiaOnly: boolean): Signal 
       return true;
     })());
     if (hit === undefined) continue;
-    const stop = side * (low - 0.1 * a);
+    // v27.37 his very strict stop: just past the absorbing candle, but never wider than his 10 Nasdaq points (scaled per
+    // market) — on a 15-minute / hourly candle that often puts it inside the candle, where his 1-minute entry would sit
     const px = p.c(i);
-    const risk = px - (low - 0.1 * a);
-    if (!(risk >= 0.3 * a) || risk > 4 * a) continue;
+    const risk = Math.min(px - (low - 0.1 * a), strictStopDist(c.pair, c.close[i]!));
+    if (!(risk > 0)) continue;
+    const stop = side * (px - risk);
     const tgt = lv.far.filter((T) => T - px >= ASIA.minR * risk && T - px <= ASIA.maxR * risk).sort((x, y) => x - y)[0];
     const target = side * (tgt ?? px + ASIA.fallbackR * risk);
     return { side, stop, target, maxBars: Math.max(4, Math.round(1440 / c.barMin)) };

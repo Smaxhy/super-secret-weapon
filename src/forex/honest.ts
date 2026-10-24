@@ -69,7 +69,7 @@ export interface HonestOut {
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 
 /** The whole thing. `from` / `to` / `oosFrom` are the lab's history span and 70/30 line (ms). */
-export function honestStats(inputs: readonly StatInput[], o: { from: number; to: number; oosFrom: number }): HonestOut {
+export function honestStats(inputs: readonly StatInput[], o: { from: number; to: number; oosFrom: number; extraSr?: readonly number[] }): HonestOut {
   const rows = new Map<string, RowStat>();
   // ── per-row deflated Sharpe on the unseen trades ──
   const unseen = new Map<string, number[]>();
@@ -84,6 +84,8 @@ export function honestStats(inputs: readonly StatInput[], o: { from: number; to:
     const m = moments(rs);
     trialSr.push(m.sd > 0 ? m.mean / m.sd : 0);
   }
+  // v27.37: retired strategies skipped this run were still tried — their Sharpe ratios keep counting as trials
+  trialSr.push(...(o.extraSr ?? []));
   const trials = trialSr.length;
   const varSr = varianceOf(trialSr);
   let expectedMaxSr = 0;

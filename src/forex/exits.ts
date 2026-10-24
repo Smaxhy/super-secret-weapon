@@ -7,10 +7,10 @@
  * last 30% stays a fair test. Pure.
  */
 import type { Ctx } from './ta';
-import type { Signal } from './types';
+import { instrument, isCrypto, type Signal } from './types';
 
-export type ExitKind = 'designed' | 'breakeven' | 'scale' | 'tight' | 'runner' | 'quick' | 'wide' | 'trail_tp' | 'half_trail' | 'trail_sl' | 'roomy' | 'swing';
-export const EXITS: ExitKind[] = ['designed', 'breakeven', 'scale', 'tight', 'runner', 'quick', 'wide', 'trail_tp', 'half_trail', 'trail_sl', 'roomy', 'swing'];
+export type ExitKind = 'designed' | 'breakeven' | 'scale' | 'tight' | 'runner' | 'quick' | 'wide' | 'trail_tp' | 'half_trail' | 'trail_sl' | 'roomy' | 'swing' | 'strict';
+export const EXITS: ExitKind[] = ['designed', 'breakeven', 'scale', 'tight', 'runner', 'quick', 'wide', 'trail_tp', 'half_trail', 'trail_sl', 'roomy', 'swing', 'strict'];
 export const EXIT_LABEL: Record<ExitKind, string> = {
   designed: 'as designed',
   breakeven: 'stop to break-even at +1R',
@@ -24,7 +24,22 @@ export const EXIT_LABEL: Record<ExitKind, string> = {
   trail_sl: 'trailing stop-loss: the stop follows the price from the start, at the target it keeps trailing',
   roomy: 'bigger trade: stop and target 1.6× further away',
   swing: 'swing trade: stop 2.2× and target 2.5× further away, held longer',
+  strict: "very strict stop: the friend's 10 Nasdaq points (scaled per market), target unchanged",
 };
+
+/**
+ * v27.37 (owner: "his SL is 10 points, make it like that, very strict SL"): his stop on the Nasdaq is 10 points; the same
+ * size of stop on the other markets, scaled by how far each one usually moves (S&P 2.5, Dow 15, Russell 1.5, gold $1,
+ * silver 5¢), 5 pips on a currency pair, 0.15% on a coin — never under 3 spreads (a stop inside the spread is no stop).
+ * Price units. Pure.
+ */
+export const STRICT_STOP: Record<string, number> = { NDXUSD: 10, SPXUSD: 2.5, DJIUSD: 15, RUTUSD: 1.5, XAUUSD: 1, XAGUSD: 0.05 };
+export function strictStopDist(pair: string, px: number): number {
+  const inst = instrument(pair);
+  const spread = inst ? inst.spreadPips * inst.pip : 0;
+  const base = STRICT_STOP[pair] ?? (isCrypto(pair) ? 0.0015 * px : inst ? 5 * inst.pip : 0.0005 * px);
+  return Math.max(base, 3 * spread);
+}
 /**
  * The owner's exits, in order of preference: the trailing stop-loss first (v15.1, "for safety": the stop moves up with
  * the trade from the start), then the trailing take-profits. A strategy uses the first one that tests as well as its
@@ -68,6 +83,11 @@ export function applyExit(sig: Signal | null, kind: ExitKind, c: Ctx, i: number)
       return wider(sig, px, 1.6, 1.6);
     case 'swing':
       return wider(sig, px, 2.2, 2.5);
+    case 'strict': {
+      // the stop pulled in to the strict distance (never loosened); the target stays where it was (a bigger R)
+      const d = strictStopDist(c.pair, px);
+      return d < risk ? { ...sig, stop: px - sig.side * d } : sig;
+    }
     default:
       return sig;
   }

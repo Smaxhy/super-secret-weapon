@@ -9,7 +9,7 @@ import { ConvictionCard, DeskCard, EntriesCard, ExitsCard, FiltersCard, Financin
 import { apiBase } from '../lib/ws';
 
 export interface LabRow { id: string; name: string; family?: string; desc?: string; tf?: string; verdict: 'edge' | 'maybe' | 'no'; outSample?: { n: number; avgR: number } }
-export interface LabReport { honest?: HonestReport; judge?: JudgeReport | null; filters?: FilterSummary[]; lock?: LockSummary; exits?: ExitSummary[]; entries?: EntrySummary[]; financing?: FinancingSummary; news?: NewsStudy | null; rows: LabRow[] }
+export interface LabReport { honest?: HonestReport; judge?: JudgeReport | null; filters?: FilterSummary[]; lock?: LockSummary; exits?: ExitSummary[]; entries?: EntrySummary[]; financing?: FinancingSummary; news?: NewsStudy | null; rows: LabRow[]; retired?: Array<{ id: string; name: string; why: string }> }
 const FAMILY: Record<string, { label: string; what: string }> = {
   trend: { label: 'Trend following', what: 'Go with a move that is already under way: moving-average crosses and pullbacks, Supertrend, MACD, ADX, trendline and structure breaks, time-series momentum, currency momentum.' },
   breakout: { label: 'Breakouts', what: 'Enter when price leaves a range: Donchian highs / lows, Bollinger squeeze, Keltner, inside bars, breakout-and-retest, volatility-forecast breaks, round-number breaks.' },
@@ -121,7 +121,8 @@ export function FxLab({ r }: { r: LabReport }) {
           ))}
         </ul>
       </Card>
-      <Playbook rows={r.rows} chosen={new Set(b?.chosen ?? [])} />
+      <Playbook rows={r.rows.filter((x) => !(r.retired ?? []).some((y) => y.id === x.id))} chosen={new Set(b?.chosen ?? [])} />
+      {(r.retired?.length ?? 0) > 0 && <p className="px-1 text-xs text-muted">{r.retired!.length} strategies retired for showing no promise on any chart or market ({r.retired!.map((x) => x.name).join(', ')}). They are re-tested every weekend and come back by themselves if they improve.</p>}
       <HonestCard h={r.honest} names={Object.fromEntries(r.rows.map((x) => [x.id, x.name]))} />
       <DeskCard d={b?.desk} />
       <EntriesCard e={r.entries} />
