@@ -7,7 +7,7 @@
  */
 import WebSocket from 'ws';
 import { moduleLogger } from '../lib/logger';
-import { loadBars, mergeBars, refreshSeries, saveBars, type FeedStatus } from './data';
+import { loadBars, mergeBars, refreshSeries, saveBars, volumeFillKey, volumeShare, type FeedStatus } from './data';
 import { feeds } from './feeds';
 import { addTick, type LiveTick, type MinuteBar } from './pyth';
 import { INSTRUMENTS, type Bar, type Instrument } from './types';
@@ -41,12 +41,14 @@ export function parseCandles(json: unknown, now: number, barMs: number): Bar[] {
   const out: Bar[] = [];
   for (const row of json as unknown[]) {
     if (!Array.isArray(row) || row.length < 5) continue;
-    const [ts, l, h, o, c] = row as number[];
+    const [ts, l, h, o, c, v] = row as number[];
     if (![ts, l, h, o, c].every((x) => typeof x === 'number' && Number.isFinite(x))) continue;
     const t = Math.floor((ts! * 1000) / barMs) * barMs;
     if (!(o! > 0 && h! > 0 && l! > 0 && c! > 0) || h! < l!) continue;
     if (t + barMs > now) continue;
-    out.push({ t, o: o!, h: Math.max(h!, o!, c!), l: Math.min(l!, o!, c!), c: c! });
+    const bar: Bar = { t, o: o!, h: Math.max(h!, o!, c!), l: Math.min(l!, o!, c!), c: c! };
+    if (typeof v === 'number' && v > 0) bar.v = v; // v27.35: the exchange's own traded volume
+    out.push(bar);
   }
   return mergeBars([], out);
 }
@@ -78,13 +80,16 @@ export async function fetchCoinbaseBars(id: string, granularitySec: number, from
 export async function refreshCoinSeries(redis: { get(k: string): Promise<string | null>; set(k: string, v: string): Promise<unknown> }, inst: Instrument, now = Date.now(), fetchImpl: typeof fetch = fetch): Promise<FeedStatus> {
   const have = await loadBars(redis as never, inst.id);
   const lastT = have[have.length - 1]?.t ?? 0;
-  const full = have.length < 2_000 || now - lastT > 6 * 86_400_000;
+  // v27.35: history stored before volume was kept is pulled again once, so every old candle gets its volume
+  const volFill = have.length >= 2_000 && volumeShare(have) < 0.5 && !(await redis.get(volumeFillKey(inst.id)).catch(() => '1'));
+  const full = have.length < 2_000 || now - lastT > 6 * 86_400_000 || volFill;
   const from = full ? now - COINBASE.historyDays * 86_400_000 : lastT - 2 * 3_600_000;
   try {
     const fresh = await fetchCoinbaseBars(inst.id, 3_600, from, now, fetchImpl);
     if (full && !fresh.length) throw new Error('no candles returned');
     const merged = mergeBars(have, fresh).filter((b) => b.t >= now - (COINBASE.historyDays + 10) * 86_400_000);
     if (merged.length) await saveBars(redis as never, inst.id, merged);
+    if (volFill) await redis.set(volumeFillKey(inst.id), String(now)).catch(() => undefined);
     feeds.ok('coinbase-candles', { items: fresh.length, asOf: merged[merged.length - 1]?.t ?? null });
     return { id: inst.id, bars: merged.length, firstT: merged[0]?.t ?? null, lastT: merged[merged.length - 1]?.t ?? null, error: null, fresh: merged.filter((b) => b.t > lastT).length, source: 'coinbase' } as FeedStatus;
   } catch (err) {

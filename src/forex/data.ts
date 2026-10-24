@@ -1,6 +1,6 @@
 /**
  * Forex candles (v12): Yahoo Finance's free chart API (no key), hourly bars, ~730 days back. Stored per
- * instrument in Redis `fx:bars:<id>` as compact [t,o,h,l,c] rows; refreshed hourly with the last 7 days merged in.
+ * instrument in Redis `fx:bars:<id>` as compact [t,o,h,l,c(,v)] rows (v27.35: volume where the feed has it); refreshed hourly with the last 7 days merged in.
  * The bar still forming is dropped (a strategy may only see closed bars).
  */
 import type Redis from 'ioredis';
@@ -14,7 +14,7 @@ export const barsKey = (id: string) => `fx:bars:${id}`;
 
 /** Parse Yahoo's chart JSON into closed hourly bars. Pure (tested). */
 export function parseYahoo(json: unknown, now: number, barMs = HOUR): Bar[] {
-  const r = (json as { chart?: { result?: Array<{ timestamp?: number[]; indicators?: { quote?: Array<{ open?: Array<number | null>; high?: Array<number | null>; low?: Array<number | null>; close?: Array<number | null> }> } }> } })?.chart?.result?.[0];
+  const r = (json as { chart?: { result?: Array<{ timestamp?: number[]; indicators?: { quote?: Array<{ open?: Array<number | null>; high?: Array<number | null>; low?: Array<number | null>; close?: Array<number | null>; volume?: Array<number | null> }> } }> } })?.chart?.result?.[0];
   const ts = r?.timestamp ?? [];
   const q = r?.indicators?.quote?.[0];
   if (!q) return [];
@@ -28,7 +28,9 @@ export function parseYahoo(json: unknown, now: number, barMs = HOUR): Bar[] {
     if (o == null || h == null || l == null || c == null) continue;
     if (!(o > 0 && h > 0 && l > 0 && c > 0) || h < l) continue;
     if (t + barMs > now) continue; // still forming
-    out.push({ t, o, h: Math.max(h, o, c), l: Math.min(l, o, c), c });
+    const v = q.volume?.[k];
+    // v27.35: futures carry real volume; spot FX on Yahoo reports 0 → no volume field at all
+    out.push(v != null && v > 0 ? { t, o, h: Math.max(h, o, c), l: Math.min(l, o, c), c, v } : { t, o, h: Math.max(h, o, c), l: Math.min(l, o, c), c });
   }
   return mergeBars([], out);
 }
@@ -61,19 +63,33 @@ async function fetchYahoo(symbol: string, range: string): Promise<unknown> {
   throw last ?? new Error('yahoo failed');
 }
 
+/** v27.35: a stored row [t, o, h, l, c, v?] → a bar (v only when the row has a positive 6th value). Pure. */
+export function barOfRow([t, o, h, l, c, v]: number[]): Bar {
+  return v !== undefined && v > 0 ? { t: t!, o: o!, h: h!, l: l!, c: c!, v } : { t: t!, o: o!, h: h!, l: l!, c: c! };
+}
+const vol6 = (v: number | undefined) => (v !== undefined && v > 0 ? [Number(v.toPrecision(6))] : []);
+
 export async function loadBars(redis: Redis, id: string): Promise<Bar[]> {
   const raw = await redis.get(barsKey(id)).catch(() => null);
   if (!raw) return [];
   try {
-    return (JSON.parse(raw) as number[][]).map(([t, o, h, l, c]) => ({ t: t!, o: o!, h: h!, l: l!, c: c! }));
+    return (JSON.parse(raw) as number[][]).map(barOfRow);
   } catch {
     return [];
   }
 }
 
 export async function saveBars(redis: Redis, id: string, bars: readonly Bar[]): Promise<void> {
-  await redis.set(barsKey(id), JSON.stringify(bars.map((b) => [b.t, b.o, b.h, b.l, b.c])));
+  await redis.set(barsKey(id), JSON.stringify(bars.map((b) => [b.t, b.o, b.h, b.l, b.c, ...vol6(b.v)])));
 }
+
+/** v27.35: share of the newest 500 bars that carry volume (0…1). Pure. */
+export function volumeShare(bars: readonly Bar[]): number {
+  const tail = bars.slice(-500);
+  return tail.length ? tail.filter((b) => b.v !== undefined && b.v > 0).length / tail.length : 0;
+}
+/** v27.35: marker that a market's history was pulled again once to pick up volume (stored bars predate it) */
+export const volumeFillKey = (id: string) => `fx:bars:vfill:${id}`;
 
 export interface FeedStatus {
   id: string;
@@ -90,13 +106,16 @@ export interface FeedStatus {
 }
 
 /** Refresh one series: a full 730-day pull when we hold little, else the last 7 days merged in. */
-export async function refreshSeries(redis: Redis, id: string, yahoo: string, now = Date.now(), minBars = 2_000): Promise<FeedStatus> {
+export async function refreshSeries(redis: Redis, id: string, yahoo: string, now = Date.now(), minBars = 2_000, wantVolume = false): Promise<FeedStatus> {
   const have = await loadBars(redis, id);
-  const full = have.length < minBars || now - (have[have.length - 1]?.t ?? 0) > 6 * 86_400_000;
+  // v27.35: a futures market whose stored history has no volume yet is pulled in full ONCE so the old bars get it too
+  const volFill = wantVolume && have.length >= minBars && volumeShare(have) < 0.5 && !(await redis.get(volumeFillKey(id)).catch(() => '1'));
+  const full = have.length < minBars || now - (have[have.length - 1]?.t ?? 0) > 6 * 86_400_000 || volFill;
   try {
     const fresh = parseYahoo(await fetchYahoo(yahoo, full ? '730d' : '7d'), now);
     const merged = mergeBars(have, fresh).filter((b) => b.t >= now - 740 * 86_400_000);
     if (merged.length) await saveBars(redis, id, merged);
+    if (volFill) await redis.set(volumeFillKey(id), String(now)).catch(() => undefined);
     const prevLast = have[have.length - 1]?.t ?? 0;
     feeds.ok('yahoo-1h', { items: fresh.length, asOf: merged[merged.length - 1]?.t ?? null });
     return { id, bars: merged.length, firstT: merged[0]?.t ?? null, lastT: merged[merged.length - 1]?.t ?? null, error: null, fresh: merged.filter((b) => b.t > prevLast).length };
@@ -110,7 +129,7 @@ export async function refreshSeries(redis: Redis, id: string, yahoo: string, now
 
 /** Refresh one traded instrument. */
 export function refreshInstrument(redis: Redis, inst: Instrument, now = Date.now()): Promise<FeedStatus> {
-  return refreshSeries(redis, inst.id, inst.yahoo, now);
+  return refreshSeries(redis, inst.id, inst.yahoo, now, 2_000, inst.kind !== 'fx');
 }
 
 // ── v15: 15-minute and 1-minute candles ──
@@ -123,13 +142,13 @@ export async function loadFastBars(redis: Redis, tf: '15m' | '1m', id: string): 
   const raw = await redis.get(fastBarsKey(tf, id)).catch(() => null);
   if (!raw) return [];
   try {
-    return (JSON.parse(raw) as number[][]).map(([t, o, h, l, c]) => ({ t: t!, o: o!, h: h!, l: l!, c: c! }));
+    return (JSON.parse(raw) as number[][]).map(barOfRow);
   } catch {
     return [];
   }
 }
 export async function saveFastBars(redis: Redis, tf: '15m' | '1m', id: string, bars: readonly Bar[]): Promise<void> {
-  await redis.set(fastBarsKey(tf, id), JSON.stringify(bars.map((b) => [b.t, px7(b.o), px7(b.h), px7(b.l), px7(b.c)]))).catch(() => undefined);
+  await redis.set(fastBarsKey(tf, id), JSON.stringify(bars.map((b) => [b.t, px7(b.o), px7(b.h), px7(b.l), px7(b.c), ...vol6(b.v)]))).catch(() => undefined);
 }
 
 /**

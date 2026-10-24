@@ -13,6 +13,7 @@ import { volRatioAt } from './engine';
 import { instrument, isFutures, TF_MIN, type Timeframe } from './types';
 import { roundStep } from './strategies';
 import { spreadMultAt } from './spreads';
+import { flowOf } from './flow';
 
 export const JUDGE_FEATURES = [
   'side',
@@ -48,6 +49,13 @@ export const JUDGE_FEATURES = [
   'mom3',
   'roundAtr',
   'costR',
+  // v27.35: standard deviation, volume profile, order flow (appended: stored models keep their feature indices)
+  'lrZ',
+  'lrR2',
+  'vpPoc',
+  'vaPos',
+  'cmf',
+  'relVol',
 ] as const;
 export type JudgeFeature = (typeof JUDGE_FEATURES)[number];
 
@@ -84,6 +92,12 @@ export const JUDGE_LABEL: Record<JudgeFeature, string> = {
   mom3: 'momentum on 1 / 5 / 20 days, on its side',
   roundAtr: 'room to the next round number',
   costR: 'spread cost vs the stop',
+  lrZ: 'standard deviations from the regression line, on its side',
+  lrR2: 'how straight the 50-candle channel is',
+  vpPoc: 'distance to the busiest price (POC)',
+  vaPos: 'where it sits in the value area, on its side',
+  cmf: 'money flow (buy − sell volume), on its side',
+  relVol: 'volume vs normal',
 };
 
 export const JUDGE_CONFIG = {
@@ -158,6 +172,15 @@ export function judgeFeatures(c: Ctx, env: FilterEnv | null, i: number, side: 1 
     set('roundAtr', Math.abs(next - px) / a);
   }
   const inst = instrument(c.pair);
+  // v27.35: deviation channel, volume profile, order flow (NaN where unknown; no-volume markets get the time profile)
+  const fl = flowOf(c);
+  set('lrZ', side * fin(fl.lrZ[i]));
+  set('lrR2', fin(fl.lrR2[i]));
+  const vp = fl.vp(i);
+  if (vp && okA) set('vpPoc', (side * (px - vp.poc)) / a);
+  if (vp && vp.vah > vp.val) set('vaPos', (side * (px - (vp.vah + vp.val) / 2)) / ((vp.vah - vp.val) / 2));
+  set('cmf', side * fin(fl.cmf[i]));
+  set('relVol', fin(fl.relVol[i]));
   if (inst && risk > 0) set('costR', (inst.spreadPips * inst.pip * spreadMultAt(c.pair, c.bars[i]!.t, i > 0 ? c.bars[i - 1]!.t : null)) / risk);
   return x;
 }

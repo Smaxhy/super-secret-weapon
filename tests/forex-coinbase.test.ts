@@ -24,7 +24,7 @@ describe('candles', () => {
     ];
     const bars = parseCandles(rows, NOW, H);
     expect(bars.map((b) => b.t)).toEqual([NOW - 3 * H, NOW - 2 * H]);
-    expect(bars[1]).toEqual({ t: NOW - 2 * H, o: 100, h: 102, l: 98, c: 101 });
+    expect(bars[1]).toEqual({ t: NOW - 2 * H, o: 100, h: 102, l: 98, c: 101, v: 10 });
   });
   it('pages 300 candles at a time from `from` to now', async () => {
     const calls: string[] = [];

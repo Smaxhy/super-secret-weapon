@@ -16,7 +16,7 @@ import { moduleLogger } from '../lib/logger';
 import { feeds } from './feeds';
 import { fetchCoinbaseFast } from './coinbase';
 import { dataAgeOf, FRESH, staleReason, type DataAge } from './freshness';
-import { fetchYahooBars, loadFastBars, mergeBars, saveFastBars, trimBars } from './data';
+import { fetchYahooBars, loadFastBars, mergeBars, saveFastBars, trimBars, volumeShare } from './data';
 import { loadOanda, oandaCandles, oandaReady } from './oanda';
 import { signalsFor, simulate, WARMUP } from './engine';
 import { STRATEGIES, runsOn, strategyById, styleOf, tradesNews } from './strategies';
@@ -212,6 +212,7 @@ export class FastLab {
   private deciding = new Set<FastTf>();
   /** last full backfill attempt per series (at most one per 6 hours) */
   private backfilledAt = new Map<string, number>();
+  private volFilled = new Set<string>();
   private bigCache: { at: number; byId: Map<string, { h1: BigChart; h4: BigChart }> } | null = null;
   private oandaOn = false;
   /** one candle pull per chart at a time */
@@ -328,6 +329,11 @@ export class FastLab {
       if (thin && now - (this.backfilledAt.get(k) ?? 0) > 6 * HOUR) {
         fromT = now - FX_FAST.keepDays[tf] * DAY;
         this.backfilledAt.set(k, now);
+      }
+      // v27.35: candles stored before volume was kept → pull the history again once (per start) to pick it up
+      if (inst.kind !== 'fx' && !thin && !this.volFilled.has(k) && volumeShare(have) < 0.5) {
+        fromT = now - FX_FAST.keepDays[tf] * DAY;
+        this.volFilled.add(k);
       }
       try {
         const got = await this.src.bars(inst, tf, fromT, now);

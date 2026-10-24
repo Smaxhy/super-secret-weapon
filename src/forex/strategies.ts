@@ -7,6 +7,7 @@ import { STRETCH } from './stretch';
 import type { Ctx } from './ta';
 import { isCrypto, isFutures, isIndex, type Signal } from './types';
 import { nyOffsetMs } from './ny-time';
+import { flowOf } from './flow';
 
 /**
  * v13: a "shock" candle = what a big news release looks like on an hourly chart: range ≥ 2.2× the normal hourly range
@@ -24,7 +25,7 @@ export function shockDir(c: Ctx, i: number, k = 2.2): 1 | -1 | 0 {
   return 0;
 }
 
-export type Family = 'trend' | 'breakout' | 'session' | 'reversion' | 'pattern' | 'news' | 'intermarket' | 'flow' | 'ict' | 'control';
+export type Family = 'trend' | 'breakout' | 'session' | 'reversion' | 'pattern' | 'news' | 'intermarket' | 'flow' | 'ict' | 'deviation' | 'volume' | 'control';
 /**
  * v14: what market a strategy needs (the regime check): 'trend' = a clean directional market, 'revert' = a choppy one,
  * 'pullback' = buys dips inside a bigger trend (the bigger-chart check covers it), 'neutral' = timing / flow rules.
@@ -432,6 +433,152 @@ export function roundStep(pair: string): number {
   if (pair === 'ETHUSD') return 100;
   if (pair === 'SOLUSD') return 10;
   return pair.endsWith('JPY') ? 1 : 0.01;
+}
+
+/** v27.35 thresholds for the deviation / volume-profile / order-flow rules */
+export const DEV = {
+  /** regression channel: "flat" = the line moves less than this many residual SDs over its 50 bars */
+  flatSd: 1.5,
+  revertIn: 2.2,
+  revertOut: 2,
+  trendR2: 0.6,
+  pullZ: 1.8,
+  breakZ: 2.5,
+  quietR2: 0.3,
+  balanceBars: 12,
+  absorbLook: 20,
+  absorbCmf: 0.05,
+  thrustCmf: 0.15,
+  thrustRelVol: 1.3,
+  climaxRelVol: 3,
+  climaxRange: 1.8,
+};
+
+/** the lowest sided low of the last n bars up to i, minus 0.2 ATR → a stop in real price. */
+function swingStop(c: Ctx, i: number, side: 1 | -1, n = 3): number {
+  const p = sided(c, side);
+  let lo = Infinity;
+  for (let j = Math.max(0, i - n + 1); j <= i; j++) lo = Math.min(lo, p.l(j));
+  return side * (lo - 0.2 * c.atr14[i]!);
+}
+/** a stop-level signal with a price target that must be ≥ minR away. */
+function toTarget(c: Ctx, i: number, side: 1 | -1, stop: number, target: number, minR = 1): Signal | null {
+  const s = levelSig(c, i, side, stop, null);
+  if (!s) return null;
+  const px = c.close[i]!;
+  const risk = (px - stop) * side;
+  if (!((target - px) * side >= minR * risk)) return null;
+  return { ...s, target };
+}
+
+/** Flat regression channel, the close came back inside after ≥ 2.2 SD away → back to the line. Pure. */
+export function sdRevertSignal(c: Ctx, i: number): Signal | null {
+  const f = flowOf(c);
+  if (i < 3 || !ok(f.lrZ[i]!, f.lrSd[i]!, f.lrSlope[i]!)) return null;
+  if (Math.abs(f.lrSlope[i]! * 49) > DEV.flatSd * f.lrSd[i]!) return null;
+  for (const side of [1, -1] as const) {
+    const z = side * f.lrZ[i]!;
+    const prev = Math.min(side * f.lrZ[i - 1]!, side * f.lrZ[i - 2]!, side * f.lrZ[i - 3]!);
+    if (!(prev <= -DEV.revertIn && z > -DEV.revertOut && side * f.lrZ[i - 1]! <= -DEV.revertOut)) continue;
+    return toTarget(c, i, side, swingStop(c, i, side), f.lrMid[i]!);
+  }
+  return null;
+}
+
+/** Clean rising channel (R² ≥ 0.6), the price dipped to the lower 1.8-SD band and turns up → target 1 SD over the line. */
+export function lrChannelSignal(c: Ctx, i: number): Signal | null {
+  const f = flowOf(c);
+  if (i < 3 || !ok(f.lrZ[i]!, f.lrR2[i]!, f.lrSlope[i]!, f.lrSd[i]!) || f.lrR2[i]! < DEV.trendR2) return null;
+  const side: 1 | -1 = f.lrSlope[i]! > 0 ? 1 : -1;
+  const p = sided(c, side);
+  const touched = Math.min(side * f.lrZ[i - 1]!, side * f.lrZ[i - 2]!) <= -DEV.pullZ;
+  if (!touched || !(side * f.lrZ[i]! > -1.5) || !(p.c(i) > p.o(i))) return null;
+  return toTarget(c, i, side, swingStop(c, i, side), f.lrMid[i]! + side * f.lrSd[i]!);
+}
+
+/** A quiet, trendless channel (R² < 0.3) and the close jumps 2.5 SD off the line → follow it; stop at the line, 2R. */
+export function sdBreakoutSignal(c: Ctx, i: number): Signal | null {
+  const f = flowOf(c);
+  if (i < 2 || !ok(f.lrZ[i]!, f.lrZ[i - 1]!, f.lrR2[i - 1]!) || f.lrR2[i - 1]! >= DEV.quietR2) return null;
+  const b = c.bars[i]!;
+  if (!(b.h > b.l) || Math.abs(b.c - b.o) < 0.5 * (b.h - b.l)) return null;
+  for (const side of [1, -1] as const) {
+    if (side * f.lrZ[i]! >= DEV.breakZ && side * f.lrZ[i - 1]! < 2 && side * (b.c - b.o) > 0) return levelSig(c, i, side, f.lrMid[i]!, 2);
+  }
+  return null;
+}
+
+/** Closed outside the value area, now back inside → rotate to the POC (the "80% rule"). Pure. */
+export function vpReentrySignal(c: Ctx, i: number): Signal | null {
+  const vp = flowOf(c).vp(i - 1);
+  if (!vp || i < 2) return null;
+  for (const side of [1, -1] as const) {
+    const p = sided(c, side);
+    const edge = side > 0 ? vp.val : -vp.vah;
+    const far = side > 0 ? vp.vah : -vp.val;
+    if (!(p.c(i - 1) < edge && p.c(i) > edge && p.c(i) < far)) continue;
+    return toTarget(c, i, side, swingStop(c, i, side), vp.poc);
+  }
+  return null;
+}
+
+/** 12 closes balanced inside the value area, then a solid close out of it → follow the break; stop half an ATR back inside. */
+export function vpBreakoutSignal(c: Ctx, i: number): Signal | null {
+  const vp = flowOf(c).vp(i - 1);
+  const a = c.atr14[i]!;
+  if (!vp || !ok(a) || i < DEV.balanceBars + 1) return null;
+  const b = c.bars[i]!;
+  if (!(b.h > b.l) || Math.abs(b.c - b.o) < 0.5 * (b.h - b.l)) return null;
+  for (let j = i - DEV.balanceBars; j < i; j++) if (c.close[j]! > vp.vah || c.close[j]! < vp.val) return null;
+  for (const side of [1, -1] as const) {
+    const edge = side > 0 ? vp.vah : vp.val;
+    if (side * (b.c - edge) > 0 && side * (b.c - b.o) > 0) return levelSig(c, i, side, edge - side * 0.5 * a, 2);
+  }
+  return null;
+}
+
+/** New 20-bar low, yet money flow is positive and rising, candle closed in its upper half → absorption, buy. Volume only. */
+export function ofAbsorbSignal(c: Ctx, i: number): Signal | null {
+  const f = flowOf(c);
+  if (!f.hasVol || i < DEV.absorbLook + 10 || !ok(f.cmf[i]!, f.cmf[i - 10]!)) return null;
+  for (const side of [1, -1] as const) {
+    const p = sided(c, side);
+    let lo = Infinity;
+    for (let j = i - DEV.absorbLook; j < i; j++) lo = Math.min(lo, p.l(j));
+    const range = p.h(i) - p.l(i);
+    if (!(p.l(i) < lo) || !(range > 0) || p.c(i) - p.l(i) < 0.5 * range) continue;
+    if (!(side * f.cmf[i]! > DEV.absorbCmf && side * f.cmf[i]! > side * f.cmf[i - 10]!)) continue;
+    return levelSig(c, i, side, side * (p.l(i) - 0.2 * c.atr14[i]!), 2);
+  }
+  return null;
+}
+
+/** Money flow crosses +0.15 on above-normal volume, price above its 50 average → go with the buyers. Volume only. */
+export function ofThrustSignal(c: Ctx, i: number): Signal | null {
+  const f = flowOf(c);
+  if (!f.hasVol || i < 1 || !ok(f.cmf[i]!, f.cmf[i - 1]!, f.relVol[i]!, c.ema50[i]!)) return null;
+  if (f.relVol[i]! < DEV.thrustRelVol) return null;
+  for (const side of [1, -1] as const) {
+    if (side * f.cmf[i - 1]! < DEV.thrustCmf && side * f.cmf[i]! >= DEV.thrustCmf && side * (c.close[i]! - c.ema50[i]!) > 0) return atrSig(c, i, side, 1.5, 2);
+  }
+  return null;
+}
+
+/** Selling climax: 3× normal volume, a candle ≥ 1.8 ATR to a 20-bar low that closes in its top 40% → buy, 1.5R. Volume only. */
+export function ofClimaxSignal(c: Ctx, i: number): Signal | null {
+  const f = flowOf(c);
+  const pa = c.atr14[i - 1]!;
+  if (!f.hasVol || i < DEV.absorbLook + 1 || !ok(f.relVol[i]!, pa) || f.relVol[i]! < DEV.climaxRelVol) return null;
+  for (const side of [1, -1] as const) {
+    const p = sided(c, side);
+    const range = p.h(i) - p.l(i);
+    if (range < DEV.climaxRange * pa || p.c(i) - p.l(i) < 0.6 * range) continue;
+    let lo = Infinity;
+    for (let j = i - DEV.absorbLook; j < i; j++) lo = Math.min(lo, p.l(j));
+    if (!(p.l(i) < lo)) continue;
+    return levelSig(c, i, side, side * (p.l(i) - 0.1 * c.atr14[i]!), 1.5);
+  }
+  return null;
 }
 
 export const STRATEGIES: Strategy[] = [
@@ -1529,6 +1676,72 @@ export const STRATEGIES: Strategy[] = [
     signal(c, i) {
       return fvgCeSignal(c, i);
     },
+  },
+  // ── v27.35 standard deviation ──
+  {
+    id: 'sd_revert',
+    name: 'Standard deviation snap-back (flat regression channel)',
+    family: 'deviation',
+    style: 'revert',
+    desc: 'A 50-candle linear-regression line that is going nowhere (moves less than 1.5 standard deviations end to end). The close strayed 2.2+ standard deviations under it, now closes back inside 2 → buy back to the line. Stop under the last 3 candles, needs ≥ 1R to the line. Mirrored.',
+    signal: sdRevertSignal,
+  },
+  {
+    id: 'lr_channel',
+    name: 'Regression channel pullback',
+    family: 'deviation',
+    style: 'pullback',
+    desc: 'A clean 50-candle trend channel (R² ≥ 0.6). The price dipped to the lower 1.8-standard-deviation band and the candle closes up → buy with the trend, target 1 standard deviation over the line. Stop under the last 3 candles. Mirrored in a falling channel.',
+    signal: lrChannelSignal,
+  },
+  {
+    id: 'sd_breakout',
+    name: 'Standard deviation breakout (quiet → 2.5 SD)',
+    family: 'deviation',
+    style: 'trend',
+    desc: 'A quiet, trendless stretch (regression R² under 0.3), then a solid candle closes 2.5 standard deviations off the line → follow it. Stop at the regression line, 2R. Mirrored.',
+    signal: sdBreakoutSignal,
+  },
+  // ── v27.35 volume profile + order flow ──
+  {
+    id: 'vp_reentry',
+    name: 'Volume profile: back into value → POC',
+    family: 'volume',
+    style: 'revert',
+    desc: 'Profile of the last 96 candles (traded volume per price; time at price where the market has no volume). A close below the value area (where 70% traded), then a close back inside it → buy toward the point of control (the busiest price), needs ≥ 1R. Stop under the last 3 candles. Mirrored.',
+    signal: vpReentrySignal,
+  },
+  {
+    id: 'vp_breakout',
+    name: 'Volume profile: balance → breakout',
+    family: 'volume',
+    style: 'trend',
+    desc: '12 closes in a row inside the value area (a balanced market), then a solid candle closes out of it → follow the break. Stop half an ATR back inside the value area, 2R. Mirrored.',
+    signal: vpBreakoutSignal,
+  },
+  {
+    id: 'of_absorb',
+    name: 'Order flow: absorption at a new low',
+    family: 'volume',
+    style: 'revert',
+    desc: 'The price makes a new 20-candle low but the money flow (20-candle estimated buy − sell volume) is positive and rising, and the candle closes in its upper half — buyers are soaking up the selling → buy, stop under the low, 2R. Only markets with real volume (coins, indices, metals). Mirrored.',
+    signal: ofAbsorbSignal,
+  },
+  {
+    id: 'of_thrust',
+    name: 'Order flow: money-flow thrust',
+    family: 'volume',
+    style: 'trend',
+    desc: 'The money flow crosses above +0.15 on a candle with at least 1.3× its normal volume, price above the 50 average → go with the buyers, 1.5 ATR stop, 2R. Only markets with real volume. Mirrored.',
+    signal: ofThrustSignal,
+  },
+  {
+    id: 'of_climax',
+    name: 'Order flow: selling climax reversal',
+    family: 'volume',
+    style: 'revert',
+    desc: 'A candle with 3× normal volume and a range of 1.8+ ATR makes a new 20-candle low but closes in its top 40% — the last sellers are out → buy, stop under the low, 1.5R. Only markets with real volume. Mirrored.',
+    signal: ofClimaxSignal,
   },
   // ── control ──
   {

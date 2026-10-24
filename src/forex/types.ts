@@ -7,6 +7,8 @@ export interface Bar {
   h: number;
   l: number;
   c: number;
+  /** v27.35: traded volume of the candle (coins, stock indices, metals); absent where the feed has none (spot FX) */
+  v?: number;
 }
 
 export interface Instrument {

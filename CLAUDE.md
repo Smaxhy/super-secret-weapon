@@ -758,6 +758,29 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.35 standard deviation, volume profile, order flow — graded by the lab like every rule (Oct 24, owner: "standard
+deviation, orderflow, volume profile — I want you to train on that too")
+- **Volume in the candles** (`Bar.v?`): Yahoo `volume` (kept only when > 0 → futures / coins; spot FX reports 0 = none),
+  Coinbase's 6th column; stored rows [t,o,h,l,c,v] (`barOfRow`, `vol6`; old 5-wide rows still load), fast bars too, `to4h`
+  sums v (only when every hour has it). One-time refill: a non-FX market whose stored history is < 50% volume (`volumeShare`)
+  is pulled in full once (`fx:bars:vfill:<id>` marker; Coinbase 1,100 days, Yahoo 730) and the fast lab re-pulls its window
+  once per start (`volFilled`). Dukascopy / DK-fill bars carry none.
+- `src/forex/flow.ts` (`FLOW`, `buildFlow`, `flowOf(c)` → memo `Ctx.flow`, causal — tested): 20-bar z-score; 50-bar
+  regression channel (`lrMid`, `lrSlope`, `lrR2`, `lrSd`, `lrZ`); volume profile of the last 96 candles in 24 bins, rebuilt
+  every 4 candles (`vp(i)` → POC / VAH / VAL (70%), `byVolume`; TIME at price where a window has no volume); candle order flow
+  (delta = v × (2c − h − l) ÷ (h − l), `cmf` 20, `dr5`, `relVol` = v ÷ the 20 before; NaN without volume).
+- 8 strategies (strategies.ts, families **'deviation'** + **'volume'**, `DEV` thresholds, every chart / market): `sd_revert`
+  (flat channel, ≥ 2.2 SD away then back inside 2 → to the line, ≥ 1R), `lr_channel` (R² ≥ 0.6 channel, dip to −1.8 SD,
+  up candle → line + 1 SD), `sd_breakout` (R² < 0.3, close 2.5 SD off the line → follow, stop at the line, 2R), `vp_reentry`
+  (closed outside the value area, back in → POC, ≥ 1R), `vp_breakout` (12 closes inside value, solid close out → 2R),
+  `of_absorb` (new 20-bar low, CMF > 0.05 and rising, upper-half close → 2R), `of_thrust` (CMF crosses 0.15, relVol ≥ 1.3,
+  with the 50 average → 1.5 ATR, 2R), `of_climax` (relVol ≥ 3, range ≥ 1.8 ATR to a 20-bar low, close in the top 40% → 1.5R).
+  `of_*` are silent without volume (spot FX). Nothing trades until a row earns Edge / a strict cell (provenOnly unchanged).
+- Signal judge +6 features (appended, so stored models keep their indices): `lrZ`, `lrR2`, `vpPoc`, `vaPos`, `cmf`,
+  `relVol`; the presence mask blanks the volume ones on FX and REQUIRES them on coins / futures once known in 90%.
+- Lab: ~190 ms per 12k-bar chart for all eight (synthetic), one re-pick of nothing (existing rows unchanged). Dashboard Lab
+  playbook families "Volume profile & order flow", "Standard deviation". tests/forex-flow (8); forex-coinbase expects v.
+  Order flow from candles is an estimate — tick-level order flow has no free history.
 ## v27.34 coins = experimental practice desk, forex = winners only (Oct 23 ~22:15 UTC, owner: "switch them on, I want crypto
 to be more experimental for now and keep practising while forex is locked on only winnings")
 VPS read 22:04 UTC: coin bot idle since the weekend luck meter (Friday 21:09 run) downgraded rsi_dip:4h to 'no' (its 20 random-

@@ -3,6 +3,7 @@
  * become CONFIRMED (k bars later), never at the pivot itself — no look-ahead.
  */
 import { buildQuant, type Quant } from './quant';
+import type { Flow } from './flow';
 import { bollinger, emaSeries, macd, rsiSeries, sma } from '../evaluator/ta/indicators';
 import type { Bar } from './types';
 import { nyMinOfDay } from './ny-time';
@@ -254,6 +255,8 @@ export interface Ctx {
   quant?: Quant;
   /** memo for `volRatioAt` (−1 = not computed yet, NaN = unknown) */
   vrCache?: Float64Array;
+  /** v27.35: deviation channel, volume profile, order flow (built on first use, `flowOf`) */
+  flow?: Flow;
 }
 
 /** Efficiency ratio (Kaufman) over n bars. */
@@ -363,16 +366,25 @@ export function to4h(bars: readonly Bar[]): Bar[] {
   const out: Bar[] = [];
   let cur: Bar | null = null;
   let count = 0;
+  let vol = 0;
+  let volOk = true;
   for (const b of bars) {
     const k = Math.floor(b.t / 14_400_000) * 14_400_000;
     if (!cur || cur.t !== k) {
       if (cur && count >= 3) out.push(cur);
       cur = { t: k, o: b.o, h: b.h, l: b.l, c: b.c };
+      vol = 0;
+      volOk = true;
       count = 0;
     }
     cur.h = Math.max(cur.h, b.h);
     cur.l = Math.min(cur.l, b.l);
     cur.c = b.c;
+    // v27.35: the 4-hour candle's volume = the sum of its hours (only when every hour has one)
+    if (b.v !== undefined && b.v > 0) vol += b.v;
+    else volOk = false;
+    if (volOk) cur.v = vol;
+    else delete cur.v;
     count++;
   }
   // last bucket only if complete (4 hourly bars) — avoids trading on a half-formed bar

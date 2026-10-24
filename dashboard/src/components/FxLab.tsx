@@ -19,10 +19,12 @@ const FAMILY: Record<string, { label: string; what: string }> = {
   session: { label: 'Session timing', what: 'The clock as the edge: London and New York open breakouts, the Asian-range fade, the dollar into the London fix.' },
   news: { label: 'News shocks', what: 'After a shock candle: follow the drift, or fade the shock that fails.' },
   intermarket: { label: 'Linked markets', what: 'Oil → CAD, US yields → USD/JPY, stocks → yen crosses, the dollar → gold: trade the laggard when the leader has moved.' },
+  deviation: { label: 'Standard deviation', what: 'A 50-candle regression line and how many standard deviations the price sits from it: snap back to the line in a flat channel, buy the lower band in a clean trend channel, follow a quiet market that suddenly moves 2.5 deviations.' },
+  volume: { label: 'Volume profile & order flow', what: 'Where the volume traded (point of control, the 70% value area — time at price where a market has no volume) and who won each candle (estimated buy − sell volume, money flow, relative volume): value-area re-entry and breakouts, absorption at a new low, money-flow thrusts, selling climaxes. Order flow rules only run where candles carry real volume (coins, indices, metals).' },
   flow: { label: 'Flows & positioning', what: 'Month-end rebalancing, crowded CFTC positioning squeezes, overstretched 3-month runs.' },
   control: { label: 'Yardstick', what: 'Random entries with the same costs. Anything that cannot beat this has no edge.' },
 };
-const FAMILY_ORDER = ['ict', 'session', 'trend', 'breakout', 'reversion', 'pattern', 'news', 'intermarket', 'flow', 'control'];
+const FAMILY_ORDER = ['ict', 'session', 'volume', 'deviation', 'trend', 'breakout', 'reversion', 'pattern', 'news', 'intermarket', 'flow', 'control'];
 
 /** v18.3 playbook: every strategy the bot knows, grouped by what kind of edge it hunts, with its grade per chart. */
 function Playbook({ rows, chosen }: { rows: LabRow[]; chosen: Set<string> }) {
