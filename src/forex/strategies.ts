@@ -7,7 +7,7 @@ import { STRETCH } from './stretch';
 import type { Ctx } from './ta';
 import { isCrypto, isFutures, isIndex, type Signal } from './types';
 import { nyOffsetMs } from './ny-time';
-import { flowOf } from './flow';
+import { absorptionAt, flowOf } from './flow';
 
 /**
  * v13: a "shock" candle = what a big news release looks like on an hourly chart: range ≥ 2.2× the normal hourly range
@@ -577,6 +577,76 @@ export function ofClimaxSignal(c: Ctx, i: number): Signal | null {
     for (let j = i - DEV.absorbLook; j < i; j++) lo = Math.min(lo, p.l(j));
     if (!(p.l(i) < lo)) continue;
     return levelSig(c, i, side, side * (p.l(i) - 0.1 * c.atr14[i]!), 1.5);
+  }
+  return null;
+}
+
+/**
+ * v27.36 the owner's friend: "I only trade the Asia open and wait until my level gets hit. If sellers or buyers get
+ * absorbed there, I enter. I check every timeframe and enter on the 1-minute." His levels (the bigger charts): yesterday's
+ * and last week's high / low and the untouched major swing points (the extreme of the 40 candles before them, never
+ * traded through since). The level is hit for the first time in 12 candles, the candle that tags it shows absorption
+ * (`absorptionAt`) without blowing more than ½ ATR through it → enter at the close; stop just past that candle; target
+ * the nearest level on the other side at least 2R away (the draw on liquidity, ≤ 8R), else 3R; flat after a day.
+ */
+export const ASIA = { from: 18 * 60, to: 23 * 60, fresh: 12, swingLook: 40, maxSwings: 8, through: 0.5, minR: 2, maxR: 8, fallbackR: 3 };
+
+/** the friend's levels seen from `side` (sided prices): `near` = support for a long, `far` = the targets above. */
+function friendLevels(c: Ctx, i: number, side: 1 | -1, beforeBar: number): { near: number[]; far: number[] } {
+  const near: number[] = [];
+  const far: number[] = [];
+  const pd = c.prevDay[i];
+  const wk = flowOf(c).week[i];
+  for (const x of [pd, wk]) {
+    if (!x) continue;
+    near.push(side > 0 ? x.l : -x.h);
+    far.push(side > 0 ? x.h : -x.l);
+  }
+  const major = (list: typeof c.sw.lows, ptr: number, low: boolean, into: number[]) => {
+    for (let k = ptr; k >= 0 && k > ptr - ASIA.maxSwings; k--) {
+      const sw = list[k]!;
+      let extreme = true;
+      for (let j = Math.max(0, sw.i - ASIA.swingLook); j < sw.i && extreme; j++) if (low ? c.bars[j]!.l < sw.p : c.bars[j]!.h > sw.p) extreme = false;
+      if (!extreme) continue;
+      let untouched = true;
+      for (let j = sw.i + 1; j < beforeBar && untouched; j++) if (low ? c.bars[j]!.l < sw.p : c.bars[j]!.h > sw.p) untouched = false;
+      if (untouched) into.push(side * sw.p);
+    }
+  };
+  // support for a long = swing lows; for a short the swing highs (mirrored) — and the other kind are the targets
+  major(side > 0 ? c.sw.lows : c.sw.highs, side > 0 ? c.loPtr[i]! : c.hiPtr[i]!, side > 0, near);
+  major(side > 0 ? c.sw.highs : c.sw.lows, side > 0 ? c.hiPtr[i]! : c.loPtr[i]!, side < 0, far);
+  return { near, far };
+}
+
+/** Level hit + absorption → enter (see ASIA). `asiaOnly` = only when the candle closes 18:00–23:00 New York. Pure. */
+export function levelAbsorbSignal(c: Ctx, i: number, asiaOnly: boolean): Signal | null {
+  const a = c.atr14[i]!;
+  if (!ok(a) || a <= 0 || i < ASIA.swingLook + ASIA.fresh) return null;
+  if (asiaOnly) {
+    const closeMin = (c.nyMin[i]! + c.barMin) % 1440;
+    if (closeMin <= ASIA.from || closeMin > ASIA.to) return null;
+  }
+  for (const side of [1, -1] as const) {
+    const ab = absorptionAt(c, i, side);
+    if (!ab) continue;
+    const before = absorptionAt(c, i - 1, side);
+    if (before && before.j === ab.j) continue; // already signalled on this absorption
+    const p = sided(c, side);
+    const low = side * ab.extreme;
+    const lv = friendLevels(c, i, side, ab.j);
+    const hit = lv.near.find((L) => low <= L + 0.1 * a && low >= L - ASIA.through * a && (() => {
+      for (let j = Math.max(0, ab.j - ASIA.fresh); j < ab.j; j++) if (p.l(j) <= L) return false;
+      return true;
+    })());
+    if (hit === undefined) continue;
+    const stop = side * (low - 0.1 * a);
+    const px = p.c(i);
+    const risk = px - (low - 0.1 * a);
+    if (!(risk >= 0.3 * a) || risk > 4 * a) continue;
+    const tgt = lv.far.filter((T) => T - px >= ASIA.minR * risk && T - px <= ASIA.maxR * risk).sort((x, y) => x - y)[0];
+    const target = side * (tgt ?? px + ASIA.fallbackR * risk);
+    return { side, stop, target, maxBars: Math.max(4, Math.round(1440 / c.barMin)) };
   }
   return null;
 }
@@ -1742,6 +1812,28 @@ export const STRATEGIES: Strategy[] = [
     style: 'revert',
     desc: 'A candle with 3× normal volume and a range of 1.8+ ATR makes a new 20-candle low but closes in its top 40% — the last sellers are out → buy, stop under the low, 1.5R. Only markets with real volume. Mirrored.',
     signal: ofClimaxSignal,
+  },
+  // ── v27.36 the friend's Asia-open level + absorption ──
+  {
+    id: 'asia_absorb',
+    name: 'Asia open: level hit + absorption',
+    family: 'ict',
+    style: 'revert',
+    charts: ['15m', '1h'],
+    desc: "Your friend's setup: only the Asia open (candles closing 18:00–23:00 New York). Wait until a level from the bigger charts is hit — yesterday's or last week's high / low, or an untouched major swing point — for the first time in 12 candles. The candle that tags it must show the sellers (or buyers) being absorbed: a new 10-candle low that closes in the top half on 1.5× normal volume (no volume: a long lower wick, close in the top third), and no lower low after it. Enter at the close, stop just past that candle, target the nearest level on the other side at least 2R away (≤ 8R), else 3R; out after a day. He enters on the 1-minute — the bot's smallest chart is 15 minutes.",
+    signal(c, i) {
+      return levelAbsorbSignal(c, i, true);
+    },
+  },
+  {
+    id: 'level_absorb',
+    name: 'Level hit + absorption (any session)',
+    family: 'ict',
+    style: 'revert',
+    desc: 'The same level-plus-absorption entry as the Asia-open rule, at any hour — the yardstick that shows whether the Asia timing itself adds anything. Every chart, every market.',
+    signal(c, i) {
+      return levelAbsorbSignal(c, i, false);
+    },
   },
   // ── control ──
   {

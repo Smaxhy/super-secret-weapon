@@ -26,9 +26,9 @@ import { STRETCH } from './stretch';
 import type { Style } from './strategies';
 import type { Timeframe } from './types';
 
-export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'volf' | 'hurst' | 'crowd' | 'stretch' | 'hmm' | 'vix' | 'all';
-export const FILTERS: FilterKind[] = ['none', 'strength', 'mtf', 'mood', 'regime', 'volf', 'hurst', 'crowd', 'stretch', 'hmm', 'vix', 'all'];
-export const FILTER_LABEL: Record<FilterKind, string> = { none: 'no filter', strength: 'strong vs weak currency', mtf: 'bigger chart agrees', mood: 'market mood', regime: 'right market regime', volf: 'volatility forecast fits', hurst: 'trend / chop measure fits', crowd: 'not on the crowded side', stretch: 'not overstretched (price)', hmm: 'regime model (hidden states) fits', vix: 'VIX not in panic', all: 'strength + bigger chart + mood' };
+export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'volf' | 'hurst' | 'crowd' | 'stretch' | 'hmm' | 'vix' | 'absorb' | 'all';
+export const FILTERS: FilterKind[] = ['none', 'strength', 'mtf', 'mood', 'regime', 'volf', 'hurst', 'crowd', 'stretch', 'hmm', 'vix', 'absorb', 'all'];
+export const FILTER_LABEL: Record<FilterKind, string> = { none: 'no filter', strength: 'strong vs weak currency', mtf: 'bigger chart agrees', mood: 'market mood', regime: 'right market regime', volf: 'volatility forecast fits', hurst: 'trend / chop measure fits', crowd: 'not on the crowded side', stretch: 'not overstretched (price)', hmm: 'regime model (hidden states) fits', vix: 'VIX not in panic', absorb: 'sellers / buyers absorbed at the entry', all: 'strength + bigger chart + mood' };
 /** v16 thresholds */
 export const VOLF_UP = 1;
 export const VOLF_CALM = 1.05;
@@ -68,6 +68,9 @@ export interface FilterEnv {
   hmmLo?: Float64Array;
   /** v27.6: VIX rank within its past year, 0…1 (NaN = unknown) */
   vixRank?: Float64Array;
+  /** v27.36: 1 where sellers (absorbUp) / buyers (absorbDn) were absorbed at that close (flow.ts `absorptionAt`) */
+  absorbUp?: Uint8Array;
+  absorbDn?: Uint8Array;
 }
 
 const passStrength = (e: FilterEnv, i: number, side: 1 | -1) => {
@@ -120,6 +123,12 @@ export const passVix = (e: FilterEnv, i: number) => {
   return !fin(r) || r < VIX.panicRank;
 };
 
+/** v27.36: only enter where the other side was just absorbed (sellers for a buy, buyers for a sell) */
+export const passAbsorb = (e: FilterEnv, i: number, side: 1 | -1) => {
+  const a = side > 0 ? e.absorbUp : e.absorbDn;
+  return !a || a[i] === 1;
+};
+
 /** Why a filter would block this entry (null = allowed). Pure. */
 export function blockReason(kind: FilterKind, e: FilterEnv, i: number, side: 1 | -1, style: Style = 'neutral'): string | null {
   if (kind === 'none') return null;
@@ -130,6 +139,7 @@ export function blockReason(kind: FilterKind, e: FilterEnv, i: number, side: 1 |
   if (kind === 'stretch') return passStretch(e, i, side) ? null : `it has already run ${side === 1 ? 'up' : 'down'} unusually hard (price stretch)`;
   if (kind === 'hmm') return hmmBlockReason(e.hmmHi?.[i], e.hmmLo?.[i], style);
   if (kind === 'vix') return passVix(e, i) ? null : 'the VIX is in its most fearful 10% of the past year (panic market)';
+  if (kind === 'absorb') return passAbsorb(e, i, side) ? null : `no ${side === 1 ? 'sellers' : 'buyers'} absorbed at this candle yet`;
   if ((kind === 'strength' || kind === 'all') && !passStrength(e, i, side)) return 'the currency it buys is not the stronger one';
   if ((kind === 'mtf' || kind === 'all') && !passMtf(e, i, side)) return 'the bigger chart does not agree';
   if ((kind === 'mood' || kind === 'all') && !passMood(e, i, side)) return 'the market mood is against it';

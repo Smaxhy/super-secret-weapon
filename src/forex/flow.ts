@@ -52,6 +52,8 @@ export interface Flow {
   relVol: Float64Array;
   /** the profile known at bar i (built from the 96 candles up to the last 4-candle step ≤ i) */
   vp(i: number): VolumeProfile | null;
+  /** v27.36: previous week's high / low */
+  week: Array<{ h: number; l: number } | null>;
 }
 
 const volOf = (v: number | undefined) => (v !== undefined && v > 0 ? v : NaN);
@@ -216,10 +218,65 @@ export function buildFlow(c: Pick<Ctx, 'bars' | 'close'>): Flow {
     if (!cache.has(s)) cache.set(s, profileOf(c, s - FLOW.vpBars, s));
     return cache.get(s)!;
   };
-  return { hasVol, z20, lrMid, lrSd, lrSlope, lrR2, lrZ, delta, cmf, dr5, relVol, vp };
+  return { hasVol, z20, lrMid, lrSd, lrSlope, lrR2, lrZ, delta, cmf, dr5, relVol, vp, week: prevWeekLevels(c) };
 }
 
 /** The chart's readings, built on first use. */
 export function flowOf(c: Ctx): Flow {
   return (c.flow ??= buildFlow(c));
+}
+
+/**
+ * v27.36 absorption (owner's friend: "when the sellers or buyers get absorbed at my level, I enter"). Sellers absorbed at
+ * bar i (side +1): one of the last 3 candles pushed to a new 10-candle low, yet it closed in the top half of its range —
+ * with real volume it must be heavy (≥ 1.5× normal: the effort was there, the result wasn't); without volume (spot FX) the
+ * lower wick must be at least half the candle and the close in its top third (the rejection). No lower low since, and the
+ * newest close at or above that candle's close. Mirrored for buyers absorbed (−1). Returns the absorbing candle's
+ * extreme (for the stop) or null. Pure, causal.
+ */
+export const ABSORB = { look: 3, newLow: 10, relVol: 1.5, closeShare: 0.5, wickShare: 0.5, wickClose: 2 / 3 };
+export function absorptionAt(c: Ctx, i: number, side: 1 | -1): { j: number; extreme: number } | null {
+  const f = flowOf(c);
+  const B = c.bars;
+  const lo = (j: number) => (side > 0 ? B[j]!.l : -B[j]!.h);
+  const hi = (j: number) => (side > 0 ? B[j]!.h : -B[j]!.l);
+  const cl = (j: number) => side * B[j]!.c;
+  const op = (j: number) => side * B[j]!.o;
+  for (let j = i; j >= Math.max(ABSORB.newLow, i - ABSORB.look + 1); j--) {
+    let prevLow = Infinity;
+    for (let k = j - ABSORB.newLow; k < j; k++) prevLow = Math.min(prevLow, lo(k));
+    if (!(lo(j) < prevLow)) continue;
+    const range = hi(j) - lo(j);
+    if (!(range > 0)) continue;
+    const rv = f.relVol[j]!;
+    const heldUp = cl(j) - lo(j);
+    const absorbed = Number.isFinite(rv)
+      ? rv >= ABSORB.relVol && heldUp >= ABSORB.closeShare * range
+      : Math.min(op(j), cl(j)) - lo(j) >= ABSORB.wickShare * range && heldUp >= ABSORB.wickClose * range;
+    if (!absorbed) continue;
+    for (let k = j + 1; k <= i; k++) if (lo(k) < lo(j)) return null;
+    if (cl(i) < cl(j)) return null;
+    return { j, extreme: side * lo(j) };
+  }
+  return null;
+}
+
+/** Previous week's high / low per bar (weeks roll Sunday 21:00 UTC, the FX open). Pure, causal. */
+export function prevWeekLevels(c: Pick<Ctx, 'bars'>): Array<{ h: number; l: number } | null> {
+  const out: Array<{ h: number; l: number } | null> = [];
+  let wk = -1;
+  let cur = { h: -Infinity, l: Infinity };
+  let prev: { h: number; l: number } | null = null;
+  for (const b of c.bars) {
+    const w = Math.floor((b.t / 86_400_000 + 3 + 3 / 24) / 7);
+    if (w !== wk) {
+      if (wk >= 0 && Number.isFinite(cur.h)) prev = { ...cur };
+      wk = w;
+      cur = { h: -Infinity, l: Infinity };
+    }
+    cur.h = Math.max(cur.h, b.h);
+    cur.l = Math.min(cur.l, b.l);
+    out.push(prev);
+  }
+  return out;
 }

@@ -37,6 +37,7 @@ import type { ForexHeadlines } from './headlines';
 import { DEFAULT_SIM, equityCurve, rStats, signalsFor, simulate, type RiskResult, type RStats } from './engine';
 import { NOT_FOR_CRYPTO, STRATEGIES, tradesNews, runsOn, strategyById, styleOf, type Family, type Strategy, type Style } from './strategies';
 import { buildCtx, to4h, type Ctx } from './ta';
+import { absorptionAt } from './flow';
 import { drawingsFor, type Drawings } from './drawings';
 import { applyDesks, buildDesks, type MarketDesk } from './desks';
 import { ledgerRows } from './practice';
@@ -1065,6 +1066,12 @@ export function makeSeries(inst: Instrument, tf: Timeframe, bars: Bar[], book: M
   if (ctx.quant) {
     env.volF = ctx.quant.volF;
     env.hurst = ctx.quant.hurst;
+  }
+  env.absorbUp = new Uint8Array(bars.length);
+  env.absorbDn = new Uint8Array(bars.length);
+  for (let i = 0; i < bars.length; i++) {
+    if (absorptionAt(ctx, i, 1)) env.absorbUp[i] = 1;
+    if (absorptionAt(ctx, i, -1)) env.absorbDn[i] = 1;
   }
   return { inst, tf, ctx, env };
 }

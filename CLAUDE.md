@@ -758,6 +758,22 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.36 the friend's method: Asia open, his level, absorption (Oct 24, owner relayed: "I only trade the Asia open and wait
+until my level is hit; if sellers or buyers get absorbed there I enter; I check every timeframe and enter on the 1m")
+His 9 clips (GC / NQ / ES / YM futures, 1m, TradingView "TradeAxis DOL" draw-on-liquidity targets): entries at a sweep wick,
+stops $275–560, targets the nearest liquidity / FVG (5–10R), stop moved past entry early; winners only, mostly still open.
+- flow.ts `absorptionAt(c, i, side)` (`ABSORB`): one of the last 3 candles made a new 10-candle low (mirrored) and closed in
+  its top half on ≥ 1.5× normal volume — no volume: lower wick ≥ ½ the candle, close in the top third; no lower low since,
+  newest close ≥ that candle's → {j, extreme}. `prevWeekLevels` (weeks roll Sunday 21:00 UTC) → `Flow.week`.
+- strategies.ts `levelAbsorbSignal` (`ASIA`, `friendLevels`): his levels = yesterday's + last week's high / low + untouched
+  major swing points (extreme of the 40 candles before, never traded through); first touch in 12 candles, absorption on the
+  candle that tags it (≤ ½ ATR through) → enter at the close, stop 0.1 ATR past that candle (0.3–4 ATR), target the
+  nearest opposite level 2–8R away else 3R, out after a day. **`asia_absorb`** (15m + 1h, candle closing 18:00–23:00 New
+  York) and **`level_absorb`** (any hour, every chart — the yardstick for the Asia timing). Family 'ict'. 1m entries stay
+  out of the bot (v18.8); his 1m entry is approximated on 15m.
+- filters.ts **'absorb'** (13 filter variants; `FilterEnv.absorbUp / absorbDn` built in `makeSeries`): a strategy may be
+  tested "only where the other side was just absorbed" — picked per strategy on the FIRST 70% like every filter.
+- Nothing trades until it passes the strict test (provenOnly). tests/forex-absorb (4).
 ## v27.35 standard deviation, volume profile, order flow — graded by the lab like every rule (Oct 24, owner: "standard
 deviation, orderflow, volume profile — I want you to train on that too")
 - **Volume in the candles** (`Bar.v?`): Yahoo `volume` (kept only when > 0 → futures / coins; spot FX reports 0 = none),
