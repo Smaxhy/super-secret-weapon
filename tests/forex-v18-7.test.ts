@@ -38,7 +38,9 @@ afterEach(() => vi.useRealTimers());
 
 describe('v18.7 the bot trades the hourly and 4-hour charts only', () => {
   it('is the default', () => {
-    expect(FX_CONFIG.botFastCharts).toBe(true); // v27.19: the 15m chart trades again
+    expect(FX_CONFIG.botFastCharts).toBe(false); // v27.43: 15m back to lab only
+    expect(FX_CONFIG.botFastChartsCrypto).toBe(false);
+    expect(FX_CONFIG.botFastStrategies).toEqual([]);
     FX_CONFIG.botFastCharts = false;
     expect(BOT.reentryCooldownBars).toBe(3);
   });

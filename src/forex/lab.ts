@@ -116,14 +116,15 @@ export const FX_CONFIG = {
    * The 15m / 1m charts stay lab-tested (Strategies / Lab) but place no bot trades while this is off.
    * v27.19 (owner: "I want forex to perform like crypto"): ON — strategies that cleared the bar on the 15-minute chart trade
    * it, like the coin bot (CME indices / metals excluded: Yahoo's ~10-min-late price can't serve a 15m trade). */
-  botFastCharts: true,
+  // v27.43 (owner: "turn off 15 min trades, back to lab"): OFF again on both desks — 15m stays lab-tested only
+  botFastCharts: false,
   /** v23 (owner: "a Judas swing at the New York open… 15:45 / 10 am"): the session rules that only make sense on the
    * quarter-hours may trade the 15-minute chart even while `botFastCharts` is off — they hold for hours (flat by noon /
    * 4 pm New York), not minutes. Still only once they clear the quality bar on that chart. */
-  botFastStrategies: ['judas_swing', 'ny_q3', 'amd_daily'] as string[],
+  botFastStrategies: [] as string[], // v27.43: none (was the three ICT session rules)
   /** v24 (owner: "crypto more hardworking"): the COIN bot also trades the 15-minute chart (24/7 markets, no session
    * timing to wait for; still only strategies that cleared the quality bar on that chart) */
-  botFastChartsCrypto: true,
+  botFastChartsCrypto: false, // v27.43: off (owner)
   /** v25 (owner: "put ICT trades live"): the forex bot trades these on every chart they run on even though the lab's exam
    * says 'no' (Oct 20 real data: best fvg_entry 4h +0.11R / PF 1.37 on 29 unseen trades, judas_swing 1h −0.15R). They
    * trade at the 'no' size (0.6× the risk mode's base, `stratFactorFromVerdict`) with every other guard on (judge, market

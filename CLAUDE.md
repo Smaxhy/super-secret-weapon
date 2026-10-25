@@ -758,6 +758,10 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.43 15-minute trades off, both desks (Oct 25, owner: "turn off 15 min trades, back to lab") — `FX_CONFIG.botFastCharts`
+false, `botFastChartsCrypto` false, `botFastStrategies` [] (the ICT session rules too). The fast lab still tests 15m every hour
+(Strategies / Lab) and still MANAGES any 15m position the bot holds (`chosen: false` = manage, never open); the plan marks 15m
+signals "lab only". Turn any of the three back on to trade 15m again.
 ## v27.42 coin bot: max 15 trades a day, 3 an hour; the burst after today's peak struck (Oct 25, owner: "trading way too
 much and too risky … revert all trades till the point where it made 60+, cancel all current trades, 15 trades max so it can
 still trade throughout the day, not 18 trades at night all at once") — `BOT.maxTradesPerDay.cbot` 15 (forex bot still 0 = no
