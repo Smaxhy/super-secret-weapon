@@ -766,7 +766,11 @@ trade performance; and chart it")
 $ cap closed (stop at ≈ −cap while the tested stop was further) what the tested trade did over the next 72 h (target / tested
 stop / neither). `underCap` replays every trade under caps $10…$50 (adverse side of a candle assumed first; profit lock not
 replayed) → total per cap, best cap overall / per strategy × chart / per market. Suggestion per strategy × chart = blend of its own
-best (8+ trades) and the overall best, weight n ÷ (n + 10), rounded to $2.5, kept $10–40; ACTIVE only with 20+ analysed trades.
+best (8+ trades) and the overall best, weight n ÷ (n + 10), rounded to $2.5, kept $10–40; ACTIVE only with 30+ analysed trades,
+and a cap other than today's only counts when it changes 3+ trades for $10+ more (`provenCap`; a capped trade whose 72 h
+after-story isn't finished counts as what it did). First VPS read (08:27 UTC): coins 61 trades → $20 is the best cap (winners
+dipped median $5.61, 75% within $10.32, bottom after ~77 min, back to even ~58 min later; $10 cap would have made $15 vs $203);
+forex 20 trades → the raw best ($35) came from ONE still-open RUT trade → the evidence rule above was added, forex stays $20.
 `ForexLab.noteExcursions()` (after noteLosses, ≤ once per 50 min, both desks) → Redis `fx:excursion` / `cm:excursion`,
 `Practice.slCaps[acct]`; syncBot opens each NEW trade with `PracticePosition.maxLossUsd` = its strategy's cap (never all-in;
 `tick` + loss review use `p.maxLossUsd ?? a.maxLossUsd`); bot-log line "smarter stop: …" when the caps change. Trades opened

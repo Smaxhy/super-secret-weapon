@@ -126,7 +126,7 @@ export function ExcursionCard({ names }: { names?: Record<string, string> }) {
           <p className="text-sm text-ink">
             {r.suggest.active
               ? <>The bot now opens new trades with a <b>${r.suggest.def}</b> cap by default and its own cap per strategy below{r.best && r.best.cap !== r.currentCap ? ` (the best cap made ${money(r.best.vsCurrentUsd)} more than $${r.currentCap} on these trades)` : ''}.</>
-              : <>Still the flat ${r.currentCap} cap: the study switches on at 20 analysed trades (now {r.n}).</>}
+              : <>Still the flat ${r.currentCap} cap: the study switches on at 30 analysed trades (now {r.n}).</>}
           </p>
           {r.byKey.length > 0 && (
             <Rows>
@@ -140,7 +140,7 @@ export function ExcursionCard({ names }: { names?: Record<string, string> }) {
               ))}
             </Rows>
           )}
-          <p className="text-xs text-muted">Rough edges: a candle doesn't say whether its low or high came first (the low is assumed first), and the replay leaves the profit lock as it was. Each strategy's cap blends its own best with the overall best until it has more trades, and stays between $10 and $40.</p>
+          <p className="text-xs text-muted">Rough edges: a candle doesn't say whether its low or high came first (the low is assumed first), and the replay leaves the profit lock as it was. A cap only moves when a different one changes at least 3 trades for the better; each strategy's cap blends its own best with the overall one, between $10 and $40.</p>
         </div>
       )}
     </Card>

@@ -34,10 +34,10 @@ describe('v27.45 excursion study', () => {
   it('suggests caps only with enough trades, blended toward the overall best and clamped', () => {
     const many: ExTrade[] = [];
     const path = bars([[75, 101, 80], [76, 120, 118], [110, 141, 140]]);
-    for (let i = 0; i < 25; i++) many.push(trade({ id: `t${i}`, closedAt: T0 + 3 * H, usd: 40 }));
+    for (let i = 0; i < 35; i++) many.push(trade({ id: `t${i}`, closedAt: T0 + 3 * H, usd: 40 }));
     const rep = excursionReport(many, () => ({ bars: path, barMs: H }), () => 1, 20, T0);
-    expect(rep.n).toBe(25);
-    expect(rep.winners.over['20']).toBe(25);
+    expect(rep.n).toBe(35);
+    expect(rep.winners.over['20']).toBe(35);
     // every winner dipped $25: a cap at or under 25 is touched (stopped), the best is the smallest that holds them
     expect(rep.best?.cap).toBe(30);
     expect(rep.suggest.active).toBe(true);
@@ -47,5 +47,17 @@ describe('v27.45 excursion study', () => {
     expect(few.suggest.active).toBe(false);
     expect(few.suggest.def).toBe(20);
     expect(EXCURSION.maxCap).toBeGreaterThanOrEqual(few.suggest.def);
+  });
+
+  it('one lucky trade never moves the cap', () => {
+    const calm = bars([[95, 101, 99], [99, 141, 140]]);
+    const deep = bars([[75, 101, 80], [76, 120, 118], [110, 141, 140]]);
+    const ts: ExTrade[] = [];
+    for (let i = 0; i < 34; i++) ts.push(trade({ id: `c${i}`, closedAt: T0 + 2 * H, usd: 40 }));
+    ts.push(trade({ id: 'deep', closedAt: T0 + 3 * H, usd: 40 })); // only this one dipped $25
+    const rep = excursionReport(ts, (t) => ({ bars: t.id === 'deep' ? deep : calm, barMs: H }), () => 1, 20, T0);
+    expect(rep.best?.cap).toBe(30); // the replay's best on paper …
+    expect(rep.suggest.active).toBe(true);
+    expect(rep.suggest.def).toBe(20); // … but one trade isn't enough to move it
   });
 });

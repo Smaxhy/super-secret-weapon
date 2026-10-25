@@ -26,7 +26,11 @@ export const EXCURSION = {
   /** a strategy × chart needs this many analysed trades before its own best cap counts at all */
   minKey: 8,
   /** the suggestions only switch on with this many analysed trades on the account */
-  minAll: 20,
+  minAll: 30,
+  /** a cap other than today's is only suggested when it changes the result of this many trades … */
+  minChanged: 3,
+  /** … and makes at least this much more (USD) on them */
+  minGainUsd: 10,
   blendK: 10,
   minCap: 10,
   maxCap: 40,
@@ -203,12 +207,28 @@ export function underCap(x: NonNullable<ReturnType<typeof excursionOf>>, t: Pick
   for (const p of x.path) if (p.adv >= cap) return -cap;
   if (!x.ex.capped) return x.ex.usd;
   // the old cap closed it but this one is wider: the trade lives on (as tested) until this cap, its tested stop or target
+  // — only once its story is known (target / tested stop reached, or the whole look-ahead window has passed)
+  if (x.ex.after?.kind === 'open' && x.ex.after.hours < EXCURSION.afterHours - 1) return x.ex.usd;
   const stopAt = Math.min(cap, x.testedUsd ?? cap);
   for (const p of x.after) {
     if (p.adv >= stopAt) return -stopAt;
     if (x.targetUsd !== null && p.fav >= x.targetUsd) return x.targetUsd;
   }
   return x.after.length ? Math.max(-stopAt, x.after[x.after.length - 1]!.close) : x.ex.usd;
+}
+
+/** the cap to use: the best one only when it beats `current` by `minGainUsd` on at least `minChanged` trades */
+function provenCap(items: ReadonlyArray<{ x: NonNullable<ReturnType<typeof excursionOf>>; t: ExTrade }>, caps: readonly number[], current: number, k = EXCURSION): number {
+  const best = bestCap(capTable(items, caps));
+  if (!best || best.cap === current) return current;
+  let changed = 0;
+  let gain = 0;
+  for (const { x, t } of items) {
+    const d = underCap(x, t, best.cap) - underCap(x, t, current);
+    if (Math.abs(d) > 0.5) changed++;
+    gain += d;
+  }
+  return changed >= k.minChanged && gain >= k.minGainUsd ? best.cap : current;
 }
 
 const bestCap = (rows: readonly CapRow[]): CapRow | null => rows.reduce<CapRow | null>((b, r) => (!b || r.usd > b.usd + 1e-9 ? r : b), null);
@@ -239,7 +259,7 @@ export function excursionReport(trades: readonly ExTrade[], barsOf: (t: ExTrade)
   const best = bestCap(caps);
   const cur = caps.find((c) => c.cap === currentCap) ?? capTable(items, [currentCap])[0]!;
   const round = (v: number) => Math.min(k.maxCap, Math.max(k.minCap, Math.round(v / k.step) * k.step));
-  const allBest = best?.cap ?? currentCap;
+  const allBest = provenCap(items, k.caps, currentCap, k);
   const active = ex.length >= k.minAll;
   const groups = <G extends string>(f: (t: ExTrade) => G) => {
     const m = new Map<G, typeof items>();
@@ -252,7 +272,7 @@ export function excursionReport(trades: readonly ExTrade[], barsOf: (t: ExTrade)
   const byKey = [...groups((t) => keyOf(t)).entries()].map(([key, its]) => {
     const n = its.length;
     const wm = its.filter((i) => i.x.ex.win).map((i) => i.x.ex.maeUsd);
-    const kb = n >= k.minKey ? bestCap(capTable(its, k.caps))?.cap ?? null : null;
+    const kb = n >= k.minKey ? provenCap(its, k.caps, allBest, k) : null;
     const wt = kb === null ? 0 : n / (n + k.blendK);
     const suggested = round(kb === null ? allBest : wt * kb + (1 - wt) * allBest);
     return { key, n, winMaeP75: wm.length ? r2(pct(wm, 0.75)) : null, best: kb, suggested };
