@@ -78,7 +78,10 @@ export const BOT = {
   /** v27.38 (owner: "max 5–10 trades per day"): new trades a bot may open per trading day (from 22:00 UTC = midnight
    * Central European summer time). The best-tested signals go first (`prio`); a weekend re-open of a paused trade is not
    * a new trade. 0 = no cap. */
-  maxTradesPerDay: { bot: SIZING.maxPerDay, cbot: SIZING.maxPerDay } as Partial<Record<string, number>>,
+  maxTradesPerDay: { bot: SIZING.maxPerDay, cbot: 15 } as Partial<Record<string, number>>,
+  /** v27.42 (owner: "15 trades max … so it can still trade throughout the day, not 18 trades at night all at once"): new
+   * trades a bot may open in any rolling hour. 0 = no cap. */
+  maxTradesPerHour: { cbot: 3 } as Partial<Record<string, number>>,
   /** v27.26 (owner: "if it happens trade it with extreme size, up to 20% of the wallet"): per account, a strategy:chart
    * that trades at this % of the account at its TESTED stop — past the risk mode, the currency / correlated-risk caps and
    * the $ loss cap (its stop is the strategy's own). All such trades together never risk more than that %. */
@@ -247,7 +250,11 @@ export const tradingDayStart = (now: number): number => Math.floor((now + 2 * 3_
 /** v27.38: bot trades opened since the trading day began — one per trade (its first opening; parts, weekend legs and
  * the re-opened leg of a paused trade don't count again), plus resting orders placed today. Pure. */
 export function tradesOpenedToday(a: { open: readonly PracticePosition[]; closed: readonly ClosedPractice[]; orders?: ReadonlyArray<{ ref?: string; placedAt: number }> }, now: number): number {
-  const from = tradingDayStart(now);
+  return tradesOpenedSince(a, tradingDayStart(now));
+}
+
+/** v27.42: new trades (each ref once, by its first opening) + resting orders placed since `from`. Pure. */
+export function tradesOpenedSince(a: { open: readonly PracticePosition[]; closed: readonly ClosedPractice[]; orders?: ReadonlyArray<{ ref?: string; placedAt: number }> }, from: number): number {
   const first = new Map<string, number>();
   for (const p of [...a.open, ...a.closed]) {
     if (!p.ref) continue;
@@ -1717,6 +1724,8 @@ export class Practice {
       // v27.38 the daily trade cap
       const dayCap = BOT.maxTradesPerDay[acct] ?? 0;
       let openedToday = tradesOpenedToday(a, Date.now());
+      const hourCap = BOT.maxTradesPerHour[acct] ?? 0;
+      let openedHour = hourCap > 0 ? tradesOpenedSince(a, Date.now() - 3_600_000) : 0;
       if (rep) {
         rep.at = Date.now();
         rep.candidates += candidates.length;
@@ -1734,6 +1743,10 @@ export class Practice {
         if (dayCap > 0 && openedToday >= dayCap) {
           note(`daycap:${tradingDayStart(Date.now())}`, `daily limit reached: ${openedToday} trades opened today (max ${dayCap}) — no new trades until 22:00 UTC`);
           skip(t, `daily limit reached: ${openedToday} of ${dayCap} trades opened today`, true);
+          continue;
+        }
+        if (hourCap > 0 && openedHour >= hourCap) {
+          skip(t, `hourly limit reached: ${openedHour} of ${hourCap} trades opened in the last hour (spreads the day's trades out)`, true);
           continue;
         }
         if (Date.now() < pausedUntil) {
@@ -1907,6 +1920,7 @@ export class Practice {
           const order: RestingOrder = { id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, pair: t.pair, side: t.side, limit: resting.limit, kind: resting.kind, placedAt: Date.now(), expiresAt: resting.until, ref: t.ref, strategy: t.strategy, stop: t.stop, target: t.target, marginUsd: Math.round(margin * 100) / 100, leverage: lev, riskPct: actual, ...planOf(t), tf, ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}) };
           a.orders = [...(a.orders ?? []), order];
           openedToday++;
+          openedHour++;
           perStrategy.set(sk, (perStrategy.get(sk) ?? 0) + 1);
           perTf.set(tf, (perTf.get(tf) ?? 0) + 1);
           if (rep) rep.opened++;
@@ -1918,6 +1932,7 @@ export class Practice {
         events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${sure}${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}${heatNote}` : `skipped ${t.pair}: ${r.error}`);
         if (r.ok) {
           openedToday++;
+          openedHour++;
           perStrategy.set(sk, (perStrategy.get(sk) ?? 0) + 1);
           perTf.set(tf, (perTf.get(tf) ?? 0) + 1);
           if (rep) rep.opened++;

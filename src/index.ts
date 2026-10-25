@@ -552,6 +552,20 @@ async function main(): Promise<void> {
     cryptoLab.logBot(lines);
     log.info({ lines }, 'coin bot: today struck');
   });
+  // v27.42 (owner: "the coin bot trades way too much and too risky … revert all trades till the point where it made 60+,
+  // cancel all current trades"): today (owner's clock, from 22:00 UTC) peaked at +$63.09 right after the LINK stoch_trend
+  // close at 06:00 UTC on Oct 25; the burst after it (15m / 1h shorts, three −$20 cap stops) gave back $39. Every coin-bot
+  // close after that point and every open coin-bot trade is struck as if it never happened; their signals never re-open.
+  await oneTimeUpgrade('v27.42-undo-coin-after-peak', async () => {
+    const from = Date.UTC(2026, 9, 25, 6, 0);
+    const lines = [
+      await practice.undoClosed('cbot', (c) => c.closedAt >= from && !(c.pair === 'LINKUSD' && c.strategy === 'stoch_trend'), 'coin bot: trades after today\'s +$63 peak (owner)'),
+      await practice.undoPositions('cbot', () => true, 'coin bot: open trades cancelled (owner)'),
+      'coin bot: at most 15 new trades a day and 3 in any hour from now on (owner)',
+    ];
+    cryptoLab.logBot(lines);
+    log.info({ lines }, 'coin bot: reverted to the +$60 point');
+  });
   // v20.1 (owner: "revert all current active trades"): every open bot trade is struck as if it never happened, once
   await oneTimeUpgrade('v20.1-revert-open', async () => {
     const line = await practice.undoOpen('bot');

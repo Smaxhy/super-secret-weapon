@@ -65,7 +65,7 @@ const LABEL: Record<ReasonKind, string> = {
 /** Which bucket a wait / skip text belongs to. Exported for tests. */
 export function classify(why: string): ReasonKind {
   const w = why.toLowerCase();
-  if (w.includes('daily limit reached')) return 'day_cap';
+  if (w.includes('daily limit reached') || w.includes('hourly limit reached')) return 'day_cap';
   if (w.includes('losses in a row')) return 'streak';
   if (w.includes('one bet per market')) return 'doubled';
   if (w.includes('cooling off')) return 'cooldown';
@@ -216,7 +216,7 @@ const HINT: Partial<Record<ReasonKind, string>> = {
   market_rec: 'Working as designed: a strategy stays off a market where its own tested record there is a losing one (12+ trades, profit factor under 0.9).',
   solo: 'Working as designed (your rule): Fibonacci only trades next to another setup the same way on that market.',
   caps: 'Working as designed: raise the risk mode (Risk desk) for more slots.',
-  day_cap: 'Working as designed (your rule): at most 10 new trades a day per bot, the best-tested signals first. Resets at 22:00 UTC.',
+  day_cap: 'Working as designed (your rule): the coin bot opens at most 15 new trades a day (resets 22:00 UTC) and 3 in any hour, the best-tested signals first.',
   news: 'Working as designed: it skips the half hour around high-impact news.',
   world: 'Working as designed: a burst of war / oil / shipping headlines pauses new trades on the markets they move until 45 min after the last one (News → World events).',
   late: 'The lab filled a bar earlier than the bot saw the price; nothing to fix unless it repeats on every signal.',

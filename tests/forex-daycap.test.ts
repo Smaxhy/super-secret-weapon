@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BOT, tradesOpenedToday, tradingDayStart } from '../src/forex/practice';
+import { BOT, tradesOpenedSince, tradesOpenedToday, tradingDayStart } from '../src/forex/practice';
 import { SIZING, simulatePortfolio, type PTrade } from '../src/forex/portfolio';
 
 const H = 3_600_000;
@@ -17,6 +17,9 @@ describe('v27.38 max trades per day', () => {
     };
     expect(tradesOpenedToday(a, now)).toBe(3); // a, b, c
     expect(BOT.maxTradesPerDay.bot).toBe(SIZING.maxPerDay);
+    expect(BOT.maxTradesPerDay.cbot).toBe(15); // v27.42
+    expect(BOT.maxTradesPerHour.cbot).toBe(3);
+    expect(tradesOpenedSince(a, day + 2.5 * H)).toBe(2); // b, c
     expect(SIZING.maxPerDay).toBe(0); // v27.40: no daily cap
   });
 

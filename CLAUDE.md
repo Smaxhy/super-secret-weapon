@@ -758,6 +758,13 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.42 coin bot: max 15 trades a day, 3 an hour; the burst after today's peak struck (Oct 25, owner: "trading way too
+much and too risky … revert all trades till the point where it made 60+, cancel all current trades, 15 trades max so it can
+still trade throughout the day, not 18 trades at night all at once") — `BOT.maxTradesPerDay.cbot` 15 (forex bot still 0 = no
+cap) + `BOT.maxTradesPerHour` {cbot: 3} (rolling hour, `tradesOpenedSince`; wait "hourly limit reached", why.ts day_cap). VPS
+read 07:55 UTC: today (owner's clock, from 22:00 UTC) peaked at +$63.09 after LINK stoch_trend:1h +$67.61 (06:00 UTC); after it
+6 closes −$39.07 (three −$20 cap stops). One-time `v27.42-undo-coin-after-peak`: `undoClosed('cbot', closedAt ≥ 06:00 UTC Oct
+25 except that LINK close)` + `undoPositions('cbot', all)` (LINK keltner:1h + ETH williams_r:1h shorts then); refs → skipRefs.
 ## v27.41 less lag (Oct 24, owner: "the app keeps lagging and not properly responding") — dashboard `useApi`: a timer poll
 is skipped while the same request is still out (a slow server used to get a pile of copies); reloads after a button / event
 queue one re-fetch instead. Server `/api/<desk>/bot` (every open screen polls it every 5 s; it builds the plan, shadow book,
