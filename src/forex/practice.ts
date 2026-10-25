@@ -90,6 +90,10 @@ export const BOT = {
   allInMarginShare: 0.9,
   /** v27.23: one open trade (or resting order) per market and direction across all strategies — no doubled bets */
   onePerMarketSide: true,
+  /** v27.44 (owner: "make it trade smarter … what it just did is an account drainer"; Oct 25 06:00 UTC it shorted BTC, XRP,
+   * SOL, LINK at once — coins move together, so that was one bet placed six times): at most this many open trades (+ resting
+   * orders) in the same direction across the whole account; the best-tested signals go first. 0 = no cap. */
+  maxSameSide: { cbot: 2 } as Partial<Record<string, number>>,
   /** v27.24 (owner: "every bot can lose but 4 losses in a row is different"): 3 bot losses in a row → half size until a
    * win; 4 → no new trades for `pauseHours` after the last one (a safety rule, not graded — like the VIX brake).
    * v27.25 OFF (owner: "there doesn't have to be a cooling-off system, just a max loss system") — the per-trade loss
@@ -1761,6 +1765,13 @@ export class Practice {
         if (BOT.onePerMarketSide && [...a.open, ...(a.orders ?? [])].some((p) => p.pair === t.pair && p.side === t.side)) {
           note(`${t.ref}:dup`, `skipped ${t.pair} (${t.strategy}): already in a ${t.side === 1 ? 'buy' : 'sell'} on ${t.pair}`);
           skip(t, `already in a ${t.side === 1 ? 'buy' : 'sell'} trade on this market (one bet per market and direction)`);
+          continue;
+        }
+        const sideCap = BOT.maxSameSide[acct] ?? 0;
+        const sameSide = sideCap > 0 ? [...a.open, ...(a.orders ?? [])].filter((p) => p.side === t.side).length : 0;
+        if (sideCap > 0 && sameSide >= sideCap) {
+          note(`side:${t.side}:${sameSide}`, `holding off new ${t.side === 1 ? 'buys' : 'sells'}: already ${sameSide} open the same way (max ${sideCap} — coins move together)`);
+          skip(t, `already ${sameSide} ${t.side === 1 ? 'buy' : 'sell'} trades open across the coins (max ${sideCap} the same way — coins move together)`, true);
           continue;
         }
         const cool = reentryWait(a.closed, t.strategy, tf, t.pair, Date.now());

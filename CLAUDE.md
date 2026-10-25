@@ -758,6 +758,22 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.44 the coin bot trades smarter: a deeper bar per coin + one market move counted once (Oct 25, owner: "make it trade
+smarter, I have no issue with it trading a lot, but what it just did is an account drainer — I need in-depth research before a
+trade, I want to be profitable")
+VPS read 08:03–08:07 UTC: 1 coin Edge row, 39 Maybe, 134 no; 108 of 1,058 strategy × chart × coin cells passed the strict market
+bar (~10% — what luck gives over that many tries), and those were all live (v27.34). Two changes, coin desk only (forex unchanged):
+- `coinCellPass(cell, pooledOf(row))` + `COIN_CELL` {minN 50, minAvgR 0.15, minPf 1.5, poolMinN 30, poolMinAvgR 0, poolMinPf 1.1}
+  (lab.ts): on top of `cellPass` a coin cell needs 50+ unseen trades on that coin at +0.15R and PF 1.5, AND the same strategy ×
+  chart's pooled row (all coins together, `Row.outSample` + `verdict`) must be Edge / Maybe with a positive unseen average and
+  PF ≥ 1.1. `planChosen(…, pooled)` (8th param; hourly via `allRowOf`, fast via the row), `provenCells`, the weekend prep list.
+  On the 08:03 report: 108 → 32 cells (momentum_bar 1h / 4h, news_drift 1h, bb_squeeze 1h, inside_bar 1h, of_thrust 1h,
+  keltner 1h, round_break 1h / 4h, trendline_break 4h ADA, breakout_retest 1h); cut include pivot_bounce:4h (luck twins 20 of
+  20, −$52 live this week) and pivot_ladder:4h (−$46).
+- `BOT.maxSameSide` {cbot: 2} (practice.ts syncBot): at most 2 open trades + resting orders in the same direction across the
+  account (coins move together — the 06:00 burst shorted 4 coins at once); best-tested (`prio`) first; wait "already N sell
+  trades open across the coins". The $20 loss cap / turbo sizing were left as the owner set them (v27.20).
+tests in forex-proven-only (+1 behavioural, expectations).
 ## v27.43 15-minute trades off, both desks (Oct 25, owner: "turn off 15 min trades, back to lab") — `FX_CONFIG.botFastCharts`
 false, `botFastChartsCrypto` false, `botFastStrategies` [] (the ICT session rules too). The fast lab still tests 15m every hour
 (Strategies / Lab) and still MANAGES any 15m position the bot holds (`chosen: false` = manage, never open); the plan marks 15m

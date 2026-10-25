@@ -651,11 +651,31 @@ export function profitFloor(row: Partial<Pick<Row, 'inSample' | 'outSample' | 'm
 
 /** v27.2 pure: may the bot open `strategy` on `pair`? `rowChosen` = the normal chooser's answer for its strategy × chart row,
  * `rec` = that row's tested record on this market, `dropped` = the learner took the row off. */
-export function planChosen(strategy: string, pair: string, rowChosen: boolean, rec: { n: number; pf: number | null; totalR?: number } | undefined, dropped = false, cell?: MarketCell | null, tf?: string): boolean {
+/**
+ * v27.44 (owner: "make it trade smarter … I need in-depth research before a trade, I want to be profitable"; VPS 08:03 UTC
+ * Oct 25: 108 of 1,058 coin strategy × chart × coin cells passed the strict market bar — about the share luck alone gives
+ * over that many tries — while only 1 pooled coin row was Edge): a coin cell trades only when, on top of `cellPass`, its
+ * own record is clearly stronger (more unseen trades, a bigger edge per trade) AND the same strategy × chart is not losing
+ * across the coins together (one coin's luck on a rule that loses everywhere else is not a reason to trade). Pure.
+ */
+export const COIN_CELL = { minN: 50, minAvgR: 0.15, minPf: 1.5, poolMinN: 30, poolMinAvgR: 0, poolMinPf: 1.1 };
+/** the pooled row's unseen record + its verdict (VPS 08:07 UTC Oct 25: of 108 strict coin cells 55 clear the record checks,
+ * 32 also have a pooled verdict that isn't 'no' — the 23 cut include pivot_bounce:4h / pivot_ladder:4h, whose random-
+ * timing twins did as well (the luck meter) and which lost −$52 / −$46 live that week) */
+export type Pooled = Pick<RStats, 'n' | 'avgR' | 'pf'> & { verdict?: Row['verdict'] };
+export const pooledOf = (r: { outSample?: RStats; verdict?: Row['verdict'] } | null | undefined): Pooled | null => (r?.outSample ? { ...r.outSample, verdict: r.verdict } : null);
+export function coinCellPass(c: MarketCell | undefined | null, pooled: Pooled | null | undefined, k = COIN_CELL): boolean {
+  if (!c || !pooled) return false;
+  if (!(c.n >= k.minN && c.avgR >= k.minAvgR && (c.pf ?? 99) >= k.minPf)) return false;
+  if (pooled.verdict !== 'edge' && pooled.verdict !== 'maybe') return false;
+  return pooled.n >= k.poolMinN && pooled.avgR > k.poolMinAvgR && (pooled.pf ?? 99) >= k.poolMinPf;
+}
+export function planChosen(strategy: string, pair: string, rowChosen: boolean, rec: { n: number; pf: number | null; totalR?: number } | undefined, dropped = false, cell?: MarketCell | null, tf?: string, pooled?: Pooled | null): boolean {
   if (dropped) return false;
   if (tf && !onlyOk(isCrypto(pair) ? 'crypto' : 'fx', strategy, tf)) return false; // v27.26
-  // v27.27: only the strict-test (Edge) rows; v27.31: + strategies proven on THIS market on the strict market bar (forex)
-  if (FX_CONFIG.provenOnly.on) return rowChosen || (FX_CONFIG.provenOnly.cells[isCrypto(pair) ? 'crypto' : 'fx'] && cellPass(cell));
+  // v27.27: only the strict-test (Edge) rows; v27.31: + strategies proven on THIS market on the strict market bar (forex);
+  // v27.44: a coin cell must also clear the deeper coin bar (`coinCellPass`)
+  if (FX_CONFIG.provenOnly.on) return rowChosen || (FX_CONFIG.provenOnly.cells[isCrypto(pair) ? 'crypto' : 'fx'] && cellPass(cell) && (!isCrypto(pair) || coinCellPass(cell, pooled)));
   if (tf && ownerTrialOf(strategy, tf, pair)) return true; // v27.11
   // v27.4: a strategy that proved itself on THIS market on its own (cellPass) trades here even when its pooled row doesn't;
   // v27.9: the looser trial bar is enough (at a smaller size, see `focusTrial`); v27.10 (owner: "if a chart has good
@@ -717,14 +737,14 @@ export function onlyOk(universe: 'fx' | 'crypto', strategy: string, tf: string):
 export const ownerTrialOf = (strategy: string, tf: string, pair: string) =>
   FX_CONFIG.ownerTrials.find((x) => x.strategy === strategy && x.tf === tf && (x.pair === pair || (x.pair === '*' && !isCrypto(pair))));
 /** v27.10 pure: per market, the strategy × chart rows that proved themselves there on their own (full or trial bar) */
-export function provenCells(rows: ReadonlyArray<Pick<Row, 'id' | 'tf' | 'markets'> & { pairs?: Row['pairs'] }>): Record<string, string[]> {
+export function provenCells(rows: ReadonlyArray<Pick<Row, 'id' | 'tf' | 'markets'> & { pairs?: Row['pairs']; outSample?: RStats; verdict?: Row['verdict'] }>): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   for (const r of rows) {
     if (r.id === 'random') continue;
     for (const c of r.markets ?? []) {
       // v27.34: while only proven strategies trade, a cell counts only where planChosen lets it trade (strict bar, desk on)
       const po = FX_CONFIG.provenOnly;
-      const live = po.on ? po.cells[isCrypto(c.pair) ? 'crypto' : 'fx'] && cellPass(c) : cellPass(c) || focusTrial(c.pair, c) || workTrial(c.pair, c, r.pairs?.find((p) => p.pair === c.pair));
+      const live = po.on ? po.cells[isCrypto(c.pair) ? 'crypto' : 'fx'] && cellPass(c) && (!isCrypto(c.pair) || coinCellPass(c, pooledOf(r))) : cellPass(c) || focusTrial(c.pair, c) || workTrial(c.pair, c, r.pairs?.find((p) => p.pair === c.pair));
       if (live) (out[c.pair] ??= []).push(`${r.id}:${r.tf}`);
     }
   }
@@ -1784,7 +1804,7 @@ export class ForexLab {
     const real = rows.filter((r) => r.id !== 'random');
     for (const r of real) if (r.verdict === 'edge' && profitFloor(r).ok) add(r, 'live', []);
     if (FX_CONFIG.provenOnly.cells[this.universe]) for (const r of real) {
-      const ps = (r.markets ?? []).filter((c) => cellPass(c)).map((c) => c.pair);
+      const ps = (r.markets ?? []).filter((c) => cellPass(c) && (!isCrypto(c.pair) || coinCellPass(c, pooledOf(r)))).map((c) => c.pair);
       if (ps.length && !(r.verdict === 'edge' && profitFloor(r).ok)) add(r, 'cell', ps);
     }
     const near = real
@@ -2433,7 +2453,7 @@ export class ForexLab {
       return rowOf.get(k) ?? (FX_CONFIG.marketPlan[t.pair]?.includes(t.strategy) || ownerTrialOf(t.strategy, t.tf, t.pair) || cellPass(c) || focusTrial(t.pair, c) || workTrial(t.pair, c, any?.pairs.find((p) => p.pair === t.pair)) ? any : undefined);
     };
     const cellFor = (t: { strategy: string; tf: string; pair: string }) => allRowOf.get(`${t.strategy}:${t.tf}`)?.markets?.find((c) => c.pair === t.pair);
-    this.labOpen = Object.fromEntries(open.filter((t) => planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), rowFor(t)?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf)).map((t) => [`${t.strategy}:${t.tf}:${t.pair}`, t.entryT]));
+    this.labOpen = Object.fromEntries(open.filter((t) => planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), rowFor(t)?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf, pooledOf(allRowOf.get(`${t.strategy}:${t.tf}`)))).map((t) => [`${t.strategy}:${t.tf}:${t.pair}`, t.entryT]));
     // v17: how often each filter input was known on the first 70% of each series (for `missingInput`)
     const covCache = new Map<Series, ReturnType<typeof filterCoverage>>();
     const coverageOf = (se: Series) => {
@@ -2492,7 +2512,7 @@ export class ForexLab {
         soloWait: soloWait(t, open, TF_MIN[t.tf as Timeframe] ?? 60),
         agree,
         marketRec,
-        chosen: planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf),
+        chosen: planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf, pooledOf(allRowOf.get(`${t.strategy}:${t.tf}`))),
         rowChosen: chosen.has(`${t.strategy}:${t.tf}`),
         sizeF,
         prio: focusPrio(t.pair, row ? row.all.avgR : -1),

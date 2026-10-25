@@ -30,7 +30,14 @@ describe('v27.27 only proven strategies trade, big size', () => {
     // v27.31: a strategy on the strict per-market bar trades that forex market; v27.34: coins too (experimental desk)
     const strict = { pair: 'RUTUSD', n: 108, avgR: 0.19, pf: 2.4, winPct: 50, inN: 60, inAvgR: 0.1, mcP: 0.99, mcP5: 0.05 } as never;
     expect(planChosen('pivot_bounce', 'RUTUSD', false, undefined, false, strict, '4h')).toBe(true);
-    expect(planChosen('pivot_bounce', 'BTCUSD', false, undefined, false, { ...(strict as object), pair: 'BTCUSD' } as never, '4h')).toBe(true);
+    // v27.44: a coin cell also needs the deeper coin bar: 50+ unseen trades, +0.15R, PF 1.5, and the strategy not losing across the coins
+    const btc = { ...(strict as object), pair: 'BTCUSD' } as never;
+    expect(planChosen('pivot_bounce', 'BTCUSD', false, undefined, false, btc, '4h')).toBe(false); // no pooled record
+    expect(planChosen('pivot_bounce', 'BTCUSD', false, undefined, false, btc, '4h', { n: 400, avgR: 0.05, pf: 1.2, verdict: 'maybe' as const })).toBe(true);
+    expect(planChosen('pivot_bounce', 'BTCUSD', false, undefined, false, btc, '4h', { n: 400, avgR: -0.02, pf: 0.95, verdict: 'maybe' as const })).toBe(false); // loses on the coins together
+    expect(planChosen('pivot_bounce', 'BTCUSD', false, undefined, false, btc, '4h', { n: 400, avgR: 0.05, pf: 1.2, verdict: 'no' as const })).toBe(false); // pooled row failed (e.g. its random-timing twins did as well)
+    expect(planChosen('pivot_bounce', 'BTCUSD', false, undefined, false, { ...(btc as object), avgR: 0.12 } as never, '4h', { n: 400, avgR: 0.05, pf: 1.2, verdict: 'maybe' as const })).toBe(false); // edge too thin
+    expect(planChosen('pivot_bounce', 'BTCUSD', false, undefined, false, { ...(btc as object), n: 40 } as never, '4h', { n: 400, avgR: 0.05, pf: 1.2, verdict: 'maybe' as const })).toBe(false); // too few unseen trades
     expect(planChosen('pivot_bounce', 'RUTUSD', false, undefined, true, strict, '4h')).toBe(false); // learner drop wins
     expect(planChosen('judas_swing', 'NDXUSD', false, undefined, false, null, '1h')).toBe(false); // the owner trial is off too
     expect(planChosen('rsi_dip', 'BTCUSD', true, undefined, false, null, '4h')).toBe(true);
@@ -52,8 +59,11 @@ describe('v27.27 only proven strategies trade, big size', () => {
 
   it('v27.34: per-market cells count as live setups in provenCells only where they trade', () => {
     const cell = (pair: string) => ({ pair, n: 108, avgR: 0.19, pf: 2.4, winPct: 50, inN: 60, inAvgR: 0.1, mcP: 0.99, mcP5: 0.05, sess: [] });
-    const out = provenCells([{ id: 'news_drift', tf: '1h', markets: [cell('ETHUSD'), cell('RUTUSD'), { ...cell('BTCUSD'), mcP: 0.8 }] }]);
+    const pooled = { n: 400, winPct: 50, avgR: 0.05, medianR: 0, pf: 1.2, totalR: 20, maxDdR: 5 };
+    const out = provenCells([{ id: 'news_drift', tf: '1h', outSample: pooled, verdict: 'maybe', markets: [cell('ETHUSD'), cell('RUTUSD'), { ...cell('BTCUSD'), mcP: 0.8 }, { ...cell('XRPUSD'), avgR: 0.12 }] }]);
     expect(out).toEqual({ ETHUSD: ['news_drift:1h'], RUTUSD: ['news_drift:1h'] });
+    // v27.44: without a pooled record (or with a losing one) a coin cell doesn't count; forex cells are unchanged
+    expect(provenCells([{ id: 'news_drift', tf: '1h', markets: [cell('ETHUSD'), cell('RUTUSD')] }])).toEqual({ RUTUSD: ['news_drift:1h'] });
   });
 
   it('a proven coin trade risks 20% on its tested stop and the $20 cap leaves it alone', async () => {
@@ -92,5 +102,23 @@ describe('v27.28 tight trail once in profit (owner: "trail its SL VERY tightly")
     expect(lockedStop(1, plan, 101.2, 96)).toBeCloseTo(100.4, 9);
     expect(lockedStop(1, plan, 104, 100.4)).toBeCloseTo(102.8, 9);
     expect(lockedStop(1, plan, 103, 102.8)).toBeCloseTo(102.8, 9); // never loosens
+  });
+});
+
+describe('v27.44 the coin bot counts a market move once', () => {
+  it('at most 2 open trades the same way across the coins (best-tested first); the other way still opens', async () => {
+    vi.useFakeTimers({ now: NOW });
+    expect(BOT.maxSameSide.cbot).toBe(2);
+    const r = new NxRedis();
+    r.m.set('fx:practice:cbot', JSON.stringify(newAccount(1000)));
+    const p = new Practice(r as unknown as Redis);
+    const px: Record<string, number> = { BTCUSD: 100_000, ETHUSD: 4_000, SOLUSD: 200, XRPUSD: 2 };
+    (p as unknown as { quotes: () => Promise<Record<string, Quote>> }).quotes = async () => Object.fromEntries(Object.entries(px).map(([id, m]) => [id, { ...quote(m), id, bid: m * 0.9999, ask: m * 1.0001, bars: [[NOW - M, m, m, m]] }]));
+    const short = (pair: string, prio: number) => ({ ref: `keltner:1h:${pair}:${NOW - 2 * M}`, strategy: 'keltner', tf: '1h', pair, side: -1 as const, entryT: NOW - 2 * M, stop: px[pair]! * 1.02, target: px[pair]! * 0.96, chosen: true, sizeF: 1, prio, judge: null });
+    const long = { ...short('XRPUSD', 0.1), ref: `rsi_dip:1h:XRPUSD:${NOW - 2 * M}`, strategy: 'rsi_dip', side: 1 as const, stop: 1.96, target: 2.08 };
+    await p.syncBot([short('BTCUSD', 0.2), short('ETHUSD', 0.5), short('SOLUSD', 0.4), long], () => null, {}, { scope: ['1h', '4h'], acct: 'cbot' });
+    const a = JSON.parse(r.m.get('fx:practice:cbot')!) as PracticeAccount;
+    expect(a.open.filter((x) => x.side === -1).map((x) => x.pair).sort()).toEqual(['ETHUSD', 'SOLUSD']); // the two best-tested shorts
+    expect(a.open.some((x) => x.side === 1 && x.pair === 'XRPUSD')).toBe(true);
   });
 });
