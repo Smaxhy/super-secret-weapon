@@ -49,7 +49,7 @@ export const LOSS_REVIEW = {
   capSlack: 0.15,
 };
 
-const tfOf = (c: { tf?: string | null; ref?: string | null }) => c.tf ?? (c.ref ? c.ref.split(':')[1] ?? null : null);
+export const tfOf = (c: { tf?: string | null; ref?: string | null }) => c.tf ?? (c.ref ? c.ref.split(':')[1] ?? null : null);
 const money = (x: number) => `${x < 0 ? '−' : '+'}$${Math.abs(x).toFixed(2)}`;
 const rTxt = (r: number) => `${r >= 0 ? '+' : '−'}${Math.abs(r).toFixed(2)}R`;
 
@@ -73,7 +73,8 @@ export function reviewLoss(c: ClosedPractice, ctx: { closed: readonly ClosedPrac
   const twin = c.ref ? ctx.labDone.get(c.ref) : undefined;
   const testR = twin ? Math.round(twin.r * 100) / 100 : null;
   const dup = doubledWith(c, ctx.closed, ctx.open);
-  const cap = ctx.maxLossUsd && c.reason === 'stop' && (c.riskUsd0 ?? 0) > ctx.maxLossUsd * (1 + LOSS_REVIEW.capSlack) && Math.abs(c.pnlUsd) <= ctx.maxLossUsd * (1 + LOSS_REVIEW.capSlack);
+  const capL = c.maxLossUsd ?? ctx.maxLossUsd; // v27.45: the trade's own cap when it had one
+  const cap = capL && c.reason === 'stop' && (c.riskUsd0 ?? 0) > capL * (1 + LOSS_REVIEW.capSlack) && Math.abs(c.pnlUsd) <= capL * (1 + LOSS_REVIEW.capSlack);
   if (dup) causes.push('doubled');
   if (!twin) {
     const running = !!c.ref && ctx.labOpen.has(c.ref);
@@ -92,7 +93,7 @@ export function reviewLoss(c: ClosedPractice, ctx: { closed: readonly ClosedPrac
   }
   const parts: string[] = [];
   if (dup) parts.push(`${dup} was already in the same ${c.side === 1 ? 'buy' : 'sell'} on ${c.pair} — the bet was doubled`);
-  if (causes.includes('loss_cap')) parts.push(`the ${money(-(ctx.maxLossUsd ?? 0))} loss cap stopped it while the tested trade ${twin.r >= 0 ? `won ${rTxt(twin.r)}` : `only lost ${rTxt(twin.r)}`}`);
+  if (causes.includes('loss_cap')) parts.push(`the ${money(-(capL ?? 0))} loss cap stopped it while the tested trade ${twin.r >= 0 ? `won ${rTxt(twin.r)}` : `only lost ${rTxt(twin.r)}`}`);
   if (causes.includes('worse_than_test')) parts.push(`the tested trade ended ${rTxt(twin.r)} (${twin.reason}) but the bot's copy lost ${money(c.pnlUsd)} — its entry / exit differed from the test`);
   if (lostToo && dup) parts.push(`the tested trade lost too (${rTxt(twin.r)})`);
   const main = causes.find((x) => x !== 'tested_loss') ?? 'worse_than_test';

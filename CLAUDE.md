@@ -758,6 +758,23 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.45 smarter $ stop from how trades really dipped (Oct 25, owner: "how much it bounced from loss to high, how long it is red
+before it makes profit, how low it goes before it bounces; instead of a flat $20, could it be $25 or $15 — a smarter SL based on
+trade performance; and chart it")
+`src/forex/excursion.ts` (pure, `EXCURSION`): per closed bot trade (not partial / weekend legs) from the 15m candles (hourly when
+15m doesn't reach back): MAE / MFE in USD (+ ×1R), minutes to the bottom, winners' minutes back to break-even, and for trades the
+$ cap closed (stop at ≈ −cap while the tested stop was further) what the tested trade did over the next 72 h (target / tested
+stop / neither). `underCap` replays every trade under caps $10…$50 (adverse side of a candle assumed first; profit lock not
+replayed) → total per cap, best cap overall / per strategy × chart / per market. Suggestion per strategy × chart = blend of its own
+best (8+ trades) and the overall best, weight n ÷ (n + 10), rounded to $2.5, kept $10–40; ACTIVE only with 20+ analysed trades.
+`ForexLab.noteExcursions()` (after noteLosses, ≤ once per 50 min, both desks) → Redis `fx:excursion` / `cm:excursion`,
+`Practice.slCaps[acct]`; syncBot opens each NEW trade with `PracticePosition.maxLossUsd` = its strategy's cap (never all-in;
+`tick` + loss review use `p.maxLossUsd ?? a.maxLossUsd`); bot-log line "smarter stop: …" when the caps change. Trades opened
+before Oct 22 17:00 UTC (`EXCURSION_CAP_SINCE`) count as uncapped. Size unchanged (turbo, v27.20). API GET
+`/api/<desk>/excursion[?refresh=1]`; Trades page card "How far trades go red before they win" (`components/FxExcursion.tsx`:
+headline, winners-that-went-$10/15/20/25-red tiles, scatter red-depth × final $ with today's cap dashed + the suggested cap
+solid, capped trades that later hit the target, total per cap bars, per-strategy caps). tests/forex-excursion (3),
+forex-loss-cap (+1).
 ## v27.44 the coin bot trades smarter: a deeper bar per coin + one market move counted once (Oct 25, owner: "make it trade
 smarter, I have no issue with it trading a lot, but what it just did is an account drainer — I need in-depth research before a
 trade, I want to be profitable")

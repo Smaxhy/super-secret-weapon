@@ -61,3 +61,14 @@ describe('v27.22 undoPositions', () => {
     expect(a.skipRefs).toEqual(['pivot_bounce:4h:NZDUSD:1']);
   });
 });
+
+describe('v27.45 a trade can carry its own loss cap', () => {
+  it('a $30 cap on the trade beats the account $20 cap', () => {
+    const a = newAccount(1000);
+    a.maxLossUsd = 20;
+    a.open = [{ ...long(), maxLossUsd: 30 }];
+    const m1 = T + 60_000;
+    tick(a, { BTCUSD: q(99_900, [[m1, 100_000, 99_800, 99_900, 100_000]]) }, m1 + 30_000);
+    expect(a.open[0]!.stop).toBeCloseTo(98_500, 6); // $30 ÷ 0.02 BTC = $1,500 below the entry
+  });
+});

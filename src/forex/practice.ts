@@ -221,6 +221,8 @@ export interface PracticePosition {
   desk?: boolean;
   /** v27.26: an all-in trade (`BOT.allIn`) — its own tested stop, the account's $ loss cap doesn't pull it in */
   allIn?: boolean;
+  /** v27.45: this trade's own $ loss cap (from the excursion study, `Practice.slCaps`); missing = the account's */
+  maxLossUsd?: number;
   /** bot trades (v15.3): USD already banked by parts taken off (and legs before a weekend pause) */
   bankedUsd?: number;
   /** v17: USD lost if the stop is hit, measured on the real fill when it opened (1 R) */
@@ -759,22 +761,23 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
     }
     // v27.20: the account's loss cap in USD — the stop is pulled in so this trade can't lose more (never loosened);
     // already past it → closed at the market now
-    if (a.maxLossUsd && a.maxLossUsd > 0 && !q.stale && !p.allIn) {
+    const capUsd = p.maxLossUsd ?? a.maxLossUsd; // v27.45: the trade's own cap first
+    if (capUsd && capUsd > 0 && !q.stale && !p.allIn) {
       const per = pnlUsd({ pair: p.pair, side: p.side, units: p.units, entry: p.entry }, p.entry + p.side, mids);
       if (per > 0) {
-        const capStop = p.entry - (p.side * a.maxLossUsd) / per;
+        const capStop = p.entry - (p.side * capUsd) / per;
         if (p.stop === null || (p.side === 1 ? capStop > p.stop : capStop < p.stop)) {
           const exitNow = p.side === 1 ? q.bid : q.ask;
           if (p.side === 1 ? exitNow <= capStop : exitNow >= capStop) {
             closePos(a, p, exitNow, mids, 'stop', now);
-            events.push(`${p.pair} closed: it reached the $${a.maxLossUsd} loss cap`);
+            events.push(`${p.pair} closed: it reached the $${capUsd} loss cap`);
             continue;
           }
           p.stop = capStop;
           const lastT = q.bars.length ? q.bars[q.bars.length - 1]![0] : now;
           p.stopMovedT = lastT;
           if (mv) mv.moved = true;
-          events.push(`${p.pair} stop pulled in to the $${a.maxLossUsd} loss cap (${capStop.toPrecision(6)})`);
+          events.push(`${p.pair} stop pulled in to the $${capUsd} loss cap (${capStop.toPrecision(6)})`);
         }
       }
     }
@@ -1075,7 +1078,7 @@ export interface ExitPlan {
   exitWhen?: string | null;
 }
 
-export interface OpenReq extends ExitPlan { /** v20: a market desk's learning trade */ desk?: boolean; /** v27.26 */ allIn?: boolean; pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; bankedUsd?: number; /** v17: refuse a price older than this (default 30 min) */ maxQuoteAgeMs?: number; /** v17: an hourly / 4-hour trade may use a source's declared delay (Yahoo's metals) on top of the limit */ feedDelayOk?: boolean; /** v17: 1 R of a re-opened trade (else measured on this fill) */ riskUsd0?: number }
+export interface OpenReq extends ExitPlan { /** v20: a market desk's learning trade */ desk?: boolean; /** v27.26 */ allIn?: boolean; pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; bankedUsd?: number; /** v17: refuse a price older than this (default 30 min) */ maxQuoteAgeMs?: number; /** v17: an hourly / 4-hour trade may use a source's declared delay (Yahoo's metals) on top of the limit */ feedDelayOk?: boolean; /** v17: 1 R of a re-opened trade (else measured on this fill) */ riskUsd0?: number; /** v27.45: this trade's own $ loss cap */ maxLossUsd?: number }
 
 /** The exit-plan fields of a lab trade, ready for `openIn`. Pure. */
 export function planOf(t: LabOpenTrade): ExitPlan {
@@ -1136,6 +1139,9 @@ export class Practice {
   live: LiveSource = liveFeed;
   /** v18: the pair's carry (base rate − quote rate, %) now — set by the lab from the policy rates it tests with */
   carryFor: (pair: string, t: number) => number = () => NaN;
+  /** v27.45: smarter $ loss caps per strategy × chart from the excursion study (set by the lab each hour; only used while
+   * `active` — enough analysed trades) */
+  slCaps: Partial<Record<AcctId, { active: boolean; def: number; byKey: Record<string, number> }>> = {};
   /** v17.9: yesterday's close per market (Yahoo, refreshed in the background ≤ every 30 min) for live prices' day change */
   private prev = new Map<string, { close: number; at: number }>();
   private checking = false;
@@ -1492,6 +1498,7 @@ export class Practice {
         checkedT: quote.bars[quote.bars.length - 1]?.[0] ?? Date.now(),
         ...(req.strategy ? { strategy: req.strategy } : {}),
         ...(req.ref ? { ref: req.ref } : {}),
+        ...(req.maxLossUsd && req.maxLossUsd > 0 && !req.allIn ? { maxLossUsd: req.maxLossUsd } : {}),
         ...(req.riskPct !== undefined ? { riskPct: req.riskPct } : {}),
         ...(req.conviction ? { conviction: req.conviction } : {}),
         ...(req.desk ? { desk: true } : {}),
@@ -1938,9 +1945,12 @@ export class Practice {
           events.push(`placed a ${resting.kind === 'pullback' ? 'pullback' : 'limit'} order to ${t.side === 1 ? 'buy' : 'sell'} ${t.pair} (${t.strategy}, ${tf}) at ${resting.limit.toPrecision(6)}, good until ${new Date(resting.until).toISOString().slice(11, 16)} UTC, risking ${actual}%${heatNote}`);
           continue;
         }
-        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, desk: !!t.desk, ...(allInPct ? { allIn: true } : {}), ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}), maxQuoteAgeMs: BOT.quoteAgeMsByTf[tf] ?? 10 * 60_000, feedDelayOk: tf === '1h' || tf === '4h' });
+        // v27.45: the excursion study's $ loss cap for this strategy × chart (only once it has enough trades; never all-in)
+        const slc = this.slCaps[acct];
+        const capFor = !allInPct && slc?.active && a.maxLossUsd ? slc.byKey[`${t.strategy}:${tf}`] ?? slc.def : undefined;
+        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, desk: !!t.desk, ...(allInPct ? { allIn: true } : {}), ...(capFor ? { maxLossUsd: capFor } : {}), ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}), maxQuoteAgeMs: BOT.quoteAgeMsByTf[tf] ?? 10 * 60_000, feedDelayOk: tf === '1h' || tf === '4h' });
         const sure = allInPct ? ` — ALL-IN (${t.strategy} ${tf}, a proven strategy): risking ${actual}% at ${lev}× on its tested stop` : t.desk ? ` — DESK learning trade: ${t.desk.why}` : snipe ? ` — SNIPER: ${snipe.votes} of ${snipe.of} checks agree, risking ${actual}% at ${lev}×` : conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
-        events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${sure}${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}${heatNote}` : `skipped ${t.pair}: ${r.error}`);
+        events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${sure}${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}${heatNote}${capFor && capFor !== a.maxLossUsd ? `, loss cap $${capFor} (from how its past trades dipped)` : ''}` : `skipped ${t.pair}: ${r.error}`);
         if (r.ok) {
           openedToday++;
           openedHour++;

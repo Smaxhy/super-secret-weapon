@@ -13,7 +13,8 @@
  */
 import { PREP, prepNotes, studyRow, weekForecast, type PrepReport, type PrepRow, type PrepTarget } from './prep';
 import type Redis from 'ioredis';
-import { howToWin, reviewLosses, type LossReview } from './loss-review';
+import { howToWin, reviewLosses, tfOf, type LossReview } from './loss-review';
+import { excursionReport, type ExTrade, type ExcursionReport } from './excursion';
 import { confluenceStudy, isTogether, type ConfTrade, type ConfluenceReport } from './confluence';
 import { buildCorrBook, gradeHeat, HEAT, roundedMatrix, type HeatGrade } from './risk';
 import { luckDowngrade, luckFor } from './luck';
@@ -40,7 +41,7 @@ import { buildCtx, to4h, type Ctx } from './ta';
 import { absorptionAt } from './flow';
 import { drawingsFor, type Drawings } from './drawings';
 import { applyDesks, buildDesks, type MarketDesk } from './desks';
-import { ledgerRows } from './practice';
+import { ledgerRows, pnlUsd } from './practice';
 import { bySession, sessionOf, cellPass, cellTry, marketCells, monteCarlo, seedOf, type MarketCell, type McResult } from './montecarlo';
 import { INSTRUMENTS, MOOD_SYMBOLS, STRENGTH_PAIRS, TF_MIN, type Bar, type Instrument, type Signal, type Timeframe, type Trade, isCrypto, isFutures } from './types';
 import { buildStrength, gapSeries, scoreAt, strengthNow, type StrengthBook, type StrengthNow } from './strength';
@@ -1130,6 +1131,9 @@ export interface TfEval {
  * clears the per-market bars (`cellPass` / `cellTry`). Retired strategies are skipped on weekdays (lab rows, the live
  * "what fired" lists) and re-tested every weekend, when the list is rebuilt — one that improves comes back by itself.
  */
+/** v27.45: the $ loss cap started Oct 22 17:00 UTC (v27.20); older trades lived without one */
+export const EXCURSION_CAP_SINCE = Date.UTC(2026, 9, 22, 17);
+
 export const RETIRE = { on: true, minUnseen: 60, promiseN: 10 };
 export const FX_RETIRED = 'fx:retired';
 export interface RetiredStrategy {
@@ -2588,6 +2592,7 @@ export class ForexLab {
     // v24: every refused signal goes into the shadow book; finished lab trades grade the older ones
     await this.noteShadows(sync, out.botTrades, out.report.paper.recent);
     await this.noteLosses(out.report.paper.recent, out.botTrades.map((t) => t.ref));
+    await this.noteExcursions();
     this.noteRun({ t: Date.now(), tf: '1h', signals: out.firing.signals, chosen: out.firing.chosen, opened: sync.opened, skipped: sync.skipped.length, waits: sync.waits.length, holding: sync.heldOpen + sync.opened });
     await this.redis.set(this.k('fx:bot:chosen'), JSON.stringify(out.chosen)).catch(() => undefined);
     await this.redis.set(this.k('fx:bot:dropped'), JSON.stringify(out.dropped)).catch(() => undefined);
@@ -2629,6 +2634,73 @@ export class ForexLab {
       }
     } catch (err) {
       log.warn({ err: (err as Error).message }, 'loss review failed');
+    }
+  }
+
+  /**
+   * v27.45 excursion study (excursion.ts): how far each closed bot trade went red before it ended, how long winners took to
+   * come back, what the trades the $ loss cap closed did afterwards, and which cap would have made the most — overall and
+   * per strategy × chart. Redis `fx:excursion` / `cm:excursion`; once enough trades exist the suggested caps go to the
+   * account (`Practice.slCaps`) and each NEW trade opens with its strategy's cap instead of the flat one.
+   */
+  private excursionAt = 0;
+  lastExcursion: ExcursionReport | null = null;
+  async noteExcursions(force = false): Promise<void> {
+    if (!this.practice) return;
+    if (!force && Date.now() - this.excursionAt < 50 * 60_000) return;
+    this.excursionAt = Date.now();
+    try {
+      const a = await this.practice.rawAccount(this.acct);
+      const currentCap = a.maxLossUsd ?? 20;
+      const trades: ExTrade[] = a.closed
+        .filter((c) => c.ref && c.reason !== 'partial' && c.reason !== 'weekend' && c.entry > 0 && c.units > 0)
+        .map((c) => ({
+          id: c.id,
+          pair: c.pair,
+          strategy: c.strategy,
+          tf: tfOf(c) ?? undefined,
+          side: c.side === -1 ? -1 : 1,
+          entry: c.entry,
+          stop: c.stop,
+          target: c.target,
+          units: c.units,
+          openedAt: c.openedAt,
+          closedAt: c.closedAt,
+          usd: c.pnlUsd + (c.bankedUsd ?? 0),
+          reason: c.reason,
+          ...(c.riskUsd0 ? { riskUsd0: c.riskUsd0 } : {}),
+          ...(c.allIn ? { allIn: true } : {}),
+          // trades before the cap existed (Oct 22 17:00 UTC) lived without one
+          capUsd: c.maxLossUsd ?? (c.openedAt >= EXCURSION_CAP_SINCE ? currentCap : 0),
+        }));
+      const mids: Record<string, number> = Object.fromEntries(this.marketsNow.map((m) => [m.id, m.price]));
+      const h1 = new Map<string, Bar[]>();
+      const m15 = new Map<string, Bar[]>();
+      for (const pair of new Set(trades.map((t) => t.pair))) {
+        h1.set(pair, await loadBars(this.redis, pair).catch(() => [] as Bar[]));
+        m15.set(pair, await loadFastBars(this.redis, '15m', pair).catch(() => [] as Bar[]));
+      }
+      const barsOf = (t: ExTrade) => {
+        const f = m15.get(t.pair) ?? [];
+        // 15-minute candles when they reach back to the entry (finer timing), else hourly
+        return f.length && f[0]!.t <= t.openedAt ? { bars: f, barMs: 15 * 60_000 } : { bars: h1.get(t.pair) ?? [], barMs: 3_600_000 };
+      };
+      const perOf = (t: ExTrade) => {
+        const d = t.entry * 0.001;
+        return Math.abs(pnlUsd({ pair: t.pair, side: 1, units: t.units, entry: t.entry }, t.entry + d, mids) / d);
+      };
+      const rep = excursionReport(trades, barsOf, perOf, currentCap, Date.now());
+      const prev = this.practice.slCaps[this.acct];
+      this.practice.slCaps[this.acct] = rep.suggest;
+      this.lastExcursion = rep;
+      await this.redis.set(this.k('fx:excursion'), JSON.stringify(rep));
+      const same = prev && prev.active === rep.suggest.active && prev.def === rep.suggest.def && JSON.stringify(prev.byKey) === JSON.stringify(rep.suggest.byKey);
+      if (!same && rep.suggest.active) {
+        const diff = Object.entries(rep.suggest.byKey).filter(([, v]) => v !== rep.suggest.def).map(([k2, v]) => `${k2} $${v}`);
+        this.logBot([`smarter stop: from ${rep.n} trades the loss cap is now $${rep.suggest.def} (was a flat $${currentCap})${diff.length ? `; per strategy: ${diff.slice(0, 8).join(', ')}` : ''} — winners typically dipped $${rep.winners.maeMedian} (75% within $${rep.winners.maeP75})`]);
+      }
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'excursion study failed');
     }
   }
 

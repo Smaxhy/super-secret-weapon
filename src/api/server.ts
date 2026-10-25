@@ -303,6 +303,17 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         riskModes: RISK_MODES,
       };
     };
+    // v27.45: how far trades dip before they win, and which $ loss cap fits each strategy (excursion.ts)
+    secured.get(`${U.base}/excursion`, async (req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      if ((req.query as { refresh?: string } | undefined)?.refresh === '1' && U.lab) await U.lab.noteExcursions(true);
+      if (U.lab?.lastExcursion) return { report: U.lab.lastExcursion };
+      try {
+        return { report: JSON.parse((await redis.get(K('fx:excursion'))) ?? 'null') as unknown };
+      } catch {
+        return { report: null };
+      }
+    });
     // v27.32: the weekend review — last week's recap, what to test, and the Monday readiness checklist
     secured.get(`${U.base}/weekend`, async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');

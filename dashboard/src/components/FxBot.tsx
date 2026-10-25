@@ -10,6 +10,7 @@ import { useState } from 'react';
 import { useApi } from '../hooks/useApi';
 import { ShadowCard, type ShadowSummary } from './FxShadow';
 import { LossReviewCard, type ConfluenceReport, type LossSummary } from './FxLosses';
+import { ExcursionCard } from './FxExcursion';
 import { liveOf, livePnl, useFxLive } from '../hooks/useFxLive';
 import { api } from '../lib/api';
 import { ago } from '../lib/format';
@@ -103,6 +104,7 @@ export function FxBot() {
       <MarketsCard plan={plan} />
       <ChecksCard plan={plan} log={data?.log ?? []} />
       <LossReviewCard s={data?.losses} names={data?.names} conf={data?.confluence} />
+      <ExcursionCard names={data?.names} />
       <ShadowCard s={data?.shadow} names={data?.names} />
       <AdvancedFold>
         <RollingCard r={data?.rolling} chooser={data?.chooser} ledger={data?.ledger} names={data?.names} />
