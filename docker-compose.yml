@@ -135,6 +135,24 @@ services:
       driver: json-file
       options: { max-size: "20m", max-file: "5" }
 
+  # v27.50: Kojiro's Discord signals → paper copies, running here so it works while the owner's PC is off.
+  # Off unless /root/bot/.env has COMPOSE_PROFILES=discord and DISCORD_TOKEN=… (the owner's Discord user token).
+  # Logs in to the bot API inside Docker with DASHBOARD_PASSWORD (already in .env).
+  discord:
+    profiles: ["discord"]
+    build: ./scripts/discord-scanner
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      BOT_API_URL: http://bot:8080
+    depends_on:
+      - bot
+    mem_limit: 256m
+    mem_reservation: 64m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
   # Phase 8 — uncomment once ml/ has a real service.
   # ml-service:
   #   build: ./ml

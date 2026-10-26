@@ -159,7 +159,7 @@ class BotApi:
         return self.session
 
     async def login(self) -> bool:
-        password = os.environ.get("BOT_DASHBOARD_PASSWORD") or copy_cfg().get("api_password", "")
+        password = os.environ.get("BOT_DASHBOARD_PASSWORD") or os.environ.get("DASHBOARD_PASSWORD") or copy_cfg().get("api_password", "")
         if not password:
             logger.warning("copy: no BOT_DASHBOARD_PASSWORD set — can't send signals to the bot")
             return False
@@ -365,6 +365,7 @@ async def on_message(message: discord.Message):
 # ─── Self-Commands ────────────────────────────────────────────────────────────
 
 async def handle_command(message: discord.Message):
+    global CFG
     prefix = CFG.get("prefix", "!scan")
     parts = message.content[len(prefix):].strip().split()
     cmd = parts[0].lower() if parts else "help"
@@ -430,7 +431,6 @@ async def handle_command(message: discord.Message):
         await message.channel.send(f"📋 Keywords: {kw_list}", delete_after=15)
 
     elif cmd == "reload":
-        global CFG
         CFG = load_config()
         KEYWORDS.clear()
         KEYWORDS.extend(CFG.get("scan_keywords", []))
@@ -455,6 +455,11 @@ def _save_keywords():
 def main():
     token = os.environ.get("DISCORD_TOKEN") or CFG.get("token", "")
     if not token or token == "YOUR_DISCORD_TOKEN_HERE":
+        if os.environ.get("DISCORD_IN_DOCKER"):
+            import time
+            print(f"{Fore.RED}[ERROR] DISCORD_TOKEN is not in /root/bot/.env{Style.RESET_ALL}")
+            time.sleep(3600)
+            sys.exit(1)
         print(f"{Fore.RED}[ERROR] Set DISCORD_TOKEN (or the token in config.json){Style.RESET_ALL}")
         print(f"{Fore.YELLOW}How to get your token:")
         print(f"  1. Open Discord in your browser")
@@ -464,7 +469,15 @@ def main():
         sys.exit(1)
 
     print(f"{Fore.CYAN}Starting scanner...{Style.RESET_ALL}")
-    bot.run(token)
+    try:
+        bot.run(token)
+    except discord.LoginFailure:
+        print(f"{Fore.RED}[ERROR] Discord refused the token — get a fresh one (README: Getting your token){Style.RESET_ALL}")
+        # in the VPS container: wait an hour before Docker restarts it, so a dead token doesn't hammer Discord's login
+        if os.environ.get("DISCORD_IN_DOCKER"):
+            import time
+            time.sleep(3600)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

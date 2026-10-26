@@ -758,6 +758,14 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.50 Discord copier on the VPS (Oct 26, owner: "I want the bot also to run when my PC isn't on")
+`docker-compose.yml` service **discord** (`profiles: ["discord"]`, build `scripts/discord-scanner/Dockerfile`, python
+3.12-slim, 256 MB, `BOT_API_URL=http://bot:8080`, env_file .env): off unless .env has `COMPOSE_PROFILES=discord` +
+`DISCORD_TOKEN` (the owner adds both over SSH, README "On the VPS"); bot.py logs in with `DASHBOARD_PASSWORD` when
+`BOT_DASHBOARD_PASSWORD` isn't set; a missing / refused token waits an hour before exiting (no login hammering). Fixed
+on the way (the v27.46 script never ran): requirements pinned `discord.py-self==1.9.2` (needs aiohttp < 3.8 — no
+install on modern Python) → **2.1.0** + aiohttp ≥ 3.9 (checked: installs and loads on 3.12 + 3.13); `global CFG` sat
+after CFG was used in `handle_command` (SyntaxError on every Python) → moved to the top.
 ## v27.49 coin bot: daily / hourly trade caps OFF (Oct 26, owner: "turn it off then if it's that good") — VPS read 11:08 UTC:
 the coin shadow book's biggest refusal bucket was `day_cap` (47 held back, 46 done, 89% won, +29.57R ≈ +$2,774 at base
 risk). `BOT.maxTradesPerDay.cbot` 15 → 0 and `maxTradesPerHour.cbot` 3 → 0 (0 = no cap; the v27.38 / v27.42 code stays).

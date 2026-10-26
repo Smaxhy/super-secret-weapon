@@ -16,7 +16,25 @@ his exit. Signals older than 10 minutes (a reconnect) are not opened; each messa
 
 > ⚠️ A self-bot logs in as YOUR Discord account. That breaks Discord's terms and the account can be banned.
 
-## Setup (on the PC or the VPS — anywhere that stays on)
+## On the VPS (always on — works while your PC is off)
+
+The copier runs as its own small container next to the bot. Once, over SSH (`ssh root@209.250.254.34`):
+
+```bash
+cd /root/bot
+read -rs T && echo "DISCORD_TOKEN=$T" >> .env && echo 'COMPOSE_PROFILES=discord' >> .env && unset T
+#   ↑ paste your Discord token and press Enter (nothing shows while you paste — that's on purpose)
+docker compose up -d --build discord
+docker compose logs -f discord          # "Discord Self Bot Scanner — ONLINE" + "Copying: ON → http://bot:8080"
+```
+
+It logs in to the bot with the `DASHBOARD_PASSWORD` already in `.env`, restarts by itself, and every update keeps it
+running. Stop it: `docker compose stop discord` (and remove the `COMPOSE_PROFILES=discord` line so updates don't
+start it again). A new token: edit the `DISCORD_TOKEN=` line in `.env` (`nano .env`), then
+`docker compose up -d discord`. Run it in ONE place only — not on the PC and the VPS at the same time (each message
+is only copied once, but Discord sees two logins). Discord may ask to verify a login from a new place (the server's IP).
+
+## Setup on your PC (Python 3.12 or 3.13)
 
 ```bash
 cd scripts/discord-scanner
