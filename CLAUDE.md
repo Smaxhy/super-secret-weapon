@@ -758,6 +758,23 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.52 no more 10-minute-late index candles + his levels watched on live 1-minute candles (Oct 26, owner: "what happened
+to not having delayed candles, I thought we fixed that"; "copy his trades immediately, or even 1–2 minutes later" — screenshot:
+his MNQ long 9 contracts at 29,194.75 off his 29,182.25 level, +$3,973; VPS read 14:52: the copier started 14:32, after it)
+- v27.48 only made the PRICE live; the candles of the indices / metals stayed Yahoo's (~10 min late). basis.ts
+  `extendWithLive(base, live, barMs, now, closed)` (pure): the gap = `measureBasis` on the candles both have (≥ 10), then
+  only FINISHED live candles newer than Yahoo's last are added, moved onto the futures price; volume × the median Yahoo ÷
+  live ratio (else none); the CME halt hour (17–18 New York) and closed hours skipped; Yahoo's own candle replaces it at
+  the next refresh (nothing is written to the stores). hyperliquid.ts `hlCandles(coin, '1m'|'15m'|'1h', from, to)` (REST
+  candleSnapshot), `HL_FUTURES_KEY` `fx:hl:futures` (index.ts writes the discovered {id → builder market} map via
+  `hyperliquidLive.onDiscover`; the worker child reads it with `loadHlFutures`). Used by the hourly lab (computeRun, after
+  the DK fill: last 4 days of 1h, counted in `fillInfo.filled`) and the 15-minute pass (fast.ts decide: last 12 h of 15m).
+- `src/forex/level-watch.ts` `LevelWatch` (index.ts, every 20 s): markets with posted levels and a Hyperliquid builder
+  market → its live 1-minute candles (6 h) moved by `Practice.hlGap(id)` (the measured futures − Hyperliquid gap; none yet
+  → waits, one log line) → `postedLevelSignal(…, minRisk = 0.08% of the price)` on the newest finished minute (≤ 3 min
+  old) → `takeLevelTrades` (moved here from fast.ts; one per candle via Redis NX, one open per market). The 15-minute
+  pass keeps posted levels only for markets the watcher can't cover. His SIGNAL posts were already copied the moment
+  the self-bot sees them. tests/forex-live-candles (5).
 ## v27.51 Kojiro's levels + daily plan traded, tight trailing stop on every copy (Oct 26, owner: "he also sends Levels
 29,220.00 (29,182.25) (29,160.00) (29,070.50)"; "it can trust his trades, I want it to take it and trail it tight SL"; then
 his plan post "Bias: bullish · DOL: Around 29,385.25 · Narrative: manipulation to the downside, then long off my levels")

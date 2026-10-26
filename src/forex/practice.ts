@@ -1300,6 +1300,10 @@ export class Practice {
   private basisTried = new Map<string, number>();
   /** v27.48: Hyperliquid's builder index / metal markets (swappable for tests) */
   hl: Pick<typeof hyperliquidLive, 'book' | 'candles' | 'futBars'> = hyperliquidLive;
+  /** v27.52: the futures − Hyperliquid gap for one market (null = not measured yet; asking starts a measurement) */
+  hlGap(id: string, now = Date.now()): number | null {
+    return this.basisFor(id, 'hl', now);
+  }
   private basisFor(id: string, src: 'oanda' | 'hl', now: number, s?: OandaSettings): number | null {
     const key = `${src}:${id}`;
     const r = this.basis.get(key);

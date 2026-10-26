@@ -72,7 +72,8 @@ import { ledgerRows, Practice } from './forex/practice';
 import { loadPythConf, pythConf, pythKey, pythLive, setPythConf, testPythKey } from './forex/pyth';
 import { yahooLive } from './forex/yahoo-live';
 import { coinbaseLive } from './forex/coinbase';
-import { hyperliquidLive } from './forex/hyperliquid';
+import { HL_FUTURES_KEY, hyperliquidLive } from './forex/hyperliquid';
+import { LevelWatch } from './forex/level-watch';
 import { startLivePush } from './forex/live-push';
 import { ForexCalendar, marketClock } from './forex/calendar';
 import { ForexHeadlines } from './forex/headlines';
@@ -411,6 +412,7 @@ async function main(): Promise<void> {
   // no account); Pyth only with an API key (Hermes refuses keyless requests since August 2026)
   yahooLive.start();
   coinbaseLive.start();
+  hyperliquidLive.onDiscover = (found) => void redis.set(HL_FUTURES_KEY, JSON.stringify(found)).catch(() => undefined); // v27.52: for the labs' live candles
   hyperliquidLive.start();
   // v17.12: the key pasted on the dashboard (DB) wins over the .env one; an .env key finds its endpoint first
   await loadPythConf();
@@ -441,6 +443,9 @@ async function main(): Promise<void> {
   cryptoLab.start();
   const fastCrypto = new FastLab(redis, cryptoLab);
   fastCrypto.start();
+  // v27.52 (owner: "copy his trades immediately, or 1–2 minutes later"): Kojiro's levels watched on live 1-minute candles
+  const levelWatch = new LevelWatch(redis, practice, (_pair, lines) => forex.logBot(lines));
+  levelWatch.start();
   // v27.32 (owner: "recap the past week and think how to improve all weekend, be ready Monday"): the weekend review per desk
   const deskOf = (lab: ForexLab, fast: FastLab): WeekendDeskDef => ({
     universe: lab.universe,
@@ -1114,6 +1119,7 @@ async function main(): Promise<void> {
       tournament.stop();
       forex.stop();
       fastFx.stop();
+      levelWatch.stop();
       cryptoLab.stop();
       fastCrypto.stop();
       practice.stop();

@@ -17,7 +17,7 @@ import WebSocket from 'ws';
 import { moduleLogger } from '../lib/logger';
 import { feeds } from './feeds';
 import { addTick, type LiveTick, type MinuteBar } from './pyth';
-import { INSTRUMENTS, type Instrument } from './types';
+import { INSTRUMENTS, type Bar, type Instrument } from './types';
 import type { LiveSocket, SocketFactory } from './yahoo-live';
 
 const log = moduleLogger('hyperliquid');
@@ -55,7 +55,7 @@ export function matchFutures(names: readonly string[]): Record<string, string> {
   return out;
 }
 
-type Fetcher = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
+export type Fetcher = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
 /** Hyperliquid coin name of an instrument (`BTCUSD` → `BTC`). */
 export const hlCoin = (id: string) => id.slice(0, -3);
@@ -171,6 +171,7 @@ export class HyperliquidLive {
           // subscribed on the next connect
         }
       }
+      if (Object.keys(found).length) this.onDiscover?.(found);
       if (fresh.length || !this.futures.size) log.info({ found, dexes: (dexes ?? []).filter(Boolean).length }, Object.keys(found).length ? 'Hyperliquid index / metal markets found' : 'no Hyperliquid index / metal markets found');
       return found;
     } catch (err) {
@@ -178,6 +179,9 @@ export class HyperliquidLive {
       return Object.fromEntries(this.futures);
     }
   }
+
+  /** v27.52: told the market list after every discovery (index.ts stores it in Redis for the labs / the worker child) */
+  onDiscover: ((found: Record<string, string>) => void) | null = null;
 
   /** v27.48: which builder market follows which of our futures markets */
   futuresFound(): Record<string, string> {
@@ -318,3 +322,29 @@ export class HyperliquidLive {
 }
 
 export const hyperliquidLive = new HyperliquidLive(realSocket, Date.now, INSTRUMENTS, (url, init) => fetch(url, init));
+
+/** v27.52: Redis key holding {our id → Hyperliquid builder market} (written after each discovery, read by the labs). */
+export const HL_FUTURES_KEY = 'fx:hl:futures';
+
+/** v27.52: a builder market's candles over REST (no account): newest last, finished and forming alike. */
+export async function hlCandles(coin: string, interval: '1m' | '15m' | '1h', startTime: number, endTime: number, fetcher: Fetcher = (url, init) => fetch(url, init)): Promise<Bar[]> {
+  const res = await fetcher(HYPERLIQUID.info, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'candleSnapshot', req: { coin, interval, startTime, endTime } }), signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error(`Hyperliquid candles HTTP ${res.status}`);
+  const rows = (await res.json()) as Array<{ t?: number; o?: string; h?: string; l?: string; c?: string; v?: string }> | null;
+  return (rows ?? [])
+    .map((r) => ({ t: Number(r.t), o: Number(r.o), h: Number(r.h), l: Number(r.l), c: Number(r.c), v: Number(r.v) }))
+    .filter((b) => b.t > 0 && b.o > 0 && b.h > 0 && b.l > 0 && b.c > 0)
+    .map((b) => (b.v > 0 ? b : { t: b.t, o: b.o, h: b.h, l: b.l, c: b.c }))
+    .sort((a, b) => a.t - b.t);
+}
+
+/** v27.52: the stored {our id → builder market} list ({} when none yet). */
+export async function loadHlFutures(redis: { get(k: string): Promise<string | null> }): Promise<Record<string, string>> {
+  try {
+    const raw = await redis.get(HL_FUTURES_KEY);
+    const m = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+    return m && typeof m === 'object' ? m : {};
+  } catch {
+    return {};
+  }
+}

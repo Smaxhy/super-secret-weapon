@@ -18,10 +18,12 @@ import { fetchCoinbaseFast } from './coinbase';
 import { dataAgeOf, FRESH, staleReason, type DataAge } from './freshness';
 import { fetchYahooBars, loadFastBars, mergeBars, saveFastBars, trimBars, volumeShare } from './data';
 import { loadOanda, oandaCandles, oandaCovers, oandaReady } from './oanda';
-import { needsBasis } from './basis';
+import { extendWithLive, needsBasis } from './basis';
+import { hlCandles, loadHlFutures } from './hyperliquid';
 import { signalsFor, simulate, WARMUP } from './engine';
 import { STRATEGIES, postedLevelSignal, runsOn, strategyById, styleOf, tradesNews } from './strategies';
-import { DISCORD_COPY, POSTED_LEVELS, levelStrategy, loadLevels, type PostedLevels } from './discord';
+import { DISCORD_COPY, POSTED_LEVELS, loadLevels, type PostedLevels } from './discord';
+import { takeLevelTrades } from './level-watch';
 import { to4h } from './ta';
 import { TF_MIN, isFutures, type Bar, type Instrument, type Trade } from './types';
 import { allowFor, blockReason, filterCoverage, missingInput } from './filters';
@@ -512,8 +514,16 @@ export class FastLab {
       // v27.51: Kojiro's posted levels (15-minute chart only) → a trade where the price is absorbed at one of them
       const posted: Record<string, PostedLevels> = tf === '15m' && POSTED_LEVELS.trade && DISCORD_COPY.on ? await loadLevels(this.redis, now) : {};
       const levelTrades: Array<{ pair: string; side: 1 | -1; stop: number; target: number | null; barT: number; source: string }> = [];
+      const hlMap = tf === '15m' ? await loadHlFutures(this.redis) : {};
       for (const inst of this.insts) {
-        const all = this.series(tf, inst.id);
+        let all = this.series(tf, inst.id);
+        // v27.52: Yahoo's index / metal candles are ~10 min late — the newest ones come from Hyperliquid (moved onto the
+        // futures price; only for this pass, the store keeps Yahoo's)
+        const coin = isFutures(inst.id) ? hlMap[inst.id] : undefined;
+        if (coin && all.length) {
+          const live = await hlCandles(coin, '15m', now - 12 * 3_600_000, now).catch(() => [] as Bar[]);
+          all = extendWithLive(all, live, TF_MIN[tf] * MIN, now, (t) => !clockFor(inst.id, t).open).bars;
+        }
         ages[inst.id] = dataAgeOf(inst.id, tf, all, now, TF_MIN[tf] * MIN);
         if (all.length < WARMUP + 60 || !clockFor(inst.id, now).open) continue;
         const bars = all.slice(-FX_FAST.liveBars[tf]);
@@ -583,7 +593,13 @@ export class FastLab {
       }
       this.firing[tf] = { tf, t: newest, at: Date.now(), byPair };
       this.labOpen[tf] = openKeys;
-      if (practice && levelTrades.length) await this.takeLevelTrades(levelTrades, ages, now);
+      if (practice && levelTrades.length) {
+        // markets the 1-minute watcher covers (live Hyperliquid candles) are taken there, a minute after the touch
+        const mine = levelTrades.filter((x) => !(isFutures(x.pair) && hlMap[x.pair]));
+        const stale = mine.filter((x) => staleReason(ages[x.pair], now));
+        for (const x of stale) this.lab.logBot([`Kojiro level on ${x.pair}: not taken — ${staleReason(ages[x.pair], now)}`]);
+        await takeLevelTrades(this.redis, practice, this.lab.acct, mine.filter((x) => !stale.includes(x)), (l) => this.lab.logBot(l));
+      }
       // no test report yet (or it has no rows for this chart): never manage trades without the lab's view of them
       if (!practice || !rowsTf.length) return;
       const sync = newSyncReport();
@@ -602,30 +618,6 @@ export class FastLab {
       this.lab.noteRun({ t: Date.now(), tf, signals: fired.length, chosen: fired.filter((f) => f.chosen && f.allowed).length, opened: sync.opened, skipped: sync.skipped.length, waits: sync.waits.length, holding: sync.heldOpen + sync.opened });
     } finally {
       this.deciding.delete(tf);
-    }
-  }
-
-  /** v27.51: open the trades at Kojiro's posted levels — one per candle (Redis NX, so a candle seen twice never trades
-   * twice), one open at a time per market, sized and stopped like his copies, the profit lock trailing it. */
-  private async takeLevelTrades(list: ReadonlyArray<{ pair: string; side: 1 | -1; stop: number; target: number | null; barT: number; source: string }>, ages: Record<string, DataAge>, now: number): Promise<void> {
-    const practice = this.lab.practice;
-    if (!practice) return;
-    const held = await practice.heldRefs(this.lab.acct).catch(() => [] as string[]);
-    for (const x of list) {
-      const strategy = levelStrategy(x.source);
-      if (held.some((r) => r.startsWith(`${strategy}:signal:${x.pair}:`))) continue;
-      const stale = staleReason(ages[x.pair], now);
-      if (stale) {
-        this.lab.logBot([`Kojiro level on ${x.pair}: not taken — ${stale}`]);
-        continue;
-      }
-      const ref = `${strategy}:signal:${x.pair}:${x.barT}`;
-      const first = await this.redis.set(`fx:discord:lvdone:${ref}`, '1', 'EX', 2 * 86_400, 'NX').catch(() => null);
-      if (first !== 'OK') continue;
-      const r = await practice
-        .copyOpen({ pair: x.pair, side: x.side, stopNamed: null, hisPx: null, strategy, ref, riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: true, stop: x.stop, target: x.target }, this.lab.acct)
-        .catch((err: Error) => ({ ok: false as const, error: err.message }));
-      this.lab.logBot([r.ok ? `Kojiro level: ${x.side === 1 ? 'bought' : 'sold'} ${x.pair} at ${r.entry} — absorbed at his level; stop ${r.stop}${x.target !== null ? `, target his next level ${x.target}` : ''}, risking $${r.riskUsd}, tight trailing stop once in profit` : `Kojiro level on ${x.pair}: not taken — ${r.error}`]);
     }
   }
 }

@@ -33,7 +33,9 @@ import { hasSpreadProfile } from './spreads';
 import { carryAt, carrySeries, cotSeries, loadMacro, macroNow, refreshMacro, type MacroData } from './macro';
 import { FINANCING } from './financing';
 import { RISK_MODES, newSyncReport, type HeatLive, type LabOpenTrade, type Practice, type SyncReport } from './practice';
-import { marketClock, type ForexCalendar } from './calendar';
+import { clockFor, marketClock, type ForexCalendar } from './calendar';
+import { hlCandles, loadHlFutures } from './hyperliquid';
+import { extendWithLive } from './basis';
 import type { ForexHeadlines } from './headlines';
 import { DEFAULT_SIM, equityCurve, rStats, signalsFor, simulate, type RiskResult, type RStats } from './engine';
 import { NOT_FOR_CRYPTO, STRATEGIES, tradesNews, runsOn, strategyById, styleOf, type Family, type Strategy, type Style } from './strategies';
@@ -1911,6 +1913,23 @@ export class ForexLab {
       return stitchHistory(id, f.bars, dk, nowT);
     };
     for (const inst of this.insts) h1ById.set(inst.id, await filledBars(inst.id));
+    // v27.52: Yahoo's CME candles are ~10 min late → the hour that just closed is added from Hyperliquid's market for it
+    // (moved onto the futures price); Yahoo's own candle replaces it at the next refresh
+    const hlMap = await loadHlFutures(this.redis);
+    for (const inst of this.insts) {
+      const coin = isFutures(inst.id) ? hlMap[inst.id] : undefined;
+      if (!coin) continue;
+      try {
+        const live = await hlCandles(coin, '1h', nowT - 4 * 86_400_000, nowT);
+        const x = extendWithLive(h1ById.get(inst.id) ?? [], live, HOUR, nowT, (t) => !clockFor(inst.id, t).open);
+        if (x.added) {
+          h1ById.set(inst.id, x.bars);
+          fillInfo[inst.id] = { source: fillInfo[inst.id]?.source ?? 'yahoo', filled: (fillInfo[inst.id]?.filled ?? 0) + x.added };
+        }
+      } catch (err) {
+        log.warn({ id: inst.id, err: (err as Error).message }, 'Hyperliquid hourly candles failed (Yahoo only this hour)');
+      }
+    }
     // v17: how many hourly candles behind each market is (a lagging feed → no new bot trades on that market)
     this.dataAge = Object.fromEntries(this.insts.map((inst) => [inst.id, { ...dataAgeOf(inst.id, '1h', h1ById.get(inst.id) ?? [], nowT, HOUR), ...(fillInfo[inst.id] ?? {}) }]));
     const strengthInput: Record<string, Bar[]> = {};
