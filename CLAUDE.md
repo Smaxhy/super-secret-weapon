@@ -758,6 +758,27 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.46 Kojiro's Discord signals copied as paper trades (Oct 26, owner uploaded their own self-bot: "you don't have to
+build it, just implement it with the bot")
+`scripts/discord-scanner/` = the owner's self-bot (discord.py-self 1.9.2; logs in as the OWNER's account — breaks Discord's
+terms, ban risk, owner's call) + a copy step: every post in `config.json` `copy.channel_ids` (optionally only
+`copy.author_ids`) — content + embed text — is POSTed to **`POST /api/forex/discord-signal`** {id, text, at, source} with
+a JWT from `/api/auth/login` (`BOT_DASHBOARD_PASSWORD` env; `DISCORD_TOKEN` env for Discord). `config.json` + the hit log
+are gitignored (`config.example.json` committed; first run copies it). `src/forex/discord.ts`: `parseSignal` (pure)
+"SIGNAL · NQ — LONG @ 29,026.25" → open (LONG / SHORT anywhere, BUY / SELL only with SIGNAL; optional `SL @` / `TP @`),
+bare "SELL @ x" → close longs, "BUY / COVER @" → shorts, "CLOSE / EXIT @" → both, "SL to BE" → stop to entry; `symbolToPair`
+(NQ / MNQ / NAS100 / NQZ6 / MNQ1! → NDXUSD, ES → SPX, YM → DJI, RTY → RUT, GC → XAU, SI → XAG, BTC / ETH / SOL, our ids).
+`handleSignal`: Redis SET NX `fx:discord:seen:<id>` (7 d, once per message), opens refused when posted > 10 min ago, every
+message logged (`fx:discord:log`, 200; GET `/api/forex/discord`), action lines into the desk's bot log. Practice
+`copyOpen` / `copyClose` / `copyBreakeven`: account **bot** (coins → cbot), strategy `discord_<source>` (`discord_kojiro`),
+tf **'signal'** (ref `discord_kojiro:signal:<pair>:<msgId>` → outside every syncBot scope, so the lab never manages / closes
+it), safety stop = his SL when on the losing side else `stopPct` 0.5% of the price (`copyStop`), sized so that stop loses
+`riskPct` 2% of equity capped at the account's $ loss cap (`copySize`, ≤ 50% of free margin, leverage 50 capped per
+market), no target, `OpenReq.noLock` → `lock: null` (follows HIS exit; `DISCORD_COPY_LOCK=on` adds the profit lock),
+entry at our quote (Yahoo NQ ≈ 10 min late — `feedDelayOk`), refused when our price is > 1.5 stop distances from his
+(wrong market). Exits close at the market with reason 'signal'. Weekend flatten: a copy ENDS (no resume item —
+`pausable`). Env (VPS .env): `DISCORD_COPY` off, `DISCORD_COPY_RISK_PCT`, `DISCORD_COPY_STOP_PCT`, `DISCORD_COPY_LEVERAGE`,
+`DISCORD_COPY_LOCK`. Copies count toward the bot's open caps (one slot each). tests/forex-discord (9).
 ## v27.45 smarter $ stop from how trades really dipped (Oct 25, owner: "how much it bounced from loss to high, how long it is red
 before it makes profit, how low it goes before it bounces; instead of a flat $20, could it be $25 or $15 — a smarter SL based on
 trade performance; and chart it")

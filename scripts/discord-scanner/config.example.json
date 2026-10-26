@@ -1,0 +1,26 @@
+{
+  "token": "PUT IT IN THE DISCORD_TOKEN ENVIRONMENT VARIABLE INSTEAD",
+  "copy": {
+    "enabled": true,
+    "api_url": "https://209-250-254-34.sslip.io",
+    "channel_ids": [],
+    "author_ids": [],
+    "source": "kojiro"
+  },
+  "scan_keywords": [],
+  "scan_regex_patterns": [],
+  "monitor_all_guilds": false,
+  "monitored_guild_ids": [],
+  "monitored_channel_ids": [],
+  "ignored_channel_ids": [],
+  "ignored_user_ids": [],
+  "log_to_channel_id": null,
+  "log_to_file": true,
+  "log_file": "scan_hits.log",
+  "alert_dm_user_id": null,
+  "case_sensitive": false,
+  "scan_embeds": true,
+  "scan_attachments_text": false,
+  "cooldown_seconds": 0,
+  "prefix": "!scan"
+}

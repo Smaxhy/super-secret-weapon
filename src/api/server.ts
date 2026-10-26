@@ -29,6 +29,8 @@ import { lossSummary, type LossReview } from '../forex/loss-review';
 import { FX_CONFIG, focusMarkets } from '../forex/lab';
 import { botStatus, dayTrades, parsePnlQuery, pnlReport } from '../forex/pnl';
 import { STRATEGIES } from '../forex/strategies';
+import { DISCORD_COPY, copyLog, handleSignal } from '../forex/discord';
+import { isCrypto } from '../forex/types';
 import { moneyMap } from '../learner/money-map';
 import { DEFAULT_CONFIG as DEFAULTS } from '../config/default';
 import { getConfig as cfgNow } from '../config/runtime-config';
@@ -419,6 +421,31 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       const r = deps.practice ? await deps.practice.edit(String(b.id ?? ''), b.stop == null ? null : Number(b.stop), b.target == null ? null : Number(b.target)) : { ok: false, error: 'not running' };
       if (!r.ok) reply.code(400);
       return r;
+    });
+    // v27.46: Kojiro's Discord signals, posted by the owner's self-bot (scripts/discord-scanner) → copy trades
+    secured.post<{ Body: { id?: string; text?: string; at?: number | string; source?: string; channel?: string } }>('/api/forex/discord-signal', async (req, reply) => {
+      const b = req.body ?? {};
+      const id = String(b.id ?? '');
+      const text = String(b.text ?? '');
+      if (!/^[0-9]{5,25}$/.test(id) || !text || text.length > 4000) {
+        reply.code(400);
+        return { ok: false, error: 'id (Discord message id) and text are required' };
+      }
+      if (!deps.practice) {
+        reply.code(503);
+        return { ok: false, error: 'not running' };
+      }
+      const at = typeof b.at === 'number' ? b.at : Date.parse(String(b.at ?? '')) || Date.now();
+      const row = await handleSignal(redis, deps.practice, { id, text, at, ...(b.source ? { source: String(b.source) } : {}), ...(b.channel ? { channel: String(b.channel) } : {}) });
+      if (row.kind === 'open' || row.kind === 'close' || row.kind === 'breakeven' || row.kind === 'old') {
+        const lab = row.pair && isCrypto(row.pair) ? deps.crypto : deps.forex;
+        lab?.logBot([`Discord (${row.source}): ${row.what}`]);
+      }
+      return row;
+    });
+    secured.get('/api/forex/discord', async (_req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      return { on: DISCORD_COPY.on, riskPct: DISCORD_COPY.riskPct, stopPct: DISCORD_COPY.stopPct, profitLock: DISCORD_COPY.profitLock, log: await copyLog(redis, 50) };
     });
     // v17.11: the owner's profit lock on their own trades (the bot account always uses it)
     secured.post<{ Body: { on?: boolean } }>('/api/forex/practice/lock', async (req, reply) => {

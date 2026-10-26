@@ -25,6 +25,7 @@ import { liveFeed } from './live-feed';
 import { lockedStop, lockPlan, PROFIT_LOCK, type LockPlan } from './profit-lock';
 import { FINANCING, rollsBetween, swapGain } from './financing';
 import { tradesNews } from './strategies';
+import { DISCORD_COPY, copySize, copyStop, type CopyBook } from './discord';
 
 const log = moduleLogger('forex-practice');
 /** 'me' = the owner's own practice account, 'bot' = the forex auto-bot, 'cbot' (v22.1) = the coin auto-bot */
@@ -637,6 +638,10 @@ function closePos(a: PracticeAccount, p: PracticePosition, px: number, mids: Rec
   return pl;
 }
 
+/** v27.46: a lab trade pauses over the weekend and comes back Monday; a Discord copy (tf 'signal') just ends there */
+const pausable = (p: PracticePosition) => !!p.ref && p.tf !== 'signal';
+const copyRec = (p: PracticePosition) => (p.ref ? { ref: p.ref, ...(p.riskUsd0 ? { riskUsd0: p.riskUsd0 } : {}), why: 'weekend' as const } : undefined);
+
 /** v17: the weekend pause of a bot trade (re-opened after Monday's open while the lab still holds it). Pure. */
 function resumeItemOf(p: PracticePosition, leg: number, at: number): ResumeItem {
   return { ref: p.ref!, ...(p.strategy ? { strategy: p.strategy } : {}), pair: p.pair, side: p.side, ...(p.riskPct !== undefined ? { riskPct: p.riskPct } : {}), scaled: !!p.scaled, tpHit: !!p.tpHit, lev: p.leverage, bankedUsd: Math.round(((p.bankedUsd ?? 0) + leg) * 100) / 100, ...(p.riskUsd0 ? { riskUsd0: p.riskUsd0 } : {}), at };
@@ -722,8 +727,8 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
       const leg = closePos(a, p, p.side === 1 ? q.bid : q.ask, mids, p.closePending.reason, now);
       // a weekend close is a pause like the normal flatten: the lab trade comes back after Monday's open
       if (p.closePending.reason === 'weekend') {
-        if (p.ref) a.resume = [...(a.resume ?? []), resumeItemOf(p, leg, now)];
-        else recordTrade(a, statKey(p), now, leg + (p.bankedUsd ?? 0));
+        if (pausable(p)) a.resume = [...(a.resume ?? []), resumeItemOf(p, leg, now)];
+        else recordTrade(a, statKey(p), now, leg + (p.bankedUsd ?? 0), copyRec(p));
       }
       events.push(`${p.pair} closed at the first price after its exit (${p.closePending.reason})`);
       continue;
@@ -1078,7 +1083,7 @@ export interface ExitPlan {
   exitWhen?: string | null;
 }
 
-export interface OpenReq extends ExitPlan { /** v20: a market desk's learning trade */ desk?: boolean; /** v27.26 */ allIn?: boolean; pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; bankedUsd?: number; /** v17: refuse a price older than this (default 30 min) */ maxQuoteAgeMs?: number; /** v17: an hourly / 4-hour trade may use a source's declared delay (Yahoo's metals) on top of the limit */ feedDelayOk?: boolean; /** v17: 1 R of a re-opened trade (else measured on this fill) */ riskUsd0?: number; /** v27.45: this trade's own $ loss cap */ maxLossUsd?: number }
+export interface OpenReq extends ExitPlan { /** v20: a market desk's learning trade */ desk?: boolean; /** v27.26 */ allIn?: boolean; pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; bankedUsd?: number; /** v17: refuse a price older than this (default 30 min) */ maxQuoteAgeMs?: number; /** v17: an hourly / 4-hour trade may use a source's declared delay (Yahoo's metals) on top of the limit */ feedDelayOk?: boolean; /** v17: 1 R of a re-opened trade (else measured on this fill) */ riskUsd0?: number; /** v27.45: this trade's own $ loss cap */ maxLossUsd?: number; /** v27.46: no profit lock on this trade (a Discord copy follows its caller's exit) */ noLock?: boolean }
 
 /** The exit-plan fields of a lab trade, ready for `openIn`. Pure. */
 export function planOf(t: LabOpenTrade): ExitPlan {
@@ -1407,8 +1412,8 @@ export class Practice {
           continue;
         }
         const leg = closePos(a, p, p.side === 1 ? qq.bid : qq.ask, mids, 'weekend', Date.now());
-        if (p.ref) a.resume = [...(a.resume ?? []), resumeItemOf(p, leg, Date.now())];
-        else recordTrade(a, statKey(p), Date.now(), leg + (p.bankedUsd ?? 0));
+        if (pausable(p)) a.resume = [...(a.resume ?? []), resumeItemOf(p, leg, Date.now())];
+        else recordTrade(a, statKey(p), Date.now(), leg + (p.bankedUsd ?? 0), copyRec(p));
       }
       ev.push('weekend: every bot trade closed before the Friday close (re-opened after Monday\'s open if still running)');
     }
@@ -1514,6 +1519,7 @@ export class Practice {
         ...(req.maxBars != null ? { maxBars: req.maxBars } : {}),
         ...(req.exitWhen ? { exitWhen: req.exitWhen } : {}),
         ...(req.ref && riskUsd0 > 0 ? { riskUsd0 } : {}),
+        ...(req.noLock ? { lock: null } : {}),
       });
       // v27.30 (owner: "a notification when it enters a trade"): bot trades only (they carry a lab ref)
       if (req.ref) {
@@ -2007,6 +2013,86 @@ export class Practice {
       }
       await this.save(a, acct);
       return pending ? { ok: true, error: `${pending} position${pending > 1 ? 's' : ''} will close at the first price (no live price right now)` } : { ok: true };
+    });
+  }
+
+  /** v27.46: open a copy of a Discord signal (discord.ts). Safety stop from the message or `stopPct`; sized so that stop
+   * loses `riskPct` of the account (never more than the account's $ loss cap); no target, he posts the exit. */
+  async copyOpen(r: Parameters<CopyBook['copyOpen']>[0], acct: 'bot' | 'cbot'): ReturnType<CopyBook['copyOpen']> {
+    return this.serial(async () => {
+      const a = await this.load(acct);
+      const inst = instrument(r.pair);
+      if (!inst) return { ok: false, error: 'unknown market' };
+      if (a.open.some((p) => p.ref === r.ref)) return { ok: false, error: 'already copied' };
+      const q = await this.quotes(this.neededIds(a, [inst.id]), 10_000);
+      const quote = q[inst.id];
+      if (!quote || quote.stale) return { ok: false, error: 'no live price right now' };
+      const mids: Record<string, number> = {};
+      for (const x of Object.values(q)) mids[x.id] = x.mid;
+      const entry = r.side === 1 ? quote.ask : quote.bid;
+      const stop = copyStop(r.side, entry, r.stopNamed);
+      const stopDist = Math.abs(entry - stop);
+      if (r.hisPx && Math.abs(entry - r.hisPx) > DISCORD_COPY.maxMismatchStops * stopDist) return { ok: false, error: `our price ${entry} is far from his ${r.hisPx} — wrong market?` };
+      const v = view(a, mids, { [inst.id]: (quote.ask - quote.bid) / 2 });
+      const perUnit = unitsFor(inst, 1, mids);
+      const usdPerUnitMove = Math.abs(pnlUsd({ pair: inst.id, side: 1, units: 1, entry }, entry + 1, mids));
+      const lev = Math.max(1, Math.min(Math.round(r.leverage), MAX_LEVERAGE, maxLeverageFor(inst.id)));
+      const want = (v.equityUsd * r.riskPct) / 100;
+      const riskUsd = a.maxLossUsd ? Math.min(want, a.maxLossUsd) : want;
+      const size = copySize({ riskUsd, stopDist, usdPerUnitMove, notionalPerUnit: perUnit ? 1 / perUnit : 0, leverage: lev, freeMarginUsd: v.freeMarginUsd });
+      if (!(size.marginUsd > 0)) return { ok: false, error: `no room (free margin $${v.freeMarginUsd})` };
+      const riskPct = v.equityUsd > 0 ? Math.round((size.riskUsd / v.equityUsd) * 10_000) / 100 : 0;
+      const res = await this.openIn(a, { pair: inst.id, side: r.side, marginUsd: size.marginUsd, leverage: lev, stop, target: null, strategy: r.strategy, ref: r.ref, riskPct, tf: 'signal', maxQuoteAgeMs: 2 * 60_000, feedDelayOk: true, noLock: !r.profitLock });
+      if (!res.ok) return res;
+      await this.save(a, acct);
+      const p = a.open[a.open.length - 1]!;
+      return { ok: true, entry: p.entry, stop: Math.round(stop * 1e5) / 1e5, riskUsd: size.riskUsd, marginUsd: size.marginUsd };
+    });
+  }
+
+  /** v27.46: close the open copies of one strategy (`side` 1 = longs, −1 = shorts, 0 = both) at the market — reason
+   * 'signal'; with no live price they close at the first price that arrives. */
+  async copyClose(m: Parameters<CopyBook['copyClose']>[0], acct: 'bot' | 'cbot'): ReturnType<CopyBook['copyClose']> {
+    return this.serial(async () => {
+      const a = await this.load(acct);
+      const targets = a.open.filter((p) => p.strategy === m.strategy && (!m.pair || p.pair === m.pair) && (!m.side || p.side === m.side) && !p.closePending);
+      if (!targets.length) return { ok: true, closed: [], pending: 0 };
+      const q = await this.quotes(this.neededIds(a), 5_000);
+      const mids: Record<string, number> = {};
+      for (const x of Object.values(q)) mids[x.id] = x.mid;
+      const closed: string[] = [];
+      let pending = 0;
+      for (const p of targets) {
+        const qq = q[p.pair];
+        if (!qq || qq.stale) {
+          p.closePending = { reason: 'signal', at: Date.now() };
+          pending++;
+        } else {
+          const pl = closePos(a, p, p.side === 1 ? qq.bid : qq.ask, mids, 'signal', Date.now());
+          closed.push(`${p.side === 1 ? 'long' : 'short'} ${p.pair} ${pl >= 0 ? '+' : '−'}$${Math.abs(pl).toFixed(2)}`);
+          continue;
+        }
+        closed.push(`${p.side === 1 ? 'long' : 'short'} ${p.pair}`);
+      }
+      await this.save(a, acct);
+      return { ok: true, closed, pending };
+    });
+  }
+
+  /** v27.46: "SL to BE" — the open copies' stop to their entry (only ever tighter). */
+  async copyBreakeven(m: Parameters<CopyBook['copyBreakeven']>[0], acct: 'bot' | 'cbot'): ReturnType<CopyBook['copyBreakeven']> {
+    return this.serial(async () => {
+      const a = await this.load(acct);
+      const moved: string[] = [];
+      for (const p of a.open) {
+        if (p.strategy !== m.strategy || (m.pair && p.pair !== m.pair)) continue;
+        if (p.stop !== null && (p.side === 1 ? p.stop >= p.entry : p.stop <= p.entry)) continue;
+        p.stop = p.entry;
+        p.stopMovedT = null;
+        moved.push(`${p.side === 1 ? 'long' : 'short'} ${p.pair}`);
+      }
+      if (moved.length) await this.save(a, acct);
+      return { ok: true, moved };
     });
   }
 
