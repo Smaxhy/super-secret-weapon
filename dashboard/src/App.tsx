@@ -16,7 +16,7 @@ import { disconnectSocket, useBotUptime, useSocketStatus } from './hooks/useWebS
 import { useStreamRates } from './hooks/useStreamRates';
 import { refreshAll } from './lib/refresh';
 import { sol } from './lib/format';
-import { getToken, setToken } from './lib/api';
+import { getToken, renewLogin, setToken } from './lib/api';
 import type { Overview as OverviewData } from './lib/types';
 import { History } from './pages/History';
 import { Learning } from './pages/Learning';
@@ -238,6 +238,19 @@ function useAuthed(): boolean {
     window.addEventListener('solbot-auth', h);
     return () => window.removeEventListener('solbot-auth', h);
   }, []);
+  // v27.53: keep the login fresh while the app is in use (sliding 7 days)
+  useEffect(() => {
+    if (!authed) return;
+    const renew = () => void renewLogin();
+    renew();
+    const t = setInterval(renew, 30 * 60_000);
+    const onVis = () => document.visibilityState === 'visible' && renew();
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [authed]);
   return authed;
 }
 

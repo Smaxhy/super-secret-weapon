@@ -4,6 +4,9 @@
  */
 const KEY_URL = 'solbot.apiUrl';
 const KEY_TOKEN = 'solbot.token';
+const KEY_RENEWED = 'solbot.tokenRenewedAt';
+/** v27.53: swap the login token for a fresh 7-day one at most this often while the app is open */
+const RENEW_MS = 6 * 3_600_000;
 
 function store(): Storage | null {
   try {
@@ -57,5 +60,26 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 export async function login(password: string): Promise<void> {
   const { token } = await api<{ token: string }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ password }) });
+  store()?.setItem(KEY_RENEWED, String(Date.now()));
   setToken(token);
+}
+
+/**
+ * v27.53 (owner: "I keep getting logged out"): a token lasted 7 days from when the password was typed, however often the
+ * app was used. While the app is open it now trades the token for a fresh 7-day one (at most every 6 h), so the login only
+ * runs out after 7 days without opening the app. Offline / an older bot: the current token is kept.
+ */
+export async function renewLogin(): Promise<void> {
+  if (!getToken()) return;
+  const last = Number(store()?.getItem(KEY_RENEWED) ?? 0);
+  if (Date.now() - last < RENEW_MS) return;
+  try {
+    const { token } = await api<{ token?: string }>('/api/auth/refresh', { method: 'POST' });
+    if (token && getToken()) {
+      store()?.setItem(KEY_TOKEN, token);
+      store()?.setItem(KEY_RENEWED, String(Date.now()));
+    }
+  } catch {
+    /* keep the current token */
+  }
 }

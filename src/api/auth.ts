@@ -2,7 +2,9 @@
  * Single-user JWT auth.
  *
  * POST /api/auth/login { password } → { token }. The password is
- * DASHBOARD_PASSWORD from .env. Tokens last 7 days. Every other /api route
+ * DASHBOARD_PASSWORD from .env. Tokens last 7 days; v27.53: POST /api/auth/refresh (logged in) swaps a valid token
+ * for a fresh 7-day one — the dashboard does it while open, so the login only runs out after 7 days unused (before, it
+ * ran out 7 days after the password was typed, however often the app was used). Every other /api route
  * (and the WebSocket) requires `Authorization: Bearer <token>`.
  *
  * Brute-force protection: 5 wrong passwords per IP per 15 minutes.
@@ -38,6 +40,7 @@ export async function registerAuth(app: FastifyInstance): Promise<void> {
     attempts.delete(req.ip);
     return { token: app.jwt.sign({ sub: 'owner' }, { expiresIn: '7d' }) };
   });
+  app.post('/api/auth/refresh', { preHandler: requireAuth }, async () => ({ token: app.jwt.sign({ sub: 'owner' }, { expiresIn: '7d' }) }));
 }
 
 /** preHandler for protected routes. */

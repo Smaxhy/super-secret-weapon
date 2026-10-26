@@ -758,6 +758,15 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.53 the login no longer runs out every week (Oct 26, owner: "I keep getting logged out of my app")
+A dashboard token lasted 7 days from when the password was typed, however often the app was used. auth.ts: POST
+`/api/auth/refresh` (behind `requireAuth`) returns a fresh 7-day token; dashboard `lib/api.ts` `renewLogin()` swaps it at
+most every 6 h (`solbot.tokenRenewedAt`), called by App.tsx `useAuthed` on open, every 30 min and when the app becomes
+visible → the login only runs out after 7 days without opening the app (same secret, same lifetime). tests/auth-refresh (2).
+**Dukascopy** (owner: "make Dukascopy work"): the VPS gets HTTP 403 from jetta.dukascopy.com = its AWS bot firewall
+blocking automated downloads on purpose. dukascopy-node 1.51.0 passes it with a hidden browser — NOT adopted: that is
+getting around a site's bot protection (the action was refused in the session). Legit routes: Dukascopy's own manual
+historical-data export (a person downloads CSVs) + an upload into the bot, or keep Yahoo's ~2 years (what runs now).
 ## v27.52 no more 10-minute-late index candles + his levels watched on live 1-minute candles (Oct 26, owner: "what happened
 to not having delayed candles, I thought we fixed that"; "copy his trades immediately, or even 1–2 minutes later" — screenshot:
 his MNQ long 9 contracts at 29,194.75 off his 29,182.25 level, +$3,973; VPS read 14:52: the copier started 14:32, after it)
