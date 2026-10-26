@@ -758,6 +758,12 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.49 coin bot: daily / hourly trade caps OFF (Oct 26, owner: "turn it off then if it's that good") — VPS read 11:08 UTC:
+the coin shadow book's biggest refusal bucket was `day_cap` (47 held back, 46 done, 89% won, +29.57R ≈ +$2,774 at base
+risk). `BOT.maxTradesPerDay.cbot` 15 → 0 and `maxTradesPerHour.cbot` 3 → 0 (0 = no cap; the v27.38 / v27.42 code stays).
+Still on: `maxSameSide` 2 (no burst of same-way trades), one bet per market and direction, the $20 / smarter loss cap.
+Same read: forex news_drift / news_fade are retired (lost unseen), the forex news pause skipped 5 trades worth −$314 net;
+coin news_drift:1h is the best coin row (1,326 unseen, +0.23R, PF 1.58; cells ETH / BTC / XRP / SOL) and trades already.
 ## v27.48 live index / metal prices from Hyperliquid, no account (Oct 26, owner: OANDA's demo login + password reset both
 fail, so no token)
 hyperliquid.ts: `HyperliquidLive.discover()` (singleton gets a fetcher; at start + every 6 h): POST

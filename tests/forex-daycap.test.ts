@@ -17,8 +17,8 @@ describe('v27.38 max trades per day', () => {
     };
     expect(tradesOpenedToday(a, now)).toBe(3); // a, b, c
     expect(BOT.maxTradesPerDay.bot).toBe(SIZING.maxPerDay);
-    expect(BOT.maxTradesPerDay.cbot).toBe(15); // v27.42
-    expect(BOT.maxTradesPerHour.cbot).toBe(3);
+    expect(BOT.maxTradesPerDay.cbot).toBe(0); // v27.49: off (was 15, v27.42)
+    expect(BOT.maxTradesPerHour.cbot).toBe(0); // v27.49: off (was 3)
     expect(tradesOpenedSince(a, day + 2.5 * H)).toBe(2); // b, c
     expect(SIZING.maxPerDay).toBe(0); // v27.40: no daily cap
   });

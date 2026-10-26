@@ -81,10 +81,11 @@ export const BOT = {
   /** v27.38 (owner: "max 5–10 trades per day"): new trades a bot may open per trading day (from 22:00 UTC = midnight
    * Central European summer time). The best-tested signals go first (`prio`); a weekend re-open of a paused trade is not
    * a new trade. 0 = no cap. */
-  maxTradesPerDay: { bot: SIZING.maxPerDay, cbot: 15 } as Partial<Record<string, number>>,
+  maxTradesPerDay: { bot: SIZING.maxPerDay, cbot: 0 } as Partial<Record<string, number>>,
   /** v27.42 (owner: "15 trades max … so it can still trade throughout the day, not 18 trades at night all at once"): new
-   * trades a bot may open in any rolling hour. 0 = no cap. */
-  maxTradesPerHour: { cbot: 3 } as Partial<Record<string, number>>,
+   * trades a bot may open in any rolling hour. 0 = no cap. v27.49 (owner: "turn it off"): both coin caps OFF — the shadow
+   * book had 46 trades held back by them at 89% won / +29.6R; `maxSameSide` 2 still stops a same-way burst. */
+  maxTradesPerHour: { cbot: 0 } as Partial<Record<string, number>>,
   /** v27.26 (owner: "if it happens trade it with extreme size, up to 20% of the wallet"): per account, a strategy:chart
    * that trades at this % of the account at its TESTED stop — past the risk mode, the currency / correlated-risk caps and
    * the $ loss cap (its stop is the strategy's own). All such trades together never risk more than that %. */
