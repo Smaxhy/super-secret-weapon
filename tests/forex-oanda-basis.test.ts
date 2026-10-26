@@ -63,7 +63,7 @@ describe('Practice prices with OANDA connected', () => {
     expect(before.NDXUSD!.source).toBe('yahoo');
     expect(before.EURUSD!.source).toBe('oanda');
     expect(before.BTCUSD!.source).toBe('yahoo'); // coins keep their own feed (were missing before v27.47)
-    (p as unknown as { basis: Map<string, { basis: number; n: number; at: number }> }).basis.set('NDXUSD', { basis: 80, n: 30, at: Date.now() });
+    (p as unknown as { basis: Map<string, { basis: number; n: number; at: number }> }).basis.set('oanda:NDXUSD', { basis: 80, n: 30, at: Date.now() });
     const after = await p.quotes(['NDXUSD']);
     expect(after.NDXUSD!.source).toBe('oanda');
     expect(after.NDXUSD!.mid).toBe(29_030);
@@ -73,7 +73,7 @@ describe('Practice prices with OANDA connected', () => {
   it('an hour-old gap is not trusted', async () => {
     const p = make();
     (p as unknown as { measureBasisFor: () => Promise<void> }).measureBasisFor = async () => undefined;
-    (p as unknown as { basis: Map<string, { basis: number; n: number; at: number }> }).basis.set('NDXUSD', { basis: 80, n: 30, at: Date.now() - 2 * 3_600_000 });
+    (p as unknown as { basis: Map<string, { basis: number; n: number; at: number }> }).basis.set('oanda:NDXUSD', { basis: 80, n: 30, at: Date.now() - 2 * 3_600_000 });
     expect((await p.quotes(['NDXUSD'])).NDXUSD!.source).toBe('yahoo');
   });
 });

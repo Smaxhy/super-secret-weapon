@@ -4,7 +4,7 @@ import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 import { Badge, Button, Card, inputCls } from './ui';
 
-interface Data { connected: boolean; token: string | null; accountId: string | null; env: string; updatedAt: string | null; basis?: Record<string, { basis: number; n: number; at: number }> }
+interface Data { connected: boolean; token: string | null; accountId: string | null; env: string; updatedAt: string | null; basis?: Record<string, { basis: number; n: number; at: number; src?: 'oanda' | 'hl' }> }
 
 /** v27.47: the futures markets that get a live OANDA price once their gap to the futures price is measured */
 const FUTURES: Array<[string, string]> = [['NDXUSD', 'Nasdaq 100'], ['SPXUSD', 'S&P 500'], ['DJIUSD', 'Dow 30'], ['RUTUSD', 'Russell 2000'], ['XAUUSD', 'Gold'], ['XAGUSD', 'Silver']];
@@ -42,9 +42,9 @@ export function OandaCard() {
         <li>Paste the token and the account id (looks like 101-004-1234567-001) below.</li>
       </ol>
       {data?.connected && <p className="mb-2 text-sm text-ink-2">Token {data.token} · account {data.accountId}</p>}
-      {data?.connected && (
+      {data && (
         <div className="mb-3 rounded-lg border border-line p-3 text-sm">
-          <p className="mb-1 text-ink-2">Currency pairs are live at once. Indices and metals trade as futures, so OANDA's price is moved by the measured gap to the futures price (checked every 10 min); until it's measured they stay on Yahoo's 10-minute-late price.</p>
+          <p className="mb-1 text-ink-2">Indices and metals: the bot tests and trades them on futures prices, which Yahoo shows 10 minutes late. A live price from OANDA (when connected) or Hyperliquid (free, no account) is moved onto the futures price by the gap measured every 10 minutes; until a gap is measured, the market stays on Yahoo's late price.</p>
           <ul className="space-y-0.5">
             {FUTURES.map(([id, name]) => {
               const b = data.basis?.[id];
@@ -52,7 +52,7 @@ export function OandaCard() {
               return (
                 <li key={id} className="flex justify-between gap-2">
                   <span>{name}</span>
-                  <span className={fresh ? 'text-up' : 'text-muted'}>{fresh ? `live · gap ${b!.basis >= 0 ? '+' : '−'}${Math.abs(b!.basis).toFixed(id === 'XAGUSD' ? 3 : 2)} (${ago(b!.at)})` : 'measuring the gap…'}</span>
+                  <span className={fresh ? 'text-up' : 'text-muted'}>{fresh ? `live via ${b!.src === 'hl' ? 'Hyperliquid' : 'OANDA'} · gap ${b!.basis >= 0 ? '+' : '−'}${Math.abs(b!.basis).toFixed(id === 'XAGUSD' ? 3 : 2)} (${ago(b!.at)})` : '10 min late (no live source yet)'}</span>
                 </li>
               );
             })}

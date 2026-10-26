@@ -758,6 +758,22 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.48 live index / metal prices from Hyperliquid, no account (Oct 26, owner: OANDA's demo login + password reset both
+fail, so no token)
+hyperliquid.ts: `HyperliquidLive.discover()` (singleton gets a fetcher; at start + every 6 h): POST
+`api.hyperliquid.xyz/info` {type perpDexs} → {type meta, dex} per builder dex (≤ 40) → `matchFutures` (`HL_FUTURES` name
+patterns, only `dex:NAME` markets — the main dex's "SPX" is the SPX6900 memecoin): NDXUSD (XYZ100 / NDX / NAS100 / US100…),
+SPXUSD (SP500 / SPX / US500…), DJIUSD (US30 / DOW…), RUTUSD (US2000 / RUSSELL…), XAUUSD (GOLD / XAU), XAGUSD (SILVER / XAG)
+→ their l2Book subscribed on the same socket; `idOf` coin → id; `parseL2` returns `coin`. A builder market's price is NOT
+the CME future: never in `get()` / the tick push (so the LiveFeed and the dashboard live P&L never see it raw); `book(id)`,
+`futBars(id)`, `candles(id)` (info candleSnapshot 1m, else the bars built from the book), `futuresFound()`. Practice: gap
+store keyed `src:id` ('oanda' | 'hl'), `basisFor(id, src, now, s?)`, `measureBasisFor` (Yahoo 1m vs OANDA M1 or HL
+candles), `hlQuote` = book + gap (bars shifted, source 'hyperliquid', no delay) used by `quote()` for futures markets
+only while the CME clock is open and a gap ≤ 1 h old exists (weekends / halts → Yahoo; the builder market trades 24/7
+on its own). OANDA, when connected, still goes first in `quotes()`. `basisNow()` → {basis, n, at, src} (OANDA preferred);
+Setup "Live price feed" card lists each market as "live via Hyperliquid / OANDA · gap ±x" or "10 min late"; feed label
+'hyperliquid-live' mentions indices / metals. UNVERIFIED: which builder markets exist (the sandbox can't reach
+Hyperliquid) — the bot log says "Hyperliquid index / metal markets found {…}" or "none found" at start. tests/forex-hl-index (4).
 ## v27.47 OANDA demo = live index / metal prices, moved onto the futures price (Oct 26, owner: "why is ours 10 min behind,
 make it on time"; OANDA for charts only, never trading; the demo account should need no ID)
 Yahoo's CME futures (NQ=F, ES=F, YM=F, RTY=F, GC=F, SI=F) are ~10 min late (exchange data licence). oanda.ts `toOanda`:

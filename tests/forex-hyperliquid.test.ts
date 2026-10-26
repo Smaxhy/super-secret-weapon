@@ -10,7 +10,7 @@ const NOW = Date.UTC(2026, 9, 20, 21, 0);
 describe('Hyperliquid live order book', () => {
   it('parses the best bid / ask of an l2Book message and ignores the rest', () => {
     const msg = { channel: 'l2Book', data: { coin: 'ETH', time: NOW, levels: [[{ px: '2438.4', sz: '3', n: 2 }], [{ px: '2438.6', sz: '1', n: 1 }]] } };
-    expect(parseL2(JSON.stringify(msg), NOW)).toEqual({ id: 'ETHUSD', bid: 2438.4, ask: 2438.6, t: NOW });
+    expect(parseL2(JSON.stringify(msg), NOW)).toEqual({ id: 'ETHUSD', coin: 'ETH', bid: 2438.4, ask: 2438.6, t: NOW });
     expect(parseL2(JSON.stringify({ channel: 'subscriptionResponse', data: {} }), NOW)).toBeNull();
     expect(parseL2(JSON.stringify({ channel: 'l2Book', data: { coin: 'BTC', levels: [[], []] } }), NOW)).toBeNull();
     expect(parseL2('nope', NOW)).toBeNull();

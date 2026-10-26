@@ -5,6 +5,13 @@
  * spot stays the coin bot's main price because the coin lab is graded on Coinbase candles; Hyperliquid prices fill in when
  * Coinbase is quiet. Subscription: {"method":"subscribe","subscription":{"type":"l2Book","coin":"BTC"}} → messages
  * {"channel":"l2Book","data":{"coin","time","levels":[[bids…],[asks…]]}} (levels: {px, sz, n}, best first).
+ *
+ * v27.48 (owner: OANDA's demo login is broken; "make the index price on time"): Hyperliquid also lists builder-deployed
+ * (HIP-3) perps that follow the Nasdaq 100, S&P, Dow, Russell, gold and silver, 24/7, free. `discover()` reads the list
+ * of those exchanges (`perpDexs` + `meta` per dex) and matches names (`HL_FUTURES`, only names with a `dex:` prefix —
+ * the main dex's "SPX" is the SPX6900 memecoin); their books are subscribed like the coins'. Their prices are NOT the
+ * CME futures the lab / stops / Kojiro use, so they never reach `get()` or the tick push: the practice account reads
+ * `book()` and adds the measured gap (basis.ts), exactly like OANDA's CFDs.
  */
 import WebSocket from 'ws';
 import { moduleLogger } from '../lib/logger';
@@ -22,13 +29,40 @@ export const HYPERLIQUID = {
   watchdogMs: 60_000,
   /** the server drops a socket with no traffic for a minute: ping well inside that */
   pingMs: 30_000,
+  info: 'https://api.hyperliquid.xyz/info',
+  /** re-read the list of index / metal markets this often */
+  discoverMs: 6 * 3_600_000,
+  maxDexes: 40,
 } as const;
+
+/** Our futures-priced markets → the names a Hyperliquid builder market may carry (the part after `dex:`). */
+export const HL_FUTURES: Record<string, RegExp> = {
+  NDXUSD: /^(XYZ100|NDX|NAS100|US100|USTECH|USTEC|NASDAQ|NASDAQ100|NQ)$/,
+  SPXUSD: /^(SP500|SPX|SPX500|US500|ES)$/,
+  DJIUSD: /^(US30|DJI|DJIA|DOW|DOW30|YM)$/,
+  RUTUSD: /^(US2000|RUT|RTY|RUSSELL|RUSSELL2000)$/,
+  XAUUSD: /^(GOLD|XAU)$/,
+  XAGUSD: /^(SILVER|XAG)$/,
+};
+
+/** Builder markets (`dex:NAME`) that follow our futures markets; first listed wins. Pure. */
+export function matchFutures(names: readonly string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [id, re] of Object.entries(HL_FUTURES)) {
+    const hit = names.find((n) => n.includes(':') && re.test((n.split(':').pop() ?? '').toUpperCase()));
+    if (hit) out[id] = hit;
+  }
+  return out;
+}
+
+type Fetcher = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
 /** Hyperliquid coin name of an instrument (`BTCUSD` → `BTC`). */
 export const hlCoin = (id: string) => id.slice(0, -3);
 
 export interface HlBook {
   id: string;
+  coin?: string;
   bid: number;
   ask: number;
   t: number;
@@ -47,7 +81,7 @@ export function parseL2(raw: string, now = Date.now()): HlBook | null {
   const ask = Number(m.data.levels[1]?.[0]?.px);
   if (!(bid > 0) || !(ask > 0) || ask < bid) return null;
   const t = Number(m.data.time);
-  return { id: `${m.data.coin}USD`, bid, ask, t: Number.isFinite(t) && t > 0 ? t : now };
+  return { id: `${m.data.coin}USD`, coin: m.data.coin, bid, ask, t: Number.isFinite(t) && t > 0 ? t : now };
 }
 
 const realSocket: SocketFactory = (url) => new WebSocket(url, { handshakeTimeout: 15_000 }) as unknown as LiveSocket;
@@ -56,6 +90,10 @@ const realSocket: SocketFactory = (url) => new WebSocket(url, { handshakeTimeout
 export class HyperliquidLive {
   readonly name = 'hyperliquid-live';
   private readonly ids: string[];
+  /** coin name → our id (coins + discovered futures markets) */
+  private idOf = new Map<string, string>();
+  /** v27.48: our futures id → its Hyperliquid builder market */
+  private futures = new Map<string, string>();
   private latest = new Map<string, HlBook & { at: number }>();
   private bars = new Map<string, MinuteBar[]>();
   private listeners = new Set<(ticks: LiveTick[]) => void>();
@@ -69,14 +107,21 @@ export class HyperliquidLive {
   updates = 0;
   lastTickAt = 0;
 
-  constructor(private readonly makeSocket: SocketFactory = realSocket, private readonly clock: () => number = Date.now, insts: readonly Instrument[] = INSTRUMENTS) {
+  constructor(private readonly makeSocket: SocketFactory = realSocket, private readonly clock: () => number = Date.now, insts: readonly Instrument[] = INSTRUMENTS, private readonly fetcher: Fetcher | null = null) {
     this.ids = insts.filter((i) => i.kind === 'crypto').map((i) => i.id);
+    for (const id of this.ids) this.idOf.set(hlCoin(id), id);
   }
 
   start(): void {
     if (!this.stopped || !this.ids.length) return;
     this.stopped = false;
     this.connect();
+    if (this.fetcher) {
+      void this.discover();
+      const again = setInterval(() => void this.discover(), HYPERLIQUID.discoverMs);
+      again.unref?.();
+      this.timers.push(again);
+    }
     const dog = setInterval(() => {
       const now = this.clock();
       if (this.sock && now - Math.max(this.lastMsgAt, this.connectedAt) > HYPERLIQUID.watchdogMs) {
@@ -93,7 +138,68 @@ export class HyperliquidLive {
     }, HYPERLIQUID.pingMs);
     dog.unref?.();
     ping.unref?.();
-    this.timers = [dog, ping];
+    this.timers.push(dog, ping);
+  }
+
+  private async info(body: object): Promise<unknown> {
+    const res = await this.fetcher!(HYPERLIQUID.info, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) throw new Error(`Hyperliquid info HTTP ${res.status}`);
+    return res.json();
+  }
+
+  /** v27.48: find the builder markets that follow the indices / metals and subscribe their books. */
+  async discover(): Promise<Record<string, string>> {
+    if (!this.fetcher) return {};
+    try {
+      const dexes = (await this.info({ type: 'perpDexs' })) as Array<{ name?: string } | null>;
+      const names: string[] = [];
+      for (const d of (dexes ?? []).slice(0, HYPERLIQUID.maxDexes + 1)) {
+        if (!d?.name) continue;
+        const meta = (await this.info({ type: 'meta', dex: d.name }).catch(() => null)) as { universe?: Array<{ name?: string; isDelisted?: boolean }> } | null;
+        for (const u of meta?.universe ?? []) if (u.name && !u.isDelisted) names.push(u.name.includes(':') ? u.name : `${d.name}:${u.name}`);
+      }
+      const found = matchFutures(names);
+      const fresh = Object.entries(found).filter(([id, coin]) => this.futures.get(id) !== coin);
+      for (const [id, coin] of fresh) {
+        const old = this.futures.get(id);
+        if (old) this.idOf.delete(old);
+        this.futures.set(id, coin);
+        this.idOf.set(coin, id);
+        try {
+          this.sock?.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'l2Book', coin } }));
+        } catch {
+          // subscribed on the next connect
+        }
+      }
+      if (fresh.length || !this.futures.size) log.info({ found, dexes: (dexes ?? []).filter(Boolean).length }, Object.keys(found).length ? 'Hyperliquid index / metal markets found' : 'no Hyperliquid index / metal markets found');
+      return found;
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'Hyperliquid market list failed');
+      return Object.fromEntries(this.futures);
+    }
+  }
+
+  /** v27.48: which builder market follows which of our futures markets */
+  futuresFound(): Record<string, string> {
+    return Object.fromEntries(this.futures);
+  }
+  private isFut(id: string): boolean {
+    return this.futures.has(id);
+  }
+
+  /** v27.48: a futures market's own 1-minute candles (mid prices), newest last — for the gap measurement */
+  async candles(id: string, minutes = 300): Promise<Array<[number, number]>> {
+    const coin = this.futures.get(id);
+    if (!coin || !this.fetcher) return (this.bars.get(id) ?? []).map((b) => [b[0], b[3]]);
+    const end = this.clock();
+    const rows = (await this.info({ type: 'candleSnapshot', req: { coin, interval: '1m', startTime: end - minutes * 60_000, endTime: end } })) as Array<{ t?: number; c?: string }>;
+    const out = (rows ?? []).map((r) => [Number(r.t), Number(r.c)] as [number, number]).filter(([t, c]) => t > 0 && c > 0);
+    return out.length ? out : (this.bars.get(id) ?? []).map((b) => [b[0], b[3]]);
+  }
+
+  /** v27.48: a futures market's 1-minute candles built from its book (unshifted) */
+  futBars(id: string): MinuteBar[] {
+    return (this.bars.get(id) ?? []).map((b) => [...b] as MinuteBar);
   }
 
   stop(): void {
@@ -118,7 +224,8 @@ export class HyperliquidLive {
 
   get(id: string, now = this.clock()): { px: number; t: number; bars: MinuteBar[] } | null {
     const p = this.latest.get(id);
-    if (!p || !this.sock || now - p.at > HYPERLIQUID.freshMs) return null;
+    // v27.48: a builder index / metal market is never handed out raw (it isn't the futures price)
+    if (!p || !this.sock || now - p.at > HYPERLIQUID.freshMs || this.isFut(id)) return null;
     return { px: (p.bid + p.ask) / 2, t: p.t, bars: (this.bars.get(id) ?? []).map((b) => [...b] as MinuteBar) };
   }
 
@@ -147,6 +254,7 @@ export class HyperliquidLive {
     s.on('open', () => {
       if (this.sock !== s) return;
       for (const id of this.ids) s.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'l2Book', coin: hlCoin(id) } }));
+      for (const coin of this.futures.values()) s.send(JSON.stringify({ method: 'subscribe', subscription: { type: 'l2Book', coin } }));
     });
     s.on('message', (data) => {
       if (this.sock === s) this.onMessage(typeof data === 'string' ? data : Buffer.isBuffer(data) ? data.toString('utf8') : String(data));
@@ -162,8 +270,10 @@ export class HyperliquidLive {
   onMessage(raw: string): void {
     const now = this.clock();
     this.lastMsgAt = now;
-    const b = parseL2(raw, now);
-    if (!b || !this.ids.includes(b.id)) return;
+    const parsed = parseL2(raw, now);
+    const id = parsed?.coin ? this.idOf.get(parsed.coin) : undefined;
+    if (!parsed || !id) return;
+    const b = { ...parsed, id };
     this.fails = 0;
     const mid = (b.bid + b.ask) / 2;
     const prev = this.latest.get(b.id);
@@ -173,7 +283,7 @@ export class HyperliquidLive {
     this.lastTickAt = now;
     feeds.ok('hyperliquid-live', { items: this.latest.size, asOf: b.t });
     // the book republishes every block: only a moved mid is a tick
-    if (prev && (prev.bid + prev.ask) / 2 === mid) return;
+    if ((prev && (prev.bid + prev.ask) / 2 === mid) || this.isFut(b.id)) return;
     const out: LiveTick[] = [{ id: b.id, mid, conf: (b.ask - b.bid) / 2, t: b.t }];
     for (const fn of this.listeners) {
       try {
@@ -207,4 +317,4 @@ export class HyperliquidLive {
   }
 }
 
-export const hyperliquidLive = new HyperliquidLive();
+export const hyperliquidLive = new HyperliquidLive(realSocket, Date.now, INSTRUMENTS, (url, init) => fetch(url, init));

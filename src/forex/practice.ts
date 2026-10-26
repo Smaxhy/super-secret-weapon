@@ -14,6 +14,7 @@ import { dkQuote } from './dukascopy';
 import { HEAT, maxRiskUnder, topCorrelated, type CorrBook } from './risk';
 import { oandaCandles, oandaCovers, oandaPrices, oandaReady, loadOanda, type Granularity, type OandaSettings } from './oanda';
 import { BASIS, measureBasis, needsBasis, shiftBars, type BasisRow } from './basis';
+import { hyperliquidLive } from './hyperliquid';
 import { INSTRUMENTS, TF_MIN, instrument, isCrypto, isFutures, maxLeverageFor, type Bar, type Instrument, type Timeframe } from './types';
 import { clockFor, marketClock } from './calendar';
 import { priceShock } from './headlines';
@@ -169,7 +170,7 @@ export interface Quote {
   bars: Array<[number, number, number, number, number?]>;
   dayChangePct: number | null;
   /** where the price came from (v17: Dukascopy = the backup when Yahoo fails, currency pairs only) */
-  source: 'oanda' | 'yahoo' | 'dukascopy' | 'pyth' | 'yahoo-live';
+  source: 'oanda' | 'yahoo' | 'dukascopy' | 'pyth' | 'yahoo-live' | 'hyperliquid';
   barsAt?: number;
   /** v17.9: yesterday's close (Yahoo) — the day change of a live Pyth price */
   prevClose?: number;
@@ -1204,7 +1205,15 @@ export class Practice {
         return q;
       }
     }
-    if (c && Date.now() - c.t < maxAgeMs && c.source !== 'pyth' && c.source !== 'yahoo-live') return c;
+    // v27.48: indices / metals live from Hyperliquid's builder markets + the measured gap (Yahoo's are ~10 min late)
+    if (needsBasis(id)) {
+      const hq = this.hlQuote(inst, Date.now());
+      if (hq) {
+        this.cache.set(id, hq);
+        return hq;
+      }
+    }
+    if (c && Date.now() - c.t < maxAgeMs && c.source !== 'pyth' && c.source !== 'yahoo-live' && c.source !== 'hyperliquid') return c;
     let q = feeds.allow('yahoo') ? await fetchQuote(inst) : null;
     if (q) {
       this.cache.set(id, q);
@@ -1243,7 +1252,7 @@ export class Practice {
         const now = Date.now();
         // v27.47: OANDA's names for the indices; coins stay on Coinbase; a futures market (indices, metals) only once its
         // gap to the futures price is measured (basis.ts) — until then Yahoo's delayed futures price, as before
-        const viaOanda = ids.filter((id) => oandaCovers(id, now) && (!needsBasis(id) || this.basisFor(id, s, now) !== null));
+        const viaOanda = ids.filter((id) => oandaCovers(id, now) && (!needsBasis(id) || this.basisFor(id, 'oanda', now, s) !== null));
         const fresh = viaOanda.filter((id) => {
           const c = this.cache.get(id);
           return !c || c.source !== 'oanda' || Date.now() - c.t > 2_000;
@@ -1251,7 +1260,7 @@ export class Practice {
         if (fresh.length) {
           const prices = await oandaPrices(s, fresh);
           await Promise.all(prices.map(async (p) => {
-            const b = needsBasis(p.id) ? this.basisFor(p.id, s, now) : 0;
+            const b = needsBasis(p.id) ? this.basisFor(p.id, 'oanda', now, s) : 0;
             if (b === null) return;
             const prev = this.cache.get(p.id);
             // 1-minute bars for stop / target checks: refreshed at most every 20 s
@@ -1284,35 +1293,57 @@ export class Practice {
     return out;
   }
 
-  /** v27.47: futures − OANDA gap per market (basis.ts); measured in the background, null until known / when too old */
+  /** v27.47: futures − OANDA / Hyperliquid gap per market (basis.ts, key `src:id`); measured in the background, null
+   * until known / when too old */
   private basis = new Map<string, BasisRow>();
   private basisTried = new Map<string, number>();
-  private basisFor(id: string, s: OandaSettings, now: number): number | null {
-    const r = this.basis.get(id);
-    if ((!r || now - r.at > BASIS.refreshMs) && now - (this.basisTried.get(id) ?? 0) > 60_000) {
-      this.basisTried.set(id, now);
-      void this.measureBasisFor(id, s);
+  /** v27.48: Hyperliquid's builder index / metal markets (swappable for tests) */
+  hl: Pick<typeof hyperliquidLive, 'book' | 'candles' | 'futBars'> = hyperliquidLive;
+  private basisFor(id: string, src: 'oanda' | 'hl', now: number, s?: OandaSettings): number | null {
+    const key = `${src}:${id}`;
+    const r = this.basis.get(key);
+    if ((!r || now - r.at > BASIS.refreshMs) && now - (this.basisTried.get(key) ?? 0) > 60_000) {
+      this.basisTried.set(key, now);
+      void this.measureBasisFor(id, src, s);
     }
     return r && now - r.at <= BASIS.maxAgeMs ? r.basis : null;
   }
-  private async measureBasisFor(id: string, s: OandaSettings): Promise<void> {
+  private async measureBasisFor(id: string, src: 'oanda' | 'hl', s?: OandaSettings): Promise<void> {
     const inst = instrument(id);
     if (!inst || !feeds.allow('yahoo')) return;
     try {
-      const [yq, oc] = await Promise.all([fetchQuote(inst), oandaCandles(s, id, 'M1', 300)]);
+      const other: Promise<Array<readonly [number, number]>> =
+        src === 'oanda' ? oandaCandles(s!, id, 'M1', 300).then((oc) => oc.filter((c) => c.complete).map((c) => [c.t, c.c] as const)) : this.hl.candles(id, 300);
+      const [yq, rows] = await Promise.all([fetchQuote(inst), other]);
       if (!yq) return;
-      const m = measureBasis(yq.bars.map((b) => [b[0], b[3]] as const), oc.filter((c) => c.complete).map((c) => [c.t, c.c] as const));
+      const m = measureBasis(yq.bars.map((b) => [b[0], b[3]] as const), rows);
       if (!m) return;
-      const had = this.basis.get(id);
-      this.basis.set(id, { ...m, at: Date.now() });
-      if (!had) log.info({ id, basis: Math.round(m.basis * 100) / 100, n: m.n }, 'live OANDA price in use (futures gap measured)');
+      const key = `${src}:${id}`;
+      const had = this.basis.get(key);
+      this.basis.set(key, { ...m, at: Date.now() });
+      if (!had) log.info({ id, src, basis: Math.round(m.basis * 100) / 100, n: m.n }, 'live price in use (futures gap measured)');
     } catch (err) {
-      log.warn({ id, err: (err as Error).message }, 'futures gap not measured');
+      log.warn({ id, src, err: (err as Error).message }, 'futures gap not measured');
     }
   }
+  /** v27.48: a futures market's live price from Hyperliquid's builder market + the gap (null when either is missing or the
+   * CME market is closed — weekends, the daily halt: the builder market keeps trading on its own then) */
+  private hlQuote(inst: Instrument, now: number): Quote | null {
+    const book = this.hl.book(inst.id, now);
+    if (!book || !clockFor(inst.id, now).open) return null;
+    const b = this.basisFor(inst.id, 'hl', now);
+    if (b === null) return null;
+    const prev = this.cache.get(inst.id);
+    return { id: inst.id, mid: (book.bid + book.ask) / 2 + b, bid: book.bid + b, ask: book.ask + b, t: now, bars: shiftBars(this.hl.futBars(inst.id), b), dayChangePct: prev?.dayChangePct ?? null, source: 'hyperliquid', priceT: book.t, ...(prev?.prevClose ? { prevClose: prev.prevClose } : {}) };
+  }
   /** v27.47: the measured gaps, for Setup */
-  basisNow(): Record<string, BasisRow> {
-    return Object.fromEntries(this.basis);
+  basisNow(): Record<string, BasisRow & { src: 'oanda' | 'hl' }> {
+    const out: Record<string, BasisRow & { src: 'oanda' | 'hl' }> = {};
+    for (const [key, r] of this.basis) {
+      const [src, id] = key.split(':') as ['oanda' | 'hl', string];
+      if (!out[id] || src === 'oanda') out[id] = { ...r, src };
+    }
+    return out;
   }
 
   /**
@@ -2158,7 +2189,7 @@ export class Practice {
     if (oandaReady(s)) {
       try {
         // v27.47: a futures market's CFD / spot candles moved onto the futures price; no gap measured yet → Yahoo below
-        const b = !oandaCovers(id) ? null : needsBasis(id) ? this.basisFor(id, s, Date.now()) : 0;
+        const b = !oandaCovers(id) ? null : needsBasis(id) ? this.basisFor(id, 'oanda', Date.now(), s) : 0;
         if (b !== null) return { source: 'oanda', bars: (await oandaCandles(s, id, g, count)).map((x) => ({ ...x, o: x.o + b, h: x.h + b, l: x.l + b, c: x.c + b })) };
       } catch (err) {
         log.warn({ err: (err as Error).message }, 'oanda candles failed, using yahoo');
