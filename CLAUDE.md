@@ -766,6 +766,8 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 on the way (the v27.46 script never ran): requirements pinned `discord.py-self==1.9.2` (needs aiohttp < 3.8 — no
 install on modern Python) → **2.1.0** + aiohttp ≥ 3.9 (checked: installs and loads on 3.12 + 3.13); `global CFG` sat
 after CFG was used in `handle_command` (SyntaxError on every Python) → moved to the top.
+Oct 26: second signal channel 1495278719647088650 (Kojiro, mostly Nasdaq 100) added to `copy.channel_ids` in
+`config.example.json`; the container makes its config.json from it on every recreate (auto-update rebuilds it).
 ## v27.49 coin bot: daily / hourly trade caps OFF (Oct 26, owner: "turn it off then if it's that good") — VPS read 11:08 UTC:
 the coin shadow book's biggest refusal bucket was `day_cap` (47 held back, 46 done, 89% won, +29.57R ≈ +$2,774 at base
 risk). `BOT.maxTradesPerDay.cbot` 15 → 0 and `maxTradesPerHour.cbot` 3 → 0 (0 = no cap; the v27.38 / v27.42 code stays).
