@@ -17,7 +17,8 @@ import { feeds } from './feeds';
 import { fetchCoinbaseFast } from './coinbase';
 import { dataAgeOf, FRESH, staleReason, type DataAge } from './freshness';
 import { fetchYahooBars, loadFastBars, mergeBars, saveFastBars, trimBars, volumeShare } from './data';
-import { loadOanda, oandaCandles, oandaReady } from './oanda';
+import { loadOanda, oandaCandles, oandaCovers, oandaReady } from './oanda';
+import { needsBasis } from './basis';
 import { signalsFor, simulate, WARMUP } from './engine';
 import { STRATEGIES, runsOn, strategyById, styleOf, tradesNews } from './strategies';
 import { to4h } from './ta';
@@ -131,7 +132,8 @@ export const DEFAULT_FAST_SOURCE: FastSource = {
       }
     }
     const s = await loadOanda();
-    if (oandaReady(s)) {
+    // v27.47: OANDA history for currency pairs only — its index / metal candles are CFD / spot, the lab tests futures
+    if (oandaReady(s) && oandaCovers(inst.id) && !needsBasis(inst.id)) {
       // page back from now, 5,000 candles a page, until `fromT` (complete candles only)
       let out: Bar[] = [];
       let to: number | undefined;

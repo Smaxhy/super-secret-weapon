@@ -524,7 +524,8 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     });
     secured.get('/api/forex/oanda', async () => {
       const s = await loadOanda();
-      return { connected: oandaReady(s), token: maskToken(s.token), accountId: s.accountId ? `${s.accountId.slice(0, 4)}…${s.accountId.slice(-3)}` : null, env: s.env ?? 'practice', updatedAt: s.updatedAt ?? null };
+      // v27.47: the measured futures − OANDA gap per index / metal (their live price = OANDA + this)
+      return { connected: oandaReady(s), token: maskToken(s.token), accountId: s.accountId ? `${s.accountId.slice(0, 4)}…${s.accountId.slice(-3)}` : null, env: s.env ?? 'practice', updatedAt: s.updatedAt ?? null, basis: deps.practice?.basisNow() ?? {} };
     });
     secured.put<{ Body: { token?: string; accountId?: string; env?: string; clear?: boolean } }>('/api/forex/oanda', async (req, reply) => {
       const b = req.body ?? {};

@@ -4,10 +4,17 @@ import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 import { Badge, Button, Card, inputCls } from './ui';
 
-interface Data { connected: boolean; token: string | null; accountId: string | null; env: string; updatedAt: string | null }
+interface Data { connected: boolean; token: string | null; accountId: string | null; env: string; updatedAt: string | null; basis?: Record<string, { basis: number; n: number; at: number }> }
+
+/** v27.47: the futures markets that get a live OANDA price once their gap to the futures price is measured */
+const FUTURES: Array<[string, string]> = [['NDXUSD', 'Nasdaq 100'], ['SPXUSD', 'S&P 500'], ['DJIUSD', 'Dow 30'], ['RUTUSD', 'Russell 2000'], ['XAUUSD', 'Gold'], ['XAGUSD', 'Silver']];
+const ago = (t: number) => {
+  const m = Math.max(0, Math.round((Date.now() - t) / 60_000));
+  return m < 1 ? 'just now' : `${m} min ago`;
+};
 
 export function OandaCard() {
-  const { data, reload } = useApi<Data>('/api/forex/oanda', 0);
+  const { data, reload } = useApi<Data>('/api/forex/oanda', 60_000);
   const [token, setToken] = useState('');
   const [acct, setAcct] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -35,6 +42,23 @@ export function OandaCard() {
         <li>Paste the token and the account id (looks like 101-004-1234567-001) below.</li>
       </ol>
       {data?.connected && <p className="mb-2 text-sm text-ink-2">Token {data.token} · account {data.accountId}</p>}
+      {data?.connected && (
+        <div className="mb-3 rounded-lg border border-line p-3 text-sm">
+          <p className="mb-1 text-ink-2">Currency pairs are live at once. Indices and metals trade as futures, so OANDA's price is moved by the measured gap to the futures price (checked every 10 min); until it's measured they stay on Yahoo's 10-minute-late price.</p>
+          <ul className="space-y-0.5">
+            {FUTURES.map(([id, name]) => {
+              const b = data.basis?.[id];
+              const fresh = b && Date.now() - b.at < 60 * 60_000;
+              return (
+                <li key={id} className="flex justify-between gap-2">
+                  <span>{name}</span>
+                  <span className={fresh ? 'text-up' : 'text-muted'}>{fresh ? `live · gap ${b!.basis >= 0 ? '+' : '−'}${Math.abs(b!.basis).toFixed(id === 'XAGUSD' ? 3 : 2)} (${ago(b!.at)})` : 'measuring the gap…'}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
       <div className="grid gap-2 sm:grid-cols-2">
         <input className={inputCls} placeholder="API token" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" />
         <input className={inputCls} placeholder="Account id" value={acct} onChange={(e) => setAcct(e.target.value)} autoComplete="off" />

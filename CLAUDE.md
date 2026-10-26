@@ -758,6 +758,21 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.47 OANDA demo = live index / metal prices, moved onto the futures price (Oct 26, owner: "why is ours 10 min behind,
+make it on time"; OANDA for charts only, never trading; the demo account should need no ID)
+Yahoo's CME futures (NQ=F, ES=F, YM=F, RTY=F, GC=F, SI=F) are ~10 min late (exchange data licence). oanda.ts `toOanda`:
+NDXUSD → NAS100_USD, SPXUSD → SPX500_USD, DJIUSD → US30_USD, RUTUSD → US2000_USD (before: NDX_USD etc. → HTTP 400 failed
+the WHOLE pricing call), coins → null (Coinbase stays their feed); `fromOanda`; `oandaPrices` on a 400 finds the name this
+account can't price (one call each) and skips it 6 h (`oandaCovers`). OANDA's index / metal prices are CFD / spot, the
+lab / stops / Kojiro are futures → `src/forex/basis.ts` `measureBasis` (median futures − OANDA close over the 1-minute
+candles both have, ≥ 10 minutes, < 3% of the price); Practice `basisFor` re-measures every 10 min in the background
+(Yahoo 1m via `fetchQuote` vs OANDA M1 300), trusts a gap ≤ 1 h old; `quotes()`: a futures market goes through OANDA only
+with a gap (bid / ask / mid / 1m bars + gap, no `delayMs`, priceT = OANDA's → no 10-min delay), else Yahoo as before.
+Fixed on the way: with OANDA connected, markets OANDA didn't price (coins) were MISSING from `quotes()` — now every
+market not priced by OANDA gets its normal quote. `candles()` (charts): futures OANDA candles + gap, no gap → Yahoo.
+Fast lab: OANDA history for currency pairs only (`!needsBasis`). GET `/api/forex/oanda` → `basis` per market; Setup card
+"Live price feed" lists Nasdaq / S&P / Dow / Russell / gold / silver as "live · gap ±x (n min ago)" or "measuring the
+gap…". UNVERIFIED against the real OANDA API (sandbox can't reach it). tests/forex-oanda-basis (6).
 ## v27.46 Kojiro's Discord signals copied as paper trades (Oct 26, owner uploaded their own self-bot: "you don't have to
 build it, just implement it with the bot")
 `scripts/discord-scanner/` = the owner's self-bot (discord.py-self 1.9.2; logs in as the OWNER's account — breaks Discord's

@@ -12,7 +12,8 @@ import { bus, type FxNotice } from '../lib/bus';
 import { feeds } from './feeds';
 import { dkQuote } from './dukascopy';
 import { HEAT, maxRiskUnder, topCorrelated, type CorrBook } from './risk';
-import { oandaCandles, oandaPrices, oandaReady, loadOanda, type Granularity } from './oanda';
+import { oandaCandles, oandaCovers, oandaPrices, oandaReady, loadOanda, type Granularity, type OandaSettings } from './oanda';
+import { BASIS, measureBasis, needsBasis, shiftBars, type BasisRow } from './basis';
 import { INSTRUMENTS, TF_MIN, instrument, isCrypto, isFutures, maxLeverageFor, type Bar, type Instrument, type Timeframe } from './types';
 import { clockFor, marketClock } from './calendar';
 import { priceShock } from './headlines';
@@ -1239,41 +1240,79 @@ export class Practice {
     const s = await loadOanda();
     if (oandaReady(s)) {
       try {
-        const fresh = ids.filter((id) => {
+        const now = Date.now();
+        // v27.47: OANDA's names for the indices; coins stay on Coinbase; a futures market (indices, metals) only once its
+        // gap to the futures price is measured (basis.ts) — until then Yahoo's delayed futures price, as before
+        const viaOanda = ids.filter((id) => oandaCovers(id, now) && (!needsBasis(id) || this.basisFor(id, s, now) !== null));
+        const fresh = viaOanda.filter((id) => {
           const c = this.cache.get(id);
           return !c || c.source !== 'oanda' || Date.now() - c.t > 2_000;
         });
         if (fresh.length) {
           const prices = await oandaPrices(s, fresh);
           await Promise.all(prices.map(async (p) => {
+            const b = needsBasis(p.id) ? this.basisFor(p.id, s, now) : 0;
+            if (b === null) return;
             const prev = this.cache.get(p.id);
             // 1-minute bars for stop / target checks: refreshed at most every 20 s
             let bars = prev?.source === 'oanda' && Date.now() - (prev.barsAt ?? 0) < 20_000 ? prev.bars : null;
             let barsAt = prev?.barsAt ?? 0;
             if (!bars) {
               const cs = await oandaCandles(s, p.id, 'M1', 180).catch(() => []);
-              bars = cs.map((c) => [c.t, c.h, c.l, c.c, c.o] as [number, number, number, number, number]);
+              bars = shiftBars(cs.map((c) => [c.t, c.h, c.l, c.c, c.o] as [number, number, number, number, number]), b);
               barsAt = Date.now();
             }
-            const mid = (p.bid + p.ask) / 2;
-            this.cache.set(p.id, { id: p.id, mid, bid: p.bid, ask: p.ask, t: Date.now(), bars, dayChangePct: prev?.dayChangePct ?? null, source: 'oanda', barsAt, priceT: p.t, tradeable: p.tradeable });
+            const mid = (p.bid + p.ask) / 2 + b;
+            this.cache.set(p.id, { id: p.id, mid, bid: p.bid + b, ask: p.ask + b, t: Date.now(), bars, dayChangePct: prev?.dayChangePct ?? null, source: 'oanda', barsAt, priceT: p.t, tradeable: p.tradeable });
           }));
         }
-        for (const id of ids) {
+        for (const id of viaOanda) {
           const c = this.cache.get(id);
           // v17: a price OANDA didn't refresh this time is marked old (never used to open or close)
-          if (c) out[id] = c.source === 'oanda' && Date.now() - c.t > 15_000 ? { ...c, stale: true } : c;
+          if (c && c.source === 'oanda') out[id] = Date.now() - c.t > 15_000 ? { ...c, stale: true } : c;
         }
-        if (Object.keys(out).length) return out;
       } catch (err) {
         log.warn({ err: (err as Error).message }, 'oanda prices failed, using yahoo');
       }
     }
-    await Promise.all(ids.map(async (id) => {
+    // v27.47: every market OANDA didn't price (coins, a market it refused, a futures market without a measured gap)
+    // still gets its normal price — before, those were simply missing while OANDA was connected
+    await Promise.all(ids.filter((id) => !out[id]).map(async (id) => {
       const q = await this.quote(id, maxAgeMs);
       if (q) out[id] = q;
     }));
     return out;
+  }
+
+  /** v27.47: futures − OANDA gap per market (basis.ts); measured in the background, null until known / when too old */
+  private basis = new Map<string, BasisRow>();
+  private basisTried = new Map<string, number>();
+  private basisFor(id: string, s: OandaSettings, now: number): number | null {
+    const r = this.basis.get(id);
+    if ((!r || now - r.at > BASIS.refreshMs) && now - (this.basisTried.get(id) ?? 0) > 60_000) {
+      this.basisTried.set(id, now);
+      void this.measureBasisFor(id, s);
+    }
+    return r && now - r.at <= BASIS.maxAgeMs ? r.basis : null;
+  }
+  private async measureBasisFor(id: string, s: OandaSettings): Promise<void> {
+    const inst = instrument(id);
+    if (!inst || !feeds.allow('yahoo')) return;
+    try {
+      const [yq, oc] = await Promise.all([fetchQuote(inst), oandaCandles(s, id, 'M1', 300)]);
+      if (!yq) return;
+      const m = measureBasis(yq.bars.map((b) => [b[0], b[3]] as const), oc.filter((c) => c.complete).map((c) => [c.t, c.c] as const));
+      if (!m) return;
+      const had = this.basis.get(id);
+      this.basis.set(id, { ...m, at: Date.now() });
+      if (!had) log.info({ id, basis: Math.round(m.basis * 100) / 100, n: m.n }, 'live OANDA price in use (futures gap measured)');
+    } catch (err) {
+      log.warn({ id, err: (err as Error).message }, 'futures gap not measured');
+    }
+  }
+  /** v27.47: the measured gaps, for Setup */
+  basisNow(): Record<string, BasisRow> {
+    return Object.fromEntries(this.basis);
   }
 
   /**
@@ -2118,7 +2157,9 @@ export class Practice {
     const s = await loadOanda();
     if (oandaReady(s)) {
       try {
-        return { source: 'oanda', bars: await oandaCandles(s, id, g, count) };
+        // v27.47: a futures market's CFD / spot candles moved onto the futures price; no gap measured yet → Yahoo below
+        const b = !oandaCovers(id) ? null : needsBasis(id) ? this.basisFor(id, s, Date.now()) : 0;
+        if (b !== null) return { source: 'oanda', bars: (await oandaCandles(s, id, g, count)).map((x) => ({ ...x, o: x.o + b, h: x.h + b, l: x.l + b, c: x.c + b })) };
       } catch (err) {
         log.warn({ err: (err as Error).message }, 'oanda candles failed, using yahoo');
       }
