@@ -3,8 +3,12 @@
   "copy": {
     "enabled": true,
     "api_url": "https://209-250-254-34.sslip.io",
-    "channel_ids": [],
-    "author_ids": [],
+    "channel_ids": [
+      1563800424769916968
+    ],
+    "author_ids": [
+      665960102259589136
+    ],
     "source": "kojiro"
   },
   "scan_keywords": [],
