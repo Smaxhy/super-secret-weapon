@@ -8,8 +8,11 @@
  *   "SL to BE" / "move stop to entry"  → the copies' stop goes to their entry
  *
  * The signal carries no stop, so the copy gets a safety stop (`DISCORD_COPY.stopPct` of the price, or the SL the
- * message names) and is sized so that stop loses `riskPct` of the account. It closes when he posts his exit — no target
- * and (by default) no profit lock, so it follows his exit, not ours. Paper only, like every trade here.
+ * message names) and is sized so that stop loses `riskPct` of the account. It closes when he posts his exit; since v27.51
+ * the profit lock also trails it tightly once it is in profit (owner: "trust his trades, take them and trail a tight SL").
+ * v27.51: his "Levels" posts (a list of prices, mostly Nasdaq 100) are saved for a day (`POSTED_LEVELS`); the 15-minute
+ * pass takes a trade when the price comes to one of them and the other side gets absorbed there (fast.ts →
+ * `postedLevelSignal`). Paper only, like every trade here.
  */
 import type Redis from 'ioredis';
 import { INSTRUMENTS, instrument, isCrypto } from './types';
@@ -27,8 +30,8 @@ export const DISCORD_COPY = {
   maxMismatchStops: 1.5,
   /** a message older than this when it reaches us is not opened (a reconnect replaying old posts) */
   maxAgeMs: 10 * 60_000,
-  /** the profit lock trails behind every bot trade; off here so the copy follows HIS exit */
-  profitLock: process.env.DISCORD_COPY_LOCK === 'on',
+  /** v27.51: the profit lock (tight trailing stop once in profit) is ON for copies too; `DISCORD_COPY_LOCK=off` = his exit only */
+  profitLock: process.env.DISCORD_COPY_LOCK !== 'off',
   seenTtlSec: 7 * 86_400,
   logKey: 'fx:discord:log',
   logMax: 200,
@@ -58,6 +61,106 @@ export function symbolToPair(sym: string): string | null {
   const id = s.replace(/USDT$/, 'USD');
   return INSTRUMENTS.some((i) => i.id === id) ? id : null;
 }
+
+/** v27.51: his posted price levels (one list per market, the newest post wins). */
+export const POSTED_LEVELS = {
+  /** `DISCORD_LEVEL_TRADES=off` keeps saving / drawing the levels but takes no trades at them */
+  trade: process.env.DISCORD_LEVEL_TRADES !== 'off',
+  key: 'fx:discord:levels',
+  /** a list is used for this long after it was posted (his levels are for the day) */
+  validMs: 24 * 3_600_000,
+  /** he mainly trades the Nasdaq 100: a post that names no market is read as NQ */
+  defaultPair: 'NDXUSD',
+  /** prices further than this % from the list's median are numbering / noise, not levels */
+  maxSpreadPct: 10,
+};
+
+export interface PostedLevels {
+  pair: string;
+  levels: number[];
+  /** when the levels were posted (ms; 0 = no levels yet) */
+  t: number;
+  msgId: string;
+  source: string;
+  /** his daily plan post: 1 bullish / −1 bearish / 0 neutral → level trades only his way */
+  bias?: 1 | -1 | 0;
+  /** his "DOL" (draw on liquidity) = where he expects the price to go → the level trades' target */
+  dol?: number | null;
+  /** when the plan was posted (ms) */
+  biasT?: number;
+}
+
+/** His daily plan post ("🔍 Bias: bullish · 💧 DOL: Around 29,385.25 · 🧠 Narrative: …"), or null. Pure. */
+export function parseBias(raw: string): { pair: string; bias: 1 | -1 | 0 | null; dol: number | null } | null {
+  const up = raw.replace(/[*_`~>|]/g, ' ').toUpperCase();
+  const b = /\bBIAS\b\W*(BULLISH|BULL|LONG|BEARISH|BEAR|SHORT|NEUTRAL|NONE)/.exec(up);
+  const d = /\bDOL\b\W*(?:AROUND|AT|NEAR|~)?\s*([0-9][0-9,]*(?:\.[0-9]+)?)/.exec(up);
+  if (!b && !d) return null;
+  const word = b?.[1] ?? '';
+  const bias = !b ? null : /BULL|LONG/.test(word) ? 1 : /BEAR|SHORT/.test(word) ? -1 : 0;
+  const dol = d ? Number(d[1]!.replace(/,/g, '')) || null : null;
+  const sym = /\b(MNQ|NQ|NAS100|US100|USTEC|NASDAQ|ES|MES|US500|SPX|YM|US30|RTY|GC|GOLD|XAUUSD|SI|BTC|ETH|SOL)[A-Z]?\d{0,4}!?\b/.exec(up);
+  return { pair: (sym && symbolToPair(sym[1]!)) || POSTED_LEVELS.defaultPair, bias, dol };
+}
+
+/** A "Levels" post → the prices in it (brackets, commas and list numbers ignored), or null. Pure. */
+export function parseLevels(raw: string): { pair: string; levels: number[] } | null {
+  const text = raw.replace(/[*_`~>|]/g, ' ');
+  if (!/\bLEVELS?\b/i.test(text)) return null;
+  const nums = [...text.matchAll(/(?<![\d.])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d{3,})(?![\d,])/g)].map((m) => Number(m[1]!.replace(/,/g, ''))).filter((x) => Number.isFinite(x) && x > 0);
+  if (nums.length < 2) return null;
+  const sorted = [...nums].sort((a, b) => a - b);
+  const med = sorted[sorted.length >> 1]!;
+  const levels = [...new Set(nums.filter((x) => Math.abs(x - med) <= (med * POSTED_LEVELS.maxSpreadPct) / 100))].sort((a, b) => b - a);
+  if (levels.length < 2) return null;
+  const sym = /\b(MNQ|NQ|NAS100|US100|USTEC|NASDAQ|ES|MES|US500|SPX|YM|US30|RTY|GC|GOLD|XAUUSD|SI|BTC|ETH|SOL)[A-Z]?\d{0,4}!?\b/.exec(text.toUpperCase());
+  const pair = (sym && symbolToPair(sym[1]!)) || POSTED_LEVELS.defaultPair;
+  return { pair, levels };
+}
+
+/** Every market's newest posted list still in force. */
+export async function loadLevels(redis: Redis, now = Date.now()): Promise<Record<string, PostedLevels>> {
+  const raw = await redis.get(POSTED_LEVELS.key).catch(() => null);
+  let all: Record<string, PostedLevels> = {};
+  try {
+    all = raw ? (JSON.parse(raw) as Record<string, PostedLevels>) : {};
+  } catch {
+    all = {};
+  }
+  const out: Record<string, PostedLevels> = {};
+  for (const [pair, x] of Object.entries(all)) {
+    if (!x || !Array.isArray(x.levels)) continue;
+    // the levels and the plan each count for a day from their own post
+    const levelsOk = now - x.t <= POSTED_LEVELS.validMs;
+    const planOk = x.biasT !== undefined && now - x.biasT <= POSTED_LEVELS.validMs;
+    if (!levelsOk && !planOk) continue;
+    out[pair] = { ...x, levels: levelsOk ? x.levels : [], ...(planOk ? {} : { bias: undefined, dol: undefined, biasT: undefined }) };
+  }
+  return out;
+}
+
+/** Merge a post into the market's record; an older post arriving late never replaces a newer one. */
+async function savePosted(redis: Redis, pair: string, patch: { levels: number[]; t: number; msgId: string; source: string } | { bias: 1 | -1 | 0 | null; dol: number | null; biasT: number; source: string }): Promise<void> {
+  const raw = await redis.get(POSTED_LEVELS.key).catch(() => null);
+  let all: Record<string, PostedLevels> = {};
+  try {
+    all = raw ? (JSON.parse(raw) as Record<string, PostedLevels>) : {};
+  } catch {
+    all = {};
+  }
+  const cur: PostedLevels = all[pair] ?? { pair, levels: [], t: 0, msgId: '', source: patch.source };
+  if ('levels' in patch) {
+    if (cur.t > patch.t) return;
+    all[pair] = { ...cur, ...patch };
+  } else {
+    if ((cur.biasT ?? 0) > patch.biasT) return;
+    all[pair] = { ...cur, ...(patch.bias !== null ? { bias: patch.bias } : {}), ...(patch.dol !== null ? { dol: patch.dol } : {}), biasT: patch.biasT };
+  }
+  await redis.set(POSTED_LEVELS.key, JSON.stringify(all));
+}
+
+/** Strategy name for trades taken at a source's posted levels (kojiro → discord_kojiro_levels). Pure. */
+export const levelStrategy = (source: string | undefined) => `${copyStrategy(source)}_levels`;
 
 export type ParsedSignal =
   | { kind: 'open'; pair: string | null; symbol: string | null; side: 1 | -1; price: number | null; stop: number | null; target: number | null }
@@ -130,7 +233,7 @@ export interface CopyLogRow {
   id: string;
   source: string;
   text: string;
-  kind: ParsedSignal['kind'] | 'old' | 'duplicate' | 'off';
+  kind: ParsedSignal['kind'] | 'old' | 'duplicate' | 'off' | 'levels';
   pair?: string | null;
   side?: 1 | -1;
   hisPx?: number | null;
@@ -140,7 +243,7 @@ export interface CopyLogRow {
 
 /** What the practice account offers the copier (Practice implements it). */
 export interface CopyBook {
-  copyOpen(r: { pair: string; side: 1 | -1; stopNamed: number | null; hisPx: number | null; strategy: string; ref: string; riskPct: number; leverage: number; profitLock: boolean }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; error?: string; entry?: number; stop?: number; riskUsd?: number; marginUsd?: number }>;
+  copyOpen(r: { pair: string; side: 1 | -1; stopNamed: number | null; hisPx: number | null; strategy: string; ref: string; riskPct: number; leverage: number; profitLock: boolean; stop?: number; target?: number | null }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; error?: string; entry?: number; stop?: number; riskUsd?: number; marginUsd?: number }>;
   copyClose(m: { strategy: string; pair: string | null; side: 1 | -1 | 0 }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; closed: string[]; pending: number }>;
   copyBreakeven(m: { strategy: string; pair: string | null }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; moved: string[] }>;
 }
@@ -158,7 +261,22 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
   const first = await redis.set(`fx:discord:seen:${s.id}`, '1', 'EX', DISCORD_COPY.seenTtlSec, 'NX');
   if (first !== 'OK') return { ...base, kind: 'duplicate', ok: true, what: 'already handled' };
   const sig = parseSignal(s.text);
-  if (sig.kind === 'none') return done({ ...base, kind: 'none', ok: true, what: 'not a trade message' });
+  if (sig.kind === 'none') {
+    const fmt = (x: number) => x.toLocaleString('en-US', { maximumFractionDigits: 5 });
+    const plan = parseBias(s.text);
+    const lv = parseLevels(s.text);
+    if (!lv && !plan) return done({ ...base, kind: 'none', ok: true, what: 'not a trade message' });
+    const said: string[] = [];
+    if (plan) {
+      await savePosted(redis, plan.pair, { bias: plan.bias, dol: plan.dol, biasT: s.at, source });
+      said.push(`${plan.pair} plan for today: ${plan.bias === 1 ? 'bullish (only long trades at his levels)' : plan.bias === -1 ? 'bearish (only short trades at his levels)' : plan.bias === 0 ? 'neutral' : 'no bias'}${plan.dol ? `, target (DOL) ${fmt(plan.dol)}` : ''}`);
+    }
+    if (lv) {
+      await savePosted(redis, lv.pair, { levels: lv.levels, t: s.at, msgId: s.id, source });
+      said.push(`${lv.pair} levels saved for today: ${lv.levels.map(fmt).join(' · ')}${POSTED_LEVELS.trade ? ' — the bot trades a reversal at them (15-minute candles)' : ''}`);
+    }
+    return done({ ...base, kind: 'levels', pair: (lv ?? plan)!.pair, ok: true, what: said.join('; ') });
+  }
   if (sig.kind === 'open') {
     if (now - s.at > DISCORD_COPY.maxAgeMs) return done({ ...base, kind: 'old', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `posted ${Math.round((now - s.at) / 60_000)} min ago — too old to copy` });
     if (!sig.pair || !instrument(sig.pair)) return done({ ...base, kind: 'open', pair: null, side: sig.side, hisPx: sig.price, ok: false, what: `unknown market "${sig.symbol ?? '?'}"` });

@@ -2101,7 +2101,10 @@ export class Practice {
       const mids: Record<string, number> = {};
       for (const x of Object.values(q)) mids[x.id] = x.mid;
       const entry = r.side === 1 ? quote.ask : quote.bid;
-      const stop = copyStop(r.side, entry, r.stopNamed);
+      // v27.51: a trade at his posted levels brings its own stop (past the absorbing candle) and target (his next level)
+      const stop = r.stop ?? copyStop(r.side, entry, r.stopNamed);
+      if (r.side === 1 ? stop >= entry : stop <= entry) return { ok: false, error: `the price ${entry} is already past the stop ${stop}` };
+      const target = r.target != null && (r.side === 1 ? r.target > entry : r.target < entry) ? r.target : null;
       const stopDist = Math.abs(entry - stop);
       if (r.hisPx && Math.abs(entry - r.hisPx) > DISCORD_COPY.maxMismatchStops * stopDist) return { ok: false, error: `our price ${entry} is far from his ${r.hisPx} — wrong market?` };
       const v = view(a, mids, { [inst.id]: (quote.ask - quote.bid) / 2 });
@@ -2113,7 +2116,7 @@ export class Practice {
       const size = copySize({ riskUsd, stopDist, usdPerUnitMove, notionalPerUnit: perUnit ? 1 / perUnit : 0, leverage: lev, freeMarginUsd: v.freeMarginUsd });
       if (!(size.marginUsd > 0)) return { ok: false, error: `no room (free margin $${v.freeMarginUsd})` };
       const riskPct = v.equityUsd > 0 ? Math.round((size.riskUsd / v.equityUsd) * 10_000) / 100 : 0;
-      const res = await this.openIn(a, { pair: inst.id, side: r.side, marginUsd: size.marginUsd, leverage: lev, stop, target: null, strategy: r.strategy, ref: r.ref, riskPct, tf: 'signal', maxQuoteAgeMs: 2 * 60_000, feedDelayOk: true, noLock: !r.profitLock });
+      const res = await this.openIn(a, { pair: inst.id, side: r.side, marginUsd: size.marginUsd, leverage: lev, stop, target, strategy: r.strategy, ref: r.ref, riskPct, tf: 'signal', maxQuoteAgeMs: 2 * 60_000, feedDelayOk: true, noLock: !r.profitLock });
       if (!res.ok) return res;
       await this.save(a, acct);
       const p = a.open[a.open.length - 1]!;

@@ -14,7 +14,7 @@
 import { useId, useState } from 'react';
 
 export interface ChartLine { kind: 'support' | 'resistance'; t1: number; p1: number; t2: number; p2: number; pNow: number; touches: number; broken: boolean }
-export interface ChartLevel { kind: 'support' | 'resistance'; price: number; touches: number }
+export interface ChartLevel { kind: 'support' | 'resistance' | 'posted'; price: number; touches: number }
 export interface ChartDrawings {
   lines: ChartLine[];
   levels: ChartLevel[];
@@ -287,7 +287,14 @@ export function MarketChart({
       })()}
       {show.levels && drawings?.levels.filter((l) => near(l.price)).map((l, k) => (
         <g key={k}>
-          <line x1={0} x2={cw} y1={y(l.price)} y2={y(l.price)} stroke={l.kind === 'support' ? '#22c55e' : '#ef4444'} strokeWidth={1 + Math.min(2, l.touches / 3)} strokeDasharray="8 5" opacity={0.55} />
+          {l.kind === 'posted' ? (
+            <>
+              <line x1={0} x2={cw} y1={y(l.price)} y2={y(l.price)} stroke="#f59e0b" strokeWidth={1.5} opacity={0.85} />
+              <text x={4} y={y(l.price) - 3} className="text-[10px]" fill="#f59e0b" stroke="var(--surface)" strokeWidth={3} paintOrder="stroke">Kojiro {l.price.toLocaleString('en-US', { maximumFractionDigits: 5 })}</text>
+            </>
+          ) : (
+            <line x1={0} x2={cw} y1={y(l.price)} y2={y(l.price)} stroke={l.kind === 'support' ? '#22c55e' : '#ef4444'} strokeWidth={1 + Math.min(2, l.touches / 3)} strokeDasharray="8 5" opacity={0.55} />
+          )}
         </g>
       ))}
       {entryMarker && show.trades && trades.map((t, k) => {

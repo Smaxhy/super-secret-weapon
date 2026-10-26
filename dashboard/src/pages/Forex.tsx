@@ -257,7 +257,7 @@ function MarketDetail({ m, r }: { m: MarketNow; r: Report }) {
               <Row key={`l${k}`} label={`${l.kind === 'support' ? 'Rising support' : 'Falling resistance'} trendline`} sub={`${l.touches} touches · ${l.broken ? 'just broken' : 'holding'}`} value={l.pNow.toFixed(DIGITS(m.id))} />
             ))}
             {m.drawings.levels.map((l, k) => (
-              <Row key={`v${k}`} label={l.kind === 'support' ? 'Support level' : 'Resistance level'} sub={`${l.touches} swing points`} value={l.price.toFixed(DIGITS(m.id))} />
+              <Row key={`v${k}`} label={l.kind === 'posted' ? "Kojiro's level" : l.kind === 'support' ? 'Support level' : 'Resistance level'} sub={l.kind === 'posted' ? 'posted in Discord today' : `${l.touches} swing points`} value={l.price.toFixed(DIGITS(m.id))} />
             ))}
             {m.drawings.profile && <Row label={`Volume profile (${m.drawings.profile.byVolume ? 'traded volume' : 'time at price — no volume on this market'})`} sub={`value area ${m.drawings.profile.val.toFixed(DIGITS(m.id))} – ${m.drawings.profile.vah.toFixed(DIGITS(m.id))}${m.drawings.read?.inValue === true ? ' · price inside it (balanced)' : m.drawings.read?.inValue === false ? ' · price outside it (one side in control)' : ''}`} value={`POC ${m.drawings.profile.poc.toFixed(DIGITS(m.id))}`} />}
             {m.drawings.read?.lrZ != null && <Row label="Regression channel (50 candles)" sub={`${(m.drawings.read.r2 ?? 0) >= 0.6 ? 'clean trend' : (m.drawings.read.r2 ?? 0) < 0.3 ? 'no trend (flat / choppy)' : 'loose trend'} · R² ${m.drawings.read.r2}`} value={`${m.drawings.read.lrZ > 0 ? '+' : ''}${m.drawings.read.lrZ} SD from the line`} />}

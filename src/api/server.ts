@@ -29,7 +29,7 @@ import { lossSummary, type LossReview } from '../forex/loss-review';
 import { FX_CONFIG, focusMarkets } from '../forex/lab';
 import { botStatus, dayTrades, parsePnlQuery, pnlReport } from '../forex/pnl';
 import { STRATEGIES } from '../forex/strategies';
-import { DISCORD_COPY, copyLog, handleSignal } from '../forex/discord';
+import { DISCORD_COPY, POSTED_LEVELS, copyLog, handleSignal, loadLevels } from '../forex/discord';
 import { isCrypto } from '../forex/types';
 import { moneyMap } from '../learner/money-map';
 import { DEFAULT_CONFIG as DEFAULTS } from '../config/default';
@@ -149,7 +149,14 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     // v12 forex lab: last report (backtest + paper) and a Run button.
     secured.get(`${U.base}`, async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
-      return { running: (U.lab?.isRunning() ?? false) || (U.fast?.isRunning() ?? false), last: U.lab ? await U.lab.last() : null, fast: U.fast?.report ?? null };
+      const last = U.lab ? await U.lab.last() : null;
+      // v27.51: Kojiro's posted levels drawn on that market's chart (kind 'posted')
+      const posted = last?.markets?.length ? await loadLevels(redis) : {};
+      for (const m of last?.markets ?? []) {
+        const lv = posted[m.id];
+        if (lv && m.drawings) m.drawings = { ...m.drawings, levels: [...m.drawings.levels, ...[...lv.levels, ...(lv.dol ? [lv.dol] : [])].map((price) => ({ kind: 'posted', price, touches: 0 }) as unknown as (typeof m.drawings.levels)[number])] }; // the dashboard draws kind 'posted' amber
+      }
+      return { running: (U.lab?.isRunning() ?? false) || (U.fast?.isRunning() ?? false), last, fast: U.fast?.report ?? null };
     });
     secured.post<{ Body: { refresh?: boolean } }>(`${U.base}/run`, async (req, reply) => {
       if (!U.lab) {
@@ -437,7 +444,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       }
       const at = typeof b.at === 'number' ? b.at : Date.parse(String(b.at ?? '')) || Date.now();
       const row = await handleSignal(redis, deps.practice, { id, text, at, ...(b.source ? { source: String(b.source) } : {}), ...(b.channel ? { channel: String(b.channel) } : {}) });
-      if (row.kind === 'open' || row.kind === 'close' || row.kind === 'breakeven' || row.kind === 'old') {
+      if (row.kind === 'open' || row.kind === 'close' || row.kind === 'breakeven' || row.kind === 'old' || row.kind === 'levels') {
         const lab = row.pair && isCrypto(row.pair) ? deps.crypto : deps.forex;
         lab?.logBot([`Discord (${row.source}): ${row.what}`]);
       }
@@ -445,7 +452,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     });
     secured.get('/api/forex/discord', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
-      return { on: DISCORD_COPY.on, riskPct: DISCORD_COPY.riskPct, stopPct: DISCORD_COPY.stopPct, profitLock: DISCORD_COPY.profitLock, log: await copyLog(redis, 50) };
+      return { on: DISCORD_COPY.on, riskPct: DISCORD_COPY.riskPct, stopPct: DISCORD_COPY.stopPct, profitLock: DISCORD_COPY.profitLock, levelTrades: POSTED_LEVELS.trade, levels: await loadLevels(redis), log: await copyLog(redis, 50) };
     });
     // v17.11: the owner's profit lock on their own trades (the bot account always uses it)
     secured.post<{ Body: { on?: boolean } }>('/api/forex/practice/lock', async (req, reply) => {

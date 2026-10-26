@@ -758,6 +758,27 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.51 Kojiro's levels + daily plan traded, tight trailing stop on every copy (Oct 26, owner: "he also sends Levels
+29,220.00 (29,182.25) (29,160.00) (29,070.50)"; "it can trust his trades, I want it to take it and trail it tight SL"; then
+his plan post "Bias: bullish · DOL: Around 29,385.25 · Narrative: manipulation to the downside, then long off my levels")
+- Copies: `DISCORD_COPY.profitLock` now ON by default (`DISCORD_COPY_LOCK=off` = his exit only): no target → lock D =
+  2 × the safety stop (0.5% ≈ 145 NQ points) → arms ≈ +43 points, trails ≈ 43 behind the best price; his exit still closes it.
+- discord.ts `parseLevels` (a post with the word Level(s) + ≥ 2 prices within 10% of their median; brackets / commas / list
+  numbers ignored; no market named → `POSTED_LEVELS.defaultPair` NDXUSD) and `parseBias` (Bias bullish / bearish /
+  neutral + DOL price) → one record per market in Redis `fx:discord:levels` (`savePosted` merges; levels and plan each
+  valid 24 h from their own post, `loadLevels`); log row kind 'levels', bot-log line. Never a trade by itself.
+- fast.ts (15m pass, both desks): `postedLevelSignal(ctx, i, levels, postedT, bias, dol)` (strategies.ts) = the
+  level_absorb test on HIS levels (absorption candle after his post, first touch, ≤ ½ ATR through) only in his bias
+  direction; stop 0.15 ATR past the candle (≥ 0.3 ATR — not the 10-point strict stop: the % venue fee would eat it);
+  target = his DOL when ≥ 1R away, else his next level ≥ 1R, else none. `takeLevelTrades`: one trade per candle (Redis NX
+  `fx:discord:lvdone:<ref>`), one open per market, stale data skipped, `practice.copyOpen` with explicit `stop` / `target`
+  (new optional fields; refused when the price is already past the stop), strategy `discord_kojiro_levels`, tf
+  'signal', 2% / $20 cap, profit lock on. `DISCORD_LEVEL_TRADES=off` = save + draw only. NOT lab-tested (no history of
+  his posts) — owner's call ("trust his trades"); judge it on its own strategy line in the P&L.
+- `/api/forex` (+ crypto) draws his levels + DOL on that market's chart (drawings level kind 'posted', amber "Kojiro …"
+  label in MarketChart; Markets drawer row "Kojiro's level"); GET `/api/forex/discord` → `levels`, `levelTrades`.
+- bot.py `message_text` also reads forwarded posts (`message_snapshots`; his plan arrived "Forwarded").
+  tests/forex-discord-levels (8), forex-discord expects the lock.
 ## v27.50 Discord copier on the VPS (Oct 26, owner: "I want the bot also to run when my PC isn't on")
 `docker-compose.yml` service **discord** (`profiles: ["discord"]`, build `scripts/discord-scanner/Dockerfile`, python
 3.12-slim, 256 MB, `BOT_API_URL=http://bot:8080`, env_file .env): off unless .env has `COMPOSE_PROFILES=discord` +

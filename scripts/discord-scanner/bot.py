@@ -120,13 +120,16 @@ def should_ignore_user(user_id: int) -> bool:
     return user_id in CFG.get("ignored_user_ids", [])
 
 def message_text(msg: discord.Message) -> str:
-    """Content + every embed's text (signal bots often post embeds only)."""
-    parts = [msg.content or ""]
-    for embed in msg.embeds:
-        parts += [embed.title or "", embed.description or ""]
-        parts += [f"{f.name} {f.value}" for f in embed.fields]
-        if embed.footer and embed.footer.text:
-            parts.append(embed.footer.text)
+    """Content + every embed's text (signal bots often post embeds only) + forwarded messages (their text lives in
+    message_snapshots, the forwarding message itself is empty)."""
+    parts = []
+    for m in [msg, *getattr(msg, "message_snapshots", [])]:
+        parts.append(getattr(m, "content", "") or "")
+        for embed in getattr(m, "embeds", []):
+            parts += [embed.title or "", embed.description or ""]
+            parts += [f"{f.name} {f.value}" for f in embed.fields]
+            if embed.footer and embed.footer.text:
+                parts.append(embed.footer.text)
     return "\n".join(p for p in parts if p).strip()
 
 # ─── Copy trading → the trading bot ─────────────────────────────────────────

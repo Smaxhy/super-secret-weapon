@@ -85,14 +85,15 @@ describe('handleSignal on the bot account', () => {
     const acct = () => JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount;
     return { r, p, acct, setMid: (x: number) => (mid = x) };
   };
-  it('opens a long on his post, sized to the $20 cap, no target and no profit lock; once per message', async () => {
+  it('opens a long on his post, sized to the $20 cap, no target, tight trailing stop (profit lock) on; once per message', async () => {
     const { r, p, acct } = setup();
     const row = await handleSignal(r as unknown as Redis, p, { id: '1300000000000000001', text: 'SIGNAL · NQ — LONG @ 29,026.25', at: NOW - 20_000 });
     expect(row.ok).toBe(true);
     const a = acct();
     expect(a.open).toHaveLength(1);
     const pos = a.open[0]!;
-    expect(pos).toMatchObject({ pair: 'NDXUSD', side: 1, entry: 29_031, target: null, strategy: 'discord_kojiro', tf: 'signal', lock: null });
+    expect(pos).toMatchObject({ pair: 'NDXUSD', side: 1, entry: 29_031, target: null, strategy: 'discord_kojiro', tf: 'signal' });
+    expect(pos.lock).not.toBeNull(); // v27.51: "trust his trades … trail it tight SL"
     expect(pos.ref).toBe('discord_kojiro:signal:NDXUSD:1300000000000000001');
     expect((pos.entry - pos.stop!) * pos.units).toBeCloseTo(20, 0); // the safety stop loses $20
     const again = await handleSignal(r as unknown as Redis, p, { id: '1300000000000000001', text: 'SIGNAL · NQ — LONG @ 29,026.25', at: NOW - 20_000 });

@@ -654,6 +654,40 @@ export function levelAbsorbSignal(c: Ctx, i: number, asiaOnly: boolean): Signal 
   return null;
 }
 
+/** v27.51: trade levels posted by a signal provider (Kojiro's "Levels" list). The newest candle is the absorption candle
+ * at one of `levels` (same test as `level_absorb`: a new 10-candle low that closes strong, ≤ ½ ATR through the level,
+ * first touch since the post) → enter at its close, stop 0.15 ATR past the candle's extreme (at least 0.3 ATR — not the
+ * 10-point strict stop: the venue fee is a share of the position and would eat a stop that tight), target = his next
+ * level the other way at least 1R off (none → no target; the profit lock trails it). Only candles after `postedT`.
+ * His daily plan: `onlySide` (bias) keeps only his direction, `dol` is the target when ≥ 1R away. Pure. */
+export function postedLevelSignal(c: Ctx, i: number, levels: readonly number[], postedT: number, onlySide: 1 | -1 | 0 = 0, dol: number | null = null): Signal | null {
+  const a = c.atr14[i]!;
+  if (!ok(a) || a <= 0 || !levels.length || c.bars[i]!.t < postedT) return null;
+  for (const side of [1, -1] as const) {
+    if (onlySide && side !== onlySide) continue; // his bias: only his way
+    const ab = absorptionAt(c, i, side);
+    if (!ab || c.bars[ab.j]!.t < postedT) continue;
+    const before = absorptionAt(c, i - 1, side);
+    if (before && before.j === ab.j) continue;
+    const p = sided(c, side);
+    const low = side * ab.extreme;
+    const firstAfter = c.bars.findIndex((b) => b.t >= postedT);
+    const hit = levels
+      .map((L) => side * L)
+      .find((L) => low <= L + 0.1 * a && low >= L - ASIA.through * a && (() => {
+        for (let j = Math.max(firstAfter, ab.j - ASIA.fresh); j < ab.j; j++) if (p.l(j) <= L) return false;
+        return true;
+      })());
+    if (hit === undefined) continue;
+    const px = p.c(i);
+    const risk = Math.max(px - (low - 0.15 * a), 0.3 * a);
+    // his DOL (draw on liquidity) is the target when it is at least 1R his way, else his next level
+    const tgt = dol !== null && side * dol - px >= risk ? side * dol : levels.map((L) => side * L).filter((T) => T - px >= risk).sort((x, y) => x - y)[0];
+    return { side, stop: side * (px - risk), target: tgt === undefined ? null : side * tgt, maxBars: Math.max(4, Math.round(1440 / c.barMin)) };
+  }
+  return null;
+}
+
 export const STRATEGIES: Strategy[] = [
   // ── trend ──
   {
