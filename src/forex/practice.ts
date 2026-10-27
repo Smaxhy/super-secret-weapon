@@ -601,6 +601,56 @@ export function undoPositions(a: PracticeAccount, pick: (p: PracticePosition) =>
 }
 
 /**
+ * v27.58 (owner: "adjust the current live trade as if it has 20%"): re-size the OPEN Discord copies (tf 'signal') as if
+ * they had opened at `pct`% of the balance on their original stop — same entry, more units; all copies together ≤ `pct`;
+ * margin ≤ the all-in share of the free margin. The $ loss cap is lifted (`allIn`) and a stop the cap had pulled in goes
+ * back to the original distance (a stop the profit lock moved stays). Nothing booked changes. Mutates `a`. Pure.
+ */
+export function resizeCopies(a: PracticeAccount, pct: number, mids: Record<string, number>): string[] {
+  const out: string[] = [];
+  const copies = a.open.filter((p) => p.tf === 'signal' && !p.closePending);
+  let left = pct;
+  for (const p of copies) {
+    const per = Math.abs(pnlUsd({ pair: p.pair, side: 1, units: 1, entry: p.entry }, p.entry + 1, { ...mids, [p.pair]: mids[p.pair] ?? p.entry }));
+    const nowStopDist = p.stop === null ? 0 : p.side * (p.entry - p.stop);
+    const d0 = p.riskUsd0 && p.units > 0 && per > 0 ? p.riskUsd0 / (p.units * per) : nowStopDist;
+    if (!(per > 0) || !(d0 > 0)) {
+      out.push(`${p.pair} ${p.strategy}: no stop distance to size from — left as is`);
+      continue;
+    }
+    const wantUsd = (a.balanceUsd * Math.max(0, left)) / 100;
+    const haveUsd = p.units * per * d0;
+    const otherMargin = a.open.filter((x) => x !== p).reduce((n, x) => n + x.marginUsd, 0);
+    const freeUsd = Math.max(0, a.balanceUsd - otherMargin);
+    let f = wantUsd / haveUsd;
+    f = Math.min(f, (freeUsd * BOT.allInMarginShare) / Math.max(p.marginUsd, 1e-9));
+    if (!(f > 1.0001)) {
+      p.allIn = true;
+      delete p.maxLossUsd;
+      left -= p.riskPct ?? 0;
+      out.push(`${p.pair} ${p.strategy}: already ${p.riskPct ?? '?'}% — no bigger size fits`);
+      continue;
+    }
+    const before = p.units;
+    p.units = p.units * f;
+    p.marginUsd = Math.round(p.marginUsd * f * 100) / 100;
+    p.riskUsd0 = Math.round(haveUsd * f * 100) / 100;
+    p.riskPct = a.balanceUsd > 0 ? Math.round((p.riskUsd0 / a.balanceUsd) * 10_000) / 100 : pct;
+    p.allIn = true;
+    delete p.maxLossUsd;
+    // a stop the $ cap pulled in (tighter than the original, still on the losing side, not the profit lock's) goes back
+    if (!p.locked && p.stop !== null && nowStopDist > 0 && nowStopDist < d0 * 0.999) {
+      p.stop = p.entry - p.side * d0;
+      p.stopMovedT = null;
+    }
+    left -= p.riskPct;
+    out.push(`${p.pair} ${p.strategy} ${p.side === 1 ? 'long' : 'short'} re-sized as if opened at ${p.riskPct}%: ${before.toPrecision(4)} → ${p.units.toPrecision(4)} units, $${p.riskUsd0} at the stop ${p.stop?.toPrecision(7)}, margin $${p.marginUsd}`);
+  }
+  if (!copies.length) out.push('no open Kojiro copy to re-size');
+  return out;
+}
+
+/**
  * v20.1 (owner: "revert all current active trades"): strike every OPEN trade from an account as if it never happened —
  * the positions, their parts already taken (USD back out of the balance), their overnight rolls, resting orders and
  * weekend pauses. Closed trades stay. Returns what was removed + the ids whose P&L-log rows must go. Mutates `a`. Pure.
@@ -2381,6 +2431,17 @@ export class Practice {
       }
       await this.save(a, acct);
       return `${label}: ${r.ids.length} open trade${r.ids.length === 1 ? '' : 's'} struck${r.usd ? ` (${r.usd >= 0 ? '−' : '+'}$${Math.abs(r.usd).toFixed(2)} booked rolls taken back)` : ''} — balance now $${a.balanceUsd.toFixed(2)}`;
+    });
+  }
+
+  /** v27.58: re-size the open Discord copies to `pct`% (see `resizeCopies`). */
+  async resizeCopies(acct: AcctId, pct: number): Promise<string[]> {
+    return this.serial(async () => {
+      const a = await this.load(acct);
+      if (!a.open.some((p) => p.tf === 'signal')) return [];
+      const lines = resizeCopies(a, pct, {});
+      await this.save(a, acct);
+      return lines;
     });
   }
 

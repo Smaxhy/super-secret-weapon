@@ -758,6 +758,13 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.58 the open Kojiro copy re-sized to 20% (Oct 27, owner: "adjust the current live trade as if it has 20% fast")
+`resizeCopies(a, pct, mids)` (practice.ts, pure) + `Practice.resizeCopies(acct, pct)`: every open copy (tf 'signal') gets
+more units as if it had opened at `pct`% of the balance on its ORIGINAL stop (distance = `riskUsd0` ÷ units; same entry),
+all copies together ≤ pct, margin ≤ `BOT.allInMarginShare` of the free margin; `allIn` set, `maxLossUsd` dropped, a stop
+the $20 cap had pulled in goes back to the original distance (a profit-lock stop stays). Nothing booked changes — the open
+P&L simply counts the bigger size from the entry (a paper adjustment, not a real fill). Run once at start
+(`oneTimeUpgrade('v27.58-resize-kojiro')`, bot + cbot, bot-log lines "Kojiro copy: … re-sized"). tests in forex-discord (+1).
 ## v27.57 Kojiro's calls risk 20% (Oct 27, owner: "use muchhhh more on kojiro calls … also 20")
 `DISCORD_COPY.riskPct` 2 → **20** (default; `DISCORD_COPY_RISK_PCT` in the VPS .env still overrides it), `marginShare` 0.5 →
 0.9. Practice `copyOpen`: all open copies (tf 'signal': his SIGNAL posts + the level trades) together risk at most that 20%

@@ -17,6 +17,7 @@ import { bus } from './lib/bus';
 import { mondayOf, weeklyLog, weekText } from './forex/pnl';
 import { chosenAt, WeekendReview, type WeekendDeskDef } from './forex/weekend';
 import { staleReason } from './forex/freshness';
+import { DISCORD_COPY } from './forex/discord';
 import { getConfig, startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
 import { DEFAULT_CONFIG } from './config/default';
 import { markStrategySince, oneTimeUpgrade, runConfigMigrations } from './config/migrations';
@@ -570,6 +571,17 @@ async function main(): Promise<void> {
     ];
     cryptoLab.logBot(lines);
     log.info({ lines }, 'coin bot: reverted to the +$60 point');
+  });
+  // v27.58 (owner: "adjust the current live trade as if it has 20%"): the Kojiro copies open at deploy were sized at 2% /
+  // the $20 cap; they are re-sized once as if they had opened at the new 20% (same entry and original stop, more units)
+  await oneTimeUpgrade('v27.58-resize-kojiro', async () => {
+    for (const [acct, lab] of [['bot', forex], ['cbot', cryptoLab]] as const) {
+      const lines = await practice.resizeCopies(acct, DISCORD_COPY.riskPct);
+      if (lines.length) {
+        lab.logBot(lines.map((l) => `Kojiro copy: ${l} (owner: 20% on his calls)`));
+        log.info({ acct, lines }, 'Kojiro copies re-sized');
+      }
+    }
   });
   // v20.1 (owner: "revert all current active trades"): every open bot trade is struck as if it never happened, once
   await oneTimeUpgrade('v20.1-revert-open', async () => {

@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type Redis from 'ioredis';
 import { copySize, copyStop, copyStrategy, handleSignal, parseSignal, symbolToPair, type CopyBook } from '../src/forex/discord';
-import { Practice, newAccount, type PracticeAccount, type Quote } from '../src/forex/practice';
+import { Practice, newAccount, type PracticeAccount, type PracticePosition, type Quote } from '../src/forex/practice';
 import { VENUE_FEES } from '../src/forex/venue-fees';
 
 VENUE_FEES.on = false;
@@ -139,5 +139,24 @@ describe('handleSignal on the bot account', () => {
     expect(row.kind).toBe('none');
     expect(book.copyOpen).not.toHaveBeenCalled();
     expect(r.lists.get('fx:discord:log')).toHaveLength(1);
+  });
+});
+
+describe('v27.58 resizeCopies', () => {
+  it('re-sizes an open 2% copy to 20% on its original stop, restores a stop the $ cap pulled in, lifts the cap', async () => {
+    const { resizeCopies } = await import('../src/forex/practice');
+    const a = { ...newAccount(1000), maxLossUsd: 20 } as PracticeAccount;
+    // 0.5% safety stop at 29,000 = 145 points; $20 risk → 0.1379 units; the cap had pulled the stop in to $10
+    const units = 20 / 145;
+    a.open.push({ id: 'k1', pair: 'NDXUSD', side: 1, units, entry: 29_000, marginUsd: (units * 29_000) / 50, leverage: 50, stop: 29_000 - 10 / units, target: null, openedAt: NOW, checkedT: NOW, strategy: 'discord_kojiro', ref: 'discord_kojiro:signal:NDXUSD:1', tf: 'signal', riskPct: 2, riskUsd0: 20, maxLossUsd: 20 } as PracticePosition);
+    const lines = resizeCopies(a, 20, {});
+    const p = a.open[0]!;
+    expect(lines[0]).toMatch(/re-sized as if opened at 20%/);
+    expect((p.entry - p.stop!) * p.units).toBeCloseTo(200, 0);
+    expect(p.entry - p.stop!).toBeCloseTo(145, 1);
+    expect(p.allIn).toBe(true);
+    expect(p.maxLossUsd).toBeUndefined();
+    expect(p.marginUsd).toBeLessThanOrEqual(900);
+    expect(a.balanceUsd).toBe(1000); // nothing booked
   });
 });
