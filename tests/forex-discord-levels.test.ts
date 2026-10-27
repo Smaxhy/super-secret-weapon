@@ -1,7 +1,7 @@
 /** v27.51 (owner: "he also sends Levels … it can trust his trades, take it and trail it tight SL"). */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type Redis from 'ioredis';
-import { POSTED_LEVELS, handleSignal, loadLevels, parseBias, parseLevels, type CopyBook } from '../src/forex/discord';
+import { POSTED_LEVELS, handleSignal, levelSets, loadLevels, parseBias, parseLevels, type CopyBook } from '../src/forex/discord';
 import { postedLevelSignal } from '../src/forex/strategies';
 import { buildCtx } from '../src/forex/ta';
 import { Practice, newAccount, type PracticeAccount, type Quote } from '../src/forex/practice';
@@ -130,5 +130,31 @@ describe('trading at his levels', () => {
     // a price already past the stop is refused
     const past = await p.copyOpen({ pair: 'NDXUSD', side: 1, stopNamed: null, hisPx: null, strategy: 'discord_kojiro_levels', ref: 'discord_kojiro_levels:signal:NDXUSD:2', riskPct: 2, leverage: 50, profitLock: true, stop: 29_200, target: null }, 'bot');
     expect(past.ok).toBe(false);
+  });
+});
+
+describe('v27.64 short / long level lists', () => {
+  const SHORT = '**Short Levels (for today)**\n\n29,713.75\n29,727.75\n29,765.00\n29,783.00\n29,736.25';
+  it('a "Short Levels" post is read as shorts only', () => {
+    expect(parseLevels(SHORT)).toEqual({ pair: 'NDXUSD', levels: [29_783, 29_765, 29_736.25, 29_727.75, 29_713.75], side: -1 });
+    expect(parseLevels('Buy levels 29,100 29,050')).toMatchObject({ side: 1 });
+    expect(parseLevels(POST)).not.toHaveProperty('side');
+  });
+
+  it('keeps his plain levels + plan, adds the short list; each list trades its own side', async () => {
+    const r = new FakeRedis();
+    const book = { copyOpen: vi.fn(), copyClose: vi.fn(), copyBreakeven: vi.fn() } as unknown as CopyBook;
+    await handleSignal(r as unknown as Redis, book, { id: '1400000000000000020', text: 'Levels 29,562.25 29,431.25 29,305.00', at: NOW - 2 * H }, NOW);
+    await handleSignal(r as unknown as Redis, book, { id: '1400000000000000021', text: 'Bias: bullish\nDOL: 29,713.75', at: NOW - H }, NOW);
+    const row = await handleSignal(r as unknown as Redis, book, { id: '1400000000000000022', text: SHORT, at: NOW - 0.5 * H }, NOW);
+    expect(row.what).toMatch(/SHORT levels \(shorts only\)/);
+    const lv = (await loadLevels(r as unknown as Redis, NOW)).NDXUSD!;
+    expect(lv.levels).toEqual([29_562.25, 29_431.25, 29_305]);
+    expect(lv).toMatchObject({ bias: 1, dol: 29_713.75, shortLevels: [29_783, 29_765, 29_736.25, 29_727.75, 29_713.75] });
+    const sets = levelSets(lv);
+    expect(sets.map((s) => [s.side, s.dol])).toEqual([[1, 29_713.75], [-1, null]]);
+    expect(sets[1]!.all).toContain(29_562.25); // a short targets his long levels below
+    // a day later the lists are gone
+    expect(await loadLevels(r as unknown as Redis, NOW + 25 * H)).toEqual({});
   });
 });

@@ -22,7 +22,7 @@ import { extendWithLive, needsBasis } from './basis';
 import { hlCandles, loadHlFutures } from './hyperliquid';
 import { signalsFor, simulate, WARMUP } from './engine';
 import { STRATEGIES, postedLevelSignal, runsOn, strategyById, styleOf, tradesNews } from './strategies';
-import { DISCORD_COPY, POSTED_LEVELS, loadLevels, type PostedLevels } from './discord';
+import { DISCORD_COPY, POSTED_LEVELS, levelSets, loadLevels, type PostedLevels } from './discord';
 import { takeLevelTrades } from './level-watch';
 import { to4h } from './ta';
 import { TF_MIN, isFutures, type Bar, type Instrument, type Trade } from './types';
@@ -536,8 +536,9 @@ export class FastLab {
         const last = bars.length - 1;
         newest = Math.max(newest, bars[last]!.t);
         const lv = posted[inst.id];
-        if (lv?.levels.length && bars[last]!.t + 3 * TF_MIN[tf] * MIN >= now) {
-          const ps = postedLevelSignal(se.ctx, last, lv.levels, lv.t, lv.bias ?? 0, lv.dol ?? null);
+        if (lv && levelSets(lv).length && bars[last]!.t + 3 * TF_MIN[tf] * MIN >= now) {
+          let ps = null;
+          for (const st of levelSets(lv)) if ((ps = postedLevelSignal(se.ctx, last, st.levels, st.t, st.side, st.dol, 0, st.all))) break;
           if (ps) levelTrades.push({ pair: inst.id, side: ps.side, stop: ps.stop, target: ps.target, barT: bars[last]!.t, source: lv.source });
         }
         const fired: FastFiring['byPair'][string] = [];

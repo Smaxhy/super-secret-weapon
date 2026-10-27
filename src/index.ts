@@ -17,7 +17,7 @@ import { bus } from './lib/bus';
 import { mondayOf, weeklyLog, weekText } from './forex/pnl';
 import { chosenAt, WeekendReview, type WeekendDeskDef } from './forex/weekend';
 import { staleReason } from './forex/freshness';
-import { DISCORD_COPY, handleSignal } from './forex/discord';
+import { DISCORD_COPY, handleSignal, loadLevels, savePosted } from './forex/discord';
 import { getConfig, startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
 import { DEFAULT_CONFIG } from './config/default';
 import { markStrategySince, oneTimeUpgrade, runConfigMigrations } from './config/migrations';
@@ -620,6 +620,19 @@ async function main(): Promise<void> {
     const row = await handleSignal(redis, practice, { id: 'owner-paste-plan-2026-10-27', text, at: Date.parse('2026-10-27T14:25:00Z'), source: 'kojiro' });
     forex.logBot([`Discord (kojiro, pasted by the owner): ${row.what}`]);
     log.info({ row }, 'Kojiro plan saved by hand');
+  });
+  // v27.64 (owner: "Short Levels … do the levels that were said, don't miss out"): his 14:55 "Short Levels" post had replaced
+  // his 13:24 levels (one list per market then) → both put back: the 13:24 list = his long levels (bias bullish, DOL), the
+  // 14:55 list = shorts only
+  await oneTimeUpgrade('v27.64-kojiro-short-levels-oct27', async () => {
+    const t13 = Date.parse('2026-10-27T13:24:40Z');
+    const t14 = Date.parse('2026-10-27T14:55:13Z');
+    await savePosted(redis, 'NDXUSD', { levels: [29562.25, 29431.25, 29418.75, 29383.75, 29305], t: t13, msgId: '1564630918029647943', source: 'kojiro' }, true);
+    await savePosted(redis, 'NDXUSD', { levels: [29783, 29765, 29736.25, 29727.75, 29713.75], t: t14, msgId: '1564653704878231745', source: 'kojiro', side: -1 }, true);
+    const lv = (await loadLevels(redis)).NDXUSD;
+    const line = `Kojiro levels on NDXUSD put back: long levels ${lv?.levels.join(' · ') || '—'} (plan ${lv?.bias === 1 ? 'bullish' : lv?.bias === -1 ? 'bearish' : 'none'}${lv?.dol ? `, DOL ${lv.dol}` : ''}); SHORT levels ${lv?.shortLevels?.join(' · ') || '—'} (shorts only)`;
+    forex.logBot([line]);
+    log.info({ lv }, 'Kojiro levels restored');
   });
   // v20.1 (owner: "revert all current active trades"): every open bot trade is struck as if it never happened, once
   await oneTimeUpgrade('v20.1-revert-open', async () => {

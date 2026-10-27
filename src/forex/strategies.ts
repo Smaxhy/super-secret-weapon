@@ -660,7 +660,7 @@ export function levelAbsorbSignal(c: Ctx, i: number, asiaOnly: boolean): Signal 
  * 10-point strict stop: the venue fee is a share of the position and would eat a stop that tight), target = his next
  * level the other way at least 1R off (none → no target; the profit lock trails it). Only candles after `postedT`.
  * His daily plan: `onlySide` (bias) keeps only his direction, `dol` is the target when ≥ 1R away. Pure. */
-export function postedLevelSignal(c: Ctx, i: number, levels: readonly number[], postedT: number, onlySide: 1 | -1 | 0 = 0, dol: number | null = null, minRisk = 0): Signal | null {
+export function postedLevelSignal(c: Ctx, i: number, levels: readonly number[], postedT: number, onlySide: 1 | -1 | 0 = 0, dol: number | null = null, minRisk = 0, targets: readonly number[] = levels): Signal | null {
   const a = c.atr14[i]!;
   if (!ok(a) || a <= 0 || !levels.length || c.bars[i]!.t < postedT) return null;
   for (const side of [1, -1] as const) {
@@ -682,7 +682,7 @@ export function postedLevelSignal(c: Ctx, i: number, levels: readonly number[], 
     const px = p.c(i);
     const risk = Math.max(px - (low - 0.15 * a), 0.3 * a, minRisk); // v27.52 `minRisk`: the 1-minute watcher's floor (fees)
     // his DOL (draw on liquidity) is the target when it is at least 1R his way, else his next level
-    const tgt = dol !== null && side * dol - px >= risk ? side * dol : levels.map((L) => side * L).filter((T) => T - px >= risk).sort((x, y) => x - y)[0];
+    const tgt = dol !== null && side * dol - px >= risk ? side * dol : targets.map((L) => side * L).filter((T) => T - px >= risk).sort((x, y) => x - y)[0];
     return { side, stop: side * (px - risk), target: tgt === undefined ? null : side * tgt, maxBars: Math.max(4, Math.round(1440 / c.barMin)) };
   }
   return null;

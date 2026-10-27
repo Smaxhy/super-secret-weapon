@@ -154,7 +154,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       const posted = last?.markets?.length ? await loadLevels(redis) : {};
       for (const m of last?.markets ?? []) {
         const lv = posted[m.id];
-        if (lv && m.drawings) m.drawings = { ...m.drawings, levels: [...m.drawings.levels, ...[...lv.levels, ...(lv.dol ? [lv.dol] : [])].map((price) => ({ kind: 'posted', price, touches: 0 }) as unknown as (typeof m.drawings.levels)[number])] }; // the dashboard draws kind 'posted' amber
+        if (lv && m.drawings) m.drawings = { ...m.drawings, levels: [...m.drawings.levels, ...[...lv.levels, ...(lv.shortLevels ?? []), ...(lv.longLevels ?? []), ...(lv.dol ? [lv.dol] : [])].map((price) => ({ kind: 'posted', price, touches: 0 }) as unknown as (typeof m.drawings.levels)[number])] }; // the dashboard draws kind 'posted' amber
       }
       return { running: (U.lab?.isRunning() ?? false) || (U.fast?.isRunning() ?? false), last, fast: U.fast?.report ?? null };
     });

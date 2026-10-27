@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.64 his "Short Levels" are shorts only and no longer wipe his other levels (Oct 27, owner: "Short Levels (for today) …
+do the levels that were said, don't miss out")
+VPS read 15:14 UTC: the 14:55 "Short Levels" post (29,713.75 / 29,727.75 / 29,736.25 / 29,765 / 29,783) REPLACED his 13:24
+levels (one list per market) and had no side, so the bullish plan would have made the bot only BUY at his short levels.
+discord.ts: `parseLevels` → `side` −1 on "Short / Sell levels", +1 on "Long / Buy levels"; `PostedLevels.shortLevels` /
+`shortT` / `longLevels` / `longT` (each valid a day from its own post, `loadLevels`); `savePosted` (exported, `force` for
+hand corrections) fills the side list and leaves the plain levels alone; `levelSets(x)` → plain levels (his bias + DOL),
+short list (side −1), long list (side +1), targets from ALL his levels (`postedLevelSignal(…, targets)`; DOL only on the bias
+side). LevelWatch (1-minute) and the 15-minute pass loop the sets; the chart draws every list. One-time
+`v27.64-kojiro-short-levels-oct27`: NDXUSD levels back to the 13:24 list + the short list (force). The channel the owner
+named (1495278719647088650) was already watched — his plan post went missing for another reason (posted by another
+account / an embed or forward the self-bot didn't read); unexplained. tests in forex-discord-levels (+2).
 ## v27.63 Kojiro's plan of Oct 27 saved by hand (Oct 27 ~14:40 UTC, owner pasted "Bias: bullish · DOL: 29,713.75 · Narrative:
 manipulation to the downside, then long off my levels")
 It never reached the copier (no log row at all — his 13:24 levels did, so the plan went in a channel / as a post the copier

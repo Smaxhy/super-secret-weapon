@@ -9,7 +9,7 @@
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
 import { clockFor } from './calendar';
-import { DISCORD_COPY, POSTED_LEVELS, levelStrategy, loadLevels } from './discord';
+import { DISCORD_COPY, POSTED_LEVELS, levelSets, levelStrategy, loadLevels } from './discord';
 import { hlCandles, loadHlFutures } from './hyperliquid';
 import type { Practice } from './practice';
 import { postedLevelSignal } from './strategies';
@@ -90,11 +90,12 @@ export class LevelWatch {
     this.busy = true;
     try {
       const posted = await loadLevels(this.redis, now);
-      if (!Object.values(posted).some((x) => x.levels.length)) return;
+      if (!Object.values(posted).some((x) => levelSets(x).length)) return;
       const hlMap = await loadHlFutures(this.redis);
       for (const [pair, lv] of Object.entries(posted)) {
         const coin = isFutures(pair) ? hlMap[pair] : undefined;
-        if (!lv.levels.length || !coin || !clockFor(pair, now).open) continue;
+        const sets = levelSets(lv);
+        if (!sets.length || !coin || !clockFor(pair, now).open) continue;
         const gap = this.practice.hlGap(pair, now);
         if (gap === null) {
           this.once(pair, `gap:${pair}`, `Kojiro levels on ${pair}: measuring the live-feed gap first (a minute or two) — until then the 15-minute pass watches his levels`);
@@ -109,7 +110,9 @@ export class LevelWatch {
         if (last < 60 || now - (bars[last]!.t + 60_000) > LEVEL_WATCH.maxLagMs) continue;
         const ctx = buildCtx(bars, 1, pair);
         const minRisk = (bars[last]!.c * LEVEL_WATCH.minStopPct) / 100;
-        const sig = postedLevelSignal(ctx, last, lv.levels, lv.t, lv.bias ?? 0, lv.dol ?? null, minRisk);
+        // plain levels (his bias + DOL), then his short / long lists (their side forced, targets = his other levels)
+        let sig = null;
+        for (const st of sets) if ((sig = postedLevelSignal(ctx, last, st.levels, st.t, st.side, st.dol, minRisk, st.all))) break;
         if (!sig) continue;
         await takeLevelTrades(this.redis, this.practice, 'bot', [{ pair, side: sig.side, stop: sig.stop, target: sig.target, barT: bars[last]!.t, source: lv.source }], (l) => this.logBot(pair, l));
       }

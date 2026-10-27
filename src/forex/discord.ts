@@ -91,6 +91,33 @@ export interface PostedLevels {
   dol?: number | null;
   /** when the plan was posted (ms) */
   biasT?: number;
+  /** v27.64: a "Short Levels" post → only shorts at these prices (whatever the bias); `shortT` = when posted */
+  shortLevels?: number[];
+  shortT?: number;
+  /** a "Long Levels" post → only longs at these prices */
+  longLevels?: number[];
+  longT?: number;
+}
+
+/** One list of his levels to trade: entry prices, the only side allowed (0 = both), when it was posted, the DOL target. */
+export interface LevelSet {
+  levels: number[];
+  side: 1 | -1 | 0;
+  t: number;
+  dol: number | null;
+  /** every level of his in force (targets come from the whole map, not only this list) */
+  all: number[];
+}
+
+/** A market's posted lists as tradable sets: plain levels follow his bias + DOL; short / long lists force their side and
+ * target his other levels (his DOL is the bias side's target). Pure. */
+export function levelSets(x: PostedLevels): LevelSet[] {
+  const all = [...new Set([...x.levels, ...(x.shortLevels ?? []), ...(x.longLevels ?? [])])];
+  const out: LevelSet[] = [];
+  if (x.levels.length) out.push({ levels: x.levels, side: x.bias ?? 0, t: x.t, dol: x.dol ?? null, all });
+  if (x.shortLevels?.length) out.push({ levels: x.shortLevels, side: -1, t: x.shortT ?? 0, dol: x.bias === -1 ? (x.dol ?? null) : null, all });
+  if (x.longLevels?.length) out.push({ levels: x.longLevels, side: 1, t: x.longT ?? 0, dol: x.bias === 1 ? (x.dol ?? null) : null, all });
+  return out;
 }
 
 /** His daily plan post ("🔍 Bias: bullish · 💧 DOL: Around 29,385.25 · 🧠 Narrative: …"), or null. Pure. */
@@ -107,7 +134,7 @@ export function parseBias(raw: string): { pair: string; bias: 1 | -1 | 0 | null;
 }
 
 /** A "Levels" post → the prices in it (brackets, commas and list numbers ignored), or null. Pure. */
-export function parseLevels(raw: string): { pair: string; levels: number[] } | null {
+export function parseLevels(raw: string): { pair: string; levels: number[]; side?: 1 | -1 } | null {
   const text = raw.replace(/[*_`~>|]/g, ' ');
   if (!/\bLEVELS?\b/i.test(text)) return null;
   const nums = [...text.matchAll(/(?<![\d.])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d{3,})(?![\d,])/g)].map((m) => Number(m[1]!.replace(/,/g, ''))).filter((x) => Number.isFinite(x) && x > 0);
@@ -118,7 +145,10 @@ export function parseLevels(raw: string): { pair: string; levels: number[] } | n
   if (levels.length < 2) return null;
   const sym = /\b(MNQ|NQ|NAS100|US100|USTEC|NASDAQ|ES|MES|US500|SPX|YM|US30|RTY|GC|GOLD|XAUUSD|SI|BTC|ETH|SOL)[A-Z]?\d{0,4}!?\b/.exec(text.toUpperCase());
   const pair = (sym && symbolToPair(sym[1]!)) || POSTED_LEVELS.defaultPair;
-  return { pair, levels };
+  // v27.64: "Short Levels (for today)" / "Sell levels" → shorts only; "Long / Buy levels" → longs only
+  const up = text.toUpperCase();
+  const side = /\b(SHORT|SELL)\s+LEVELS?\b/.test(up) ? -1 : /\b(LONG|BUY)\s+LEVELS?\b/.test(up) ? 1 : undefined;
+  return side ? { pair, levels, side } : { pair, levels };
 }
 
 /** Every market's newest posted list still in force. */
@@ -133,17 +163,28 @@ export async function loadLevels(redis: Redis, now = Date.now()): Promise<Record
   const out: Record<string, PostedLevels> = {};
   for (const [pair, x] of Object.entries(all)) {
     if (!x || !Array.isArray(x.levels)) continue;
-    // the levels and the plan each count for a day from their own post
-    const levelsOk = now - x.t <= POSTED_LEVELS.validMs;
-    const planOk = x.biasT !== undefined && now - x.biasT <= POSTED_LEVELS.validMs;
-    if (!levelsOk && !planOk) continue;
-    out[pair] = { ...x, levels: levelsOk ? x.levels : [], ...(planOk ? {} : { bias: undefined, dol: undefined, biasT: undefined }) };
+    // the levels, the short / long lists and the plan each count for a day from their own post
+    const fresh = (t: number | undefined) => t !== undefined && now - t <= POSTED_LEVELS.validMs;
+    const levelsOk = fresh(x.t);
+    const planOk = fresh(x.biasT);
+    const shortOk = !!x.shortLevels?.length && fresh(x.shortT);
+    const longOk = !!x.longLevels?.length && fresh(x.longT);
+    if (!levelsOk && !planOk && !shortOk && !longOk) continue;
+    const { shortLevels, shortT, longLevels, longT, ...rest } = x;
+    out[pair] = {
+      ...rest,
+      levels: levelsOk ? x.levels : [],
+      ...(planOk ? {} : { bias: undefined, dol: undefined, biasT: undefined }),
+      ...(shortOk ? { shortLevels, shortT } : {}),
+      ...(longOk ? { longLevels, longT } : {}),
+    };
   }
   return out;
 }
 
-/** Merge a post into the market's record; an older post arriving late never replaces a newer one. */
-async function savePosted(redis: Redis, pair: string, patch: { levels: number[]; t: number; msgId: string; source: string } | { bias: 1 | -1 | 0 | null; dol: number | null; biasT: number; source: string }): Promise<void> {
+/** Merge a post into the market's record; an older post arriving late never replaces a newer one (`force` = it does:
+ * a correction by hand). A levels post with a `side` fills the short / long list and leaves his plain levels alone. */
+export async function savePosted(redis: Redis, pair: string, patch: { levels: number[]; t: number; msgId: string; source: string; side?: 1 | -1 } | { bias: 1 | -1 | 0 | null; dol: number | null; biasT: number; source: string }, force = false): Promise<void> {
   const raw = await redis.get(POSTED_LEVELS.key).catch(() => null);
   let all: Record<string, PostedLevels> = {};
   try {
@@ -152,11 +193,16 @@ async function savePosted(redis: Redis, pair: string, patch: { levels: number[];
     all = {};
   }
   const cur: PostedLevels = all[pair] ?? { pair, levels: [], t: 0, msgId: '', source: patch.source };
-  if ('levels' in patch) {
-    if (cur.t > patch.t) return;
-    all[pair] = { ...cur, ...patch };
+  if ('levels' in patch && patch.side) {
+    const k = patch.side === -1 ? 'short' : 'long';
+    if (!force && (cur[`${k}T`] ?? 0) > patch.t) return;
+    all[pair] = { ...cur, [`${k}Levels`]: patch.levels, [`${k}T`]: patch.t };
+  } else if ('levels' in patch) {
+    if (!force && cur.t > patch.t) return;
+    const { side: _side, ...p } = patch;
+    all[pair] = { ...cur, ...p };
   } else {
-    if ((cur.biasT ?? 0) > patch.biasT) return;
+    if (!force && (cur.biasT ?? 0) > patch.biasT) return;
     all[pair] = { ...cur, ...(patch.bias !== null ? { bias: patch.bias } : {}), ...(patch.dol !== null ? { dol: patch.dol } : {}), biasT: patch.biasT };
   }
   await redis.set(POSTED_LEVELS.key, JSON.stringify(all));
@@ -275,8 +321,9 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
       said.push(`${plan.pair} plan for today: ${plan.bias === 1 ? 'bullish (only long trades at his levels)' : plan.bias === -1 ? 'bearish (only short trades at his levels)' : plan.bias === 0 ? 'neutral' : 'no bias'}${plan.dol ? `, target (DOL) ${fmt(plan.dol)}` : ''}`);
     }
     if (lv) {
-      await savePosted(redis, lv.pair, { levels: lv.levels, t: s.at, msgId: s.id, source });
-      said.push(`${lv.pair} levels saved for today: ${lv.levels.map(fmt).join(' · ')}${POSTED_LEVELS.trade ? ' — the bot trades a reversal at them (15-minute candles)' : ''}`);
+      await savePosted(redis, lv.pair, { levels: lv.levels, t: s.at, msgId: s.id, source, ...(lv.side ? { side: lv.side } : {}) });
+      const which = lv.side === -1 ? 'SHORT levels (shorts only)' : lv.side === 1 ? 'LONG levels (longs only)' : 'levels';
+      said.push(`${lv.pair} ${which} saved for today: ${lv.levels.map(fmt).join(' · ')}${POSTED_LEVELS.trade ? ' — the bot trades a reversal at them (live 1-minute candles)' : ''}`);
     }
     return done({ ...base, kind: 'levels', pair: (lv ?? plan)!.pair, ok: true, what: said.join('; ') });
   }
