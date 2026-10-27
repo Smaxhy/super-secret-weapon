@@ -758,6 +758,24 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.65 the missed Oct 26 SELL booked + the copier can't silently miss his posts (Oct 27, owner: "count it in as well in the
+portfolio and don't miss shit again")
+His "SIGNAL · NQ — SELL @ 29,189.75" (Oct 26 ~01:55 UTC, +$770 on 1 contract in his screenshot) came before the copier ran on
+the server (v27.50 fixed its install / syntax errors ~14:30 UTC that day) — no log row, nothing copied. `bookMissedCopy(a, …)`
+(practice.ts, pure) + `Practice.bookMissedCopy`: a 20% copy on the 0.5% safety stop (1.444 units, $843 margin at 50×), his
+price → 29,151.25 (38.5 points), reason 'signal', venue fee $25.29 → **+$30.31**, through `closePos` (balance, record, R
+ledger, P&L log on Oct 26); refused when the ref is already booked. One-time `v27.65-book-kojiro-nq-sell-oct26`.
+Copier (scripts/discord-scanner/bot.py, rebuilt by the auto-update with the `discord` profile): `catch_up()` every 2 min
+(started once from on_ready) re-reads the newest 30 posts (last 12 h) of each signal channel and hands over any the live
+event missed (`SENT_IDS` skips ones already sent; the bot's seen-key refuses repeats; opens older than 10 min are still
+refused, levels / plans still saved), then POSTs **`/api/forex/discord-heartbeat`** {channels, sent} → Redis `fx:discord:hb`
+(`saveHeartbeat` / `loadHeartbeat` / `copierDown`, `COPIER_HB.staleMs` 15 min). Posts in his channels by OTHER authors are
+sent with `other: true` → logged as kind 'other' ("posted by X, not him — logged, not copied"), never traded — so a plan
+posted by another account shows up in the log instead of vanishing. index.ts `copierWatch` (60 s): heartbeat quiet 15 min →
+bot-log line + phone alert (FxNotice kind **'copier'**, push.ts always sends it), and again when it is back (state in Redis
+`fx:discord:hbalert`; a copier that never reported = no alert). GET `/api/forex/discord` → `copier` {lastSeen, channels,
+down}. Verified `channel.history(limit, …)` / `wait_until_ready` exist in discord.py-self 2.1.0 (installed in a venv).
+tests/forex-copier-v27-65 (4).
 ## v27.64 his "Short Levels" are shorts only and no longer wipe his other levels (Oct 27, owner: "Short Levels (for today) …
 do the levels that were said, don't miss out")
 VPS read 15:14 UTC: the 14:55 "Short Levels" post (29,713.75 / 29,727.75 / 29,736.25 / 29,765 / 29,783) REPLACED his 13:24

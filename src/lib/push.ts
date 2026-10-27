@@ -55,6 +55,8 @@ export function fxMessageFor(n: Extract<BusEvent, { type: 'fxTrade' }>['data'], 
   const url = n.acct === 'bot' ? '/forex/bot' : n.acct === 'cbot' ? '/crypto/bot' : '/forex/practice';
   // v27.32: the Sunday "ready for Monday" line rides the weekly-summary switch
   if (n.kind === 'ready') return s.fxWeek ? { title: n.ok === false ? `⚠️ ${who} not ready for Monday` : `✅ ${who} ready for Monday`, body: (n.reason ?? '').replace(/^\S+ (Forex|Coin) bot (NOT )?ready for Monday — /, ''), url, tag: `fx-ready-${n.acct}` } : null;
+  // v27.65: the Discord copier went quiet / came back (`ok` true = back) — always sent, missing his calls costs money
+  if (n.kind === 'copier') return { title: n.ok ? '✅ Kojiro copier back online' : '⚠️ Kojiro copier is offline', body: n.reason ?? '', url, tag: 'fx-copier' };
   if (n.kind === 'week') return s.fxWeek ? { title: `📒 ${who} last week ${fxUsd(n.pnlUsd)}`, body: n.reason ?? '', url, tag: `fx-week-${n.acct}` } : null;
   const pair = n.pair.length === 6 ? `${n.pair.slice(0, 3)}/${n.pair.slice(3)}` : n.pair;
   const safe = typeof n.stopPnlUsd === 'number' ? ` — even if it turns, it closes ${fxUsd(n.stopPnlUsd)}` : '';

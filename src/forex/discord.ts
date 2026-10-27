@@ -275,6 +275,9 @@ export interface SignalIn {
   at: number;
   source?: string;
   channel?: string;
+  /** v27.65: posted in his channel by someone else → logged only, never traded on */
+  other?: boolean;
+  author?: string;
 }
 
 export interface CopyLogRow {
@@ -282,7 +285,7 @@ export interface CopyLogRow {
   id: string;
   source: string;
   text: string;
-  kind: ParsedSignal['kind'] | 'old' | 'duplicate' | 'off' | 'levels';
+  kind: ParsedSignal['kind'] | 'old' | 'duplicate' | 'off' | 'levels' | 'other';
   pair?: string | null;
   side?: 1 | -1;
   hisPx?: number | null;
@@ -309,6 +312,7 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
   if (!DISCORD_COPY.on) return done({ ...base, kind: 'off', ok: false, what: 'copying is switched off (DISCORD_COPY=off)' });
   const first = await redis.set(`fx:discord:seen:${s.id}`, '1', 'EX', DISCORD_COPY.seenTtlSec, 'NX');
   if (first !== 'OK') return { ...base, kind: 'duplicate', ok: true, what: 'already handled' };
+  if (s.other) return done({ ...base, kind: 'other', ok: true, what: `posted by ${(s.author ?? 'someone else').slice(0, 40)}, not him — logged, not copied` });
   const sig = parseSignal(s.text);
   if (sig.kind === 'none') {
     const fmt = (x: number) => x.toLocaleString('en-US', { maximumFractionDigits: 5 });
@@ -361,4 +365,33 @@ export async function copyLog(redis: Redis, n = 50): Promise<CopyLogRow[]> {
       return [];
     }
   });
+}
+
+/** v27.65 (owner: "don't miss shit again"): the copier says it is alive every 2 minutes (it also re-reads his channels). */
+export const COPIER_HB = { key: 'fx:discord:hb', alertKey: 'fx:discord:hbalert', staleMs: 15 * 60_000 };
+
+export interface CopierBeat {
+  t: number;
+  channels: string[];
+  sent: number;
+}
+
+export async function saveHeartbeat(redis: Redis, b: { channels?: unknown; sent?: unknown }, now = Date.now()): Promise<CopierBeat> {
+  const beat: CopierBeat = { t: now, channels: Array.isArray(b.channels) ? b.channels.slice(0, 20).map((x) => String(x).slice(0, 25)) : [], sent: Number(b.sent) || 0 };
+  await redis.set(COPIER_HB.key, JSON.stringify(beat), 'EX', 7 * 86_400);
+  return beat;
+}
+
+export async function loadHeartbeat(redis: Redis): Promise<CopierBeat | null> {
+  const raw = await redis.get(COPIER_HB.key).catch(() => null);
+  try {
+    return raw ? (JSON.parse(raw) as CopierBeat) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Is the copier quiet for too long? null = it never reported (an older copier / not running yet). Pure. */
+export function copierDown(beat: CopierBeat | null, now: number): boolean | null {
+  return beat ? now - beat.t > COPIER_HB.staleMs : null;
 }

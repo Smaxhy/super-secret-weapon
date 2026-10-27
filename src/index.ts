@@ -17,7 +17,7 @@ import { bus } from './lib/bus';
 import { mondayOf, weeklyLog, weekText } from './forex/pnl';
 import { chosenAt, WeekendReview, type WeekendDeskDef } from './forex/weekend';
 import { staleReason } from './forex/freshness';
-import { DISCORD_COPY, handleSignal, loadLevels, savePosted } from './forex/discord';
+import { COPIER_HB, DISCORD_COPY, copierDown, handleSignal, loadHeartbeat, loadLevels, savePosted } from './forex/discord';
 import { getConfig, startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
 import { DEFAULT_CONFIG } from './config/default';
 import { markStrategySince, oneTimeUpgrade, runConfigMigrations } from './config/migrations';
@@ -634,6 +634,14 @@ async function main(): Promise<void> {
     forex.logBot([line]);
     log.info({ lv }, 'Kojiro levels restored');
   });
+  // v27.65 (owner: "count it in as well in the portfolio"): his "SIGNAL · NQ — SELL @ 29,189.75" (Oct 26 ~01:55 UTC) came before
+  // the copier ran on the server; booked as if copied at today's copy size (20%), closed where his screenshot showed
+  // +$770 on one contract (38.5 points → 29,151.25)
+  await oneTimeUpgrade('v27.65-book-kojiro-nq-sell-oct26', async () => {
+    const line = await practice.bookMissedCopy('bot', { pair: 'NDXUSD', side: -1, entry: 29189.75, exit: 29151.25, openedAt: Date.parse('2026-10-26T01:55:00Z'), closedAt: Date.parse('2026-10-26T02:10:00Z'), ref: 'discord_kojiro:signal:NDXUSD:missed-2026-10-26-sell', strategy: 'discord_kojiro', riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage });
+    forex.logBot([`Kojiro copy (missed, booked by hand): ${line}`]);
+    log.info({ line }, 'missed Kojiro call booked');
+  });
   // v20.1 (owner: "revert all current active trades"): every open bot trade is struck as if it never happened, once
   await oneTimeUpgrade('v20.1-revert-open', async () => {
     const line = await practice.undoOpen('bot');
@@ -1073,6 +1081,25 @@ async function main(): Promise<void> {
       }
     }
   }, 10 * 60_000);
+  // v27.65 (owner: "don't miss shit again"): the Discord copier reports every 2 minutes; quiet for 15 → phone alert + bot
+  // log, once, and again when it is back (state kept in Redis so a restart doesn't re-alert)
+  const copierWatch = setInterval(async () => {
+    try {
+      if (!DISCORD_COPY.on) return;
+      const down = copierDown(await loadHeartbeat(redis), Date.now());
+      if (down === null) return; // the copier never reported (older version / not started yet)
+      const was = (await redis.get(COPIER_HB.alertKey)) === 'down';
+      if (down === was) return;
+      await redis.set(COPIER_HB.alertKey, down ? 'down' : 'up');
+      const text = down
+        ? `No sign of life from the Kojiro copier for ${COPIER_HB.staleMs / 60_000}+ minutes — his calls are not being read. Check the discord container (docker compose logs discord).`
+        : 'The Kojiro copier is reading his channels again (anything posted while it was away is caught up; calls older than 10 minutes are not opened).';
+      forex.logBot([text]);
+      bus.publish({ type: 'fxTrade', data: { kind: 'copier', pair: '', side: 1, pnlUsd: 0, reason: text, acct: 'bot', ok: !down } });
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'copier watch failed');
+    }
+  }, 60_000);
   const pushTimer = setInterval(() => {
     const s = statsOf();
     bus.publish({ type: 'stats', data: { connected: s?.connected ?? false, launches: s?.creates ?? 0, trades: s?.trades ?? 0, tracked: liveState.trackedCount, uptimeSec: Math.round((Date.now() - startedAt) / 1000) } });
@@ -1158,6 +1185,7 @@ async function main(): Promise<void> {
     clearInterval(statsTimer);
     clearInterval(pushTimer);
     clearInterval(weekPush);
+    clearInterval(copierWatch);
     weekendReview.stop();
     const force = setTimeout(() => process.exit(1), 15_000); // don't hang forever
     try {

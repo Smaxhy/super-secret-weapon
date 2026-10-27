@@ -675,6 +675,33 @@ export function reviveCopy(a: PracticeAccount, ref: string, pct: number): { ids:
 }
 
 /**
+ * v27.65 (owner: "count it in as well in the portfolio"): book a call the copier missed as if it had been copied — the copy's
+ * size (`riskPct` of the balance now on the 0.5% safety stop, leverage capped per market, margin ≤ its share of the balance),
+ * opened at his price, closed at `exit` (reason 'signal', fee included), into the balance, P&L log, record and R ledger.
+ * Refused when that ref is already in the account. Mutates `a`. Pure.
+ */
+export function bookMissedCopy(a: PracticeAccount, r: { pair: string; side: 1 | -1; entry: number; exit: number; openedAt: number; closedAt: number; ref: string; strategy: string; riskPct: number; leverage: number }): string {
+  const inst = instrument(r.pair);
+  if (!inst) return `unknown market ${r.pair}`;
+  if (a.closed.some((c) => c.ref === r.ref) || a.open.some((p) => p.ref === r.ref)) return `${r.pair} call ${r.ref} is already booked`;
+  const mids = { [r.pair]: r.entry };
+  const stop = copyStop(r.side, r.entry, null);
+  const stopDist = Math.abs(r.entry - stop);
+  const perUnit = unitsFor(inst, 1, mids);
+  const usdPerUnitMove = Math.abs(pnlUsd({ pair: r.pair, side: 1, units: 1, entry: r.entry }, r.entry + 1, mids));
+  const lev = Math.max(1, Math.min(Math.round(r.leverage), MAX_LEVERAGE, maxLeverageFor(inst.id)));
+  const size = copySize({ riskUsd: (a.balanceUsd * r.riskPct) / 100, stopDist, usdPerUnitMove, notionalPerUnit: perUnit ? 1 / perUnit : 0, leverage: lev, freeMarginUsd: a.balanceUsd, marginShare: DISCORD_COPY.marginShare });
+  if (!(size.marginUsd > 0)) return 'no room to size it';
+  const units = unitsFor(inst, size.marginUsd * lev, mids) ?? 0;
+  if (!(units > 0)) return 'no price to size it';
+  const p: PracticePosition = { id: `copy-${r.ref.split(':').pop()}`, pair: r.pair, side: r.side, units, entry: r.entry, marginUsd: size.marginUsd, leverage: lev, stop, target: null, openedAt: r.openedAt, checkedT: r.closedAt, strategy: r.strategy, ref: r.ref, tf: 'signal', allIn: true, riskPct: r.riskPct, riskUsd0: size.riskUsd };
+  a.open.push(p);
+  const pl = closePos(a, p, r.exit, mids, 'signal', r.closedAt);
+  a.peakUsd = Math.max(a.peakUsd ?? a.balanceUsd, a.balanceUsd);
+  return `${r.pair} ${r.side === 1 ? 'long' : 'short'} call booked as if copied: ${units.toFixed(3)} units ${r.entry} → ${r.exit}, ${pl >= 0 ? '+' : '−'}$${Math.abs(pl).toFixed(2)} after fees`;
+}
+
+/**
  * v20.1 (owner: "revert all current active trades"): strike every OPEN trade from an account as if it never happened —
  * the positions, their parts already taken (USD back out of the balance), their overnight rolls, resting orders and
  * weekend pauses. Closed trades stay. Returns what was removed + the ids whose P&L-log rows must go. Mutates `a`. Pure.
@@ -2491,6 +2518,16 @@ export class Practice {
   }
 
   /** v27.60: put a closed Discord copy back open at `pct`% (see `reviveCopy`), P&L log row dropped. */
+  /** v27.65: `bookMissedCopy` on an account (balance, record, P&L log via the close) + save. */
+  async bookMissedCopy(acct: AcctId, r: Parameters<typeof bookMissedCopy>[1]): Promise<string> {
+    return this.serial(async () => {
+      const a = await this.load(acct);
+      const line = bookMissedCopy(a, r);
+      await this.save(a, acct);
+      return line;
+    });
+  }
+
   async reviveCopy(acct: AcctId, ref: string, pct: number): Promise<string[]> {
     return this.serial(async () => {
       const a = await this.load(acct);

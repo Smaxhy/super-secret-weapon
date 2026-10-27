@@ -22,7 +22,7 @@ import os
 import sys
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiohttp
@@ -137,14 +137,18 @@ def message_text(msg: discord.Message) -> str:
 def copy_cfg() -> dict:
     return CFG.get("copy", {}) or {}
 
-def is_signal_message(msg: discord.Message) -> bool:
+def is_copy_channel(msg: discord.Message) -> bool:
     c = copy_cfg()
-    if not c.get("enabled", False):
+    return bool(c.get("enabled", False)) and msg.channel.id in c.get("channel_ids", [])
+
+def is_signal_message(msg: discord.Message) -> bool:
+    if not is_copy_channel(msg):
         return False
-    if msg.channel.id not in c.get("channel_ids", []):
-        return False
-    authors = c.get("author_ids", [])
+    authors = copy_cfg().get("author_ids", [])
     return not authors or msg.author.id in authors
+
+# v27.65: ids already handed to the trading bot (the catch-up sweep skips them; the bot also refuses repeats)
+SENT_IDS: set[int] = set()
 
 class BotApi:
     """Logs in to the trading bot once (JWT, 7 days) and re-logs in on a 401."""
@@ -174,20 +178,25 @@ class BotApi:
             self.token = (await r.json()).get("token")
             return bool(self.token)
 
-    async def send_signal(self, msg: discord.Message, text: str) -> dict | None:
+    async def send_signal(self, msg: discord.Message, text: str, other: bool = False) -> dict | None:
         body = {
             "id": str(msg.id),
             "text": text,
             "at": int(msg.created_at.timestamp() * 1000),
             "source": copy_cfg().get("source", "kojiro"),
             "channel": str(msg.channel.id),
+            # v27.65: posted in his channel by someone else → the bot only logs it (never trades on it)
+            **({"other": True, "author": str(msg.author)[:40]} if other else {}),
         }
+        return await self.post("/api/forex/discord-signal", body)
+
+    async def post(self, path: str, body: dict) -> dict | None:
         for attempt in range(3):
             if not self.token and not await self.login():
                 return None
             try:
                 s = await self._session()
-                async with s.post(f"{self.base()}/api/forex/discord-signal", json=body,
+                async with s.post(f"{self.base()}{path}", json=body,
                                   headers={"Authorization": f"Bearer {self.token}"}) as r:
                     if r.status == 401:
                         self.token = None
@@ -200,14 +209,17 @@ class BotApi:
 
 bot_api = BotApi()
 
-async def forward_signal(msg: discord.Message):
+async def forward_signal(msg: discord.Message, other: bool = False):
+    if msg.id in SENT_IDS:
+        return
     text = message_text(msg)
     if not text:
         return
-    res = await bot_api.send_signal(msg, text)
+    res = await bot_api.send_signal(msg, text, other)
     if res is None:
         logger.warning(f"COPY FAILED | {text[:120]!r}")
         return
+    SENT_IDS.add(msg.id)
     kind = res.get("kind")
     if kind in ("none", "duplicate"):
         return
@@ -242,6 +254,34 @@ def format_hit_pretty(msg: discord.Message, matched: list[str], source: str = "c
         f"{Fore.GREEN}╚═════════════════╝{Style.RESET_ALL}"
     )
 
+async def catch_up():
+    """v27.65 (owner: "don't miss shit again"): every 2 minutes re-read the newest posts of each signal channel and hand
+    over anything the live event missed (a reconnect, a restart, a hiccup). The bot refuses repeats and opens nothing
+    posted more than 10 minutes ago; levels and plans are still saved. Also tells the bot it is alive (heartbeat)."""
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        seen = []
+        try:
+            since = datetime.now(timezone.utc) - timedelta(hours=12)
+            for cid in copy_cfg().get("channel_ids", []) if copy_cfg().get("enabled") else []:
+                ch = bot.get_channel(int(cid))
+                if ch is None:
+                    continue
+                seen.append(str(cid))
+                # the newest 30 (with `after` Discord would hand the OLDEST 30 since then)
+                msgs = [m async for m in ch.history(limit=30) if m.created_at >= since]
+                for m in sorted(msgs, key=lambda x: x.created_at):
+                    if m.id in SENT_IDS:
+                        continue
+                    if is_signal_message(m):
+                        await forward_signal(m)
+                    elif m.author.id != bot.user.id:
+                        await forward_signal(m, other=True)
+            await bot_api.post("/api/forex/discord-heartbeat", {"channels": seen, "sent": len(SENT_IDS)})
+        except Exception as e:  # never let the sweep die
+            logger.warning(f"copy: catch-up failed ({e})")
+        await asyncio.sleep(120)
+
 # ─── Bot Setup ───────────────────────────────────────────────────────────────
 
 bot = discord.Client()
@@ -256,6 +296,9 @@ scan_stats = {
 @bot.event
 async def on_ready():
     scan_stats["started_at"] = datetime.now(timezone.utc)
+    if not getattr(bot, "_catch_up_started", False):  # on_ready fires again after every reconnect
+        bot._catch_up_started = True
+        asyncio.create_task(catch_up())
     print(f"""
 {Fore.GREEN}{'='*50}
   Discord Self Bot Scanner — ONLINE
@@ -282,6 +325,8 @@ async def on_message(message: discord.Message):
     # ── Copy trading: signal channel → the trading bot (runs even while paused) ─
     if is_signal_message(message):
         asyncio.create_task(forward_signal(message))
+    elif is_copy_channel(message) and message.author.id != bot.user.id:
+        asyncio.create_task(forward_signal(message, other=True))
 
     # ── Ignore own messages ──────────────────────────────────────────────
     if message.author.id == bot.user.id:

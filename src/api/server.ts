@@ -29,7 +29,7 @@ import { lossSummary, type LossReview } from '../forex/loss-review';
 import { FX_CONFIG, focusMarkets } from '../forex/lab';
 import { botStatus, dayTrades, parsePnlQuery, pnlReport } from '../forex/pnl';
 import { STRATEGIES } from '../forex/strategies';
-import { DISCORD_COPY, POSTED_LEVELS, copyLog, handleSignal, loadLevels } from '../forex/discord';
+import { DISCORD_COPY, POSTED_LEVELS, copierDown, copyLog, handleSignal, loadHeartbeat, loadLevels, saveHeartbeat } from '../forex/discord';
 import { isCrypto } from '../forex/types';
 import { moneyMap } from '../learner/money-map';
 import { DEFAULT_CONFIG as DEFAULTS } from '../config/default';
@@ -429,8 +429,13 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       if (!r.ok) reply.code(400);
       return r;
     });
+    // v27.65: the copier's heartbeat (every 2 min, with its catch-up sweep)
+    secured.post<{ Body: { channels?: unknown; sent?: unknown } }>('/api/forex/discord-heartbeat', async (req) => {
+      const beat = await saveHeartbeat(redis, req.body ?? {});
+      return { ok: true, t: beat.t };
+    });
     // v27.46: Kojiro's Discord signals, posted by the owner's self-bot (scripts/discord-scanner) → copy trades
-    secured.post<{ Body: { id?: string; text?: string; at?: number | string; source?: string; channel?: string } }>('/api/forex/discord-signal', async (req, reply) => {
+    secured.post<{ Body: { id?: string; text?: string; at?: number | string; source?: string; channel?: string; other?: boolean; author?: string } }>('/api/forex/discord-signal', async (req, reply) => {
       const b = req.body ?? {};
       const id = String(b.id ?? '');
       const text = String(b.text ?? '');
@@ -443,7 +448,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         return { ok: false, error: 'not running' };
       }
       const at = typeof b.at === 'number' ? b.at : Date.parse(String(b.at ?? '')) || Date.now();
-      const row = await handleSignal(redis, deps.practice, { id, text, at, ...(b.source ? { source: String(b.source) } : {}), ...(b.channel ? { channel: String(b.channel) } : {}) });
+      const row = await handleSignal(redis, deps.practice, { id, text, at, ...(b.source ? { source: String(b.source) } : {}), ...(b.channel ? { channel: String(b.channel) } : {}), ...(b.other ? { other: true, author: String(b.author ?? '') } : {}) });
       if (row.kind === 'open' || row.kind === 'close' || row.kind === 'breakeven' || row.kind === 'old' || row.kind === 'levels') {
         const lab = row.pair && isCrypto(row.pair) ? deps.crypto : deps.forex;
         lab?.logBot([`Discord (${row.source}): ${row.what}`]);
@@ -452,7 +457,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     });
     secured.get('/api/forex/discord', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
-      return { on: DISCORD_COPY.on, riskPct: DISCORD_COPY.riskPct, stopPct: DISCORD_COPY.stopPct, profitLock: DISCORD_COPY.profitLock, levelTrades: POSTED_LEVELS.trade, levels: await loadLevels(redis), log: await copyLog(redis, 50) };
+      return { on: DISCORD_COPY.on, riskPct: DISCORD_COPY.riskPct, stopPct: DISCORD_COPY.stopPct, profitLock: DISCORD_COPY.profitLock, levelTrades: POSTED_LEVELS.trade, levels: await loadLevels(redis), log: await copyLog(redis, 50), copier: await (async () => { const hb = await loadHeartbeat(redis); return { lastSeen: hb?.t ?? null, channels: hb?.channels ?? [], down: copierDown(hb, Date.now()) }; })() };
     });
     // v17.11: the owner's profit lock on their own trades (the bot account always uses it)
     secured.post<{ Body: { on?: boolean } }>('/api/forex/practice/lock', async (req, reply) => {

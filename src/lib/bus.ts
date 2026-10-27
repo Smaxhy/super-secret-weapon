@@ -8,7 +8,7 @@ import { EventEmitter } from 'node:events';
 /** v17.12 (forex/practice.ts) */
 export interface FxNotice {
   /** v27.30: 'open' = a bot trade was opened; 'week' = last week's summary (`reason` carries the text); v27.32 'ready' = the Sunday "ready for Monday" line */
-  kind: 'lock' | 'run' | 'close' | 'open' | 'week' | 'ready';
+  kind: 'lock' | 'run' | 'close' | 'open' | 'week' | 'ready' | 'copier';
   pair: string;
   side: 1 | -1;
   /** the trade's P&L now (close: its total, parts taken included) */
