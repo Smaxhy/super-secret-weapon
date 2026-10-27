@@ -21,7 +21,7 @@ interface DayTrade { id: string; pair: string; side: 1 | -1; strategy: string | 
 const WEEK = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 const pad = (n: number) => String(n).padStart(2, '0');
 const keyOf = (y: number, m: number, d: number) => `${y}-${pad(m + 1)}-${pad(d)}`;
-const REASON: Record<string, string> = { partial: 'part taken', weekend: 'paused for the weekend', signal: 'strategy exit', 'stop-out': 'margin call', stop: 'stop', target: 'target', manual: 'closed by hand', breakeven: 'break-even stop' };
+const REASON: Record<string, string> = { partial: 'part taken', weekend: 'paused for the weekend', signal: 'strategy exit', 'stop-out': 'margin call', stop: 'stop', target: 'target', manual: 'closed by hand', breakeven: 'break-even stop', spike: 'sold into a spike' };
 /** Calendar cell: "+12", "−3.45", "+1.2k" (fits a phone-width cell). */
 const cell = (v: number) => {
   const a = Math.abs(v);

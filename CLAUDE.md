@@ -758,6 +758,19 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.67 sell into a big spike (Oct 27, owner: "you sure these are profitable charts … the bot loses because it's too
+focused on the tight TP, I close it way earlier — if there is a big spike, sell")
+VPS read 15:44 UTC (cbot, all time +$188.44): bot-closed 52 trades −$126.05, hand-closed 19 +$314.49 (17 in profit, +0.04…+1.17R,
+median ≈ +0.3R on `riskUsd0`). The named losers (pivot_bounce:4h −$66, pivot_ladder:4h −$46, trendline_break:1h −$38,
+donchian20:1h −$32) all opened before v27.44 (Oct 25 08:00) / most before the $20 cap (Oct 22 17:00); under v27.44 none of
+them can trade (pivot_bounce / pivot_ladder / trendline_break:1h rows 'no' → coinCellPass needs Edge / Maybe; donchian20:1h
+cells +0.11–0.14R < 0.15). Since Oct 25 08:00 the bot's own closes: 8 trades +$16.18. practice.ts `SPIKE_EXIT` {on, jumpR
+0.3, windowMs 5 min, minR 0.3, minUsd 5} + `spikeExitFor(p, q, mids, half, now)` (pure): a bot trade (has a lab ref, not tf
+'signal') whose price jumped ≥ 0.3R its way from the worst 1-minute price of the last 5 minutes and now sits ≥ +0.3R (R =
+`riskUsd0` ÷ units) and ≥ $5 after the close fee → `tick` closes it at the market, reason **'spike'** (`LEDGER_WHY.spike` 6;
+dashboard "sold into a spike"; push FX_WHY). Both bots. Live rule, NOT lab-graded (the engine's 1h / 4h candles can't see
+a minutes-long spike) — judge it on the P&L ("sold into a spike" rows) vs the trades it would have held.
+tests/forex-spike-exit (3).
 ## v27.66 the bot learns which of Kojiro's calls hit + a tight trailing stop around big news (Oct 27, owner: "lock in and be
 more accurate, scan Kojiro's calls, see which one hits and take it; with a tight trailing SL in moments of need")
 `src/forex/kojiro-study.ts`: his posts (copier uploads his last 120 days at start + every 12 h → POST

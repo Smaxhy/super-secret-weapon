@@ -45,7 +45,7 @@ const dp = digitsOf;
 const usd = (x: number) => `${x < 0 ? '−' : ''}$${Math.abs(x).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink-2');
 const clock = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-const REASON: Record<string, string> = { partial: 'part taken', weekend: 'paused for the weekend', signal: 'strategy exit', 'stop-out': 'margin call', stop: 'stop', target: 'target' };
+const REASON: Record<string, string> = { partial: 'part taken', weekend: 'paused for the weekend', signal: 'strategy exit', 'stop-out': 'margin call', stop: 'stop', target: 'target', spike: 'sold into a spike' };
 const STATUS: Record<PlanMarket['status'], { label: string; tone: 'up' | 'warn' | 'neutral' | 'down' }> = {
   trading: { label: 'In a trade', tone: 'up' },
   waiting: { label: 'Waiting', tone: 'warn' },

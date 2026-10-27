@@ -283,7 +283,7 @@ export interface ClosedPractice extends PracticePosition {
   exit: number;
   closedAt: number;
   pnlUsd: number;
-  reason: 'manual' | 'stop' | 'target' | 'stop-out' | 'signal' | 'weekend' | 'partial';
+  reason: 'manual' | 'stop' | 'target' | 'stop-out' | 'signal' | 'weekend' | 'partial' | 'spike';
   /** v26: the venue's open + close fee taken out of `pnlUsd` (venue-fees.ts) */
   feeUsd?: number;
 }
@@ -312,7 +312,7 @@ export interface ResumeItem {
  * opened; null when unknown), lab ref, why]. Never rewritten — the only record of what the bot itself really did.
  */
 export type LedgerRow = [closedAt: number, usd: number, r: number | null, ref: string, why: number];
-export const LEDGER_WHY = { stop: 0, target: 1, signal: 2, 'stop-out': 3, weekend: 4, manual: 5 } as const;
+export const LEDGER_WHY = { stop: 0, target: 1, signal: 2, 'stop-out': 3, weekend: 4, manual: 5, spike: 6 } as const;
 const LEDGER_KEEP = 60;
 const LEDGER_DAYS = 120;
 
@@ -727,6 +727,36 @@ export function undoOpen(a: PracticeAccount): { open: number; parts: number; usd
   return { open, parts: parts.length, usd, orders, paused, ids };
 }
 
+/** v27.67: sell into a big spike (see the call in `tick`). Bot trades only (they carry a lab ref — never the owner's own
+ * trades, never a Kojiro copy: those follow his exit). */
+export const SPIKE_EXIT = {
+  on: true,
+  /** the move its way within `windowMs` (from the worst price of that window to now), in R */
+  jumpR: 0.3,
+  windowMs: 5 * 60_000,
+  /** and the trade is at least this far in profit now (R), and at least `minUsd` after the close fee */
+  minR: 0.3,
+  minUsd: 5,
+};
+
+/** The reason to sell into a spike now, or null. Pure. */
+export function spikeExitFor(p: PracticePosition, q: Pick<Quote, 'mid' | 'bars'>, mids: Record<string, number>, half: number, now: number): string | null {
+  if (!SPIKE_EXIT.on || !p.ref || p.tf === 'signal' || !(p.riskUsd0 && p.riskUsd0 > 0) || !(p.units > 0)) return null;
+  const per = Math.abs(pnlUsd({ pair: p.pair, side: 1, units: 1, entry: p.entry }, p.entry + 1, mids));
+  const d0 = per > 0 ? p.riskUsd0 / (p.units * per) : 0;
+  if (!(d0 > 0)) return null;
+  const recent = q.bars.filter((b) => b[0] >= now - SPIKE_EXIT.windowMs && b[0] >= p.openedAt - 60_000);
+  if (!recent.length) return null;
+  const worst = p.side === 1 ? Math.min(...recent.map((b) => b[2])) : Math.max(...recent.map((b) => b[1]));
+  const jump = (p.side * (q.mid - worst)) / d0;
+  const px = exitPx(p, q.mid, half);
+  const inR = (p.side * (px - p.entry)) / d0;
+  if (jump < SPIKE_EXIT.jumpR || inR < SPIKE_EXIT.minR) return null;
+  const fee = feeUsd(instrument(p.pair) ?? { id: p.pair, kind: 'fx' }, p.marginUsd, p.leverage);
+  if (pnlUsd(p, px, mids) - fee < SPIKE_EXIT.minUsd) return null;
+  return `+${jump.toFixed(2)}R in ${Math.round(SPIKE_EXIT.windowMs / 60_000)} min, now +${inR.toFixed(2)}R`;
+}
+
 /** Close a position; a bot trade's total (parts + this close) goes into its record unless it only paused for the
  * weekend. Returns this close's P&L. Mutates `a`. */
 function closePos(a: PracticeAccount, p: PracticePosition, px: number, mids: Record<string, number>, reason: ClosedPractice['reason'], at: number): number {
@@ -890,6 +920,17 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
           } else if (mv) mv.moved = true;
         }
       }
+    }
+    // v27.67 (owner: "the bot is too focused on the tight TP, I close it way earlier — if there is a big spike, sell"):
+    // a bot trade that jumped its way by SPIKE_EXIT.jumpR within the last few minutes and now sits ≥ minR in profit is
+    // closed at the market (reason 'spike'). R = its tested stop distance (riskUsd0). Live rule, not lab-graded; his 19
+    // hand closes were cut at +0.2…+1.2R (median ≈ +0.3R), 17 of them in profit.
+    const spikeWhy = !q.stale && spikeExitFor(p, q, mids, half, now);
+    if (spikeWhy) {
+      const px = exitPx(p, q.mid, half);
+      const pl = closePos(a, p, px, mids, 'spike', now);
+      events.push(`${p.pair} big spike its way (${spikeWhy}) — sold into it: ${pl >= 0 ? '+' : '−'}$${Math.abs(pl).toFixed(2)}`);
+      continue;
     }
     // v27.20: the account's loss cap in USD — the stop is pulled in so this trade can't lose more (never loosened);
     // already past it → closed at the market now

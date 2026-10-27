@@ -46,7 +46,7 @@ export interface PushMessage {
 }
 
 const fxUsd = (x: number) => `${x >= 0 ? '+' : '−'}$${Math.abs(x).toFixed(2)}`;
-const FX_WHY: Record<string, string> = { stop: 'its stop', target: 'its target', signal: "its strategy's exit", manual: 'closed by hand', 'stop-out': 'margin call' };
+const FX_WHY: Record<string, string> = { stop: 'its stop', target: 'its target', signal: "its strategy's exit", manual: 'closed by hand', 'stop-out': 'margin call', spike: 'a big spike its way (sold into it)' };
 
 /** v17.12 Pure: the notification for a forex trade event, or null when the owner doesn't want it. */
 export function fxMessageFor(n: Extract<BusEvent, { type: 'fxTrade' }>['data'], s: PushSettings): PushMessage | null {
