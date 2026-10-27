@@ -2434,6 +2434,25 @@ export class Practice {
     });
   }
 
+  /** v27.59 (owner: "re-enter his trade, it sold, I didn't want that"): open the newest closed Discord copy again at the
+   * market — same market, side and strategy, its ORIGINAL stop price (the stop it opened with, not one the cap / lock
+   * moved), no target, `riskPct` of the account; refused when the price is already past that stop. A new ref, so the
+   * close stays in the record as it happened. */
+  async reenterCopy(acct: 'bot' | 'cbot', riskPct: number, pick: (c: ClosedPractice) => boolean = () => true): Promise<string> {
+    const a = await this.serial(() => this.load(acct));
+    const last = [...a.closed].filter((c) => c.tf === 'signal' && c.reason !== 'partial' && pick(c)).sort((x, y) => y.closedAt - x.closedAt)[0];
+    if (!last) return 'no closed Kojiro copy to re-enter';
+    if (a.open.some((p) => p.tf === 'signal' && p.pair === last.pair && p.side === last.side)) return `already back in a ${last.side === 1 ? 'long' : 'short'} ${last.pair} copy`;
+    const per = Math.abs(pnlUsd({ pair: last.pair, side: 1, units: 1, entry: last.entry }, last.entry + 1, { [last.pair]: last.entry }));
+    const d0 = last.riskUsd0 && last.units > 0 && per > 0 ? last.riskUsd0 / (last.units * per) : last.stop !== null ? Math.abs(last.entry - last.stop) : 0;
+    if (!(d0 > 0)) return `${last.pair}: no original stop to re-enter with`;
+    const stop = last.entry - last.side * d0;
+    const n = a.closed.filter((c) => c.ref?.startsWith(`${last.ref}:re`)).length + a.open.filter((p) => p.ref?.startsWith(`${last.ref}:re`)).length;
+    const r = await this.copyOpen({ pair: last.pair, side: last.side, stopNamed: null, hisPx: null, strategy: last.strategy ?? 'discord_kojiro', ref: `${last.ref}:re${n + 1}`, riskPct, leverage: DISCORD_COPY.leverage, profitLock: DISCORD_COPY.profitLock, stop, target: null }, acct);
+    const what = `${last.side === 1 ? 'long' : 'short'} ${last.pair} (closed ${new Date(last.closedAt).toISOString().slice(11, 16)} UTC on '${last.reason}' at ${last.exit})`;
+    return r.ok ? `re-entered ${what} at ${r.entry}, original stop ${stop.toPrecision(7)}, risking $${r.riskUsd} (margin $${r.marginUsd})` : `could not re-enter ${what}: ${r.error}`;
+  }
+
   /** v27.58: re-size the open Discord copies to `pct`% (see `resizeCopies`). */
   async resizeCopies(acct: AcctId, pct: number): Promise<string[]> {
     return this.serial(async () => {

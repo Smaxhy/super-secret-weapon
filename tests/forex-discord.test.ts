@@ -85,7 +85,7 @@ describe('handleSignal on the bot account', () => {
     const acct = () => JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount;
     return { r, p, acct, setMid: (x: number) => (mid = x) };
   };
-  it('opens a long on his post at 20% of the account (past the $20 cap), no target, tight trailing stop (profit lock) on; once per message', async () => {
+  it('opens a long on his post at 20% of the account (past the $20 cap), no target, no profit lock; once per message', async () => {
     const { r, p, acct } = setup();
     const row = await handleSignal(r as unknown as Redis, p, { id: '1300000000000000001', text: 'SIGNAL · NQ — LONG @ 29,026.25', at: NOW - 20_000 });
     expect(row.ok).toBe(true);
@@ -93,7 +93,7 @@ describe('handleSignal on the bot account', () => {
     expect(a.open).toHaveLength(1);
     const pos = a.open[0]!;
     expect(pos).toMatchObject({ pair: 'NDXUSD', side: 1, entry: 29_031, target: null, strategy: 'discord_kojiro', tf: 'signal' });
-    expect(pos.lock).not.toBeNull(); // v27.51: "trust his trades … trail it tight SL"
+    expect(pos.lock).toBeNull(); // v27.59: no profit lock on his calls — his exit / the safety stop only
     expect(pos.ref).toBe('discord_kojiro:signal:NDXUSD:1300000000000000001');
     expect((pos.entry - pos.stop!) * pos.units).toBeCloseTo(200, 0); // v27.57: the safety stop loses 20% ($200)
     expect(pos.allIn).toBe(true); // the account's $20 loss cap leaves it alone
@@ -158,5 +158,27 @@ describe('v27.58 resizeCopies', () => {
     expect(p.maxLossUsd).toBeUndefined();
     expect(p.marginUsd).toBeLessThanOrEqual(900);
     expect(a.balanceUsd).toBe(1000); // nothing booked
+  });
+});
+
+describe('v27.59 reenterCopy', () => {
+  it('re-opens the newest closed copy at the market on its original stop, 20% of the account, new ref', async () => {
+    vi.useFakeTimers({ now: NOW });
+    const r = new FakeRedis();
+    const a = newAccount(1000);
+    const units = 200 / 145; // re-sized copy: $200 at a 145-point stop from 29,000
+    a.closed.push({ id: 'k1', pair: 'NDXUSD', side: 1, units, entry: 29_000, marginUsd: 800, leverage: 50, stop: 29_010, target: null, openedAt: NOW - 30 * M, checkedT: NOW, strategy: 'discord_kojiro', ref: 'discord_kojiro:signal:NDXUSD:9', tf: 'signal', riskPct: 20, riskUsd0: 200, exit: 29_010, closedAt: NOW - 2 * M, pnlUsd: 10, reason: 'stop' } as PracticeAccount['closed'][number]);
+    r.m.set('fx:practice:bot', JSON.stringify(a));
+    const p = new Practice(r as unknown as Redis);
+    const mid = 29_050;
+    (p as unknown as { quotes: () => Promise<Record<string, Quote>> }).quotes = async () => ({ NDXUSD: { id: 'NDXUSD', mid, bid: mid - 1, ask: mid + 1, t: Date.now(), bars: [[Date.now() - M, mid, mid, mid]], dayChangePct: 0, source: 'yahoo', priceT: Date.now() } as Quote });
+    const line = await p.reenterCopy('bot', 20);
+    expect(line).toMatch(/re-entered long NDXUSD/);
+    const pos = (JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount).open[0]!;
+    expect(pos.stop).toBeCloseTo(28_855, 0); // the original stop, not the profit-lock stop it closed on
+    expect(pos.ref).toBe('discord_kojiro:signal:NDXUSD:9:re1');
+    expect(pos.allIn).toBe(true);
+    expect((pos.entry - pos.stop!) * pos.units).toBeCloseTo(200, -1);
+    expect(await p.reenterCopy('bot', 20)).toMatch(/already back in/);
   });
 });

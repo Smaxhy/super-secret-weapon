@@ -758,6 +758,16 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.59 his NQ long re-entered + no profit lock on his calls (Oct 27, owner: "re-enter his trade, it sold, I didn't want that")
+VPS read 01:53 UTC (d0804f7 — v27.58 had not deployed yet, so it was still 1.9% / $20): his NQ long (posted 29,470, copied
+01:34 at 29,486, safety stop 29,338.57) ran to ~29,546; the v27.51 profit lock (no target → D = 2 × stop ≈ 295 pts, armed
+at +44, trailing 44 behind) moved the stop to 29,501.77 and the pullback closed it at 01:51 (+15.8 pts, −$0.26 after fees).
+Kojiro posted no exit. Fixes: `DISCORD_COPY.profitLock` default OFF (`DISCORD_COPY_LOCK=on` restores it) → his calls close
+on his exit / his SL / the safety stop; the level trades keep their lock (they have a target). `Practice.reenterCopy(acct,
+riskPct, pick)`: the newest closed copy opened again at the market on its ORIGINAL stop (`riskUsd0` ÷ units), new ref
+`<ref>:reN`, refused past that stop / when already back in. One-time `v27.59-reenter-kojiro-nq` (that ref, 20%; first try
+60 s after start, retried every 30 s ×10 while there is no live price; bot-log line "Kojiro copy: re-entered …").
+tests in forex-discord (+1, lock expectation flipped).
 ## v27.58 the open Kojiro copy re-sized to 20% (Oct 27, owner: "adjust the current live trade as if it has 20% fast")
 `resizeCopies(a, pct, mids)` (practice.ts, pure) + `Practice.resizeCopies(acct, pct)`: every open copy (tf 'signal') gets
 more units as if it had opened at `pct`% of the balance on its ORIGINAL stop (distance = `riskUsd0` ÷ units; same entry),

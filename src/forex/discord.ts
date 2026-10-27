@@ -31,8 +31,10 @@ export const DISCORD_COPY = {
   maxMismatchStops: 1.5,
   /** a message older than this when it reaches us is not opened (a reconnect replaying old posts) */
   maxAgeMs: 10 * 60_000,
-  /** v27.51: the profit lock (tight trailing stop once in profit) is ON for copies too; `DISCORD_COPY_LOCK=off` = his exit only */
-  profitLock: process.env.DISCORD_COPY_LOCK !== 'off',
+  /** v27.51 had the profit lock (tight trailing stop once in profit) on for copies; v27.59 OFF again (owner: "it sold, I
+   * didn't want that" — the lock closed his NQ long on a 45-point pullback): his exit / his SL / the safety stop only.
+   * `DISCORD_COPY_LOCK=on` switches it back on. The level trades (they carry a target) keep their lock. */
+  profitLock: process.env.DISCORD_COPY_LOCK === 'on',
   seenTtlSec: 7 * 86_400,
   logKey: 'fx:discord:log',
   logMax: 200,
