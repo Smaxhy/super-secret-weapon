@@ -84,3 +84,22 @@ export function extendWithLive(base: readonly Bar[], live: readonly Bar[], barMs
     .map((b): Bar => ({ t: b.t, o: b.o + B, h: b.h + B, l: b.l + B, c: b.c + B, ...(ratio !== null && b.v ? { v: b.v * ratio } : {}) }));
   return { bars: [...base, ...add], added: add.length, basis: B };
 }
+
+/**
+ * v27.56 (owner: "are the charts real time and not delayed now?"): the chart side of v27.52. The trade / market charts
+ * read Yahoo's candles, whose newest ~10 minutes are missing on the CME futures (indices, metals). `live` = the same
+ * market's candles at the same size from a real-time source, already the right size; `gap` = the measured futures − live
+ * gap. Live candles at or after Yahoo's newest one are moved onto the futures price and laid over the tail: Yahoo's
+ * (unfinished, late) newest candle is replaced, newer ones are added — the still-forming one included, so the chart's
+ * last candle moves with the price. Candles inside the CME halt hour or when `closed(t)` are skipped. Pure.
+ */
+export function liveTail(base: readonly Bar[], live: readonly Bar[], gap: number, now: number, closed: (t: number) => boolean = () => false): Bar[] {
+  if (!base.length || !live.length || !Number.isFinite(gap)) return [...base];
+  const last = base[base.length - 1]!.t;
+  const add = live
+    .filter((b) => b.t >= last && b.t <= now && b.c > 0 && !closed(b.t) && !(nyMinOfDay(b.t) >= 17 * 60 && nyMinOfDay(b.t) < 18 * 60))
+    .map((b): Bar => ({ t: b.t, o: b.o + gap, h: b.h + gap, l: b.l + gap, c: b.c + gap, ...(b.v ? { v: b.v } : {}) }));
+  if (!add.length) return [...base];
+  const out = base.filter((b) => b.t < add[0]!.t);
+  return [...out, ...add];
+}

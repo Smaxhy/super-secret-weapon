@@ -758,6 +758,16 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.56 the trade / market charts of indices and metals no longer lag 10 minutes (Oct 27, owner: "are the charts real
+time and not delayed now?")
+v27.52 only fed the BOT's candles; the dashboard chart (GET `/api/forex/candles` → `Practice.candles`, used by the
+active-trade card) still drew Yahoo's CME candles, ~10 min late, when OANDA isn't connected. `liveTail(base, live, gap, now,
+closed)` (basis.ts, pure): live candles of the same size at / after Yahoo's newest one, moved by the futures − Hyperliquid
+gap, replace Yahoo's late last candle and are added after it (the forming one included); CME halt hour / closed market
+skipped. `Practice.liveChartTail` (M1 / M5 / M15 / H1 / H4, futures only, needs a measured `hlGap`) via the swappable
+`Practice.hlBars` (= `hlCandles` on the market from `hyperliquidLive.futuresFound()`; intervals now 1m / 5m / 15m / 1h / 4h).
+No live market, no gap or an error → Yahoo's candles as before. Currency pairs / coins unchanged (Yahoo FX + Coinbase are
+not delayed). tests in forex-live-candles (+2).
 ## v27.55 v27.54 reverted: the signal judge keeps its veto on forex cell setups (Oct 27, owner: "I don't want it to force
 trades, but if it's a bug it's different")
 Not a bug: the judge and the per-market bar disagreed and the stricter one won. Evidence read 00:06 UTC: the shadow book has

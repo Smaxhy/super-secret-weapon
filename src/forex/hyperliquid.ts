@@ -327,7 +327,7 @@ export const hyperliquidLive = new HyperliquidLive(realSocket, Date.now, INSTRUM
 export const HL_FUTURES_KEY = 'fx:hl:futures';
 
 /** v27.52: a builder market's candles over REST (no account): newest last, finished and forming alike. */
-export async function hlCandles(coin: string, interval: '1m' | '15m' | '1h', startTime: number, endTime: number, fetcher: Fetcher = (url, init) => fetch(url, init)): Promise<Bar[]> {
+export async function hlCandles(coin: string, interval: '1m' | '5m' | '15m' | '1h' | '4h', startTime: number, endTime: number, fetcher: Fetcher = (url, init) => fetch(url, init)): Promise<Bar[]> {
   const res = await fetcher(HYPERLIQUID.info, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'candleSnapshot', req: { coin, interval, startTime, endTime } }), signal: AbortSignal.timeout(10_000) });
   if (!res.ok) throw new Error(`Hyperliquid candles HTTP ${res.status}`);
   const rows = (await res.json()) as Array<{ t?: number; o?: string; h?: string; l?: string; c?: string; v?: string }> | null;

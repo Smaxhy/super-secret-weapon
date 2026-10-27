@@ -1,7 +1,7 @@
 /** v27.52 (owner: "what happened to not having delayed candles"; "copy his trades immediately, or 1–2 minutes later"). */
 import { describe, expect, it, vi } from 'vitest';
 import type Redis from 'ioredis';
-import { extendWithLive } from '../src/forex/basis';
+import { extendWithLive, liveTail } from '../src/forex/basis';
 import { hlCandles } from '../src/forex/hyperliquid';
 import { LevelWatch, shiftedMinutes } from '../src/forex/level-watch';
 import type { Practice } from '../src/forex/practice';
@@ -70,5 +70,28 @@ describe('his levels on live 1-minute candles', () => {
     expect(lines[0]).toMatch(/Kojiro level: bought NDXUSD/);
     await w.tick(now + 5_000); // the same minute again → no second trade
     expect(copyOpen).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('chart tail from live candles (v27.56)', () => {
+  // Mon 2026-10-26 14:00 UTC = 10:00 New York (open)
+  const T0 = Date.UTC(2026, 9, 26, 14, 0);
+  const M = 60_000;
+  const bar = (t: number, c: number) => ({ t, o: c, h: c + 1, l: c - 1, c });
+  it('replaces Yahoo\'s late last candle and adds the newer ones (forming one included), moved by the gap', () => {
+    const yahoo = [bar(T0, 100), bar(T0 + M, 101), bar(T0 + 2 * M, 102)];
+    const live = [bar(T0 + M, 91), bar(T0 + 2 * M, 95), bar(T0 + 3 * M, 96), bar(T0 + 4 * M, 97)];
+    const out = liveTail(yahoo, live, 10, T0 + 4 * M + 20_000);
+    expect(out.map((b) => b.t)).toEqual([T0, T0 + M, T0 + 2 * M, T0 + 3 * M, T0 + 4 * M]);
+    expect(out[1]!.c).toBe(101); // older Yahoo candles stay
+    expect(out[2]!.c).toBe(105); // Yahoo's newest candle replaced by the live one + gap
+    expect(out[4]!.c).toBe(107); // the forming candle is shown
+  });
+  it('no live candles, no gap or the CME halt hour → Yahoo as it is', () => {
+    const yahoo = [bar(T0, 100)];
+    expect(liveTail(yahoo, [], 5, T0 + M)).toEqual(yahoo);
+    expect(liveTail(yahoo, [bar(T0 + M, 90)], Number.NaN, T0 + 2 * M)).toEqual(yahoo);
+    const halt = Date.UTC(2026, 9, 26, 21, 30); // 17:30 New York
+    expect(liveTail([bar(halt - M, 100)], [bar(halt, 90)], 10, halt + M).length).toBe(1);
   });
 });

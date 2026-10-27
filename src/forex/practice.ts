@@ -13,8 +13,8 @@ import { feeds } from './feeds';
 import { dkQuote } from './dukascopy';
 import { HEAT, maxRiskUnder, topCorrelated, type CorrBook } from './risk';
 import { oandaCandles, oandaCovers, oandaPrices, oandaReady, loadOanda, type Granularity, type OandaSettings } from './oanda';
-import { BASIS, measureBasis, needsBasis, shiftBars, type BasisRow } from './basis';
-import { hyperliquidLive } from './hyperliquid';
+import { BASIS, liveTail, measureBasis, needsBasis, shiftBars, type BasisRow } from './basis';
+import { hlCandles, hyperliquidLive } from './hyperliquid';
 import { INSTRUMENTS, TF_MIN, instrument, isCrypto, isFutures, maxLeverageFor, type Bar, type Instrument, type Timeframe } from './types';
 import { clockFor, marketClock } from './calendar';
 import { priceShock } from './headlines';
@@ -1300,6 +1300,12 @@ export class Practice {
   private basisTried = new Map<string, number>();
   /** v27.48: Hyperliquid's builder index / metal markets (swappable for tests) */
   hl: Pick<typeof hyperliquidLive, 'book' | 'candles' | 'futBars'> = hyperliquidLive;
+  /** v27.56: a futures market's real-time candles from its Hyperliquid builder market (unshifted; [] when it has none) —
+   * swappable for tests */
+  hlBars: (id: string, interval: '1m' | '5m' | '15m' | '1h' | '4h', from: number, to: number) => Promise<Bar[]> = async (id, interval, from, to) => {
+    const coin = hyperliquidLive.futuresFound()[id];
+    return coin ? hlCandles(coin, interval, from, to) : [];
+  };
   /** v27.52: the futures − Hyperliquid gap for one market (null = not measured yet; asking starts a measurement) */
   hlGap(id: string, now = Date.now()): number | null {
     return this.basisFor(id, 'hl', now);
@@ -2233,12 +2239,29 @@ export class Practice {
           }
           bars = out;
         }
-        return { source: 'yahoo', bars: bars.slice(-count) };
+        return { source: 'yahoo', bars: (await this.liveChartTail(id, g, bars)).slice(-count) };
       } catch {
         // next host
       }
     }
     return { source: 'yahoo', bars: [] };
+  }
+
+  /** v27.56: an index / metal chart from Yahoo (~10 min late) gets its newest candles from Hyperliquid, moved onto the
+   * futures price by the measured gap (`liveTail`); no live market / no gap yet / any error → Yahoo's candles as they are. */
+  private async liveChartTail(id: string, g: Granularity, bars: Array<Bar & { v?: number }>): Promise<Array<Bar & { v?: number }>> {
+    const iv = ({ M1: '1m', M5: '5m', M15: '15m', H1: '1h', H4: '4h' } as const)[g as 'M1' | 'M5' | 'M15' | 'H1' | 'H4'];
+    if (!iv || !needsBasis(id) || !bars.length) return bars;
+    const now = Date.now();
+    const gap = this.basisFor(id, 'hl', now);
+    if (gap === null) return bars;
+    const span = ({ '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400 } as const)[iv] * 1000;
+    try {
+      const live = await this.hlBars(id, iv, bars[bars.length - 1]!.t - 3 * span, now);
+      return liveTail(bars, live, gap, now, (t) => !clockFor(id, t).open);
+    } catch {
+      return bars;
+    }
   }
 
   async reset(startUsd: number, acct: AcctId = 'me'): Promise<void> {
