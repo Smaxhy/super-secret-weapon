@@ -758,6 +758,13 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.55 v27.54 reverted: the signal judge keeps its veto on forex cell setups (Oct 27, owner: "I don't want it to force
+trades, but if it's a bug it's different")
+Not a bug: the judge and the per-market bar disagreed and the stricter one won. Evidence read 00:06 UTC: the shadow book has
+3 forex judge refusals, 1 finished (XAGUSD round_break:4h −0.10R → it saved ~$8); the judge's own unseen exam (AUC 0.64,
+threshold 0.64, keeps 50%): kept −0.01R vs all −0.07R, the trades it skips −0.13R. So the judge cuts losers; nothing showed
+it blocking winners. `cellOnlyTrade` removed (git revert of v27.54). Re-open the question only if the shadow book's judge
+rows on proven cells finish clearly positive (20+ finished).
 ## v27.53 the login no longer runs out every week (Oct 26, owner: "I keep getting logged out of my app")
 A dashboard token lasted 7 days from when the password was typed, however often the app was used. auth.ts: POST
 `/api/auth/refresh` (behind `requireAuth`) returns a fresh 7-day token; dashboard `lib/api.ts` `renewLogin()` swaps it at
