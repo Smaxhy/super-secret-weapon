@@ -758,6 +758,15 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.61 a looser trailing stop on Kojiro's calls (Oct 27, owner: "trailing SL on his calls is fine, just not too tight early on")
+profit-lock.ts `COPY_LOCK` {atFrac 0.25, gapFrac 0.25, keepFrac 0.03, tightAtFrac 0.6, tightGapFrac 0.15} + `LockPlan.tight`
+(`lockPlan` cfg takes tightAtFrac / tightGapFrac; `lockedStop` uses the tight gap once the best price passes `tight.from`):
+for a call with no target (D = 2 × the starting stop) it arms at +0.5R, locks entry + costs + 0.06R, trails 0.5R behind,
+and past +1.2R trails 0.3R (the bot's normal lock). Practice `tick` picks it for tf 'signal' positions with no target; the
+level trades (with a target) keep `PROFIT_LOCK`. `DISCORD_COPY.profitLock` back ON by default (`DISCORD_COPY_LOCK=off`
+= his exit only). `reviveCopy` leaves `lock` unset (worked out at the next check); one-time `v27.61-relock-kojiro`
+(`Practice.relockCopies`) gives open calls with `lock: null` the copy lock. Engine / lab untouched (copies aren't graded).
+tests in forex-discord (+1).
 ## v27.60 his NQ long put back as if it never closed, at 20% (Oct 27, owner: "just revert exiting and put it at 20% instead
 of 1 … enter it where you were earlier and continue the trade")
 `reviveCopy(a, ref, pct)` (practice.ts, pure) + `Practice.reviveCopy`: the copy's close (and parts) struck via `undoClosed`

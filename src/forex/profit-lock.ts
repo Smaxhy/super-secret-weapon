@@ -23,6 +23,23 @@ export const PROFIT_LOCK = {
   keepFrac: 0.05,
 };
 
+/**
+ * v27.61 (owner: "trailing SL on his calls is fine, just not too tight early on"): the lock for Kojiro's calls (Discord
+ * copies with no target; D = 2 × the starting stop): arms at a quarter of D (+0.5R), locks entry + costs + 3% of D,
+ * trails a quarter of D (0.5R) behind the best price, and only once the price has gone 60% of D (+1.2R) its way does the
+ * trail tighten to the normal 15% of D (0.3R). His NQ long on Oct 27 (stop 147 pts, ran +60 then pulled back 45) would
+ * have stayed open.
+ */
+export const COPY_LOCK = {
+  on: true,
+  atFrac: 0.25,
+  gapFrac: 0.25,
+  keepFrac: 0.03,
+  /** past this share of D the trail tightens to `tightGapFrac` */
+  tightAtFrac: 0.6,
+  tightGapFrac: 0.15,
+};
+
 export interface LockPlan {
   /** the price that arms the lock */
   at: number;
@@ -30,13 +47,15 @@ export interface LockPlan {
   to: number;
   /** how far the stop trails behind the best price once armed (price) */
   gap: number;
+  /** v27.61: once the best price passes `from`, the trail tightens to `gap` (price) */
+  tight?: { from: number; gap: number };
 }
 
 /**
  * The lock for one trade, or null (no target and no usable stop, or costs so large the locked stop would not sit
  * between the entry and the arming price). `costPx` = what a close costs on top of the price (spread / slippage).
  */
-export function lockPlan(side: 1 | -1, entry: number, stop0: number | null, target0: number | null, costPx: number, cfg = PROFIT_LOCK): LockPlan | null {
+export function lockPlan(side: 1 | -1, entry: number, stop0: number | null, target0: number | null, costPx: number, cfg: typeof PROFIT_LOCK & { tightAtFrac?: number; tightGapFrac?: number } = PROFIT_LOCK): LockPlan | null {
   if (!Number.isFinite(entry) || entry <= 0) return null;
   let d = NaN;
   if (target0 !== null && Number.isFinite(target0) && side * (target0 - entry) > 0) d = Math.abs(target0 - entry);
@@ -45,12 +64,15 @@ export function lockPlan(side: 1 | -1, entry: number, stop0: number | null, targ
   const at = entry + side * cfg.atFrac * d;
   const to = entry + side * (Math.max(0, costPx) + cfg.keepFrac * d);
   if (side * (at - to) <= 0) return null;
-  return { at, to, gap: cfg.gapFrac * d };
+  const plan: LockPlan = { at, to, gap: cfg.gapFrac * d };
+  if (cfg.tightAtFrac !== undefined && cfg.tightGapFrac !== undefined) plan.tight = { from: entry + side * cfg.tightAtFrac * d, gap: cfg.tightGapFrac * d };
+  return plan;
 }
 
 /** The stop after the best price moved to `best` (armed lock): never looser than `stop` or the locked level. Pure. */
 export function lockedStop(side: 1 | -1, plan: LockPlan, best: number, stop: number | null): number {
-  const trail = best - side * plan.gap;
+  const gap = plan.tight && side * (best - plan.tight.from) >= 0 ? plan.tight.gap : plan.gap;
+  const trail = best - side * gap;
   let s = side === 1 ? Math.max(plan.to, trail) : Math.min(plan.to, trail);
   if (stop !== null && (side === 1 ? stop > s : stop < s)) s = stop;
   return s;

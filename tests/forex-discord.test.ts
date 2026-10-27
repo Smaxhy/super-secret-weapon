@@ -85,7 +85,7 @@ describe('handleSignal on the bot account', () => {
     const acct = () => JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount;
     return { r, p, acct, setMid: (x: number) => (mid = x) };
   };
-  it('opens a long on his post at 20% of the account (past the $20 cap), no target, no profit lock; once per message', async () => {
+  it('opens a long on his post at 20% of the account (past the $20 cap), no target, copy profit lock; once per message', async () => {
     const { r, p, acct } = setup();
     const row = await handleSignal(r as unknown as Redis, p, { id: '1300000000000000001', text: 'SIGNAL · NQ — LONG @ 29,026.25', at: NOW - 20_000 });
     expect(row.ok).toBe(true);
@@ -93,7 +93,7 @@ describe('handleSignal on the bot account', () => {
     expect(a.open).toHaveLength(1);
     const pos = a.open[0]!;
     expect(pos).toMatchObject({ pair: 'NDXUSD', side: 1, entry: 29_031, target: null, strategy: 'discord_kojiro', tf: 'signal' });
-    expect(pos.lock).toBeNull(); // v27.59: no profit lock on his calls — his exit / the safety stop only
+    expect(pos.lock).toBeUndefined(); // v27.61: the copy lock is worked out at the first check (looser than the bot's)
     expect(pos.ref).toBe('discord_kojiro:signal:NDXUSD:1300000000000000001');
     expect((pos.entry - pos.stop!) * pos.units).toBeCloseTo(200, 0); // v27.57: the safety stop loses 20% ($200)
     expect(pos.allIn).toBe(true); // the account's $20 loss cap leaves it alone
@@ -196,9 +196,21 @@ describe('v27.60 reviveCopy', () => {
     const p = a.open[0]!;
     expect(p.entry).toBe(29_486);
     expect(p.stop).toBeCloseTo(29_338.57, 1);
-    expect(p.lock).toBeNull();
+    expect(p.lock).toBeUndefined(); // the copy lock is worked out again at the next check
     expect(p.locked).toBe(false);
     expect(p.allIn).toBe(true);
     expect((p.entry - p.stop!) * p.units).toBeCloseTo(200, 0);
+  });
+});
+
+describe('v27.61 copy lock', () => {
+  it('is wide early (arms +0.5R, trails 0.5R) and tightens to 0.3R past +1.2R', async () => {
+    const { COPY_LOCK, lockPlan, lockedStop } = await import('../src/forex/profit-lock');
+    const plan = lockPlan(1, 29_486, 29_338.57, null, 1, COPY_LOCK)!;
+    const r = 29_486 - 29_338.57;
+    expect(plan.at - 29_486).toBeCloseTo(0.5 * r, 1); // +73.7: the Oct 27 run to 29,546 (+60) would not have armed it
+    expect(29_546 < plan.at).toBe(true);
+    expect(lockedStop(1, plan, 29_600, null)).toBeCloseTo(29_600 - 0.5 * r, 1); // trails 0.5R early
+    expect(lockedStop(1, plan, 29_700, null)).toBeCloseTo(29_700 - 0.3 * r, 1); // past +1.2R: 0.3R
   });
 });

@@ -24,7 +24,7 @@ import type { Tier } from './conviction';
 import { SNIPER } from './sniper';
 import { parsePnlRow, pnlRowOf, type PnlRow } from './pnl';
 import { liveFeed } from './live-feed';
-import { lockedStop, lockPlan, PROFIT_LOCK, type LockPlan } from './profit-lock';
+import { COPY_LOCK, lockedStop, lockPlan, PROFIT_LOCK, type LockPlan } from './profit-lock';
 import { FINANCING, rollsBetween, swapGain } from './financing';
 import { tradesNews } from './strategies';
 import { DISCORD_COPY, copySize, copyStop, type CopyBook } from './discord';
@@ -666,7 +666,9 @@ export function reviveCopy(a: PracticeAccount, ref: string, pct: number): { ids:
   void _x; void _p; void _r; void _f;
   const per = Math.abs(pnlUsd({ pair: row.pair, side: 1, units: 1, entry: row.entry }, row.entry + 1, { [row.pair]: row.entry }));
   const d0 = row.riskUsd0 && row.units > 0 && per > 0 ? row.riskUsd0 / (row.units * per) : 0;
-  const back: PracticePosition = { ...pos, stop: d0 > 0 ? row.entry - row.side * d0 : row.stop, lock: null, locked: false, lockBest: null, stopMovedT: null, closePending: null, checkedT: closedAt - 60_000 };
+  // v27.61: lock left unset → the next check works out the (looser) copy lock from the original stop
+  const back: PracticePosition = { ...pos, stop: d0 > 0 ? row.entry - row.side * d0 : row.stop, locked: false, lockBest: null, stopMovedT: null, closePending: null, checkedT: closedAt - 60_000 };
+  delete back.lock;
   a.open.push(back);
   const lines = [`${row.pair} ${row.side === 1 ? 'long' : 'short'} copy put back as if it never closed (its ${row.reason} close ${usd >= 0 ? '+' : '−'}$${Math.abs(usd).toFixed(2)} struck), entry ${row.entry}, stop ${back.stop?.toPrecision(7)}`, ...resizeCopies(a, pct, {})];
   return { ids, lines };
@@ -812,7 +814,9 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
     const half = halves[p.pair] ?? (inst.spreadPips * inst.pip) / 2;
     // v17.11 the owner's profit lock, worked out once per position from its entry, target (else its stop) and costs
     if (p.lock === undefined) {
-      p.lock = a.profitLock !== false && PROFIT_LOCK.on ? lockPlan(p.side, p.entry, p.stop, p.target, half) : null;
+      // v27.61: Kojiro's calls (no target) get the looser copy lock — wide early, tight once well in profit
+      const copy = p.tf === 'signal' && p.target === null;
+      p.lock = a.profitLock !== false && (copy ? COPY_LOCK.on : PROFIT_LOCK.on) ? lockPlan(p.side, p.entry, p.stop, p.target, half, copy ? COPY_LOCK : PROFIT_LOCK) : null;
       if (mv) mv.moved = true;
     }
     // v18: overnight financing at every daily roll (17:00 New York, Wednesday ×3) since the last one booked — the
@@ -2473,6 +2477,17 @@ export class Practice {
     const r = await this.copyOpen({ pair: last.pair, side: last.side, stopNamed: null, hisPx: null, strategy: last.strategy ?? 'discord_kojiro', ref: `${last.ref}:re${n + 1}`, riskPct, leverage: DISCORD_COPY.leverage, profitLock: DISCORD_COPY.profitLock, stop, target: null }, acct);
     const what = `${last.side === 1 ? 'long' : 'short'} ${last.pair} (closed ${new Date(last.closedAt).toISOString().slice(11, 16)} UTC on '${last.reason}' at ${last.exit})`;
     return r.ok ? `re-entered ${what} at ${r.entry}, original stop ${stop.toPrecision(7)}, risking $${r.riskUsd} (margin $${r.marginUsd})` : `could not re-enter ${what}: ${r.error}`;
+  }
+
+  /** v27.61: open Kojiro calls that were opened with no profit lock get the copy lock (worked out at the next check). */
+  async relockCopies(acct: AcctId): Promise<string[]> {
+    return this.serial(async () => {
+      const a = await this.load(acct);
+      const hit = a.open.filter((p) => p.tf === 'signal' && p.target === null && p.lock === null && !p.locked);
+      for (const p of hit) delete p.lock;
+      if (hit.length) await this.save(a, acct);
+      return hit.map((p) => `${p.pair} ${p.side === 1 ? 'long' : 'short'} copy: trailing stop on (arms at +0.5R, trails 0.5R, 0.3R past +1.2R)`);
+    });
   }
 
   /** v27.60: put a closed Discord copy back open at `pct`% (see `reviveCopy`), P&L log row dropped. */

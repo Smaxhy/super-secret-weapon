@@ -596,6 +596,12 @@ async function main(): Promise<void> {
     forex.logBot(lines.map((l) => (l.startsWith('Kojiro') ? l : `Kojiro copy: ${l} (owner)`)));
     log.info({ lines }, 'Kojiro NQ copy put back');
   });
+  // v27.61 (owner: "trailing SL on his calls is fine, just not too tight early on"): open Kojiro calls without a lock get
+  // the looser copy lock (after v27.60, so the put-back NQ long gets it too)
+  await oneTimeUpgrade('v27.61-relock-kojiro', async () => {
+    const lines = await practice.relockCopies('bot');
+    if (lines.length) forex.logBot(lines.map((l) => `Kojiro copy: ${l} (owner)`));
+  });
   // v20.1 (owner: "revert all current active trades"): every open bot trade is struck as if it never happened, once
   await oneTimeUpgrade('v20.1-revert-open', async () => {
     const line = await practice.undoOpen('bot');
