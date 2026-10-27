@@ -953,19 +953,6 @@ export function soloWait(t: Pick<Trade, 'strategy' | 'pair' | 'side' | 'entryT'>
   return mate ? null : `${t.strategy} alone — waits for a second setup the same way on this market`;
 }
 
-/**
- * v27.54 pure (Oct 27, owner: "make sure the bot is ready, this week decides going funded"): a trade that is live ONLY
- * because its strategy passed the strict per-market bar here (`cellPass`, while only proven strategies trade) is not
- * vetoed by the signal judge. That bar graded the market's trades WITHOUT the judge, so the judge is an untested extra
- * gate for them — on Oct 23–26 it refused RUTUSD pivot_bounce:4h at 64% / 61% (needs 66–67%) and XAGUSD round_break:4h
- * at 64% (needs 65%) while those cells stood at +0.15R / PF 2.2 and +0.22R / PF 2.5 on unseen trades. Edge rows (graded
- * as a whole) keep the judge, and so does the coin desk (its experimental practice trades, unchanged). Live = what the
- * test took, as for the market-checks gate (v27.15).
- */
-export function cellOnlyTrade(chosen: boolean, rowChosen: boolean, pair: string): boolean {
-  return FX_CONFIG.provenOnly.on && chosen && !rowChosen && !isCrypto(pair);
-}
-
 export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction']; sniper?: LabOpenTrade['sniper']; dataWait?: string | null; soloWait?: string | null; order?: LabOpenTrade['order']; agree?: LabOpenTrade['agree']; marketRec?: LabOpenTrade['marketRec']; rowChosen?: boolean }): LabOpenTrade {
   // v27.27: a chosen trade while only proven strategies trade → the big size; v27.34: unless it is live only through its
   // per-market cell on a desk whose cell trades practise at the normal size (coins)
@@ -2543,19 +2530,17 @@ export class ForexLab {
       const agree = { n: openAgree.get(tradeKey(t)) ?? 0, of: maxConfirmations(t.tf, false), need: FX_CONFIG.strict.minAgree };
       // v20.4 / v24.1: the strategy's own tested record on THIS market — a losing record here → the trade waits
       const marketRec = row ? marketRecOf(row.pairs.find((x) => x.pair === t.pair), cellFor(t), !!owned && owned.pair !== '*') : null;
-      const isChosen = planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf, pooledOf(allRowOf.get(`${t.strategy}:${t.tf}`)));
-      const judgeFree = cellOnlyTrade(isChosen, chosen.has(`${t.strategy}:${t.tf}`), t.pair);
       return toLabTrade(t, {
         order,
         soloWait: soloWait(t, open, TF_MIN[t.tf as Timeframe] ?? 60),
         agree,
         marketRec,
-        chosen: isChosen,
+        chosen: planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf, pooledOf(allRowOf.get(`${t.strategy}:${t.tf}`))),
         rowChosen: chosen.has(`${t.strategy}:${t.tf}`),
         sizeF,
         prio: focusPrio(t.pair, row ? row.all.avgR : -1),
         dataWait,
-        judge: !jv || judgeFree ? null : { p: p === null ? 0 : Math.round(p * 100) / 100, ok: judgeOk, need: Number.isFinite(jv.threshold) ? Math.round(jv.threshold * 100) / 100 : null, ...(jv.missing ? { missing: jv.missing } : {}) },
+        judge: !jv ? null : { p: p === null ? 0 : Math.round(p * 100) / 100, ok: judgeOk, need: Number.isFinite(jv.threshold) ? Math.round(jv.threshold * 100) / 100 : null, ...(jv.missing ? { missing: jv.missing } : {}) },
         conviction: { tier: b.tier, conf, of: maxConfirmations(t.tf, hasJudge), mult: b.mult, lev: b.lev },
         sniper: (() => {
           const ex = openExtra.get(tradeKey(t));
