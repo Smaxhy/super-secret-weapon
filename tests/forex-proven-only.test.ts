@@ -2,7 +2,7 @@
  * testing the rest"): both bots trade only Edge rows (the strict test), at 20% of the account on the tested stop. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type Redis from 'ioredis';
-import { FX_CONFIG, onlyOk, planChosen, provenCells, toLabTrade } from '../src/forex/lab';
+import { FX_CONFIG, cellOnlyTrade, onlyOk, planChosen, provenCells, toLabTrade } from '../src/forex/lab';
 import type { Trade } from '../src/forex/types';
 import { chosenOf } from '../src/forex/fast';
 import { BOT, Practice, newAccount, tick, type PracticeAccount, type Quote } from '../src/forex/practice';
@@ -120,5 +120,15 @@ describe('v27.44 the coin bot counts a market move once', () => {
     const a = JSON.parse(r.m.get('fx:practice:cbot')!) as PracticeAccount;
     expect(a.open.filter((x) => x.side === -1).map((x) => x.pair).sort()).toEqual(['ETHUSD', 'SOLUSD']); // the two best-tested shorts
     expect(a.open.some((x) => x.side === 1 && x.pair === 'XRPUSD')).toBe(true);
+  });
+});
+
+describe('cell-only trades skip the signal judge (v27.54)', () => {
+  it('a forex trade live only through its per-market bar is judge-free; Edge rows and coins keep the judge', () => {
+    expect(FX_CONFIG.provenOnly.on).toBe(true);
+    expect(cellOnlyTrade(true, false, 'RUTUSD')).toBe(true); // live only through its cell
+    expect(cellOnlyTrade(true, true, 'RUTUSD')).toBe(false); // an Edge row keeps the judge
+    expect(cellOnlyTrade(false, false, 'XAGUSD')).toBe(false); // not chosen at all
+    expect(cellOnlyTrade(true, false, 'ETHUSD')).toBe(false); // the coin desk keeps its judge
   });
 });

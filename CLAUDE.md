@@ -758,6 +758,17 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.54 forex setups proven on their market are no longer vetoed by the signal judge (Oct 27, owner: "make sure the bot
+is ready for tomorrow, this week decides going funded")
+VPS read 00:02 UTC: the forex bot opened nothing for 84 h while its per-market cells fired: RUTUSD pivot_bounce:4h short
+Oct 26 20:00 skipped "the signal judge gives it a 64% chance (needs 66%)" / 61% (needs 67%); XAGUSD round_break:4h long
+Oct 23 skipped at 64% (needs 65%), lab −0.10R; SPXUSD pivot_bounce:4h long Oct 23 (lab +0.32R) — reason scrolled out of
+the log (likely the old 10-min price rule). Cells then: RUT 115 unseen +0.15R PF 2.2, SPX 111 +0.14R PF 1.73, XAG
+round_break 266 +0.22R PF 2.5 — graded WITHOUT the judge. `cellOnlyTrade(chosen, rowChosen, pair)` (lab.ts): under
+provenOnly a forex trade live only through its cell gets `judge: null` (no judge veto / wait); Edge rows and the coin desk
+keep the judge. Size unchanged: forex cell trades are all-in (`provenOnly.riskPct` 20% on the tested stop, `cellAllIn.fx`).
+Display gaps seen, not fixed: why.verdict says "NO strategies" and the plan's per-market lines say "nothing to wait for"
+although cells are live (they ignore `provenCells`). tests in forex-proven-only (+1).
 ## v27.53 the login no longer runs out every week (Oct 26, owner: "I keep getting logged out of my app")
 A dashboard token lasted 7 days from when the password was typed, however often the app was used. auth.ts: POST
 `/api/auth/refresh` (behind `requireAuth`) returns a fresh 7-day token; dashboard `lib/api.ts` `renewLogin()` swaps it at
