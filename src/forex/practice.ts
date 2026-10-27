@@ -1977,7 +1977,7 @@ export class Practice {
         const snipe = t.sniper?.on && !a.open.some((p) => p.sniper) ? t.sniper : null;
         // v27.26: an all-in strategy risks its own % (minus what other all-in trades already risk), past every cap
         const allInPct = t.allIn || BOT.allIn[acct]?.[`${t.strategy}:${tf}`]; // v27.27: set by the lab on proven trades
-        const allInLeft = allInPct ? allInPct - a.open.filter((p) => p.allIn).reduce((s, p) => s + (p.riskPct ?? 0), 0) : 0;
+        const allInLeft = allInPct ? allInPct - a.open.filter((p) => p.allIn && p.tf !== 'signal').reduce((s, p) => s + (p.riskPct ?? 0), 0) : 0;
         if (allInPct && allInLeft < 1) {
           skip(t, `already ${allInPct}% of the account riding on an all-in trade`, true);
           continue;
@@ -2098,7 +2098,7 @@ export class Practice {
   }
 
   /** v27.46: open a copy of a Discord signal (discord.ts). Safety stop from the message or `stopPct`; sized so that stop
-   * loses `riskPct` of the account (never more than the account's $ loss cap); no target, he posts the exit. */
+   * loses `riskPct` of the account (v27.57: shared by all open copies, past the $ loss cap); no target, he posts the exit. */
   async copyOpen(r: Parameters<CopyBook['copyOpen']>[0], acct: 'bot' | 'cbot'): ReturnType<CopyBook['copyOpen']> {
     return this.serial(async () => {
       const a = await this.load(acct);
@@ -2121,12 +2121,15 @@ export class Practice {
       const perUnit = unitsFor(inst, 1, mids);
       const usdPerUnitMove = Math.abs(pnlUsd({ pair: inst.id, side: 1, units: 1, entry }, entry + 1, mids));
       const lev = Math.max(1, Math.min(Math.round(r.leverage), MAX_LEVERAGE, maxLeverageFor(inst.id)));
-      const want = (v.equityUsd * r.riskPct) / 100;
-      const riskUsd = a.maxLossUsd ? Math.min(want, a.maxLossUsd) : want;
-      const size = copySize({ riskUsd, stopDist, usdPerUnitMove, notionalPerUnit: perUnit ? 1 / perUnit : 0, leverage: lev, freeMarginUsd: v.freeMarginUsd });
+      // v27.57: his calls are all-in like a proven cell — `riskPct` (20) is shared by every open copy, the $ loss cap doesn't apply
+      const riding = a.open.filter((p) => p.tf === 'signal').reduce((s, p) => s + (p.riskPct ?? 0), 0);
+      const left = Math.round((r.riskPct - riding) * 100) / 100;
+      if (left < 0.5) return { ok: false, error: `already ${Math.round(riding * 10) / 10}% of the account riding on his calls (max ${r.riskPct}%)` };
+      const riskUsd = (v.equityUsd * left) / 100;
+      const size = copySize({ riskUsd, stopDist, usdPerUnitMove, notionalPerUnit: perUnit ? 1 / perUnit : 0, leverage: lev, freeMarginUsd: v.freeMarginUsd, marginShare: DISCORD_COPY.marginShare });
       if (!(size.marginUsd > 0)) return { ok: false, error: `no room (free margin $${v.freeMarginUsd})` };
       const riskPct = v.equityUsd > 0 ? Math.round((size.riskUsd / v.equityUsd) * 10_000) / 100 : 0;
-      const res = await this.openIn(a, { pair: inst.id, side: r.side, marginUsd: size.marginUsd, leverage: lev, stop, target, strategy: r.strategy, ref: r.ref, riskPct, tf: 'signal', maxQuoteAgeMs: 2 * 60_000, feedDelayOk: true, noLock: !r.profitLock });
+      const res = await this.openIn(a, { pair: inst.id, side: r.side, marginUsd: size.marginUsd, leverage: lev, stop, target, strategy: r.strategy, ref: r.ref, riskPct, tf: 'signal', allIn: true, maxQuoteAgeMs: 2 * 60_000, feedDelayOk: true, noLock: !r.profitLock });
       if (!res.ok) return res;
       await this.save(a, acct);
       const p = a.open[a.open.length - 1]!;

@@ -758,6 +758,13 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.57 Kojiro's calls risk 20% (Oct 27, owner: "use muchhhh more on kojiro calls … also 20")
+`DISCORD_COPY.riskPct` 2 → **20** (default; `DISCORD_COPY_RISK_PCT` in the VPS .env still overrides it), `marginShare` 0.5 →
+0.9. Practice `copyOpen`: all open copies (tf 'signal': his SIGNAL posts + the level trades) together risk at most that 20%
+(a call while 20% rides → refused "already N% riding on his calls"); the account's $20 loss cap no longer sizes them and
+`tick` no longer pulls their stop in (positions carry `allIn`); their stop is his SL / the 0.5% safety stop / the level
+trade's stop, profit lock on. Separate budget from the lab's all-in cells (syncBot's 20% all-in sum skips tf 'signal').
+One stopped copy ≈ −20% of the account. tests in forex-discord (+1).
 ## v27.56 the trade / market charts of indices and metals no longer lag 10 minutes (Oct 27, owner: "are the charts real
 time and not delayed now?")
 v27.52 only fed the BOT's candles; the dashboard chart (GET `/api/forex/candles` → `Practice.candles`, used by the

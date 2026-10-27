@@ -68,7 +68,7 @@ describe('sizing', () => {
     const s = copySize({ riskUsd: 20, stopDist: 145, usdPerUnitMove: 1, notionalPerUnit: 29_000, leverage: 50, freeMarginUsd: 1000 });
     expect(s.marginUsd).toBeCloseTo(80, 1);
     expect(s.riskUsd).toBe(20);
-    const capped = copySize({ riskUsd: 20, stopDist: 145, usdPerUnitMove: 1, notionalPerUnit: 29_000, leverage: 50, freeMarginUsd: 80 });
+    const capped = copySize({ riskUsd: 20, stopDist: 145, usdPerUnitMove: 1, notionalPerUnit: 29_000, leverage: 50, freeMarginUsd: 80, marginShare: 0.5 });
     expect(capped.marginUsd).toBe(40);
     expect(capped.riskUsd).toBe(10);
   });
@@ -85,7 +85,7 @@ describe('handleSignal on the bot account', () => {
     const acct = () => JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount;
     return { r, p, acct, setMid: (x: number) => (mid = x) };
   };
-  it('opens a long on his post, sized to the $20 cap, no target, tight trailing stop (profit lock) on; once per message', async () => {
+  it('opens a long on his post at 20% of the account (past the $20 cap), no target, tight trailing stop (profit lock) on; once per message', async () => {
     const { r, p, acct } = setup();
     const row = await handleSignal(r as unknown as Redis, p, { id: '1300000000000000001', text: 'SIGNAL · NQ — LONG @ 29,026.25', at: NOW - 20_000 });
     expect(row.ok).toBe(true);
@@ -95,9 +95,19 @@ describe('handleSignal on the bot account', () => {
     expect(pos).toMatchObject({ pair: 'NDXUSD', side: 1, entry: 29_031, target: null, strategy: 'discord_kojiro', tf: 'signal' });
     expect(pos.lock).not.toBeNull(); // v27.51: "trust his trades … trail it tight SL"
     expect(pos.ref).toBe('discord_kojiro:signal:NDXUSD:1300000000000000001');
-    expect((pos.entry - pos.stop!) * pos.units).toBeCloseTo(20, 0); // the safety stop loses $20
+    expect((pos.entry - pos.stop!) * pos.units).toBeCloseTo(200, 0); // v27.57: the safety stop loses 20% ($200)
+    expect(pos.allIn).toBe(true); // the account's $20 loss cap leaves it alone
+    expect(pos.maxLossUsd).toBeUndefined();
     const again = await handleSignal(r as unknown as Redis, p, { id: '1300000000000000001', text: 'SIGNAL · NQ — LONG @ 29,026.25', at: NOW - 20_000 });
     expect(again.kind).toBe('duplicate');
+    expect(acct().open).toHaveLength(1);
+  });
+  it('v27.57: all open copies together risk at most 20% — a second call while 20% rides is refused', async () => {
+    const { r, p, acct } = setup();
+    expect((await handleSignal(r as unknown as Redis, p, { id: '1300000000000000011', text: 'SIGNAL · NQ — LONG @ 29,026.25', at: NOW })).ok).toBe(true);
+    const second = await handleSignal(r as unknown as Redis, p, { id: '1300000000000000012', text: 'SIGNAL · NQ — SHORT @ 29,026.25', at: NOW });
+    expect(second.ok).toBe(false);
+    expect(second.what).toMatch(/riding on his calls/);
     expect(acct().open).toHaveLength(1);
   });
   it('closes the long on his SELL @ with reason signal; a SELL with nothing open does nothing', async () => {

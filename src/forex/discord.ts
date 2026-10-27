@@ -19,13 +19,14 @@ import { INSTRUMENTS, instrument, isCrypto } from './types';
 
 export const DISCORD_COPY = {
   on: process.env.DISCORD_COPY !== 'off',
-  /** % of the account lost if the safety stop is hit */
-  riskPct: num(process.env.DISCORD_COPY_RISK_PCT, 2),
+  /** % of the account lost if the safety stop is hit — v27.57: 20 (owner: "much more on Kojiro calls, also 20"), shared by
+   * every open copy (signals + level trades together ≤ 20%), past the account's $ loss cap */
+  riskPct: num(process.env.DISCORD_COPY_RISK_PCT, 20),
   /** safety stop distance when the message names none, % of the price (NQ ≈ 29,000 → ~145 points) */
   stopPct: num(process.env.DISCORD_COPY_STOP_PCT, 0.5),
   leverage: num(process.env.DISCORD_COPY_LEVERAGE, 50),
-  /** at most this share of free margin per copy */
-  marginShare: 0.5,
+  /** at most this share of free margin per copy (v27.57: 0.9, like an all-in cell trade) */
+  marginShare: 0.9,
   /** our (delayed) price this far past his price, in stop distances → the symbol is probably mapped wrong: refused */
   maxMismatchStops: 1.5,
   /** a message older than this when it reaches us is not opened (a reconnect replaying old posts) */
