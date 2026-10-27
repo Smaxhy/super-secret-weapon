@@ -254,9 +254,14 @@ def format_hit_pretty(msg: discord.Message, matched: list[str], source: str = "c
         f"{Fore.GREEN}╚═════════════════╝{Style.RESET_ALL}"
     )
 
-async def backfill_history():
+async def backfill_history() -> bool:
     """v27.66 (owner: "scan Kojiro's calls, see which ones hit"): his posts of the last 120 days are uploaded once at start
-    and every 12 h; the bot grades every call on its own Nasdaq candles and skips the kinds of calls that kept losing."""
+    and every 12 h; the bot grades every call on its own Nasdaq candles and skips the kinds of calls that kept losing.
+    v27.68: True only when every batch reached the bot — the first try at start often ran while the bot itself was still
+    starting (both restart on a deploy), so nothing was saved and the next try was 12 h away; a failed upload now retries
+    at the next sweep (2 min)."""
+    ok = True
+    sent = 0
     try:
         since = datetime.now(timezone.utc) - timedelta(days=120)
         for cid in copy_cfg().get("channel_ids", []) if copy_cfg().get("enabled") else []:
@@ -271,13 +276,19 @@ async def backfill_history():
                 if text:
                     batch.append({"id": str(m.id), "text": text[:2000], "at": int(m.created_at.timestamp() * 1000)})
                 if len(batch) >= 200:
-                    await bot_api.post("/api/forex/discord-history", {"items": batch})
+                    res = await bot_api.post("/api/forex/discord-history", {"items": batch})
+                    ok = ok and bool(res and res.get("ok"))
+                    sent += len(batch)
                     batch = []
             if batch:
-                await bot_api.post("/api/forex/discord-history", {"items": batch})
-            logger.info(f"copy: history of channel {cid} uploaded")
+                res = await bot_api.post("/api/forex/discord-history", {"items": batch})
+                ok = ok and bool(res and res.get("ok"))
+                sent += len(batch)
+            logger.info(f"copy: history of channel {cid}: {sent} posts so far, {'uploaded' if ok else 'NOT all uploaded'}")
     except Exception as e:
         logger.warning(f"copy: history upload failed ({e})")
+        ok = False
+    return ok
 
 async def catch_up():
     """v27.65 (owner: "don't miss shit again"): every 2 minutes re-read the newest posts of each signal channel and hand
@@ -287,8 +298,9 @@ async def catch_up():
     last_backfill = 0.0
     while not bot.is_closed():
         if asyncio.get_event_loop().time() - last_backfill > 12 * 3600 or last_backfill == 0.0:
-            last_backfill = asyncio.get_event_loop().time()
-            await backfill_history()
+            done = await backfill_history()
+            # done → again in 12 h; failed → again in 10 min (not every sweep: it reads up to 3,000 posts a channel)
+            last_backfill = asyncio.get_event_loop().time() - (0 if done else 12 * 3600 - 600)
         seen = []
         try:
             since = datetime.now(timezone.utc) - timedelta(hours=12)

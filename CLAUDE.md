@@ -758,6 +758,11 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.68 Kojiro's history upload retries (Oct 27, VPS read 16:25 UTC: copier heartbeat fine, but `study` posts 0)
+The copier's first history upload ran right after a deploy, while the bot itself was still starting (both restart
+together) → every POST failed → nothing saved, and the next try was 12 h away. bot.py `backfill_history()` now returns
+True only when every batch got `ok` back; `catch_up` retries after 10 min on failure (not every 2-min sweep — it reads up to
+3,000 posts a channel), else 12 h. GET `/api/forex/discord` → `historyPosts` (HLEN of `fx:discord:hist`).
 ## v27.67 sell into a big spike (Oct 27, owner: "you sure these are profitable charts … the bot loses because it's too
 focused on the tight TP, I close it way earlier — if there is a big spike, sell")
 VPS read 15:44 UTC (cbot, all time +$188.44): bot-closed 52 trades −$126.05, hand-closed 19 +$314.49 (17 in profit, +0.04…+1.17R,
