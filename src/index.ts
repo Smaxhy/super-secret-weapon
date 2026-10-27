@@ -17,6 +17,7 @@ import { bus } from './lib/bus';
 import { mondayOf, weeklyLog, weekText } from './forex/pnl';
 import { chosenAt, WeekendReview, type WeekendDeskDef } from './forex/weekend';
 import { staleReason } from './forex/freshness';
+import { runKojiroStudy } from './forex/kojiro-study';
 import { COPIER_HB, DISCORD_COPY, copierDown, handleSignal, loadHeartbeat, loadLevels, savePosted } from './forex/discord';
 import { getConfig, startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
 import { DEFAULT_CONFIG } from './config/default';
@@ -1100,6 +1101,10 @@ async function main(): Promise<void> {
       log.warn({ err: (err as Error).message }, 'copier watch failed');
     }
   }, 60_000);
+  // v27.66: Kojiro's record re-graded every hour (his calls finish, candles arrive); big news → his copies trail tight
+  practice.tightNow = (pair, t) => fxCalendar.newsNow(pair, t);
+  const kojiroStudy = setInterval(() => void runKojiroStudy(redis).catch((err: Error) => log.warn({ err: err.message }, 'Kojiro study failed')), 3_600_000);
+  setTimeout(() => void runKojiroStudy(redis).catch(() => undefined), 5 * 60_000).unref?.();
   const pushTimer = setInterval(() => {
     const s = statsOf();
     bus.publish({ type: 'stats', data: { connected: s?.connected ?? false, launches: s?.creates ?? 0, trades: s?.trades ?? 0, tracked: liveState.trackedCount, uptimeSec: Math.round((Date.now() - startedAt) / 1000) } });
@@ -1186,6 +1191,7 @@ async function main(): Promise<void> {
     clearInterval(pushTimer);
     clearInterval(weekPush);
     clearInterval(copierWatch);
+    clearInterval(kojiroStudy);
     weekendReview.stop();
     const force = setTimeout(() => process.exit(1), 15_000); // don't hang forever
     try {

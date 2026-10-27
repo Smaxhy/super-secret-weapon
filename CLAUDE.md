@@ -758,6 +758,25 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.66 the bot learns which of Kojiro's calls hit + a tight trailing stop around big news (Oct 27, owner: "lock in and be
+more accurate, scan Kojiro's calls, see which one hits and take it; with a tight trailing SL in moments of need")
+`src/forex/kojiro-study.ts`: his posts (copier uploads his last 120 days at start + every 12 h → POST
+**`/api/forex/discord-history`** {items} → Redis HASH `fx:discord:hist`, ≤ 5,000; every post handleSignal sees from him is
+added too) → `callsFrom` (each SIGNAL with his later exit post — "SELL @" closes the oldest open long, "BUY / COVER @" a short —
+his SL, his plan bias that day (with / against / none), at one of his levels (± 0.1%)) → `simCall` on the bot's NDX candles
+(15m, else hourly; the entry candle skipped; stop first; a price outside the entry candle ± 0.35 stop = another contract →
+`mismatch`, not graded; 24 h max) under 3 holds: `none` (his exit / 0.5% safety stop), `copy` (COPY_LOCK, live before),
+`tight` (PROFIT_LOCK); R after the venue fee. `buildCard` → `fx:discord:study` (`runKojiroStudy`: hourly + 5 min after start
++ after each history upload): per hold n / win / avg R / PF; `best` = most per call with 15+ calls (current kept unless
+beaten by 0.05R); slices side / NY session / plan / level / SL with their `rest`. **`kojiroGate`** in handleSignal (open):
+a call is NOT copied when a kind it belongs to has 8+ graded calls, avg < 0R, PF < 0.9 AND his other calls average > 0R
+(a losing record across the board skips nothing — reported only); log "not copied — his record: …"; the copy is opened with
+`best`'s trailing stop (`copyLock: 'tight'` → PracticePosition.copyLock → tick uses PROFIT_LOCK; 'none' → no lock).
+**Moments of need**: `Practice.tightNow` = `ForexCalendar.newsNow` (High-impact / central-bank speech for the pair within
+20 min, holidays not counted) → tick switches an open copy (tf 'signal', no target, lock not null) to the tight lock measured
+on its ORIGINAL stop (`riskUsd0`), `tightWhy`, event line; only ever tighter. GET `/api/forex/discord` → `study`. NOT
+lab-graded on unseen data (one caller's record, read plainly); nothing switches until the card has the calls.
+tests/forex-kojiro-study (8).
 ## v27.65 the missed Oct 26 SELL booked + the copier can't silently miss his posts (Oct 27, owner: "count it in as well in the
 portfolio and don't miss shit again")
 His "SIGNAL · NQ — SELL @ 29,189.75" (Oct 26 ~01:55 UTC, +$770 on 1 contract in his screenshot) came before the copier ran on

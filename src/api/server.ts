@@ -29,6 +29,7 @@ import { lossSummary, type LossReview } from '../forex/loss-review';
 import { FX_CONFIG, focusMarkets } from '../forex/lab';
 import { botStatus, dayTrades, parsePnlQuery, pnlReport } from '../forex/pnl';
 import { STRATEGIES } from '../forex/strategies';
+import { loadCard, runKojiroStudy, saveHistory } from '../forex/kojiro-study';
 import { DISCORD_COPY, POSTED_LEVELS, copierDown, copyLog, handleSignal, loadHeartbeat, loadLevels, saveHeartbeat } from '../forex/discord';
 import { isCrypto } from '../forex/types';
 import { moneyMap } from '../learner/money-map';
@@ -429,6 +430,17 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       if (!r.ok) reply.code(400);
       return r;
     });
+    // v27.66: his channel history (the copier uploads his past posts) → his record is re-graded
+    let studyBusy = false;
+    secured.post<{ Body: { items?: { id?: unknown; text?: unknown; at?: unknown }[] } }>('/api/forex/discord-history', async (req) => {
+      const items = (Array.isArray(req.body?.items) ? req.body!.items : []).map((x) => ({ id: String(x?.id ?? ''), text: String(x?.text ?? ''), at: Number(x?.at) }));
+      const saved = await saveHistory(redis, items);
+      if (saved && !studyBusy) {
+        studyBusy = true;
+        void runKojiroStudy(redis).catch(() => undefined).finally(() => (studyBusy = false));
+      }
+      return { ok: true, saved };
+    });
     // v27.65: the copier's heartbeat (every 2 min, with its catch-up sweep)
     secured.post<{ Body: { channels?: unknown; sent?: unknown } }>('/api/forex/discord-heartbeat', async (req) => {
       const beat = await saveHeartbeat(redis, req.body ?? {});
@@ -457,7 +469,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     });
     secured.get('/api/forex/discord', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
-      return { on: DISCORD_COPY.on, riskPct: DISCORD_COPY.riskPct, stopPct: DISCORD_COPY.stopPct, profitLock: DISCORD_COPY.profitLock, levelTrades: POSTED_LEVELS.trade, levels: await loadLevels(redis), log: await copyLog(redis, 50), copier: await (async () => { const hb = await loadHeartbeat(redis); return { lastSeen: hb?.t ?? null, channels: hb?.channels ?? [], down: copierDown(hb, Date.now()) }; })() };
+      return { on: DISCORD_COPY.on, riskPct: DISCORD_COPY.riskPct, stopPct: DISCORD_COPY.stopPct, profitLock: DISCORD_COPY.profitLock, levelTrades: POSTED_LEVELS.trade, levels: await loadLevels(redis), log: await copyLog(redis, 50), study: await loadCard(redis), copier: await (async () => { const hb = await loadHeartbeat(redis); return { lastSeen: hb?.t ?? null, channels: hb?.channels ?? [], down: copierDown(hb, Date.now()) }; })() };
     });
     // v17.11: the owner's profit lock on their own trades (the bot account always uses it)
     secured.post<{ Body: { on?: boolean } }>('/api/forex/practice/lock', async (req, reply) => {

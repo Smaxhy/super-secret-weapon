@@ -234,6 +234,11 @@ export class ForexCalendar {
     if (newsTrader) return newsBlock(pair, now, this.events, 30, true);
     return newsBlock(pair, now, this.events) ?? (this.blind(now) ? blindNewsBlock(pair, now) : null);
   }
+  /** v27.66: a High-impact release / central-bank speech for the pair within `windowMin` (holidays not counted) — a
+   * Kojiro copy switches to the tight trailing stop then. */
+  newsNow(pair: string, now = Date.now(), windowMin = 20): string | null {
+    return newsBlock(pair, now, this.events.filter((e) => e.impact !== 'Holiday'), windowMin);
+  }
   /** v15: what's coming up for a pair (the bot's plan). */
   upcoming(pair: string, now = Date.now(), hours = 6): CalEvent[] {
     return upcomingFor(pair, now, this.events, hours);

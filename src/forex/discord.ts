@@ -14,6 +14,8 @@
  * pass takes a trade when the price comes to one of them and the other side gets absorbed there (fast.ts →
  * `postedLevelSignal`). Paper only, like every trade here.
  */
+import { KSTUDY, kojiroGate, loadCard, saveHistory } from './kojiro-study';
+import { sessionOf } from './montecarlo';
 import type Redis from 'ioredis';
 import { INSTRUMENTS, instrument, isCrypto } from './types';
 
@@ -295,7 +297,7 @@ export interface CopyLogRow {
 
 /** What the practice account offers the copier (Practice implements it). */
 export interface CopyBook {
-  copyOpen(r: { pair: string; side: 1 | -1; stopNamed: number | null; hisPx: number | null; strategy: string; ref: string; riskPct: number; leverage: number; profitLock: boolean; stop?: number; target?: number | null }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; error?: string; entry?: number; stop?: number; riskUsd?: number; marginUsd?: number }>;
+  copyOpen(r: { pair: string; side: 1 | -1; stopNamed: number | null; hisPx: number | null; strategy: string; ref: string; riskPct: number; leverage: number; profitLock: boolean; stop?: number; target?: number | null; copyLock?: 'copy' | 'tight' }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; error?: string; entry?: number; stop?: number; riskUsd?: number; marginUsd?: number }>;
   copyClose(m: { strategy: string; pair: string | null; side: 1 | -1 | 0 }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; closed: string[]; pending: number }>;
   copyBreakeven(m: { strategy: string; pair: string | null }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; moved: string[] }>;
 }
@@ -313,6 +315,7 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
   const first = await redis.set(`fx:discord:seen:${s.id}`, '1', 'EX', DISCORD_COPY.seenTtlSec, 'NX');
   if (first !== 'OK') return { ...base, kind: 'duplicate', ok: true, what: 'already handled' };
   if (s.other) return done({ ...base, kind: 'other', ok: true, what: `posted by ${(s.author ?? 'someone else').slice(0, 40)}, not him — logged, not copied` });
+  await saveHistory(redis, [{ id: s.id, at: s.at, text: s.text }]).catch(() => 0); // v27.66: his record grows with every post
   const sig = parseSignal(s.text);
   if (sig.kind === 'none') {
     const fmt = (x: number) => x.toLocaleString('en-US', { maximumFractionDigits: 5 });
@@ -334,7 +337,19 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
   if (sig.kind === 'open') {
     if (now - s.at > DISCORD_COPY.maxAgeMs) return done({ ...base, kind: 'old', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `posted ${Math.round((now - s.at) / 60_000)} min ago — too old to copy` });
     if (!sig.pair || !instrument(sig.pair)) return done({ ...base, kind: 'open', pair: null, side: sig.side, hisPx: sig.price, ok: false, what: `unknown market "${sig.symbol ?? '?'}"` });
-    const r = await book.copyOpen({ pair: sig.pair, side: sig.side, stopNamed: sig.stop, hisPx: sig.price, strategy, ref: copyRef(strategy, sig.pair, s.id), riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: DISCORD_COPY.profitLock }, acctForPair(sig.pair));
+    // v27.66: his own record decides — a kind of his calls that kept losing is skipped; the trailing stop is the one
+    // that made the most on his past calls (kojiro-study.ts)
+    const lv = (await loadLevels(redis, now))[sig.pair];
+    const px = sig.price;
+    const gate = kojiroGate(await loadCard(redis), {
+      side: sig.side,
+      session: sessionOf(s.at),
+      bias: lv?.bias ? (lv.bias === sig.side ? 1 : -1) : 0,
+      atLevel: px !== null && !!lv && levelSets(lv).some((st) => st.all.some((L) => Math.abs(L - px) <= (px * KSTUDY.levelPct) / 100)),
+      stopNamed: sig.stop,
+    });
+    if (!gate.take) return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `not copied — his record: ${gate.why}` });
+    const r = await book.copyOpen({ pair: sig.pair, side: sig.side, stopNamed: sig.stop, hisPx: sig.price, strategy, ref: copyRef(strategy, sig.pair, s.id), riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: gate.plan !== 'none', ...(gate.plan === 'tight' ? { copyLock: 'tight' as const } : {}) }, acctForPair(sig.pair));
     const what = r.ok ? `copied ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair} at ${r.entry} (his ${sig.price ?? '?'}), safety stop ${r.stop}, risking $${r.riskUsd}` : `not copied: ${r.error}`;
     return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: r.ok, what });
   }

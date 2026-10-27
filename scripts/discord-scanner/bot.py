@@ -254,12 +254,41 @@ def format_hit_pretty(msg: discord.Message, matched: list[str], source: str = "c
         f"{Fore.GREEN}╚═════════════════╝{Style.RESET_ALL}"
     )
 
+async def backfill_history():
+    """v27.66 (owner: "scan Kojiro's calls, see which ones hit"): his posts of the last 120 days are uploaded once at start
+    and every 12 h; the bot grades every call on its own Nasdaq candles and skips the kinds of calls that kept losing."""
+    try:
+        since = datetime.now(timezone.utc) - timedelta(days=120)
+        for cid in copy_cfg().get("channel_ids", []) if copy_cfg().get("enabled") else []:
+            ch = bot.get_channel(int(cid))
+            if ch is None:
+                continue
+            batch = []
+            async for m in ch.history(limit=3000, after=since):
+                if not is_signal_message(m):
+                    continue
+                text = message_text(m)
+                if text:
+                    batch.append({"id": str(m.id), "text": text[:2000], "at": int(m.created_at.timestamp() * 1000)})
+                if len(batch) >= 200:
+                    await bot_api.post("/api/forex/discord-history", {"items": batch})
+                    batch = []
+            if batch:
+                await bot_api.post("/api/forex/discord-history", {"items": batch})
+            logger.info(f"copy: history of channel {cid} uploaded")
+    except Exception as e:
+        logger.warning(f"copy: history upload failed ({e})")
+
 async def catch_up():
     """v27.65 (owner: "don't miss shit again"): every 2 minutes re-read the newest posts of each signal channel and hand
     over anything the live event missed (a reconnect, a restart, a hiccup). The bot refuses repeats and opens nothing
     posted more than 10 minutes ago; levels and plans are still saved. Also tells the bot it is alive (heartbeat)."""
     await bot.wait_until_ready()
+    last_backfill = 0.0
     while not bot.is_closed():
+        if asyncio.get_event_loop().time() - last_backfill > 12 * 3600 or last_backfill == 0.0:
+            last_backfill = asyncio.get_event_loop().time()
+            await backfill_history()
         seen = []
         try:
             since = datetime.now(timezone.utc) - timedelta(hours=12)

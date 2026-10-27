@@ -250,6 +250,9 @@ export interface PracticePosition {
   lock?: LockPlan | null;
   locked?: boolean;
   lockBest?: number | null;
+  /** v27.66: a Kojiro copy held with the tight trailing stop (his record, or news right now — `tightWhy`) */
+  copyLock?: 'copy' | 'tight';
+  tightWhy?: string;
   stopMovedT?: number | null;
   /** v17.12: phone alerts already sent (1 = profit locked, 2 = two thirds of the way to the target) */
   alerts?: number;
@@ -815,7 +818,7 @@ export function fillOrder(a: PracticeAccount, o: RestingOrder, fill: number, mid
  * Check stops / targets on the new 1-minute bars, then the stop-out. Mutates `a`. Pure apart from that. `mv.moved` is
  * set when a stop moved without an event (the profit lock trailing) — the caller saves the account then too.
  */
-export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: number, mv?: { moved: boolean }, carryFor?: (pair: string, t: number) => number): string[] {
+export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: number, mv?: { moved: boolean }, carryFor?: (pair: string, t: number) => number, tightNow?: (pair: string, t: number) => string | null): string[] {
   const mids: Record<string, number> = {};
   const halves: Record<string, number> = {};
   for (const q of Object.values(quotes)) {
@@ -843,8 +846,26 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
     if (p.lock === undefined) {
       // v27.61: Kojiro's calls (no target) get the looser copy lock — wide early, tight once well in profit
       const copy = p.tf === 'signal' && p.target === null;
-      p.lock = a.profitLock !== false && (copy ? COPY_LOCK.on : PROFIT_LOCK.on) ? lockPlan(p.side, p.entry, p.stop, p.target, half, copy ? COPY_LOCK : PROFIT_LOCK) : null;
+      const cfg = copy && p.copyLock !== 'tight' ? COPY_LOCK : PROFIT_LOCK;
+      p.lock = a.profitLock !== false && cfg.on ? lockPlan(p.side, p.entry, p.stop, p.target, half, cfg) : null;
       if (mv) mv.moved = true;
+    }
+    // v27.66 (owner: "a tight trailing SL in moments of need"): big news for a Kojiro copy's market within 20 minutes →
+    // its trailing stop switches to the tight one (only ever tighter; measured from its original stop)
+    if (p.tf === 'signal' && p.target === null && p.lock && p.copyLock !== 'tight' && tightNow) {
+      const why = tightNow(p.pair, now);
+      if (why) {
+        const per = Math.abs(pnlUsd({ pair: p.pair, side: 1, units: 1, entry: p.entry }, p.entry + 1, mids));
+        const d0 = p.riskUsd0 && p.units > 0 && per > 0 ? p.riskUsd0 / (p.units * per) : p.stop !== null ? Math.abs(p.entry - p.stop) : 0;
+        const plan = d0 > 0 ? lockPlan(p.side, p.entry, p.entry - p.side * d0, null, half, PROFIT_LOCK) : null;
+        if (plan) {
+          p.lock = plan;
+          p.copyLock = 'tight';
+          p.tightWhy = why;
+          events.push(`${p.pair} Kojiro copy: tight trailing stop now — ${why}`);
+          if (mv) mv.moved = true;
+        }
+      }
     }
     // v18: overnight financing at every daily roll (17:00 New York, Wednesday ×3) since the last one booked — the
     // carry its way minus the broker markup, at the current price; booked into the balance and the trade's total.
@@ -1189,7 +1210,7 @@ export interface ExitPlan {
   exitWhen?: string | null;
 }
 
-export interface OpenReq extends ExitPlan { /** v20: a market desk's learning trade */ desk?: boolean; /** v27.26 */ allIn?: boolean; pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; bankedUsd?: number; /** v17: refuse a price older than this (default 30 min) */ maxQuoteAgeMs?: number; /** v17: an hourly / 4-hour trade may use a source's declared delay (Yahoo's metals) on top of the limit */ feedDelayOk?: boolean; /** v17: 1 R of a re-opened trade (else measured on this fill) */ riskUsd0?: number; /** v27.45: this trade's own $ loss cap */ maxLossUsd?: number; /** v27.46: no profit lock on this trade (a Discord copy follows its caller's exit) */ noLock?: boolean }
+export interface OpenReq extends ExitPlan { /** v20: a market desk's learning trade */ desk?: boolean; /** v27.26 */ allIn?: boolean; pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; bankedUsd?: number; /** v17: refuse a price older than this (default 30 min) */ maxQuoteAgeMs?: number; /** v17: an hourly / 4-hour trade may use a source's declared delay (Yahoo's metals) on top of the limit */ feedDelayOk?: boolean; /** v17: 1 R of a re-opened trade (else measured on this fill) */ riskUsd0?: number; /** v27.45: this trade's own $ loss cap */ maxLossUsd?: number; /** v27.46: no profit lock on this trade (a Discord copy follows its caller's exit) */ noLock?: boolean; /** v27.66 */ copyLock?: 'copy' | 'tight' }
 
 /** The exit-plan fields of a lab trade, ready for `openIn`. Pure. */
 export function planOf(t: LabOpenTrade): ExitPlan {
@@ -1250,6 +1271,8 @@ export class Practice {
   live: LiveSource = liveFeed;
   /** v18: the pair's carry (base rate − quote rate, %) now — set by the lab from the policy rates it tests with */
   carryFor: (pair: string, t: number) => number = () => NaN;
+  /** v27.66: big news for a market right now (index.ts: the calendar) → Kojiro copies there trail tight */
+  tightNow: (pair: string, t: number) => string | null = () => null;
   /** v27.45: smarter $ loss caps per strategy × chart from the excursion study (set by the lab each hour; only used while
    * `active` — enough analysed trades) */
   slCaps: Partial<Record<AcctId, { active: boolean; def: number; byKey: Record<string, number> }>> = {};
@@ -1570,7 +1593,7 @@ export class Practice {
     if (!a.open.length && !a.orders?.length) return;
     const q = await this.quotes(this.neededIds(a, (a.orders ?? []).map((o) => o.pair)));
     const mv = { moved: false };
-    const ev = tick(a, q, Date.now(), mv, this.carryFor);
+    const ev = tick(a, q, Date.now(), mv, this.carryFor, this.tightNow);
     // v18.4: nothing rests over the weekend
     // v22: coins have no weekend — only currency / metal orders and positions are flattened
     if (acct !== 'me' && marketClock(Date.now()).flattenNow && a.orders?.some((o) => !isCrypto(o.pair))) {
@@ -1625,7 +1648,7 @@ export class Practice {
       const a = await this.load(acct);
       const q = await this.quotes(INSTRUMENTS.map((i) => i.id), 20_000);
       const mv = { moved: false };
-      if (tick(a, q, Date.now(), mv, this.carryFor).length || mv.moved) await this.save(a, acct);
+      if (tick(a, q, Date.now(), mv, this.carryFor, this.tightNow).length || mv.moved) await this.save(a, acct);
       const mids: Record<string, number> = {};
       const halves: Record<string, number> = {};
       for (const x of Object.values(q)) {
@@ -1704,6 +1727,7 @@ export class Practice {
         ...(req.exitWhen ? { exitWhen: req.exitWhen } : {}),
         ...(req.ref && riskUsd0 > 0 ? { riskUsd0 } : {}),
         ...(req.noLock ? { lock: null } : {}),
+        ...(req.copyLock === 'tight' ? { copyLock: 'tight' as const } : {}),
       });
       // v27.30 (owner: "a notification when it enters a trade"): bot trades only (they carry a lab ref)
       if (req.ref) {
@@ -2232,7 +2256,7 @@ export class Practice {
       const size = copySize({ riskUsd, stopDist, usdPerUnitMove, notionalPerUnit: perUnit ? 1 / perUnit : 0, leverage: lev, freeMarginUsd: v.freeMarginUsd, marginShare: DISCORD_COPY.marginShare });
       if (!(size.marginUsd > 0)) return { ok: false, error: `no room (free margin $${v.freeMarginUsd})` };
       const riskPct = v.equityUsd > 0 ? Math.round((size.riskUsd / v.equityUsd) * 10_000) / 100 : 0;
-      const res = await this.openIn(a, { pair: inst.id, side: r.side, marginUsd: size.marginUsd, leverage: lev, stop, target, strategy: r.strategy, ref: r.ref, riskPct, tf: 'signal', allIn: true, maxQuoteAgeMs: 2 * 60_000, feedDelayOk: true, noLock: !r.profitLock });
+      const res = await this.openIn(a, { pair: inst.id, side: r.side, marginUsd: size.marginUsd, leverage: lev, stop, target, strategy: r.strategy, ref: r.ref, riskPct, tf: 'signal', allIn: true, maxQuoteAgeMs: 2 * 60_000, feedDelayOk: true, noLock: !r.profitLock, ...(r.copyLock === 'tight' ? { copyLock: 'tight' as const } : {}) });
       if (!res.ok) return res;
       await this.save(a, acct);
       const p = a.open[a.open.length - 1]!;
