@@ -758,6 +758,10 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.62 his NQ long struck as if it never happened (Oct 27 ~06:15 UTC, owner: "revert the trade as if it never happened")
+One-time `v27.62-strike-kojiro-nq` (index.ts): `undoPositions` + `undoClosed` on the bot account for ref
+discord_kojiro:signal:NDXUSD:1564452300599066716 and any `:re…` re-entry (open legs, closes, parts, rolls, stats, R ledger,
+P&L log). The copier settings (20%, copy lock) are unchanged.
 ## v27.61 a looser trailing stop on Kojiro's calls (Oct 27, owner: "trailing SL on his calls is fine, just not too tight early on")
 profit-lock.ts `COPY_LOCK` {atFrac 0.25, gapFrac 0.25, keepFrac 0.03, tightAtFrac 0.6, tightGapFrac 0.15} + `LockPlan.tight`
 (`lockPlan` cfg takes tightAtFrac / tightGapFrac; `lockedStop` uses the tight gap once the best price passes `tight.from`):

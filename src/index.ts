@@ -602,6 +602,17 @@ async function main(): Promise<void> {
     const lines = await practice.relockCopies('bot');
     if (lines.length) forex.logBot(lines.map((l) => `Kojiro copy: ${l} (owner)`));
   });
+  // v27.62 (owner: "revert the trade as if it never happened"): his NQ long (posted 29,470, copied 01:34 UTC Oct 27, put back
+  // at 20% by v27.60) is struck from the bot account — open or closed, every leg and any re-entry of it — balance, record
+  // and P&L log as if it never happened
+  await oneTimeUpgrade('v27.62-strike-kojiro-nq', async () => {
+    const ref = 'discord_kojiro:signal:NDXUSD:1564452300599066716';
+    const mine = (p: { ref?: string }) => !!p.ref && (p.ref === ref || p.ref.startsWith(`${ref}:`));
+    const label = 'Kojiro copy: his NQ long of Oct 27 (owner: as if it never happened)';
+    const lines = [await practice.undoPositions('bot', mine, label), await practice.undoClosed('bot', mine, label)];
+    forex.logBot(lines);
+    log.info({ lines }, 'Kojiro NQ copy struck');
+  });
   // v20.1 (owner: "revert all current active trades"): every open bot trade is struck as if it never happened, once
   await oneTimeUpgrade('v20.1-revert-open', async () => {
     const line = await practice.undoOpen('bot');
