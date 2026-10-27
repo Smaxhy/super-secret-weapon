@@ -758,6 +758,12 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.63 Kojiro's plan of Oct 27 saved by hand (Oct 27 ~14:40 UTC, owner pasted "Bias: bullish · DOL: 29,713.75 · Narrative:
+manipulation to the downside, then long off my levels")
+It never reached the copier (no log row at all — his 13:24 levels did, so the plan went in a channel / as a post the copier
+doesn't read). One-time `v27.63-kojiro-plan-oct27` (index.ts) runs it through `handleSignal` (id owner-paste-plan-2026-10-27,
+at 14:25 UTC) → NDXUSD bias bullish (level trades long only), DOL 29,713.75 as the target, valid 24 h. Owner asked to watch
+that channel too: add its ID to `copy.channel_ids` in scripts/discord-scanner/config.example.json once they send it.
 ## v27.62 his NQ long struck as if it never happened (Oct 27 ~06:15 UTC, owner: "revert the trade as if it never happened")
 One-time `v27.62-strike-kojiro-nq` (index.ts): `undoPositions` + `undoClosed` on the bot account for ref
 discord_kojiro:signal:NDXUSD:1564452300599066716 and any `:re…` re-entry (open legs, closes, parts, rolls, stats, R ledger,

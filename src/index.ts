@@ -17,7 +17,7 @@ import { bus } from './lib/bus';
 import { mondayOf, weeklyLog, weekText } from './forex/pnl';
 import { chosenAt, WeekendReview, type WeekendDeskDef } from './forex/weekend';
 import { staleReason } from './forex/freshness';
-import { DISCORD_COPY } from './forex/discord';
+import { DISCORD_COPY, handleSignal } from './forex/discord';
 import { getConfig, startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
 import { DEFAULT_CONFIG } from './config/default';
 import { markStrategySince, oneTimeUpgrade, runConfigMigrations } from './config/migrations';
@@ -612,6 +612,14 @@ async function main(): Promise<void> {
     const lines = [await practice.undoPositions('bot', mine, label), await practice.undoClosed('bot', mine, label)];
     forex.logBot(lines);
     log.info({ lines }, 'Kojiro NQ copy struck');
+  });
+  // v27.63 (owner pasted Kojiro's daily plan; it never reached the copier — posted in a channel it doesn't read):
+  // saved once by hand through the same path as a Discord post → NDXUSD bias bullish, DOL 29,713.75 (valid 24 h)
+  await oneTimeUpgrade('v27.63-kojiro-plan-oct27', async () => {
+    const text = '📅 27/10/2026\nBias: bullish\nDOL: 29,713.75\nNarrative: I want to see a manipulation to the downside, and then try to long off my levels';
+    const row = await handleSignal(redis, practice, { id: 'owner-paste-plan-2026-10-27', text, at: Date.parse('2026-10-27T14:25:00Z'), source: 'kojiro' });
+    forex.logBot([`Discord (kojiro, pasted by the owner): ${row.what}`]);
+    log.info({ row }, 'Kojiro plan saved by hand');
   });
   // v20.1 (owner: "revert all current active trades"): every open bot trade is struck as if it never happened, once
   await oneTimeUpgrade('v20.1-revert-open', async () => {
