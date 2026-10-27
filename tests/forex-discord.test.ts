@@ -182,3 +182,23 @@ describe('v27.59 reenterCopy', () => {
     expect(await p.reenterCopy('bot', 20)).toMatch(/already back in/);
   });
 });
+
+describe('v27.60 reviveCopy', () => {
+  it('strikes the close and puts the trade back on its original entry + stop at 20%, no profit lock', async () => {
+    const { reviveCopy } = await import('../src/forex/practice');
+    const a = { ...newAccount(1000), balanceUsd: 999.74 } as PracticeAccount;
+    const units = 20 / 147.43;
+    a.closed.push({ id: 'k1', pair: 'NDXUSD', side: 1, units, entry: 29_486, marginUsd: 80, leverage: 50, stop: 29_501.77, target: null, openedAt: NOW - 20 * M, checkedT: NOW, strategy: 'discord_kojiro', ref: 'discord_kojiro:signal:NDXUSD:7', tf: 'signal', riskPct: 1.9, riskUsd0: 20, lock: { at: 1, stop: 1, gap: 1 } as never, locked: true, exit: 29_501.77, closedAt: NOW - 3 * M, pnlUsd: -0.26, reason: 'stop' } as PracticeAccount['closed'][number]);
+    const r = reviveCopy(a, 'discord_kojiro:signal:NDXUSD:7', 20);
+    expect(r.ids).toEqual(['k1']);
+    expect(a.closed).toHaveLength(0);
+    expect(a.balanceUsd).toBe(1000);
+    const p = a.open[0]!;
+    expect(p.entry).toBe(29_486);
+    expect(p.stop).toBeCloseTo(29_338.57, 1);
+    expect(p.lock).toBeNull();
+    expect(p.locked).toBe(false);
+    expect(p.allIn).toBe(true);
+    expect((p.entry - p.stop!) * p.units).toBeCloseTo(200, 0);
+  });
+});

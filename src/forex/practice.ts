@@ -651,6 +651,28 @@ export function resizeCopies(a: PracticeAccount, pct: number, mids: Record<strin
 }
 
 /**
+ * v27.60 (owner: "revert the exit, put it at 20%, continue the trade where it was"): a closed Discord copy is put back as
+ * if it had never closed — its close (and parts) struck from the balance / record, the position re-opened with its
+ * original entry, opening time and ORIGINAL stop, no profit lock, then re-sized to `pct` (`resizeCopies`). Stop / target
+ * checks resume from the minute it closed. Returns the closed ids to drop from the P&L log + lines. Mutates `a`. Pure.
+ */
+export function reviveCopy(a: PracticeAccount, ref: string, pct: number): { ids: string[]; lines: string[] } {
+  const row = a.closed.filter((c) => c.ref === ref && c.reason !== 'partial').sort((x, y) => y.closedAt - x.closedAt)[0];
+  if (!row) return { ids: [], lines: [`no closed trade ${ref} to put back`] };
+  if (a.open.some((p) => p.ref === ref)) return { ids: [], lines: [`${row.pair} copy is already open`] };
+  const { ids, usd } = undoClosed(a, (c) => c.id === row.id);
+  a.skipRefs = (a.skipRefs ?? []).filter((r) => r !== ref);
+  const { exit: _x, closedAt, pnlUsd: _p, reason: _r, feeUsd: _f, ...pos } = row;
+  void _x; void _p; void _r; void _f;
+  const per = Math.abs(pnlUsd({ pair: row.pair, side: 1, units: 1, entry: row.entry }, row.entry + 1, { [row.pair]: row.entry }));
+  const d0 = row.riskUsd0 && row.units > 0 && per > 0 ? row.riskUsd0 / (row.units * per) : 0;
+  const back: PracticePosition = { ...pos, stop: d0 > 0 ? row.entry - row.side * d0 : row.stop, lock: null, locked: false, lockBest: null, stopMovedT: null, closePending: null, checkedT: closedAt - 60_000 };
+  a.open.push(back);
+  const lines = [`${row.pair} ${row.side === 1 ? 'long' : 'short'} copy put back as if it never closed (its ${row.reason} close ${usd >= 0 ? '+' : '−'}$${Math.abs(usd).toFixed(2)} struck), entry ${row.entry}, stop ${back.stop?.toPrecision(7)}`, ...resizeCopies(a, pct, {})];
+  return { ids, lines };
+}
+
+/**
  * v20.1 (owner: "revert all current active trades"): strike every OPEN trade from an account as if it never happened —
  * the positions, their parts already taken (USD back out of the balance), their overnight rolls, resting orders and
  * weekend pauses. Closed trades stay. Returns what was removed + the ids whose P&L-log rows must go. Mutates `a`. Pure.
@@ -2451,6 +2473,30 @@ export class Practice {
     const r = await this.copyOpen({ pair: last.pair, side: last.side, stopNamed: null, hisPx: null, strategy: last.strategy ?? 'discord_kojiro', ref: `${last.ref}:re${n + 1}`, riskPct, leverage: DISCORD_COPY.leverage, profitLock: DISCORD_COPY.profitLock, stop, target: null }, acct);
     const what = `${last.side === 1 ? 'long' : 'short'} ${last.pair} (closed ${new Date(last.closedAt).toISOString().slice(11, 16)} UTC on '${last.reason}' at ${last.exit})`;
     return r.ok ? `re-entered ${what} at ${r.entry}, original stop ${stop.toPrecision(7)}, risking $${r.riskUsd} (margin $${r.marginUsd})` : `could not re-enter ${what}: ${r.error}`;
+  }
+
+  /** v27.60: put a closed Discord copy back open at `pct`% (see `reviveCopy`), P&L log row dropped. */
+  async reviveCopy(acct: AcctId, ref: string, pct: number): Promise<string[]> {
+    return this.serial(async () => {
+      const a = await this.load(acct);
+      const r = reviveCopy(a, ref, pct);
+      if (!r.ids.length) return r.lines;
+      if (this.pnlLogs()) {
+        const key = pnlKey(acct);
+        const raw = await this.redis.lrange(key, 0, -1);
+        const keep = raw.filter((x) => {
+          const row = parsePnlRow(x);
+          return row !== null && !r.ids.includes(row.id);
+        });
+        const m = this.redis.multi().del(key);
+        if (keep.length) m.rpush(key, ...keep);
+        await m.exec();
+        this.pnlReady.add(acct);
+        this.pnlDirty(acct);
+      }
+      await this.save(a, acct);
+      return r.lines;
+    });
   }
 
   /** v27.58: re-size the open Discord copies to `pct`% (see `resizeCopies`). */

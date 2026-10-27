@@ -583,21 +583,18 @@ async function main(): Promise<void> {
       }
     }
   });
-  // v27.59 (owner: "re-enter his trade, it sold, I didn't want that"): his NQ long (posted 29,470, copied 01:34 UTC Oct 27) was
-  // closed at 01:51 by the copy's profit lock, not by him. It is opened again once at the market on its original safety
-  // stop at 20% (no profit lock now); tried a minute after start, then every 30 s up to 10 times (prices load first).
-  await oneTimeUpgrade('v27.59-reenter-kojiro-nq', async () => {
+  // v27.60 (owner: "just revert exiting and put it at 20% instead of 1, enter it where you were earlier and continue the
+  // trade"): his NQ long (copied 01:34 UTC Oct 27 at 29,486) was closed at 01:51 by the copy's profit lock, not by him.
+  // The close is struck and the trade put back as it was — same entry, original stop 29,338.57, no profit lock — at 20%.
+  // (v27.59's market re-entry is dropped; if it already opened one, that one is struck first.)
+  await oneTimeUpgrade('v27.60-revive-kojiro-nq', async () => {
     const ref = 'discord_kojiro:signal:NDXUSD:1564452300599066716';
-    void (async () => {
-      let line = '';
-      for (let i = 0; i < 10; i++) {
-        await new Promise((r) => setTimeout(r, i === 0 ? 60_000 : 30_000));
-        line = await practice.reenterCopy('bot', DISCORD_COPY.riskPct, (c) => c.ref === ref).catch((e: Error) => `could not re-enter: ${e.message}`);
-        if (!/no live price|could not re-enter: [^]*(price|quote)/i.test(line)) break;
-      }
-      forex.logBot([`Kojiro copy: ${line} (owner: re-enter, it was closed by the profit lock, not by him)`]);
-      log.info({ line }, 'Kojiro NQ copy re-entry');
-    })();
+    const lines = [
+      ...(await practice.rawAccount('bot')).open.some((p) => p.ref?.startsWith(`${ref}:re`)) ? [await practice.undoPositions('bot', (p) => !!p.ref?.startsWith(`${ref}:re`), 'Kojiro copy: the v27.59 market re-entry')] : [],
+      ...(await practice.reviveCopy('bot', ref, DISCORD_COPY.riskPct)),
+    ];
+    forex.logBot(lines.map((l) => (l.startsWith('Kojiro') ? l : `Kojiro copy: ${l} (owner)`)));
+    log.info({ lines }, 'Kojiro NQ copy put back');
   });
   // v20.1 (owner: "revert all current active trades"): every open bot trade is struck as if it never happened, once
   await oneTimeUpgrade('v20.1-revert-open', async () => {

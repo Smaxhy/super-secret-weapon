@@ -758,6 +758,14 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.60 his NQ long put back as if it never closed, at 20% (Oct 27, owner: "just revert exiting and put it at 20% instead
+of 1 … enter it where you were earlier and continue the trade")
+`reviveCopy(a, ref, pct)` (practice.ts, pure) + `Practice.reviveCopy`: the copy's close (and parts) struck via `undoClosed`
+(balance, stats, ledger; P&L-log row dropped), the position pushed back with its original entry / opening time / ORIGINAL
+stop (`riskUsd0` ÷ units), `lock: null`, checks resuming from the minute it closed, then `resizeCopies` to `pct`. One-time
+`v27.60-revive-kojiro-nq` (ref discord_kojiro:signal:NDXUSD:1564452300599066716, 20%): strikes the v27.59 market re-entry
+(`:re…`) if it already opened, then revives. The v27.59 one-time re-entry was REMOVED from index.ts (replaced by this);
+`reenterCopy` stays. tests in forex-discord (+1).
 ## v27.59 his NQ long re-entered + no profit lock on his calls (Oct 27, owner: "re-enter his trade, it sold, I didn't want that")
 VPS read 01:53 UTC (d0804f7 — v27.58 had not deployed yet, so it was still 1.9% / $20): his NQ long (posted 29,470, copied
 01:34 at 29,486, safety stop 29,338.57) ran to ~29,546; the v27.51 profit lock (no target → D = 2 × stop ≈ 295 pts, armed
