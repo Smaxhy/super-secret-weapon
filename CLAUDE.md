@@ -758,6 +758,10 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.92 clash rule back to lab-gated (Oct 28, owner: "remove clash rule thing then")
+`OPPOSED.always` false: the VPS read (15:31 UTC) showed trades with an opposite-way signal did BETTER on unseen data (forex
++0.10R vs +0.03R, 2,237 / 1,191 trades; coins +0.087R vs +0.061R), so forcing the skip cost money. The clash test still runs
+hourly and switches the wait on by itself only if clashing trades turn out ≥ 0.1R worse (v27.86 rules).
 ## v27.91 Databento CME history (Oct 28, owner: "can I just give you an API key and you do it for me")
 `src/forex/databento.ts`: historical HTTP API (`hist.databento.com/v0`, basic auth key:'' , dataset GLBX.MDP3, continuous
 front month by volume NQ.v.0 / ES / YM / RTY / GC / SI, `stype_in` continuous, CSV + pretty_px / pretty_ts). Key: Forex →

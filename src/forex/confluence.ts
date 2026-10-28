@@ -101,9 +101,9 @@ export interface OpposedReport {
   why: string;
 }
 export const OPPOSED = {
-  /** v27.88 (owner: "never do that again"): skip clashing trades always, not only once the lab test says so (the test
+  /** v27.92 owner: off again (the lab measured clashing trades doing slightly BETTER) → lab-gated. v27.88: skip clashing trades always, not only once the lab test says so (the test
    * keeps measuring and reporting) */
-  always: true,
+  always: false,
   bars: 2,
   minUnseen: 60,
   /** clear trades must beat clashing ones by this much a trade on the unseen part */
