@@ -758,6 +758,19 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.93 coins trade solid Maybe rows again (Oct 28, owner: "crypto will still trade solidly enough — check the past crypto
+trades, turn the best strats on")
+`FX_CONFIG.provenOnly.verdicts.crypto` ['edge','maybe'] + `maybeMinPf` {fx 0, crypto 1.3} + `verdictOk(universe, row)` (lab.ts,
+used by the hourly chooser, the forward-check "held" list and fast `chosenOf`): a coin Maybe row needs unseen PF ≥ 1.3 on top
+of the profit floor (30+ unseen, +0.05R, PF 1.2, first part positive, MC 90%) AND the forward check (10+ forward paper trades,
++0.05R, PF 1.2). Sized at the risk mode's size, the tested stop losing ≤ $47.50 (sizeToCap); only Edge rows all-in. The live
+brake (3 own losing trades → 14-day pause) still applies. VPS read 15:40 UTC — rows that qualify on those numbers: stoch_trend:1h
+(unseen 807 / .06R / PF 1.43; forward 41 / .15R / 2.79; bot +1.03R), pivot_bounce:1h (2941 / .06 / 1.35; fwd 84 / .09 / 2.16),
+bb_squeeze:1h (516 / .13 / 1.66; fwd 14 / .34), breakout_retest:1h (984 / .09 / 1.42; fwd 16 / .28 / 1.98), round_break:1h
+(1007 / .11 / 1.59; fwd 24 / .18 / 4.49), trendline_break:1h (1140 / .08 / 1.39; fwd 44 / .10 / 1.63), maybe fib_pullback:4h.
+Out: news_drift:1h / momentum_bar:1h / of_thrust:1h (forward paper losing), thin rows (PF < 1.3: fib_pullback:1h, cci_break).
+The same read showed coin forward paper donchian20:4h −1.22R / supertrend:4h −1.70R / donchian55:4h −1.56R a trade (worse than
+the stop) — being checked (suspect: the 'strict' exit's tiny stop + the 0.045% coin fee ≈ 0.6R a side… rows are 'no').
 ## v27.92 clash rule back to lab-gated (Oct 28, owner: "remove clash rule thing then")
 `OPPOSED.always` false: the VPS read (15:31 UTC) showed trades with an opposite-way signal did BETTER on unseen data (forex
 +0.10R vs +0.03R, 2,237 / 1,191 trades; coins +0.087R vs +0.061R), so forcing the skip cost money. The clash test still runs

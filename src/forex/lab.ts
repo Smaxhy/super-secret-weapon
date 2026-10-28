@@ -178,7 +178,11 @@ export const FX_CONFIG = {
    * allowed to use maybe strategies, crypto needs to be the safer and main priority"): forex cells back on; `verdicts` = the
    * row verdicts each desk trades (forex Edge + Maybe, coins Edge only). Only Edge rows get the all-in size (`allIn` in
    * toLabTrade); Maybe rows and cells trade at the risk mode's size, which `BOT.sizeToCap` keeps at the account's $ cap on
-   * the tested stop */ cells: { fx: true, crypto: false }, verdicts: { fx: ['edge', 'maybe'], crypto: ['edge'] } as Record<'fx' | 'crypto', ReadonlyArray<string>>, cellAllIn: { fx: true, crypto: false } },
+   * the tested stop */ cells: { fx: true, crypto: false }, verdicts: { fx: ['edge', 'maybe'], crypto: ['edge', 'maybe'] } as Record<'fx' | 'crypto', ReadonlyArray<string>>,
+    /** v27.93 (owner: "crypto will still trade solidly enough — check which strats did best and turn them on"): coins trade
+     * Maybe rows again, but only solid ones: unseen profit factor ≥ 1.3 (forex: the profit floor's 1.2), on top of the
+     * profit floor and the forward check every chosen row needs */
+    maybeMinPf: { fx: 0, crypto: 1.3 } as Record<'fx' | 'crypto', number>, cellAllIn: { fx: true, crypto: false } },
   /** v27.30 (owner: "make it skip the charts it loses on"): per strategy × chart, the New York sessions and markets where
    * its FIRST 70% lost (8+ trades there, average R below 0) are left out — of its record, its unseen grade and live
    * trading. Picked on the first 70% only, so the unseen part still grades it honestly. Skipped only while what is left
@@ -673,6 +677,13 @@ export function qualityPass(row: Pick<Row, 'id' | 'inSample' | 'outSample' | 'al
 }
 
 /** v27.1 pure: does a row clear the profit floor (FX_CONFIG.profitFloor)? A row without stats (old report) passes. */
+/** v27.93: may a row with this verdict trade on this desk (provenOnly)? A coin Maybe row needs unseen PF ≥ `maybeMinPf`. Pure. */
+export function verdictOk(universe: 'fx' | 'crypto', row: Pick<Row, 'verdict'> & Partial<Pick<Row, 'outSample'>>): boolean {
+  if (!FX_CONFIG.provenOnly.verdicts[universe].includes(row.verdict)) return false;
+  const minPf = row.verdict === 'maybe' ? FX_CONFIG.provenOnly.maybeMinPf[universe] : 0;
+  return !minPf || (row.outSample?.pf ?? 0) >= minPf;
+}
+
 export function profitFloor(row: Partial<Pick<Row, 'inSample' | 'outSample' | 'mc'>>): { ok: boolean; why: string } {
   const f = FX_CONFIG.profitFloor;
   const o = row.outSample;
@@ -2453,10 +2464,10 @@ export class ForexLab {
     // v27.87: the forward check — a row trades only while its forward paper record backs its backtest
     const fwdOf = new Map(paperRows.map((p) => [`${p.id}:${p.tf}`, p.stats]));
     const fwd = (key: string) => forwardOk(fwdOf.get(key));
-    const chosenRows = rows.filter((x) => x.id !== 'random' && onlyOk(this.universe, x.id, x.tf) && !(this.universe === 'crypto' && NOT_FOR_CRYPTO.has(x.id)) && !rec.dropped.includes(`${x.id}:${x.tf}`) && profitFloor(x).ok && fwd(`${x.id}:${x.tf}`).ok && (FX_CONFIG.provenOnly.on ? FX_CONFIG.provenOnly.verdicts[this.universe].includes(x.verdict) : ownerLive.has(x.id) || (mode === 'edge' ? x.verdict === 'edge' : mode === 'quality' ? !!x.quality?.ok : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`)))));
+    const chosenRows = rows.filter((x) => x.id !== 'random' && onlyOk(this.universe, x.id, x.tf) && !(this.universe === 'crypto' && NOT_FOR_CRYPTO.has(x.id)) && !rec.dropped.includes(`${x.id}:${x.tf}`) && profitFloor(x).ok && fwd(`${x.id}:${x.tf}`).ok && (FX_CONFIG.provenOnly.on ? verdictOk(this.universe, x) : ownerLive.has(x.id) || (mode === 'edge' ? x.verdict === 'edge' : mode === 'quality' ? !!x.quality?.ok : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`)))));
     // v27.87: say once (per change) which rows the forward check holds back
     if (FX_CONFIG.provenOnly.on) {
-      const held = rows.filter((x) => x.id !== 'random' && FX_CONFIG.provenOnly.verdicts[this.universe].includes(x.verdict) && profitFloor(x).ok && !fwd(`${x.id}:${x.tf}`).ok).map((x) => `${x.id}:${x.tf} (${fwd(`${x.id}:${x.tf}`).why})`);
+      const held = rows.filter((x) => x.id !== 'random' && verdictOk(this.universe, x) && profitFloor(x).ok && !fwd(`${x.id}:${x.tf}`).ok).map((x) => `${x.id}:${x.tf} (${fwd(`${x.id}:${x.tf}`).why})`);
       const sig = held.join('|');
       if (sig !== this.fwdNoted) {
         this.fwdNoted = sig;

@@ -34,7 +34,7 @@ import { newSyncReport, type LabOpenTrade } from './practice';
 import { withEnd } from './mtf';
 import { cellPass } from './montecarlo';
 import { vixFactor, vixNowOf } from './mood';
-import { FX_CONFIG, FX_RETIRED, forwardOk, RETIRE, deskWeekend, loadRetired, onlyOk, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, focusPrio, marketRecOf, pickedOnInSample, planChosen, plannedStrategies, pooledOf, prevPicks, profitFloor, signalIndex, slimTrade, soloWait, needsMate, toLabTrade, tradeKey, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
+import { FX_CONFIG, FX_RETIRED, forwardOk, verdictOk, RETIRE, deskWeekend, loadRetired, onlyOk, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, focusPrio, marketRecOf, pickedOnInSample, planChosen, plannedStrategies, pooledOf, prevPicks, profitFloor, signalIndex, slimTrade, soloWait, needsMate, toLabTrade, tradeKey, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
 import type { HmmModel } from './hmm';
 import { agreeCount, boostFor, gradeConviction, maxConfirmations, tierOf, type ConvictionReport, type ConvRow } from './conviction';
 
@@ -180,7 +180,7 @@ export const DEFAULT_FAST_SOURCE: FastSource = {
 export const chosenOf = (rows: ReadonlyArray<Pick<Row, 'id' | 'tf' | 'verdict'> & Partial<Pick<Row, 'inSample' | 'outSample'>>>, dropped: readonly string[], ownerLive: readonly string[] = [], universe: 'fx' | 'crypto' = 'fx', paper?: ReadonlyArray<Pick<PaperRow, 'id' | 'tf' | 'stats'>>) => {
   // v27.90: the forward check too (as the hourly chooser) when the paper rows are known
   const fwdOf = paper ? new Map(paper.map((p) => [`${p.id}:${p.tf}`, p.stats])) : null;
-  return rows.filter((r) => r.id !== 'random' && onlyOk(universe, r.id, r.tf) && (FX_CONFIG.provenOnly.on ? FX_CONFIG.provenOnly.verdicts[universe].includes(r.verdict) : r.verdict !== 'no' || ownerLive.includes(r.id)) && profitFloor(r).ok && !dropped.includes(`${r.id}:${r.tf}`) && (!fwdOf || forwardOk(fwdOf.get(`${r.id}:${r.tf}`)).ok)).map((r) => `${r.id}:${r.tf}`);
+  return rows.filter((r) => r.id !== 'random' && onlyOk(universe, r.id, r.tf) && (FX_CONFIG.provenOnly.on ? verdictOk(universe, r) : r.verdict !== 'no' || ownerLive.includes(r.id)) && profitFloor(r).ok && !dropped.includes(`${r.id}:${r.tf}`) && (!fwdOf || forwardOk(fwdOf.get(`${r.id}:${r.tf}`)).ok)).map((r) => `${r.id}:${r.tf}`);
 };
 
 /** v17: filter-input coverage of one tested series on its first 70% (bars before `oosFrom`, as the hourly lab measures it). Pure. */

@@ -22,7 +22,7 @@ afterEach(() => vi.useRealTimers());
 
 describe('v27.27 only proven strategies trade, big size', () => {
   it('only Edge rows are chosen; no side doors (per-market cells, owner picks); the per-desk list is empty', () => {
-    expect(FX_CONFIG.provenOnly).toEqual({ on: true, riskPct: 20, cells: { fx: true, crypto: false }, verdicts: { fx: ['edge', 'maybe'], crypto: ['edge'] }, cellAllIn: { fx: true, crypto: false } });
+    expect(FX_CONFIG.provenOnly).toEqual({ on: true, riskPct: 20, cells: { fx: true, crypto: false }, verdicts: { fx: ['edge', 'maybe'], crypto: ['edge', 'maybe'] }, maybeMinPf: { fx: 0, crypto: 1.3 }, cellAllIn: { fx: true, crypto: false } });
     // v27.82 / v27.85: coin cells off — even a strict per-market record doesn't trade without an Edge row; forex cells on
     const strict0 = { pair: 'BTCUSD', n: 108, avgR: 0.19, pf: 2.4, winPct: 50, inN: 60, inAvgR: 0.1, mcP: 0.99, mcP5: 0.05 } as never;
     expect(planChosen('pivot_bounce', 'BTCUSD', false, undefined, false, strict0, '4h', { n: 400, avgR: 0.05, pf: 1.2, verdict: 'maybe' as const })).toBe(false);
@@ -54,7 +54,12 @@ describe('v27.27 only proven strategies trade, big size', () => {
     expect(planChosen('rsi_dip', 'BTCUSD', true, undefined, true, null, '4h')).toBe(false); // the learner can still drop it
     const rows = [{ id: 'rsi_dip', tf: '15m', verdict: 'edge' as const }, { id: 'news_drift', tf: '15m', verdict: 'maybe' as const }, { id: 'judas_swing', tf: '15m', verdict: 'no' as const }];
     expect(chosenOf(rows, [], ['judas_swing'], 'fx')).toEqual(['rsi_dip:15m', 'news_drift:15m']); // v27.85: forex takes Maybe rows
-    expect(chosenOf(rows, [], ['judas_swing'], 'crypto')).toEqual(['rsi_dip:15m']); // coins: Edge only
+    expect(chosenOf(rows, [], ['judas_swing'], 'crypto')).toEqual(['rsi_dip:15m']); // coins: a Maybe row without a strong unseen PF stays out
+    // v27.93: a coin Maybe row trades once its unseen profit factor is 1.3+ (and the floor passes)
+    const st = (pf: number) => ({ n: 400, avgR: 0.1, pf, winRate: 0.5, totalR: 40, maxDdR: 5 }) as never;
+    const solid = [{ id: 'stoch_trend', tf: '15m', verdict: 'maybe' as const, outSample: st(1.43), inSample: st(1.3) }, { id: 'cci_break', tf: '15m', verdict: 'maybe' as const, outSample: st(1.23), inSample: st(1.3) }];
+    expect(chosenOf(solid, [], [], 'crypto')).toEqual(['stoch_trend:15m']);
+    expect(chosenOf(solid, [], [], 'fx')).toEqual(['stoch_trend:15m', 'cci_break:15m']);
     } finally {
       FX_CONFIG.provenOnly.cells.fx = true;
       FX_CONFIG.provenOnly.cells.crypto = false;
