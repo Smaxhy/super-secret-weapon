@@ -770,7 +770,9 @@ bb_squeeze:1h (516 / .13 / 1.66; fwd 14 / .34), breakout_retest:1h (984 / .09 / 
 (1007 / .11 / 1.59; fwd 24 / .18 / 4.49), trendline_break:1h (1140 / .08 / 1.39; fwd 44 / .10 / 1.63), maybe fib_pullback:4h.
 Out: news_drift:1h / momentum_bar:1h / of_thrust:1h (forward paper losing), thin rows (PF < 1.3: fib_pullback:1h, cci_break).
 The same read showed coin forward paper donchian20:4h −1.22R / supertrend:4h −1.70R / donchian55:4h −1.56R a trade (worse than
-the stop) — being checked (suspect: the 'strict' exit's tiny stop + the 0.045% coin fee ≈ 0.6R a side… rows are 'no').
+the stop): their exit was 'strict' — a 0.15–0.24% stop, so spread + the 0.045%-a-side coin fee ≈ 0.6R per trade (not a
+bookkeeping bug; rows 'no', never traded). `strictStopDist` on coins now ≥ 5 round-trip costs (spread + `feePxOf`) ≈ 0.45%
+of the price → costs ≤ 0.2R; FX / indices / metals keep the owner's sizes.
 ## v27.92 clash rule back to lab-gated (Oct 28, owner: "remove clash rule thing then")
 `OPPOSED.always` false: the VPS read (15:31 UTC) showed trades with an opposite-way signal did BETTER on unseen data (forex
 +0.10R vs +0.03R, 2,237 / 1,191 trades; coins +0.087R vs +0.061R), so forcing the skip cost money. The clash test still runs

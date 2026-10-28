@@ -8,6 +8,7 @@
  */
 import type { Ctx } from './ta';
 import { instrument, isCrypto, type Signal } from './types';
+import { feePxOf } from './venue-fees';
 
 export type ExitKind = 'designed' | 'breakeven' | 'scale' | 'tight' | 'runner' | 'quick' | 'wide' | 'trail_tp' | 'half_trail' | 'trail_sl' | 'roomy' | 'swing' | 'strict';
 export const EXITS: ExitKind[] = ['designed', 'breakeven', 'scale', 'tight', 'runner', 'quick', 'wide', 'trail_tp', 'half_trail', 'trail_sl', 'roomy', 'swing', 'strict'];
@@ -38,7 +39,10 @@ export function strictStopDist(pair: string, px: number): number {
   const inst = instrument(pair);
   const spread = inst ? inst.spreadPips * inst.pip : 0;
   const base = STRICT_STOP[pair] ?? (isCrypto(pair) ? 0.0015 * px : inst ? 5 * inst.pip : 0.0005 * px);
-  return Math.max(base, 3 * spread);
+  // v27.93: on a coin the venue fee is a share of the position (0.045% a side) — a 0.15% stop paid ~0.6R in costs on every
+  // trade (VPS: strict coin rows −1.2…−1.7R a trade). Coins: the stop is at least 5 round-trip costs (costs ≤ 0.2R).
+  const costFloor = isCrypto(pair) && inst ? 5 * (spread + feePxOf(inst, px)) : 0;
+  return Math.max(base, 3 * spread, costFloor);
 }
 /**
  * The owner's exits, in order of preference: the trailing stop-loss first (v15.1, "for safety": the stop moves up with

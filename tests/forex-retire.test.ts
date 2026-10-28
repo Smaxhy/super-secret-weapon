@@ -38,7 +38,8 @@ describe('v27.37 strict stop + retiring strategies with no promise', () => {
     expect(strictStopDist('SPXUSD', 7_700)).toBe(2.5);
     expect(strictStopDist('XAUUSD', 4_190)).toBe(1);
     expect(strictStopDist('EURUSD', 1.08)).toBeCloseTo(0.0005, 10);
-    expect(strictStopDist('BTCUSD', 100_000)).toBeCloseTo(150, 6);
+    // v27.93: coins ≥ 5 round-trip costs (spread + 0.045% a side) — 0.15% would pay ~0.6R in costs
+    expect(strictStopDist('BTCUSD', 100_000)).toBeCloseTo(5 * (2 * 1 + 90), 6);
     const bars: Bar[] = Array.from({ length: 30 }, (_, k) => ({ t: k * 3_600_000, o: 29_000, h: 29_050, l: 28_950, c: 29_000 }));
     const c = buildCtx(bars, 60, 'NDXUSD');
     const sig = applyExit({ side: 1, stop: 28_900, target: 29_200 }, 'strict', c, 29)!;
