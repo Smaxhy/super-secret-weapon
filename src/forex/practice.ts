@@ -120,7 +120,7 @@ export const BOT = {
   sizeToCapHeadroom: 0.95,
   /** v27.79: a strategy × chart whose own live trades (closed since `since`, the last `days`) lost money after `minN` of
    * them is paused on that account until those trades are older than `days` — lab evidence alone isn't "sure" */
-  liveBrake: { cbot: { since: Date.parse('2026-10-28T12:00:00Z'), minN: 3, days: 14 } } as Partial<Record<string, { since: number; minN: number; days: number }>>,
+  liveBrake: { cbot: { since: Date.parse('2026-10-28T12:00:00Z'), minN: 3, days: 14 }, bot: { since: Date.parse('2026-10-28T13:00:00Z'), minN: 3, days: 14 } } as Partial<Record<string, { since: number; minN: number; days: number }>>,
 };
 
 /** v27.79: the live brake for one strategy × chart from its R-ledger rows: paused when `minN`+ trades closed since

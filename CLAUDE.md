@@ -758,6 +758,10 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.84 the live brake on the forex bot too (Oct 28, owner: "I only want working strategies, I don't care if it's one trade a
+week, I want what works") — `BOT.liveBrake.bot` {since Oct 28 13:00 UTC, minN 3, days 14}: a forex strategy × chart whose own
+live trades lose after 3 of them pauses 14 days, like the coin bot (v27.79). With v27.82 (Edge rows only) + v27.83 (second
+setup required, coins on their tested entry) that is the full "only what works" gate on both desks.
 ## v27.83 coins wait for the pullback; no lone signals on either desk (Oct 28, owner: "wait for good entries, I don't want
 weak ones")
 VPS read 12:09 UTC (coin report 11:45), the 12 coin rows holding a deeper-bar cell: unseen total R by entry — pullback best on
