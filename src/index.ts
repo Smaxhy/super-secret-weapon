@@ -76,6 +76,7 @@ import { yahooLive } from './forex/yahoo-live';
 import { coinbaseLive } from './forex/coinbase';
 import { HL_FUTURES_KEY, hyperliquidLive } from './forex/hyperliquid';
 import { LevelWatch, replayMissedLevels } from './forex/level-watch';
+import { VENUE_FEES } from './forex/venue-fees';
 import { startLivePush } from './forex/live-push';
 import { ForexCalendar, marketClock } from './forex/calendar';
 import { ForexHeadlines } from './forex/headlines';
@@ -656,6 +657,13 @@ async function main(): Promise<void> {
     await savePosted(redis, 'NDXUSD', { bias: -1, dol: null, biasT: Date.parse('2026-10-28T00:08:44Z'), source: 'kojiro' }, true);
     forex.logBot([...lines, 'Kojiro: "Leaning towards bearish" (00:08 UTC) saved as his NDXUSD bias — level trades are shorts only now']);
     log.info({ lines }, 'wrong-side Kojiro level trade struck');
+  });
+  // v27.71 (owner: "yes revert it … also on the one today, I need it accurate"): every closed index trade that paid the old
+  // guessed 0.03% a side gets the difference to Hyperliquid's real 0.009% back (balance, P&L log, record, R ledger)
+  await oneTimeUpgrade('v27.71-refund-index-fees', async () => {
+    const line = await practice.refundIndexFees('bot', 0.03, VENUE_FEES.indexPct);
+    forex.logBot([line]);
+    log.info({ line }, 'index fees corrected');
   });
   // v27.69 (owner: "it legit had levels but the bot didn't take em, go in them at the exact time"): his NQ levels of
   // 23:59 UTC Oct 27 (29,835 · 29,804 · 29,782.5) + "Leaning towards bearish" (00:08) + "Break and retest" — the bot

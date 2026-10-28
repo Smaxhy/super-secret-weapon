@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.71 the old index fee given back on every closed index trade (Oct 28, owner: "yes revert it … also on the one today, I
+need it accurate")
+VPS read 00:46 UTC (b77c552): the wrong-side 00:33 long was struck (open, never closed); the v27.69 replay (run by 71d2f6d,
+still at the old fee) booked his two break-and-retest shorts — 00:03 at 29,827.75 → 29,817.50 (−$12.50, fee $29.27) and 00:13
+at 29,831.25 → 29,827.59 (−$23.02, fee $28.94), both closed on the profit lock with the move in their favour; older index
+closes (Oct 26 Kojiro SELL $25.29, Oct 23 RUT / DJI) paid 0.03% too. practice.ts `refundIndexFees(a, oldPct, newPct)` (pure)
++ `Practice.refundIndexFees`: a closed index row whose stored fee IS the old rate's (2 × oldPct × margin × leverage, ±1%)
+gets fee × new/old, the difference back in the balance, the row's P&L, its stats entry, its R ledger row (R from `riskUsd0`)
+and its P&L-log row; can't refund twice. One-time `v27.71-refund-index-fees` (bot account, 0.03 → `VENUE_FEES.indexPct`).
+NOTE for later: the profit lock's "locked" level counts the half spread but not the venue fee (`lockPlan` costPx = half), so a
+locked exit 3–5 NQ points in profit is about flat after the ~5-point fee round trip; not changed (owner asked for tight).
+tests in forex-level-retest (+1).
 ## v27.70 index fee = Hyperliquid's real rate; the wrong-side NQ long struck (Oct 28, owner: "did it take the call correctly?";
 "are you sure it's a 25 euro fee, go look, that's way too much")
 Before v27.69 deployed, the old build (bias still bullish) BOUGHT NQ at 29,815.75 at 00:33 UTC off his 29,804 level while he

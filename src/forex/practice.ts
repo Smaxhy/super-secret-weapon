@@ -571,6 +571,43 @@ export function undoClosed(a: PracticeAccount, pick: (c: ClosedPractice) => bool
   return { ids: gone.map((c) => c.id), usd };
 }
 
+/** v27.71 (owner: "yes revert it … I need it accurate"): closed index trades that paid the old 0.03% a side venue fee get the
+ * difference to `newPct` back — balance, the row's P&L and fee, its strategy record and R ledger. Only rows whose stored fee
+ * IS the old rate's (2 × oldPct × margin × leverage) are touched, so it can't refund twice. Mutates `a`. Pure. */
+export function refundIndexFees(a: PracticeAccount, oldPct: number, newPct: number): { ids: string[]; usd: number; rows: Array<{ id: string; usd: number }> } {
+  const ids: string[] = [];
+  const rows: Array<{ id: string; usd: number }> = [];
+  let total = 0;
+  for (const c of a.closed) {
+    if (instrument(c.pair)?.kind !== 'index' || !(c.feeUsd && c.feeUsd > 0)) continue;
+    const old = (2 * oldPct * c.marginUsd * c.leverage) / 100;
+    if (Math.abs(c.feeUsd - old) > Math.max(0.02, old * 0.01)) continue;
+    const fee = Math.round(((c.feeUsd * newPct) / oldPct) * 100) / 100;
+    const diff = Math.round((c.feeUsd - fee) * 100) / 100;
+    if (!(diff > 0)) continue;
+    c.feeUsd = fee;
+    c.pnlUsd = Math.round((c.pnlUsd + diff) * 100) / 100;
+    total += diff;
+    ids.push(c.id);
+    rows.push({ id: c.id, usd: c.pnlUsd });
+    if (c.reason === 'partial') continue;
+    const key = `${c.strategy ?? 'bot'}:${c.tf ?? (c.ref ? tfOfRef(c.ref) : '')}`;
+    const st = a.stats?.[key];
+    if (st) a.stats![key] = st.map(([t, u]) => (t === c.closedAt ? [t, Math.round((u + diff) * 100) / 100] : [t, u]) as [number, number]);
+    const lg = a.ledger?.[key];
+    if (lg)
+      a.ledger![key] = lg.map((r) => {
+        if (r[0] !== c.closedAt || (c.ref && r[3] !== c.ref)) return r;
+        const usd = Math.round((r[1] + diff) * 100) / 100;
+        return [r[0], usd, c.riskUsd0 && c.riskUsd0 > 0 ? Math.round((usd / c.riskUsd0) * 1000) / 1000 : r[2], r[3], r[4]] as LedgerRow;
+      });
+  }
+  const usd = Math.round(total * 100) / 100;
+  a.balanceUsd = Math.round((a.balanceUsd + usd) * 100) / 100;
+  if (a.peakUsd !== undefined) a.peakUsd = Math.max(a.peakUsd, a.balanceUsd);
+  return { ids, usd, rows };
+}
+
 /** v27.24: the account's current run of losing bot trades (newest first; manual closes, parts and weekend legs skipped). Pure. */
 export function lossStreak(closed: readonly ClosedPractice[]): { n: number; lastAt: number | null } {
   let n = 0;
@@ -2555,6 +2592,29 @@ export class Practice {
       }
       await this.save(a, acct);
       return `${label}: ${r.ids.length} closed trade${r.ids.length === 1 ? '' : 's'} struck (${r.usd < 0 ? '+' : '−'}$${Math.abs(r.usd).toFixed(2)} back) — balance now $${a.balanceUsd.toFixed(2)}`;
+    });
+  }
+
+  async refundIndexFees(acct: AcctId, oldPct: number, newPct: number): Promise<string> {
+    return this.serial(async () => {
+      const a = await this.load(acct);
+      const r = refundIndexFees(a, oldPct, newPct);
+      if (this.pnlLogs() && r.rows.length) {
+        const key = pnlKey(acct);
+        const raw = await this.redis.lrange(key, 0, -1);
+        const by = new Map(r.rows.map((x) => [x.id, x.usd]));
+        const next = raw.map((x) => {
+          const row = parsePnlRow(x);
+          return row && by.has(row.id) ? JSON.stringify({ ...row, usd: by.get(row.id) }) : x;
+        });
+        const m = this.redis.multi().del(key);
+        if (next.length) m.rpush(key, ...next);
+        await m.exec();
+        this.pnlReady.add(acct);
+        this.pnlDirty(acct);
+      }
+      await this.save(a, acct);
+      return `index fees corrected to the real rate (${newPct}% a side, was ${oldPct}%): ${r.ids.length} closed trade${r.ids.length === 1 ? '' : 's'}, +$${r.usd.toFixed(2)} back — balance now $${a.balanceUsd.toFixed(2)}`;
     });
   }
 

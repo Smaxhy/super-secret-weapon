@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parseBias } from '../src/forex/discord';
 import { postedLevelSignal, retestSignal } from '../src/forex/strategies';
 import { buildCtx } from '../src/forex/ta';
-import { bookLevelTrade, newAccount, walkTrade } from '../src/forex/practice';
+import { bookLevelTrade, newAccount, refundIndexFees, walkTrade } from '../src/forex/practice';
 import { replayMissedLevels } from '../src/forex/level-watch';
 import { VENUE_FEES } from '../src/forex/venue-fees';
 import type { Bar } from '../src/forex/types';
@@ -90,5 +90,25 @@ describe('replaying the minutes since his post', () => {
     const lines = await replayMissedLevels(redis, practice as never, 'NDXUSD', 'kojiro', [{ levels: [100, 97], side: -1, t: posted, dol: null, all: [100, 97] }], posted, bars);
     expect(lines).toEqual(['booked']);
     expect(booked[0]).toMatchObject({ side: -1, entry: 99.5, openedAt: bars[bars.length - 1]!.t + M });
+  });
+});
+
+describe('the old index fee given back', () => {
+  it('refunds the difference once, on index closes that paid the old rate only', () => {
+    const a = newAccount(1000);
+    const base = { side: -1 as const, units: 1.444, entry: 29189.75, leverage: 50, stop: null, target: null, openedAt: 1, checkedT: 0 };
+    // the Oct 26 SELL: $842.97 margin at 50× → old fee 2 × 0.03% × 42,148.5 = $25.29
+    a.closed = [
+      { ...base, id: 'k', pair: 'NDXUSD', marginUsd: 842.97, exit: 29151.25, closedAt: 10, pnlUsd: 30.31, reason: 'signal', feeUsd: 25.29, strategy: 'discord_kojiro', tf: 'signal', ref: 'discord_kojiro:signal:NDXUSD:x', riskUsd0: 210 },
+      { ...base, id: 'f', pair: 'EURUSD', marginUsd: 500, exit: 1.1, entry: 1.1, closedAt: 11, pnlUsd: 5, reason: 'target', feeUsd: 6 },
+    ];
+    a.ledger = { 'discord_kojiro:signal': [[10, 30.31, 0.144, 'discord_kojiro:signal:NDXUSD:x', 2]] };
+    a.balanceUsd = 1084.21;
+    const r = refundIndexFees(a, 0.03, 0.009);
+    expect(r.ids).toEqual(['k']);
+    expect(a.closed[0]).toMatchObject({ feeUsd: 7.59, pnlUsd: 48.01 });
+    expect(a.balanceUsd).toBe(1101.91);
+    expect(a.ledger['discord_kojiro:signal']![0]![1]).toBe(48.01);
+    expect(refundIndexFees(a, 0.03, 0.009).ids).toEqual([]);
   });
 });
