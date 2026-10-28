@@ -17,7 +17,7 @@
 import { runBacktest } from '../learner/backtester';
 import { copyReplayStatus, startCopyReplay } from '../learner/copy-replay-runner';
 import { cohortTestRunning, lastCohortTest, runCohortTest } from '../learner/cohort-test';
-import { marketClock } from '../forex/calendar';
+import { CRYPTO_CLOCK, marketClock } from '../forex/calendar';
 import { loadOanda, maskToken, oandaReady, saveOanda, testOanda } from '../forex/oanda';
 import { feedHealth, feeds as fxFeeds } from '../forex/feeds';
 import { pythConf, pythKey, pythLive, savePythConf, testPythKey } from '../forex/pyth';
@@ -253,10 +253,11 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
             log: parse<Array<{ t: number; e: string }>>(logRaw, []),
             lastSync: fx.lastSync,
             chosen: parse<string[]>(chosenRaw, []),
+            proven: Object.values(fx.proven ?? {}).reduce((n, l) => n + l.length, 0),
             lastOpenedAt: opened.length ? Math.max(...opened) : null,
             openNow: acct.positions.length,
             ordersNow: acct.orders?.length ?? 0,
-            clock: marketClock(now),
+            clock: fx.universe === 'crypto' ? CRYPTO_CLOCK : marketClock(now),
             dataAge: fx.dataAge,
             labError: fx.lastError ?? null,
           });

@@ -758,6 +758,13 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.73 the coin bot's "NO strategies" line was wrong (Oct 28, owner: "both cryptos been rather silent today")
+VPS read 01:58 UTC: coin lab 0 Edge / 37 Maybe; `chosen` [] but 35 cells pass the deeper coin bar (`coinCellPass`: momentum_bar
+1h / 4h, news_drift 1h, bb_squeeze 1h, round_break 1h / 4h, keltner 1h, of_thrust 1h, inside_bar 1h, breakout_retest 1h,
+donchian20 1h, trendline_break 4h ADA) — the plan watches 13 setups on 8 coins; none fired since 22:00 → no trade, working as
+designed. why.ts said "NO strategies to trade" because it read only `chosen`: `WhyInput.proven` (count of `provenCells`, the
+server passes `fx.proven`) → the verdict names "N strategies + M one-market setups"; the coin desk's why uses `CRYPTO_CLOCK`
+(was the forex clock → "forex market is closed" on coin weekends). Display only. tests in forex-why (+1).
 ## v27.72 gold level trades struck + no trade the fee can eat (Oct 28, owner: "it got in a weird signal, longed it then
 insta sold, lost 90"; "super big trades with insane fees"; "+50 pips but −40")
 VPS read 01:04 UTC: his GC levels (4,072.7 / 4,074.4, 23:39) made the level watcher buy gold twice — 12 oz ≈ $50k at 50× on a

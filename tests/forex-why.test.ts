@@ -62,6 +62,12 @@ describe('why no trades (v19.4)', () => {
     expect(r.reasons.map((x) => x.kind)).toEqual(['not_chosen']);
   });
 
+  it('counts one-market setups: an empty chosen list with proven setups is not "NO strategies" (v27.73)', () => {
+    const r = whyNoTrades({ ...base(), chosen: [], proven: 35, runs: [run(now - 1 * H, 40, 0)] });
+    expect(r.verdict).not.toMatch(/NO strategies/);
+    expect(r.verdict).toMatch(/none came from the 35 one-market setups the bot trades/);
+    expect(whyNoTrades({ ...base(), chosen: [], runs: [run(now - 1 * H, 40, 0)] }).verdict).toMatch(/NO strategies/);
+  });
   it('names the top hold-back reason from the log + sync reports', () => {
     const r = whyNoTrades({
       ...base(),

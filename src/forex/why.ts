@@ -94,6 +94,8 @@ export interface WhyInput {
   log: Array<{ t: number; e: string }>;
   lastSync: Record<string, SyncReport>;
   chosen: string[];
+  /** v27.73: strategy × market setups proven on one market alone (lab.ts provenCells) — they trade next to `chosen` */
+  proven?: number;
   /** bot account: when it last opened anything, what is open / resting now */
   lastOpenedAt: number | null;
   openNow: number;
@@ -174,6 +176,8 @@ export function whyNoTrades(x: WhyInput): WhyReport {
   let verdict: string;
   let hint: string | null = null;
   const chosenN = x.chosen.length;
+  const provenN = x.proven ?? 0;
+  const what = [chosenN ? `${chosenN} strateg${chosenN === 1 ? 'y' : 'ies'}` : '', provenN ? `${provenN} one-market setup${provenN === 1 ? '' : 's'}` : ''].filter(Boolean).join(' + ');
   if (x.labError && (window.lastCheckAt === null || x.labError.t > window.lastCheckAt)) {
     verdict = `${head} The hourly check is FAILING: ${x.labError.msg}`;
     hint = 'No check = no new trades. Read Setup → Data feeds and the bot log; the Today card shows the error line.';
@@ -182,14 +186,14 @@ export function whyNoTrades(x: WhyInput): WhyReport {
     hint = 'The lab is stuck or the bot restarted and has not finished its first look. If it stays like this, restart the bot (Controls → System).';
   } else if (!x.clock.open) {
     verdict = `${head} The forex market is closed${x.clock.minutesToChange ? ` — it opens in ${Math.round(x.clock.minutesToChange / 60)} h` : ''}.`;
-  } else if (chosenN === 0) {
+  } else if (chosenN === 0 && provenN === 0) {
     verdict = `${head} The bot has NO strategies to trade: nothing passed the unseen-data test and nothing is always-on right now.`;
     hint = 'Lab → the playbook shows every verdict. It trades again when a strategy earns Edge / Maybe, or the weekly picker switches on.';
   } else if (window.signals === 0) {
     verdict = `${head} In the last ${hours} h no strategy fired at all on the hourly / 4-hour charts (${window.checks} checks).`;
     hint = 'Quiet markets: the rules wait for a setup. Nothing is wrong unless the price feeds show as stale.';
   } else if (window.chosen === 0) {
-    verdict = `${head} ${window.signals} signal${window.signals === 1 ? '' : 's'} fired in ${hours} h, but none came from the ${chosenN} strateg${chosenN === 1 ? 'y' : 'ies'} the bot trades.`;
+    verdict = `${head} ${window.signals} signal${window.signals === 1 ? '' : 's'} fired in ${hours} h, but none came from the ${what} the bot trades.`;
     hint = 'The firing rules have no proven edge, so it lets them pass. More strategies qualify as the paper record grows (Lab → the playbook).';
   } else if (window.opened === 0 && placed > 0) {
     verdict = `${head} ${window.chosen} tradeable signal${window.chosen === 1 ? '' : 's'} in ${hours} h became ${placed} resting order${placed === 1 ? '' : 's'} (pullback / limit entries), not market buys: ${filled} filled, ${expired} expired unfilled, ${cancelled} cancelled, ${x.ordersNow} still waiting.`;
