@@ -703,6 +703,16 @@ async function main(): Promise<void> {
     };
     setTimeout(() => void replay(), 20_000).unref?.();
   }
+  // v27.81 (owner: "revert them both, remove them, these were bad calls"): the replayed LINK keltner 10:09 and ETH donchian20
+  // 09:09 longs struck as if they never happened (open legs, or the close if one already ended); refs → skipRefs
+  await oneTimeUpgrade('v27.81-strike-link-eth', async () => {
+    const refs = new Set(['keltner:1h:LINKUSD:1793181600000', 'donchian20:1h:ETHUSD:1793178000000']);
+    const pick = (p: { ref?: string }) => !!p.ref && refs.has(p.ref);
+    const label = 'coin bot: LINK 10:09 + ETH 09:09 longs (owner: bad calls)';
+    const lines = [await practice.undoPositions('cbot', pick, label), await practice.undoClosed('cbot', pick, label)];
+    cryptoLab.logBot(lines);
+    log.info({ lines }, 'LINK / ETH struck');
+  });
   // v27.80 (owner: "skip the Dow charts, remove it, also stop the current Dow trades"): the Dow is out of the forex desk
   // (OFF_MARKETS) and its open bot trades are closed at the market once (a pending close if there is no price yet)
   await oneTimeUpgrade('v27.80-close-dow', async () => {

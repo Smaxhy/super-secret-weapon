@@ -758,6 +758,10 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.81 the two reopened coin trades struck (Oct 28, owner: "revert them both, remove them, these were bad calls")
+One-time `v27.81-strike-link-eth` (index.ts): `undoPositions` + `undoClosed` on cbot for refs keltner:1h:LINKUSD:1793181600000
+and donchian20:1h:ETHUSD:1793178000000 (the v27.78 / v27.79 replays, −$33.53 / −$14.61 open at 11:45) — as if never taken;
+refs → skipRefs. The 04:07 LINK replay (+$9.29, closed by the profit lock) stays.
 ## v27.80 the Dow is off the forex desk + its open trade closed (Oct 28, owner: "skip the Dow charts, remove it, also stop
 the current trades of Dow")
 VPS read 11:45 UTC: the forex bot's DJIUSD round_break 1h short (11:40, risking $117.94, all-in cell path) filled 19 points
