@@ -45,6 +45,12 @@ export const DISCORD_COPY = {
   /** v27.77: his SIGNAL posts are NOT opened on the account (lab only: logged + graded by kojiro-study.ts); his exits still
    * close any copy left open. `DISCORD_COPY_LIVE=on` copies them again. */
   live: process.env.DISCORD_COPY_LIVE === 'on',
+  /** v27.94 (owner: "Fullport FOMC longs is also a call … make sure it happens at all costs"): his FULL-conviction calls
+   * ("fullport / full port / full send / all in … longs / shorts", or an event call like "FOMC longs") are taken even
+   * while his other calls are lab-only, past his-record gate; `DISCORD_FULLPORT_LIVE=off` = lab only like the rest. */
+  fullLive: process.env.DISCORD_FULLPORT_LIVE !== 'off',
+  /** a full-conviction call is still opened when it reaches us this late (a copier catch-up can be minutes behind) */
+  fullMaxAgeMs: 45 * 60_000,
   seenTtlSec: 7 * 86_400,
   logKey: 'fx:discord:log',
   logMax: 200,
@@ -226,7 +232,7 @@ export async function savePosted(redis: Redis, pair: string, patch: { levels: nu
 export const levelStrategy = (source: string | undefined) => `${copyStrategy(source)}_levels`;
 
 export type ParsedSignal =
-  | { kind: 'open'; pair: string | null; symbol: string | null; side: 1 | -1; price: number | null; stop: number | null; target: number | null }
+  | { kind: 'open'; pair: string | null; symbol: string | null; side: 1 | -1; price: number | null; stop: number | null; target: number | null; conviction?: 'full'; event?: string | null }
   | { kind: 'close'; pair: string | null; symbol: string | null; closes: 1 | -1 | 0; price: number | null }
   | { kind: 'breakeven'; pair: string | null; symbol: string | null }
   | { kind: 'none' };
@@ -255,9 +261,27 @@ export function parseSignal(raw: string): ParsedSignal {
     if (word === 'LONG' || word === 'SHORT') return { kind: 'open', pair, symbol, side: word === 'LONG' ? 1 : -1, price, stop, target };
     return { kind: 'close', pair, symbol, closes: word === 'SELL' ? 1 : word === 'BUY' || word === 'COVER' ? -1 : 0, price };
   }
+  const full = fullCall(up);
+  if (full) return { kind: 'open', pair: pair ?? POSTED_LEVELS.defaultPair, symbol: symbol ?? 'NQ', side: full.side, price: null, stop, target, conviction: 'full', event: full.event };
   if (/\b(?:SL|STOP)\b.*\b(?:BE|BREAK\s*EVEN|ENTRY)\b/.test(up) || /\bMOVE\b.*\b(?:BE|BREAK\s*EVEN)\b/.test(up)) return { kind: 'breakeven', pair, symbol };
   if (/\b(?:CLOSED?|EXIT(?:ED)?|OUT|FLAT)\b/.test(up) && /\b(?:ALL|POSITION|TRADE|SIGNAL)\b/.test(up)) return { kind: 'close', pair, symbol, closes: 0, price: null };
   return { kind: 'none' };
+}
+
+/** v27.94: a full-conviction call without a price — "Fullport FOMC longs", "full port shorts", "all in longs into CPI",
+ * "FOMC longs" — → its side (+ the event named), or null. Chatter that says not to ("no longs before FOMC", "careful with
+ * fullport shorts") is not a call. Pure (takes the upper-cased text). */
+export function fullCall(up: string): { side: 1 | -1; event: string | null } | null {
+  const sideM = /\b(LONGS?|BUYS?|CALLS|SHORTS?|PUTS)\b/.exec(up);
+  if (!sideM) return null;
+  const fullWord = /\b(?:FULL\s*-?\s*PORT(?:ED)?|FULLPORT(?:ED)?|FULL\s+SEND|FULL\s+SIZE|ALL\s*-?\s*IN|MAX\s+SIZE)\b/.test(up);
+  const eventM = /\b(FOMC|CPI|PPI|NFP|PCE|POWELL|FED|JOBS\s+REPORT|RATE\s+DECISION)\b/.exec(up);
+  if (!fullWord && !eventM) return null;
+  if (/\b(?:NO|NOT|DON'?T|DONT|AVOID|CAREFUL|NEVER|STOP(?:PED)?|WOULDN'?T|SKIP|CLOSE[DS]?|CLOSING|EXIT(?:ED|ING)?|SOLD|COVER(?:ED)?|TOOK|TRIM(?:MED)?|FLAT|PAID|PROFITS?|SECURED?|RECAP|WON|LOST)\b/.test(up)) return null;
+  // an event call needs the side word right next to it ("FOMC longs", "longs into FOMC"), not a sentence that mentions both
+  if (!fullWord && eventM && !new RegExp(String.raw`\b${eventM[1]}\b\W+(?:(?:MNQ|NQ|ES|MES|GC|GOLD|NASDAQ|NAS100|SPX|BIG|HEAVY|SIZED)\W+)?${sideM[1]}\b|\b${sideM[1]}\b\W+(?:INTO|FOR|BEFORE|ON|THROUGH|OVER|AHEAD\s+OF)\W+(?:THE\W+)?${eventM[1]}\b`).test(up)) return null;
+  const w = sideM[1]!;
+  return { side: /^(LONG|BUY|CALL)/.test(w) ? 1 : -1, event: eventM ? eventM[1]!.replace(/\s+/g, ' ') : null };
 }
 
 /** The strategy name a source's trades carry ("kojiro" → discord_kojiro). Pure. */
@@ -347,7 +371,9 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
     return done({ ...base, kind: 'levels', pair: (lv ?? plan)!.pair, ok: true, what: said.join('; ') });
   }
   if (sig.kind === 'open') {
-    if (now - s.at > DISCORD_COPY.maxAgeMs) return done({ ...base, kind: 'old', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `posted ${Math.round((now - s.at) / 60_000)} min ago — too old to copy` });
+    const full = sig.conviction === 'full';
+    if (full && sig.pair) await savePosted(redis, sig.pair, { bias: sig.side, dol: null, biasT: s.at, source }).catch(() => undefined);
+    if (now - s.at > (full ? DISCORD_COPY.fullMaxAgeMs : DISCORD_COPY.maxAgeMs)) return done({ ...base, kind: 'old', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `posted ${Math.round((now - s.at) / 60_000)} min ago — too old to copy` });
     if (!sig.pair || !instrument(sig.pair)) return done({ ...base, kind: 'open', pair: null, side: sig.side, hisPx: sig.price, ok: false, what: `unknown market "${sig.symbol ?? '?'}"` });
     // v27.66: his own record decides — a kind of his calls that kept losing is skipped; the trailing stop is the one
     // that made the most on his past calls (kojiro-study.ts)
@@ -360,10 +386,12 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
       atLevel: px !== null && !!lv && levelSets(lv).some((st) => st.all.some((L) => Math.abs(L - px) <= (px * KSTUDY.levelPct) / 100)),
       stopNamed: sig.stop,
     });
-    if (!gate.take) return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `not copied — his record: ${gate.why}` });
-    if (!DISCORD_COPY.live) return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `lab only — not traded (Kojiro calls are in the lab; his record keeps being graded): his ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair}${sig.price ? ` @ ${sig.price}` : ''}` });
+    const fullGo = full && DISCORD_COPY.fullLive;
+    if (!gate.take && !fullGo) return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `not copied — his record: ${gate.why}` });
+    if (!DISCORD_COPY.live && !fullGo) return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `lab only — not traded (Kojiro calls are in the lab; his record keeps being graded): his ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair}${sig.price ? ` @ ${sig.price}` : ''}` });
     const r = await book.copyOpen({ pair: sig.pair, side: sig.side, stopNamed: sig.stop, hisPx: sig.price, strategy, ref: copyRef(strategy, sig.pair, s.id), riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: gate.plan !== 'none', ...(gate.plan === 'tight' ? { copyLock: 'tight' as const } : {}) }, acctForPair(sig.pair));
-    const what = r.ok ? `copied ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair} at ${r.entry} (his ${sig.price ?? '?'}), safety stop ${r.stop}, risking $${r.riskUsd}` : `not copied: ${r.error}`;
+    const tag = full ? `his FULL-conviction call${sig.event ? ` (${sig.event})` : ''}${!gate.take ? ` — taken past his record (${gate.why})` : ''}: ` : '';
+    const what = r.ok ? `${tag}copied ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair} at ${r.entry} (his ${sig.price ?? 'market'}), safety stop ${r.stop}, risking $${r.riskUsd}` : `${tag}not copied: ${r.error}`;
     return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: r.ok, what });
   }
   if (sig.kind === 'close') {
@@ -382,6 +410,33 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
   const moved: string[] = [];
   for (const acct of accts) moved.push(...(await book.copyBreakeven({ strategy, pair: sig.pair }, acct)).moved);
   return done({ ...base, kind: 'breakeven', pair: sig.pair, ok: moved.length > 0, what: moved.length ? `stop to entry on ${moved.join(', ')}` : 'no open copy to move' });
+}
+
+/**
+ * v27.94: his full-conviction calls the bot read before it knew them (logged "not a trade message" / "lab only" in the last
+ * `withinMs`) are taken now, at the market — once each (`fx:discord:fullcatch:<id>` NX). Run after a deploy.
+ */
+export async function catchUpFullCalls(redis: Redis, book: CopyBook, now = Date.now(), withinMs = 4 * 3_600_000, final = true): Promise<string[]> {
+  if (!DISCORD_COPY.on || !DISCORD_COPY.fullLive) return [];
+  const out: string[] = [];
+  for (const row of (await copyLog(redis, DISCORD_COPY.logMax)).reverse()) {
+    if (row.ok && row.kind === 'open') continue; // already copied
+    if (now - row.t > withinMs || row.kind === 'other' || row.kind === 'duplicate') continue;
+    const sig = parseSignal(row.text);
+    if (sig.kind !== 'open' || sig.conviction !== 'full' || !sig.pair || !instrument(sig.pair)) continue;
+    if ((await redis.set(`fx:discord:fullcatch:${row.id}`, '1', 'EX', 7 * 86_400, 'NX')) !== 'OK') continue;
+    const strategy = copyStrategy(row.source);
+    await savePosted(redis, sig.pair, { bias: sig.side, dol: null, biasT: row.t, source: row.source }).catch(() => undefined);
+    const r = await book.copyOpen({ pair: sig.pair, side: sig.side, stopNamed: sig.stop, hisPx: null, strategy, ref: copyRef(strategy, sig.pair, row.id), riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: DISCORD_COPY.profitLock }, acctForPair(sig.pair));
+    if (!r.ok && !final) {
+      await redis.del(`fx:discord:fullcatch:${row.id}`).catch(() => 0); // e.g. no live price yet → the next try takes it
+      continue;
+    }
+    const what = `his FULL-conviction call${sig.event ? ` (${sig.event})` : ''} posted ${Math.round((now - row.t) / 60_000)} min ago, missed then — ${r.ok ? `taken now: ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair} at ${r.entry}, safety stop ${r.stop}, risking $${r.riskUsd}` : `still not taken: ${r.error}`}`;
+    await redis.multi().lpush(DISCORD_COPY.logKey, JSON.stringify({ t: now, id: `${row.id}:catchup`, source: row.source, text: row.text, kind: 'open', pair: sig.pair, side: sig.side, hisPx: null, ok: r.ok, what } satisfies CopyLogRow)).ltrim(DISCORD_COPY.logKey, 0, DISCORD_COPY.logMax - 1).exec().catch(() => undefined);
+    out.push(`Kojiro: ${what}`);
+  }
+  return out;
 }
 
 export async function copyLog(redis: Redis, n = 50): Promise<CopyLogRow[]> {

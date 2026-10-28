@@ -18,7 +18,7 @@ import { mondayOf, weeklyLog, weekText } from './forex/pnl';
 import { chosenAt, WeekendReview, type WeekendDeskDef } from './forex/weekend';
 import { staleReason } from './forex/freshness';
 import { runKojiroStudy } from './forex/kojiro-study';
-import { COPIER_HB, DISCORD_COPY, copierDown, handleSignal, loadHeartbeat, loadLevels, savePosted } from './forex/discord';
+import { COPIER_HB, DISCORD_COPY, catchUpFullCalls, copierDown, handleSignal, loadHeartbeat, loadLevels, savePosted } from './forex/discord';
 import { getConfig, startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
 import { DEFAULT_CONFIG } from './config/default';
 import { markStrategySince, oneTimeUpgrade, runConfigMigrations } from './config/migrations';
@@ -821,6 +821,19 @@ async function main(): Promise<void> {
       if (!ok && ++tries < 10) setTimeout(() => void replay(), 60_000).unref?.();
     };
     setTimeout(() => void replay(), 90_000).unref?.();
+  }
+  // v27.94 (owner: "Fullport FOMC longs is also a call … make sure it happens at all costs"): his full-conviction calls
+  // the old parser logged as "not a trade message" in the last 4 h are taken now at the market (once each; retried while
+  // there is no live price yet)
+  {
+    let tries = 0;
+    const catchUp = async () => {
+      tries++;
+      const lines = await catchUpFullCalls(redis, practice, Date.now(), 4 * 3_600_000, tries >= 6).catch((err: Error) => [`Kojiro catch-up failed: ${err.message}`]);
+      if (lines.length) forex.logBot(lines);
+      if (tries < 6) setTimeout(() => void catchUp(), 60_000).unref?.();
+    };
+    setTimeout(() => void catchUp(), 75_000).unref?.();
   }
   // v20.1 (owner: "revert all current active trades"): every open bot trade is struck as if it never happened, once
   await oneTimeUpgrade('v20.1-revert-open', async () => {

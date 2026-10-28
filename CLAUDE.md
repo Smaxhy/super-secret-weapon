@@ -758,6 +758,20 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.94 his full-conviction calls are taken, lab-only or not (Oct 28 ~16:00 UTC, FOMC day; owner: "Fullport FOMC longs is
+also a call … make sure it happens at all costs")
+discord.ts `fullCall(up)` → `parseSignal` returns {kind 'open', price null, `conviction: 'full'`, `event`} for "fullport /
+full port / full send / full size / all in / max size … longs|shorts|calls|puts" and for event calls with the side next to the
+event ("FOMC longs", "longs into CPI"; FOMC / CPI / PPI / NFP / PCE / Powell / Fed / jobs report / rate decision); no market
+named → `POSTED_LEVELS.defaultPair` NDXUSD. NOT a call: negations / exits / recaps (no, not, don't, avoid, careful, closed,
+exit, sold, covered, took, trim, flat, paid, profit, recap, won, lost…) or an event and a side far apart in a sentence.
+handleSignal: a full call saves his lean (bias ±1) and is opened at OUR market price (no price of his → no mismatch check)
+even while `DISCORD_COPY.live` is off and past `kojiroGate` (`DISCORD_COPY.fullLive`, env `DISCORD_FULLPORT_LIVE=off` = lab
+only); late arrival allowed up to `fullMaxAgeMs` 45 min (others 10); same 20% / 0.5% safety stop / fee checks / copy lock as
+his other calls. `catchUpFullCalls` (index.ts, 75 s after start, retried every 60 s ×6 while it can't open, e.g. no live
+price): log rows of the last 4 h that the old parser marked "not a trade message" / lab only and that parse as a full call
+now are taken at the market once (`fx:discord:fullcatch:<id>` NX), bot-log + copy-log line "posted N min ago, missed then —
+taken now". tests/forex-fullport (3).
 ## v27.93 coins trade solid Maybe rows again (Oct 28, owner: "crypto will still trade solidly enough — check the past crypto
 trades, turn the best strats on")
 `FX_CONFIG.provenOnly.verdicts.crypto` ['edge','maybe'] + `maybeMinPf` {fx 0, crypto 1.3} + `verdictOk(universe, row)` (lab.ts,
