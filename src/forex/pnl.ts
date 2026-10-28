@@ -90,7 +90,7 @@ export interface BotStatus {
   openPnlUsd: number;
   equityUsd: number;
   startUsd: number;
-  trades: Array<{ id: string; pair: string; side: 1 | -1; pnlUsd: number; strategy: string | null; name: string | null; tf: string | null; openedAt: number; /** v17.9: exit price behind pnlUsd + USD per 1.0 move of it (live P&L on the dashboard) */ px?: number; pnlPerPx?: number }>;
+  trades: Array<{ id: string; pair: string; side: 1 | -1; pnlUsd: number; strategy: string | null; name: string | null; tf: string | null; openedAt: number; /** v17.9: exit price behind pnlUsd + USD per 1.0 move of it (live P&L on the dashboard) */ px?: number; pnlPerPx?: number; /** v27.75: age of that price (ms) */ priceAgeMs?: number }>;
 }
 
 /** Trades with no strategy (opened by hand) are grouped under this key. */
@@ -331,7 +331,7 @@ export function pnlReport(acct: 'bot' | 'me' | 'cbot', rows: readonly PnlRow[], 
 export function botStatus(account: (Pick<AccountView, 'startUsd' | 'equityUsd'> & { positions: ReadonlyArray<AccountView['positions'][number]> }) | null, names: Readonly<Record<string, string>> = {}): BotStatus {
   if (!account) return { open: 0, openPnlUsd: 0, equityUsd: 0, startUsd: 0, trades: [] };
   const trades = account.positions
-    .map((p) => ({ id: p.id, pair: p.pair, side: p.side, pnlUsd: p.pnlUsd, strategy: p.strategy ?? null, name: p.strategy ? nameOf(p.strategy, names) : null, tf: tfOf(p), openedAt: p.openedAt, ...(Number.isFinite(p.px) ? { px: p.px } : {}), ...(p.pnlPerPx !== undefined && Number.isFinite(p.pnlPerPx) ? { pnlPerPx: p.pnlPerPx } : {}) }))
+    .map((p) => ({ id: p.id, pair: p.pair, side: p.side, pnlUsd: p.pnlUsd, strategy: p.strategy ?? null, name: p.strategy ? nameOf(p.strategy, names) : null, tf: tfOf(p), openedAt: p.openedAt, ...(Number.isFinite(p.px) ? { px: p.px } : {}), ...(p.pnlPerPx !== undefined && Number.isFinite(p.pnlPerPx) ? { pnlPerPx: p.pnlPerPx } : {}), ...(p.priceAgeMs !== undefined ? { priceAgeMs: p.priceAgeMs } : {}) }))
     .sort((a, b) => b.openedAt - a.openedAt);
   return { open: trades.length, openPnlUsd: cents(trades.reduce((s, p) => s + (Number.isFinite(p.pnlUsd) ? p.pnlUsd : 0), 0)), equityUsd: account.equityUsd, startUsd: account.startUsd, trades };
 }

@@ -758,6 +758,17 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.75 which markets have a live price — said in the bot log and on the trade card (Oct 28, owner: "the live price updating is
+being delayed")
+VPS read 02:16 UTC: Hyperliquid live prices (gap measured) for NDXUSD / SPXUSD / XAUUSD only; DJIUSD, RUTUSD and XAGUSD had no
+builder market matched → Yahoo's CME price, ~10 min late (the open Dow round_break:1h short priced from 02:06 at 02:16).
+hyperliquid.ts: more Dow / Russell / metal names (`HL_FUTURES`: USA30, DJ30, WS30, DOWJONES, US2K, R2K, R2000, SMALLCAP…) +
+`lookalikes(names, found)` (index-looking builder names that matched nothing) → `HyperliquidLive.onMarkets` → index.ts bot-log
+line once per change "live prices: NDXUSD ← Hyperliquid xyz:XYZ100 … · still ~10 min late (Yahoo): … · other index-like
+markets there: …" (read it after deploy; add a listed name to `HL_FUTURES` if it is the right market). Practice `snapshot`
+positions carry `priceAgeMs` (`quoteAge`), `botStatus` passes it; dashboard active-trade card "Price now" sub reads "price N min
+late" when ≥ 3 min and no live tick. NOT done (owner to decide): stop new trades on markets without a live price.
+tests in forex-hl-index (+1).
 ## v27.74 sell high / buy low TOWARD his levels (Oct 28, owner: "he did post it, it's these levels" — his NQ short at 29,879 →
 29,804, in #signal-proofs: sold ABOVE his three levels 29,835 / 29,804 / 29,782.5 with his bearish lean and used them as targets)
 The bot only traded AT his levels (bounce / break-and-retest), so a sell above them had no rule. strategies.ts **`towardSignal`**

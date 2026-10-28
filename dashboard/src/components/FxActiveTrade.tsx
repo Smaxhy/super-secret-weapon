@@ -46,6 +46,8 @@ export interface ActivePos {
   conviction?: ActiveConviction | null;
   sniper?: { votes: number; of: number } | null;
   closePending?: { reason: string; at: number } | null;
+  /** v27.75: how old the bot's price is (ms) — Dow / Russell / silver can run on Yahoo's ~10-minute-late price */
+  priceAgeMs?: number;
 }
 export interface ActivePlan { id: string; name: string; tf: string; lines: Array<{ k: string; text: string; done?: boolean }> }
 
@@ -173,7 +175,7 @@ function TradeView({ p, plan, onClose, read }: { p: ActivePos; plan: ActivePlan 
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2">
         <Fact label="To stop" mark="bg-[#ef4444]" value={toStop === null ? 'none' : toStop <= 0 ? 'at the stop' : `${pipsTxt(toStop)} pips`} sub={p.stop !== null ? p.stop.toFixed(dg) : 'no stop'} />
-        <Fact label="Price now" mark="bg-[#6366f1]" value={<LivePrice value={px} digits={dg} />} sub={`in at ${p.entry.toFixed(dg)}`} live={!!tick} />
+        <Fact label="Price now" mark="bg-[#6366f1]" value={<LivePrice value={px} digits={dg} />} sub={`in at ${p.entry.toFixed(dg)}${!tick && (p.priceAgeMs ?? 0) >= 3 * 60_000 ? ` · price ${Math.round((p.priceAgeMs ?? 0) / 60_000)} min late` : ''}`} live={!!tick} />
         <Fact label="To target" mark="bg-[#22c55e]" value={toTarget === null ? 'trailing' : toTarget <= 0 ? 'reached' : `${pipsTxt(toTarget)} pips`} sub={p.target !== null ? p.target.toFixed(dg) : 'no fixed target'} />
       </div>
       <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">

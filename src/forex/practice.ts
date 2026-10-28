@@ -444,7 +444,7 @@ export interface AccountView extends PracticeAccount {
   freeMarginUsd: number;
   /** equity / margin in use, % (null when flat) */
   marginLevelPct: number | null;
-  positions: Array<PracticePosition & { px: number; pnlUsd: number; pnlPct: number; /** v17.9: USD per 1.0 move of the exit price */ pnlPerPx?: number }>;
+  positions: Array<PracticePosition & { px: number; pnlUsd: number; pnlPct: number; /** v17.9: USD per 1.0 move of the exit price */ pnlPerPx?: number; /** v27.75: age of the price behind px (ms) */ priceAgeMs?: number }>;
 }
 
 export function view(a: PracticeAccount, mids: Record<string, number>, halves: Record<string, number> = {}): AccountView {
@@ -1785,7 +1785,11 @@ export class Practice {
         mids[x.id] = x.mid;
         halves[x.id] = (x.ask - x.bid) / 2;
       }
-      return { account: view(a, mids, halves), quotes: q };
+      // v27.75 (owner: "the live price is being delayed"): how old each open trade's price is (Dow / Russell / silver run on
+      // Yahoo's ~10-minute-late CME price when Hyperliquid has no market for them) — the dashboard says so
+      const now = Date.now();
+      const v = view(a, mids, halves);
+      return { account: { ...v, positions: v.positions.map((p) => (q[p.pair] ? { ...p, priceAgeMs: Math.max(0, quoteAge(q[p.pair]!, now)) } : p)) }, quotes: q };
     });
   }
 

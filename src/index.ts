@@ -75,6 +75,7 @@ import { loadPythConf, pythConf, pythKey, pythLive, setPythConf, testPythKey } f
 import { yahooLive } from './forex/yahoo-live';
 import { coinbaseLive } from './forex/coinbase';
 import { HL_FUTURES_KEY, hyperliquidLive } from './forex/hyperliquid';
+import { INSTRUMENTS, isFutures } from './forex/types';
 import { LevelWatch, replayMissedLevels } from './forex/level-watch';
 import { VENUE_FEES } from './forex/venue-fees';
 import { startLivePush } from './forex/live-push';
@@ -416,6 +417,18 @@ async function main(): Promise<void> {
   yahooLive.start();
   coinbaseLive.start();
   hyperliquidLive.onDiscover = (found) => void redis.set(HL_FUTURES_KEY, JSON.stringify(found)).catch(() => undefined); // v27.52: for the labs' live candles
+  // v27.75 (owner: "the live price updating is being delayed"): say once per change which futures markets have a live
+  // Hyperliquid price and which still run on Yahoo's ~10-minute-late CME price
+  {
+    let lastSig = '';
+    hyperliquidLive.onMarkets = (found, unknown) => {
+      const late = INSTRUMENTS.filter((x) => isFutures(x.id) && !found[x.id]).map((x) => x.id);
+      const sig = `${Object.entries(found).sort().join(',')}|${late.join(',')}`;
+      if (sig === lastSig) return;
+      lastSig = sig;
+      forex.logBot([`live prices: ${Object.entries(found).map(([id, c]) => `${id} ← Hyperliquid ${c}`).join(', ') || 'no Hyperliquid index / metal market found'}${late.length ? ` · still ~10 min late (Yahoo): ${late.join(', ')}` : ''}${late.length && unknown.length ? ` · other index-like markets there: ${unknown.join(', ')}` : ''}`]);
+    };
+  }
   hyperliquidLive.start();
   // v17.12: the key pasted on the dashboard (DB) wins over the .env one; an .env key finds its endpoint first
   await loadPythConf();

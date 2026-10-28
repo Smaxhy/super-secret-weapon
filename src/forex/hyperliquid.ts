@@ -39,11 +39,19 @@ export const HYPERLIQUID = {
 export const HL_FUTURES: Record<string, RegExp> = {
   NDXUSD: /^(XYZ100|NDX|NAS100|US100|USTECH|USTEC|NASDAQ|NASDAQ100|NQ)$/,
   SPXUSD: /^(SP500|SPX|SPX500|US500|ES)$/,
-  DJIUSD: /^(US30|DJI|DJIA|DOW|DOW30|YM)$/,
-  RUTUSD: /^(US2000|RUT|RTY|RUSSELL|RUSSELL2000)$/,
-  XAUUSD: /^(GOLD|XAU)$/,
-  XAGUSD: /^(SILVER|XAG)$/,
+  DJIUSD: /^(US30|USA30|DJI|DJIA|DJ30|WS30|DOW|DOW30|DOWJONES|YM)$/,
+  RUTUSD: /^(US2000|US2K|USA2000|RUT|RTY|R2K|R2000|RUSSELL|RUSSELL2000|SMALLCAP|SMALLCAP2000)$/,
+  XAUUSD: /^(GOLD|XAU|XAUUSD)$/,
+  XAGUSD: /^(SILVER|XAG|XAGUSD)$/,
 };
+
+/** v27.75: builder-market names that look like an index / metal but matched none of the patterns — listed in the bot log
+ * so a name we don't know (Dow / Russell / silver run on Yahoo's ~10-minute-late price without one) can be added. Pure. */
+export function lookalikes(names: readonly string[], found: Record<string, string>): string[] {
+  const taken = new Set(Object.values(found));
+  const hint = /(US|DOW|DJ|RUS|R2|SMALL|NAS|SP|GOLD|SILV|XA|INDEX|IDX)/;
+  return names.filter((n) => n.includes(':') && !taken.has(n) && hint.test((n.split(':').pop() ?? '').toUpperCase())).slice(0, 30);
+}
 
 /** Builder markets (`dex:NAME`) that follow our futures markets; first listed wins. Pure. */
 export function matchFutures(names: readonly string[]): Record<string, string> {
@@ -172,6 +180,7 @@ export class HyperliquidLive {
         }
       }
       if (Object.keys(found).length) this.onDiscover?.(found);
+      this.onMarkets?.(found, lookalikes(names, found));
       if (fresh.length || !this.futures.size) log.info({ found, dexes: (dexes ?? []).filter(Boolean).length }, Object.keys(found).length ? 'Hyperliquid index / metal markets found' : 'no Hyperliquid index / metal markets found');
       return found;
     } catch (err) {
@@ -182,6 +191,8 @@ export class HyperliquidLive {
 
   /** v27.52: told the market list after every discovery (index.ts stores it in Redis for the labs / the worker child) */
   onDiscover: ((found: Record<string, string>) => void) | null = null;
+  /** v27.75: every discovery — what was found and the index-looking names that matched nothing (for the bot log) */
+  onMarkets: ((found: Record<string, string>, unknown: string[]) => void) | null = null;
 
   /** v27.48: which builder market follows which of our futures markets */
   futuresFound(): Record<string, string> {
