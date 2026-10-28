@@ -11,7 +11,7 @@ import { moduleLogger } from '../lib/logger';
 import { clockFor } from './calendar';
 import { DISCORD_COPY, POSTED_LEVELS, levelSets, levelStrategy, loadLevels, type LevelSet } from './discord';
 import { hlCandles, loadHlFutures } from './hyperliquid';
-import type { Practice } from './practice';
+import { walkTrade, type Practice } from './practice';
 import { postedLevelSignal } from './strategies';
 import { buildCtx } from './ta';
 import { instrument, isFutures, type Bar } from './types';
@@ -84,6 +84,68 @@ export async function takeLevelTrades(redis: Redis, practice: Practice, acct: 'b
   }
 }
 
+/** v27.77 (owner: "keep all Kojiro calls in labs for now — they work for him, apparently not for us"): with level trades
+ * off, every level setup the watcher sees is RECORDED instead (one per candle), then graded on the live minutes after it
+ * like the account would have run it (stop first, the profit lock with fees, target) — R after the venue fee. */
+export const LEVEL_LAB = { key: 'fx:discord:lvlab', max: 300, maxOpenMs: 24 * 3_600_000 };
+
+export interface LabLevelTrade {
+  ref: string;
+  pair: string;
+  side: 1 | -1;
+  entry: number;
+  stop: number;
+  target: number | null;
+  /** entry time (the signal minute's close) */
+  t: number;
+  why: string;
+  done?: { at: number; exit: number; reason: 'stop' | 'target' | 'expired'; locked: boolean; pts: number; r: number };
+}
+
+export async function loadLevelLab(redis: Redis): Promise<LabLevelTrade[]> {
+  const raw = await redis.get(LEVEL_LAB.key).catch(() => null);
+  try {
+    return raw ? (JSON.parse(raw) as LabLevelTrade[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Grade the open lab rows of one market on its minutes (finished, on the futures price). Mutates; true when any changed. Pure. */
+export function gradeLevelLab(rows: LabLevelTrade[], pair: string, bars: readonly Bar[], now: number): boolean {
+  const inst = instrument(pair);
+  if (!inst) return false;
+  let changed = false;
+  for (const x of rows) {
+    if (x.done || x.pair !== pair) continue;
+    const after = bars.filter((b) => b.t >= x.t);
+    const fee = feePxOf(inst, x.entry);
+    const w = walkTrade(x.side, x.entry, x.stop, x.target, after, (inst.spreadPips * inst.pip) / 2, fee);
+    const risk = Math.abs(x.entry - x.stop);
+    const close = (exit: number, reason: 'stop' | 'target' | 'expired', at: number) => {
+      const pts = x.side * (exit - x.entry);
+      x.done = { at, exit, reason, locked: w.locked, pts: Math.round(pts * 100) / 100, r: risk > 0 ? Math.round(((pts - fee) / risk) * 100) / 100 : 0 };
+      changed = true;
+    };
+    if (w.reason) close(w.exit, w.reason, after[w.exitIdx]!.t + 60_000);
+    else if (now - x.t > LEVEL_LAB.maxOpenMs && after.length) close(after[after.length - 1]!.c, 'expired', now);
+  }
+  return changed;
+}
+
+/** Totals of the lab: finished trades, wins, R after fees. Pure. */
+export function levelLabSummary(rows: readonly LabLevelTrade[]): { n: number; done: number; wins: number; totalR: number; avgR: number | null; open: number; byWhy: Record<string, { n: number; totalR: number }> } {
+  const done = rows.filter((x) => x.done);
+  const totalR = Math.round(done.reduce((s, x) => s + x.done!.r, 0) * 100) / 100;
+  const byWhy: Record<string, { n: number; totalR: number }> = {};
+  for (const x of done) {
+    const g = (byWhy[x.why] ??= { n: 0, totalR: 0 });
+    g.n++;
+    g.totalR = Math.round((g.totalR + x.done!.r) * 100) / 100;
+  }
+  return { n: rows.length, done: done.length, wins: done.filter((x) => x.done!.r > 0).length, totalR, avgR: done.length ? Math.round((totalR / done.length) * 100) / 100 : null, open: rows.length - done.length, byWhy };
+}
+
 /** Live 1-minute candles moved onto the futures price; only finished minutes. Pure. */
 export function shiftedMinutes(live: readonly Bar[], gap: number, now: number): Bar[] {
   return live.filter((b) => b.t + 60_000 <= now).map((b) => ({ ...b, o: b.o + gap, h: b.h + gap, l: b.l + gap, c: b.c + gap }));
@@ -138,16 +200,22 @@ export class LevelWatch {
   }
 
   async tick(now = Date.now()): Promise<void> {
-    if (this.busy || !POSTED_LEVELS.trade || !DISCORD_COPY.on) return;
+    if (this.busy || !DISCORD_COPY.on) return;
     this.busy = true;
     try {
       const posted = await loadLevels(this.redis, now);
-      if (!Object.values(posted).some((x) => levelSets(x).length)) return;
+      const lab = POSTED_LEVELS.trade ? [] : await loadLevelLab(this.redis);
+      let labChanged = false;
+      const labHasOpen = lab.some((x) => !x.done);
+      if (!Object.values(posted).some((x) => levelSets(x).length) && !labHasOpen) return;
       const hlMap = await loadHlFutures(this.redis);
-      for (const [pair, lv] of Object.entries(posted)) {
+      const pairs = new Set([...Object.keys(posted), ...lab.filter((x) => !x.done).map((x) => x.pair)]);
+      for (const pair of pairs) {
+        const lv = posted[pair];
         const coin = isFutures(pair) ? hlMap[pair] : undefined;
-        const sets = levelSets(lv);
-        if (!sets.length || !coin || !clockFor(pair, now).open) continue;
+        const sets = lv ? levelSets(lv) : [];
+        const grading = lab.some((x) => !x.done && x.pair === pair);
+        if ((!sets.length && !grading) || !coin || !clockFor(pair, now).open) continue;
         const gap = this.practice.hlGap(pair, now);
         if (gap === null) {
           this.once(pair, `gap:${pair}`, `Kojiro levels on ${pair}: measuring the live-feed gap first (a minute or two) — until then the 15-minute pass watches his levels`);
@@ -159,6 +227,8 @@ export class LevelWatch {
         });
         const bars = shiftedMinutes(live, gap, now);
         const last = bars.length - 1;
+        if (grading && gradeLevelLab(lab, pair, bars, now)) labChanged = true;
+        if (!lv || !sets.length) continue;
         if (last < 60 || now - (bars[last]!.t + 60_000) > LEVEL_WATCH.maxLagMs) continue;
         const ctx = buildCtx(bars, 1, pair);
         const minRisk = (bars[last]!.c * LEVEL_WATCH.minStopPct) / 100;
@@ -166,8 +236,19 @@ export class LevelWatch {
         let sig = null;
         for (const st of sets) if ((sig = postedLevelSignal(ctx, last, st.levels, st.t, st.side, st.dol, minRisk, st.all))) break;
         if (!sig) continue;
+        if (!POSTED_LEVELS.trade) {
+          // v27.77: lab only — record it once per candle, graded on the minutes after it
+          const ref = `${levelStrategy(lv.source)}:lab:${pair}:${bars[last]!.t}`;
+          if (lab.some((x) => x.ref === ref) || feeTooBig(pair, bars[last]!.c, sig.stop)) continue;
+          lab.unshift({ ref, pair, side: sig.side, entry: bars[last]!.c, stop: sig.stop, target: sig.target, t: bars[last]!.t + 60_000, why: sig.note ?? 'level' });
+          lab.splice(LEVEL_LAB.max);
+          labChanged = true;
+          this.logBot(pair, [`Kojiro level (LAB, not traded): would ${sig.side === 1 ? 'buy' : 'sell'} ${pair} at ${bars[last]!.c} — ${sig.note ?? 'at his level'}; stop ${+sig.stop.toFixed(2)}${sig.target !== null ? `, target ${sig.target}` : ''}`]);
+          continue;
+        }
         await takeLevelTrades(this.redis, this.practice, 'bot', [{ pair, side: sig.side, stop: sig.stop, target: sig.target, barT: bars[last]!.t, entry: bars[last]!.c, source: lv.source, why: sig.note }], (l) => this.logBot(pair, l));
       }
+      if (labChanged) await this.redis.set(LEVEL_LAB.key, JSON.stringify(lab)).catch(() => undefined);
     } catch (err) {
       log.warn({ err: (err as Error).message }, 'level watch failed');
     } finally {

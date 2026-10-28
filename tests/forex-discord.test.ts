@@ -1,7 +1,9 @@
 /** v27.46 (owner: "copy a trade every time it's posted in the channel"): Kojiro's Discord signals → paper copies. */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type Redis from 'ioredis';
-import { copySize, copyStop, copyStrategy, handleSignal, parseSignal, symbolToPair, type CopyBook } from '../src/forex/discord';
+import { DISCORD_COPY, copySize, copyStop, copyStrategy, handleSignal, parseSignal, symbolToPair, type CopyBook } from '../src/forex/discord';
+
+DISCORD_COPY.live = true; // v27.77: these tests drive the live copy path (lab only is the default)
 import { Practice, newAccount, type PracticeAccount, type PracticePosition, type Quote } from '../src/forex/practice';
 import { VENUE_FEES } from '../src/forex/venue-fees';
 

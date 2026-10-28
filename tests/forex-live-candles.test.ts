@@ -4,6 +4,9 @@ import type Redis from 'ioredis';
 import { extendWithLive, liveTail } from '../src/forex/basis';
 import { hlCandles } from '../src/forex/hyperliquid';
 import { LevelWatch, shiftedMinutes } from '../src/forex/level-watch';
+import { POSTED_LEVELS } from '../src/forex/discord';
+
+POSTED_LEVELS.trade = true; // v27.77: the trading path (lab only is the default)
 import type { Practice } from '../src/forex/practice';
 import type { Bar } from '../src/forex/types';
 

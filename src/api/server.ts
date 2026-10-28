@@ -30,6 +30,7 @@ import { FX_CONFIG, focusMarkets } from '../forex/lab';
 import { botStatus, dayTrades, parsePnlQuery, pnlReport } from '../forex/pnl';
 import { STRATEGIES } from '../forex/strategies';
 import { KSTUDY, loadCard, runKojiroStudy, saveHistory } from '../forex/kojiro-study';
+import { loadLevelLab, levelLabSummary } from '../forex/level-watch';
 import { DISCORD_COPY, POSTED_LEVELS, copierDown, copyLog, handleSignal, loadHeartbeat, loadLevels, saveHeartbeat } from '../forex/discord';
 import { isCrypto } from '../forex/types';
 import { moneyMap } from '../learner/money-map';
@@ -470,7 +471,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
     });
     secured.get('/api/forex/discord', async (_req, reply) => {
       reply.header('Cache-Control', 'no-store');
-      return { on: DISCORD_COPY.on, riskPct: DISCORD_COPY.riskPct, stopPct: DISCORD_COPY.stopPct, profitLock: DISCORD_COPY.profitLock, levelTrades: POSTED_LEVELS.trade, levels: await loadLevels(redis), log: await copyLog(redis, 50), study: await loadCard(redis), historyPosts: await redis.hlen(KSTUDY.histKey).catch(() => 0), copier: await (async () => { const hb = await loadHeartbeat(redis); return { lastSeen: hb?.t ?? null, channels: hb?.channels ?? [], down: copierDown(hb, Date.now()) }; })() };
+      return { on: DISCORD_COPY.on, riskPct: DISCORD_COPY.riskPct, stopPct: DISCORD_COPY.stopPct, profitLock: DISCORD_COPY.profitLock, levelTrades: POSTED_LEVELS.trade, live: DISCORD_COPY.live, levelLab: await (async () => { const rows = await loadLevelLab(redis); return { ...levelLabSummary(rows), rows: rows.slice(0, 30) }; })(), levels: await loadLevels(redis), log: await copyLog(redis, 50), study: await loadCard(redis), historyPosts: await redis.hlen(KSTUDY.histKey).catch(() => 0), copier: await (async () => { const hb = await loadHeartbeat(redis); return { lastSeen: hb?.t ?? null, channels: hb?.channels ?? [], down: copierDown(hb, Date.now()) }; })() };
     });
     // v17.11: the owner's profit lock on their own trades (the bot account always uses it)
     secured.post<{ Body: { on?: boolean } }>('/api/forex/practice/lock', async (req, reply) => {

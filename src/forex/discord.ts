@@ -42,6 +42,9 @@ export const DISCORD_COPY = {
    * looser copy lock (profit-lock.ts `COPY_LOCK`: arms +0.5R, trails 0.5R, 0.3R past +1.2R — owner: "trailing SL on his
    * calls is fine, just not too tight early on"). `DISCORD_COPY_LOCK=off` = his exit / his SL / the safety stop only. */
   profitLock: process.env.DISCORD_COPY_LOCK !== 'off',
+  /** v27.77: his SIGNAL posts are NOT opened on the account (lab only: logged + graded by kojiro-study.ts); his exits still
+   * close any copy left open. `DISCORD_COPY_LIVE=on` copies them again. */
+  live: process.env.DISCORD_COPY_LIVE === 'on',
   seenTtlSec: 7 * 86_400,
   logKey: 'fx:discord:log',
   logMax: 200,
@@ -75,7 +78,9 @@ export function symbolToPair(sym: string): string | null {
 /** v27.51: his posted price levels (one list per market, the newest post wins). */
 export const POSTED_LEVELS = {
   /** `DISCORD_LEVEL_TRADES=off` keeps saving / drawing the levels but takes no trades at them */
-  trade: process.env.DISCORD_LEVEL_TRADES !== 'off',
+  /** v27.77 (owner: "keep all Kojiro calls in labs for now — they work for him, apparently not for us"): OFF by default —
+   * the level watcher only records what it would have traded (`LEVEL_LAB`); `DISCORD_LEVEL_TRADES=on` trades them again */
+  trade: process.env.DISCORD_LEVEL_TRADES === 'on',
   key: 'fx:discord:levels',
   /** a list is used for this long after it was posted (his levels are for the day) */
   validMs: 24 * 3_600_000,
@@ -337,7 +342,7 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
     if (lv) {
       await savePosted(redis, lv.pair, { levels: lv.levels, t: s.at, msgId: s.id, source, ...(lv.side ? { side: lv.side } : {}) });
       const which = lv.side === -1 ? 'SHORT levels (shorts only)' : lv.side === 1 ? 'LONG levels (longs only)' : 'levels';
-      said.push(`${lv.pair} ${which} saved for today: ${lv.levels.map(fmt).join(' · ')}${POSTED_LEVELS.trade ? ' — the bot trades a bounce or a break-and-retest at them (live 1-minute candles)' : ''}`);
+      said.push(`${lv.pair} ${which} saved for today: ${lv.levels.map(fmt).join(' · ')}${POSTED_LEVELS.trade ? ' — the bot trades a bounce, a break-and-retest or a move toward them (live 1-minute candles)' : ' — lab only: the bot records what it would trade at them'}`);
     }
     return done({ ...base, kind: 'levels', pair: (lv ?? plan)!.pair, ok: true, what: said.join('; ') });
   }
@@ -356,6 +361,7 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
       stopNamed: sig.stop,
     });
     if (!gate.take) return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `not copied — his record: ${gate.why}` });
+    if (!DISCORD_COPY.live) return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `lab only — not traded (Kojiro calls are in the lab; his record keeps being graded): his ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair}${sig.price ? ` @ ${sig.price}` : ''}` });
     const r = await book.copyOpen({ pair: sig.pair, side: sig.side, stopNamed: sig.stop, hisPx: sig.price, strategy, ref: copyRef(strategy, sig.pair, s.id), riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: gate.plan !== 'none', ...(gate.plan === 'tight' ? { copyLock: 'tight' as const } : {}) }, acctForPair(sig.pair));
     const what = r.ok ? `copied ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair} at ${r.entry} (his ${sig.price ?? '?'}), safety stop ${r.stop}, risking $${r.riskUsd}` : `not copied: ${r.error}`;
     return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: r.ok, what });

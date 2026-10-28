@@ -679,6 +679,15 @@ async function main(): Promise<void> {
     forex.logBot([...lines, 'Kojiro: "Leaning towards bearish" (00:08 UTC) saved as his NDXUSD bias — level trades are shorts only now']);
     log.info({ lines }, 'wrong-side Kojiro level trade struck');
   });
+  // v27.77 (owner: "do as if it never happened and keep all Kojiro calls in labs for now"): the 02:32 UTC NQ short of the
+  // "sell high toward his level" rule (entered 21 points above his newest level — v27.76) struck; Kojiro calls are lab only
+  await oneTimeUpgrade('v27.77-strike-kojiro-toward-nq', async () => {
+    const pick = (p: { ref?: string }) => p.ref === 'discord_kojiro_levels:signal:NDXUSD:1793154660000';
+    const label = 'Kojiro level: NQ short of 02:32 UTC Oct 28 (sold toward his level too early)';
+    const lines = [await practice.undoPositions('bot', pick, label), await practice.undoClosed('bot', pick, label)];
+    forex.logBot([...lines, 'Kojiro calls are LAB ONLY now: his signals and level setups are recorded and graded, never traded (DISCORD_COPY_LIVE / DISCORD_LEVEL_TRADES = on to trade again)']);
+    log.info({ lines }, 'Kojiro toward trade struck');
+  });
   // v27.72 (owner: "it got in a weird signal and longed it then insta sold, just lost 90"): tonight's gold buys at his GC
   // levels had a ~$3.3 stop while the round-trip gold fee is ~$4 a unit — they could not win after fees. Struck once;
   // such trades are now refused (level-watch.ts feeTooBig) and the profit lock counts the fee.

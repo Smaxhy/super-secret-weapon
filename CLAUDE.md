@@ -758,6 +758,23 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.77 Kojiro calls are LAB ONLY; the 02:32 NQ short struck (Oct 28, owner: "do as if it never happened and keep all Kojiro
+calls in labs for now — they always work out for him but apparently not for us")
+- discord.ts: `DISCORD_COPY.live` (env `DISCORD_COPY_LIVE=on`, default OFF): his SIGNAL posts are parsed, gated and logged
+  ("lab only — not traded …"), saved to his history and graded by kojiro-study.ts as before — never opened; his exit posts
+  still close any copy left open. `POSTED_LEVELS.trade` default OFF (env `DISCORD_LEVEL_TRADES=on`; was on unless 'off').
+  His levels / plan / bias are still saved and drawn.
+- level-watch.ts **level lab** (`LEVEL_LAB` {key `fx:discord:lvlab`, max 300, maxOpenMs 24 h}, `LabLevelTrade`,
+  `loadLevelLab`, `gradeLevelLab` (pure: `walkTrade` on the live minutes after it — stop first, the fee-aware profit lock,
+  target; R after the venue fee; 24 h without stop / target → 'expired' at the last close), `levelLabSummary`): with level
+  trades off, LevelWatch (still every 20 s, gated on `DISCORD_COPY.on` only) records every level setup once per candle (fee
+  check as live) with a bot-log line "Kojiro level (LAB, not traded): would sell …", and grades open lab rows of every
+  market it can read (also after his levels expired). GET `/api/forex/discord` → `live`, `levelLab` {n, done, wins,
+  totalR, avgR, open, byWhy, rows (30)}. The 15-minute pass takes no level trades while off (as before). No dashboard card yet.
+- One-time `v27.77-strike-kojiro-toward-nq`: ref discord_kojiro_levels:signal:NDXUSD:1793154660000 (open + closed) struck.
+- Back to trading his calls: VPS .env `DISCORD_COPY_LIVE=on` / `DISCORD_LEVEL_TRADES=on` once the lab + his graded record
+  show they work for US (after fees, our fills). tests/forex-kojiro-lab (4); forex-discord / forex-live-candles switch the
+  trading path on at the top.
 ## v27.76 "sell high toward his levels" measures from ALL his levels (Oct 28, owner: "is the current trade correct from the
 Kojiro call?")
 02:32 UTC the toward rule shorted NQ at 29,856.25 (stop 29,881, target 29,804) — his bearish lean and his target, but only
