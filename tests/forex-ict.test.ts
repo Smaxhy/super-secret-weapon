@@ -247,7 +247,7 @@ describe('v25 owner rules: ICT live, Fibonacci never alone', () => {
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(new URL('../src/forex/lab.ts', import.meta.url), 'utf8');
     expect(src).toMatch(/this\.universe === 'fx' \? new Set\(FX_CONFIG\.ownerLive\)/);
-    expect(src).toMatch(/profitFloor\(x\)\.ok && \(FX_CONFIG\.provenOnly\.on \? FX_CONFIG\.provenOnly\.verdicts\[this\.universe\]\.includes\(x\.verdict\) : ownerLive\.has\(x\.id\) \|\| \(mode === 'edge'/); // v27.1: the floor first; v27.27 / v27.85: proven-only switch, verdicts per desk
+    expect(src).toMatch(/profitFloor\(x\)\.ok && fwd\(`\$\{x\.id\}:\$\{x\.tf\}`\)\.ok && \(FX_CONFIG\.provenOnly\.on \? FX_CONFIG\.provenOnly\.verdicts\[this\.universe\]\.includes\(x\.verdict\) : ownerLive\.has\(x\.id\) \|\| \(mode === 'edge'/); // v27.1: the floor first; v27.27 / v27.85: proven-only switch, verdicts per desk
   });
 
   it('fib_pullback waits alone and trades next to a second setup the same way', async () => {

@@ -157,6 +157,13 @@ export const FX_CONFIG = {
    * and every such trade risks `riskPct` of the account on its tested stop (all of them together ≤ that). No owner picks,
    * always-on rows, per-market trial cells, rolling picker or desk trades. A row that earns Edge goes live by itself; one
    * that loses it stops opening. `on: false` = the v27.26 setup. */
+  /** v27.87 (owner: "your trade quality is very shit … adjust yourself and improve"): the forward check. A row may only
+   * trade live when its FORWARD paper record — the lab's own trades opened after paper-since, on candles no test ever
+   * saw when the bot started — agrees with its backtest: `minN` trades, average ≥ `minAvgR`, profit factor ≥ `minPf`.
+   * VPS read Oct 28 14:00: coin Maybe rows with good unseen numbers lost forward (news_drift:1h unseen +0.26R → forward
+   * −0.58R on 12, momentum_bar:1h +0.10 → −0.62 on 13, of_thrust:1h +0.12 → −0.45 on 19), and the coin bot's own closes
+   * since Oct 21 were −6.5R on 53 trades. Too few forward trades = it waits (the lab keeps paper-trading it). */
+  forwardCheck: { on: true, minN: 10, minAvgR: 0.05, minPf: 1.2 },
   provenOnly: { on: true, riskPct: 20, /** v27.31 (owner: "forex may still use the daily pivot R1 / S1, it performs too —
    * just what definitely works"): per desk, a strategy that clears the STRICT per-market bar (`cellPass`: 30+ unseen
    * trades there, +0.1R, PF 1.3, positive before the line, Monte Carlo 95%) also trades on THAT market. v27.34 (owner: "switch
@@ -962,6 +969,16 @@ export const tradeKey = (t: { strategy: string; tf: string; pair: string; entryT
  * open lab trade the same way on the same market whose entry is within `confluenceBars` candles of this one's.
  * Returns the wait text when it stands alone, else null. Pure.
  */
+/** v27.87: does a row's forward paper record (trades opened after paper-since) back its backtest? Pure. */
+export function forwardOk(st: Pick<RStats, 'n' | 'avgR' | 'pf'> | undefined): { ok: boolean; why: string } {
+  const c = FX_CONFIG.forwardCheck;
+  if (!c.on) return { ok: true, why: 'forward check off' };
+  if (!st || st.n < c.minN) return { ok: false, why: `only ${st?.n ?? 0} forward paper trades (needs ${c.minN})` };
+  const pf = st.pf ?? (st.avgR > 0 ? Infinity : 0);
+  if (st.avgR < c.minAvgR || pf < c.minPf) return { ok: false, why: `its forward paper trades lose (${st.n} trades, ${st.avgR >= 0 ? '+' : ''}${st.avgR.toFixed(2)}R a trade, profit factor ${st.pf === null ? '—' : st.pf.toFixed(2)})` };
+  return { ok: true, why: `forward paper ${st.n} trades, +${st.avgR.toFixed(2)}R a trade` };
+}
+
 /** v27.83: does this strategy's trade on this market need a second setup the same way? */
 export const needsMate = (strategy: string, pair: string): boolean => FX_CONFIG.needsConfluence.includes(strategy) || FX_CONFIG.requireConfluence[isCrypto(pair) ? 'crypto' : 'fx'];
 export function soloWait(t: Pick<Trade, 'strategy' | 'pair' | 'side' | 'entryT'>, others: ReadonlyArray<Pick<Trade, 'strategy' | 'pair' | 'side' | 'entryT'>>, barMin: number): string | null {
@@ -1758,6 +1775,8 @@ export class ForexLab {
   chooser: 'rolling' | 'verdict' = 'verdict';
   /** v18.9: always-on rows already logged as resting (one line per rest) */
   private pausedNoted = new Set<string>();
+  /** v27.87: the forward-check hold-backs last logged */
+  private fwdNoted = '';
   /** v17: the correlated-risk cap for the live bot (null until the first run) */
   heatNow: HeatLive | null = null;
   /** v18: the quant desk's latest report (what it would hold today) */
@@ -2355,7 +2374,19 @@ export class ForexLab {
     const mode = FX_CONFIG.strict.mode;
     const strict = mode !== 'off';
     const ownerLive = this.universe === 'fx' ? new Set(FX_CONFIG.ownerLive) : new Set<string>();
-    const chosenRows = rows.filter((x) => x.id !== 'random' && onlyOk(this.universe, x.id, x.tf) && !(this.universe === 'crypto' && NOT_FOR_CRYPTO.has(x.id)) && !rec.dropped.includes(`${x.id}:${x.tf}`) && profitFloor(x).ok && (FX_CONFIG.provenOnly.on ? FX_CONFIG.provenOnly.verdicts[this.universe].includes(x.verdict) : ownerLive.has(x.id) || (mode === 'edge' ? x.verdict === 'edge' : mode === 'quality' ? !!x.quality?.ok : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`)))));
+    // v27.87: the forward check — a row trades only while its forward paper record backs its backtest
+    const fwdOf = new Map(paperRows.map((p) => [`${p.id}:${p.tf}`, p.stats]));
+    const fwd = (key: string) => forwardOk(fwdOf.get(key));
+    const chosenRows = rows.filter((x) => x.id !== 'random' && onlyOk(this.universe, x.id, x.tf) && !(this.universe === 'crypto' && NOT_FOR_CRYPTO.has(x.id)) && !rec.dropped.includes(`${x.id}:${x.tf}`) && profitFloor(x).ok && fwd(`${x.id}:${x.tf}`).ok && (FX_CONFIG.provenOnly.on ? FX_CONFIG.provenOnly.verdicts[this.universe].includes(x.verdict) : ownerLive.has(x.id) || (mode === 'edge' ? x.verdict === 'edge' : mode === 'quality' ? !!x.quality?.ok : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`)))));
+    // v27.87: say once (per change) which rows the forward check holds back
+    if (FX_CONFIG.provenOnly.on) {
+      const held = rows.filter((x) => x.id !== 'random' && FX_CONFIG.provenOnly.verdicts[this.universe].includes(x.verdict) && profitFloor(x).ok && !fwd(`${x.id}:${x.tf}`).ok).map((x) => `${x.id}:${x.tf} (${fwd(`${x.id}:${x.tf}`).why})`);
+      const sig = held.join('|');
+      if (sig !== this.fwdNoted) {
+        this.fwdNoted = sig;
+        if (held.length) this.logBot([`forward check: ${held.length} tested strateg${held.length === 1 ? 'y waits' : 'ies wait'} until their forward paper trades back the test — ${held.join('; ')}`]);
+      }
+    }
     // v20.1 strict mode: say once per hour-of-change why the list is empty (the owner reads the Decisions log)
     if (FX_CONFIG.provenOnly.on && !chosenRows.length && this.chosen.length) this.logBot(['only proven strategies trade: none passes the strict test right now — the bot waits (the lab keeps testing the rest)']);
     else if (!strict && !chosenRows.length && this.chosen.length) this.logBot(['no strategy clears the profit floor right now (30+ unseen trades, 0.05R+ a trade, profit factor 1.2+) — the bot waits']);
@@ -2503,7 +2534,7 @@ export class ForexLab {
       return rowOf.get(k) ?? (FX_CONFIG.marketPlan[t.pair]?.includes(t.strategy) || ownerTrialOf(t.strategy, t.tf, t.pair) || cellPass(c) || focusTrial(t.pair, c) || workTrial(t.pair, c, any?.pairs.find((p) => p.pair === t.pair)) ? any : undefined);
     };
     const cellFor = (t: { strategy: string; tf: string; pair: string }) => allRowOf.get(`${t.strategy}:${t.tf}`)?.markets?.find((c) => c.pair === t.pair);
-    this.labOpen = Object.fromEntries(open.filter((t) => planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), rowFor(t)?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf, pooledOf(allRowOf.get(`${t.strategy}:${t.tf}`)))).map((t) => [`${t.strategy}:${t.tf}:${t.pair}`, t.entryT]));
+    this.labOpen = Object.fromEntries(open.filter((t) => fwd(`${t.strategy}:${t.tf}`).ok && planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), rowFor(t)?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf, pooledOf(allRowOf.get(`${t.strategy}:${t.tf}`)))).map((t) => [`${t.strategy}:${t.tf}:${t.pair}`, t.entryT]));
     // v17: how often each filter input was known on the first 70% of each series (for `missingInput`)
     const covCache = new Map<Series, ReturnType<typeof filterCoverage>>();
     const coverageOf = (se: Series) => {
@@ -2562,7 +2593,7 @@ export class ForexLab {
         soloWait: soloWait(t, open, TF_MIN[t.tf as Timeframe] ?? 60) ?? (opposed.active ? clashWait(t, open, (TF_MIN[t.tf as Timeframe] ?? 60) * 60_000) : null),
         agree,
         marketRec,
-        chosen: planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf, pooledOf(allRowOf.get(`${t.strategy}:${t.tf}`))),
+        chosen: fwd(`${t.strategy}:${t.tf}`).ok && planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf, pooledOf(allRowOf.get(`${t.strategy}:${t.tf}`))),
         rowChosen: chosen.has(`${t.strategy}:${t.tf}`),
         edge: row?.verdict === 'edge',
         sizeF,

@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.87 the forward check: backtests must be confirmed by forward paper trades (Oct 28, owner: "trade quality is very shit,
+adjust yourself and improve")
+VPS read 14:00 UTC — coin bot's own closes Oct 21 → now: 53 trades, −6.5R, −$240 (most from rows no longer live: pivot_bounce:4h
+−2.6R / 8, round_break:1h −2.3R / 7, donchian20:1h, trendline_break:1h, pivot_ladder:4h); forex bot +0.13R / +$65 on 10. Lab
+FORWARD paper (trades opened after paper-since: coins Oct 20, forex Oct 18) vs unseen backtest: coin news_drift:1h +0.26 →
+−0.58R (12), momentum_bar:1h +0.10 → −0.62 (13), of_thrust:1h +0.12 → −0.45 (19), keltner:1h +0.13 → −0.11 (46); coin Edge
+round_break:4h +0.23 → +0.25 (24, PF 6.7); forex round_break:4h +0.08 → −0.02 (95), pivot_bounce:4h +0.14 → +0.31 (17).
+`FX_CONFIG.forwardCheck` {on, minN 10, minAvgR 0.05, minPf 1.2} + `forwardOk(stats)` (lab.ts): the hourly chooser, the bot's
+cell path (`chosen` in botTrades) and `labOpen` also need the row's forward paper record (`report.paper.rows[].stats`, pooled
+markets, current filter / exit / entry) to clear it; fewer than 10 forward trades = wait (the lab keeps paper-trading it).
+Bot-log line once per change "forward check: N tested strategies wait … (why)". On the 14:00 numbers: coins = round_break:4h
+only; forex = pivot_bounce:4h only (+ its cells). 15m charts not wired (not traded). tests/forex-forward-check (2), forex-ict.
 ## v27.86 proven trades obey the $ cap + the clash test (Oct 28, owner after the BTC round_break 4h long stopped at −$132.95
 = −1R, 11.1% of the coin account: "that was a stupid trade going long against BTC like that")
 VPS read 13:51 UTC: opened 12:31 at 80,801 (pullback order already through its limit → market fill), stop 80,302.81 = the tested
