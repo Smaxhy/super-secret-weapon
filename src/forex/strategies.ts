@@ -683,9 +683,9 @@ export function postedLevelSignal(c: Ctx, i: number, levels: readonly number[], 
     const risk = Math.max(px - (low - 0.15 * a), 0.3 * a, minRisk); // v27.52 `minRisk`: the 1-minute watcher's floor (fees)
     // his DOL (draw on liquidity) is the target when it is at least 1R his way, else his next level
     const tgt = dol !== null && side * dol - px >= risk ? side * dol : targets.map((L) => side * L).filter((T) => T - px >= risk).sort((x, y) => x - y)[0];
-    return { side, stop: side * (px - risk), target: tgt === undefined ? null : side * tgt, maxBars: Math.max(4, Math.round(1440 / c.barMin)) };
+    return { side, stop: side * (px - risk), target: tgt === undefined ? null : side * tgt, maxBars: Math.max(4, Math.round(1440 / c.barMin)), note: 'absorbed at his level' };
   }
-  return retestSignal(c, i, levels, postedT, onlySide, dol, minRisk, targets);
+  return retestSignal(c, i, levels, postedT, onlySide, dol, minRisk, targets) ?? towardSignal(c, i, levels, postedT, onlySide, minRisk, targets);
 }
 
 /** v27.69 break and retest at his levels (Oct 27: "Break and retest"; his levels were broken, came back and held — the
@@ -724,8 +724,40 @@ export function retestSignal(c: Ctx, i: number, levels: readonly number[], poste
       const px = p.c(i);
       const risk = Math.max(px - (p.l(i) - 0.15 * a), 0.3 * a, minRisk);
       const tgt = dol !== null && side * dol - px >= risk ? side * dol : targets.map((T) => side * T).filter((T) => T - px >= risk).sort((x, y) => x - y)[0];
-      return { side, stop: side * (px - risk), target: tgt === undefined ? null : side * tgt, maxBars: Math.max(4, Math.round(1440 / c.barMin)) };
+      return { side, stop: side * (px - risk), target: tgt === undefined ? null : side * tgt, maxBars: Math.max(4, Math.round(1440 / c.barMin)), note: 'break and retest of his level' };
     }
+  }
+  return null;
+}
+
+/** v27.74 (Oct 28: his NQ short at 29,879 → 29,804, sold ABOVE his three levels and used them as targets): with his plan
+ * bearish (bullish mirrored), the price stretched `awayPct` % past his nearest level, a candle pokes past the high of the
+ * `look` candles before it and the move closes back under that old high (this candle or the next) on a down candle →
+ * sell; stop `stopAtr` ATR past the poke (≥ 0.3 ATR / the watcher's floor), target his nearest level at least `minR`
+ * away — no such level, no trade. */
+export const TOWARD = { look: 15, awayPct: 0.15, minR: 1.5, stopAtr: 0.15 };
+
+/** Sell high / buy low toward his levels — needs his bias (no bias, no trade). Pure, causal. */
+export function towardSignal(c: Ctx, i: number, levels: readonly number[], postedT: number, onlySide: 1 | -1 | 0, minRisk = 0, targets: readonly number[] = levels): Signal | null {
+  const a = c.atr14[i]!;
+  if (!onlySide || !ok(a) || a <= 0 || !levels.length || i < TOWARD.look + 2 || c.bars[i]!.t < postedT) return null;
+  const side = onlySide;
+  const p = sided(c, side); // written as the buy: below his levels, a poke under the lows that closes back above
+  const lowestLevel = Math.min(...levels.map((L) => side * L));
+  for (const j of [i, i - 1]) {
+    if (c.bars[j]!.t < postedT) continue;
+    let prev = Infinity;
+    for (let k = j - TOWARD.look; k < j; k++) prev = Math.min(prev, p.l(k));
+    if (!(p.l(j) < prev)) continue; // the poke: a new extreme past the candles before it
+    if (j === i - 1 && (p.c(i - 1) > prev || p.l(i) < p.l(j))) continue; // fired already / a deeper poke since
+    if (!(p.c(i) > prev && p.c(i) > p.o(i))) continue; // back inside, on a candle its way
+    const ext = p.l(j);
+    if (!(lowestLevel - ext >= (Math.abs(lowestLevel) * TOWARD.awayPct) / 100)) continue; // stretched past his levels
+    const px = p.c(i);
+    const risk = Math.max(px - (ext - TOWARD.stopAtr * a), 0.3 * a, minRisk);
+    const tgt = targets.map((T) => side * T).filter((T) => T - px >= TOWARD.minR * risk).sort((x, y) => x - y)[0];
+    if (tgt === undefined) return null;
+    return { side, stop: side * (px - risk), target: side * tgt, maxBars: Math.max(4, Math.round(1440 / c.barMin)), note: `${side === -1 ? 'sold high' : 'bought low'} toward his level` };
   }
   return null;
 }

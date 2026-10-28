@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.74 sell high / buy low TOWARD his levels (Oct 28, owner: "he did post it, it's these levels" — his NQ short at 29,879 →
+29,804, in #signal-proofs: sold ABOVE his three levels 29,835 / 29,804 / 29,782.5 with his bearish lean and used them as targets)
+The bot only traded AT his levels (bounce / break-and-retest), so a sell above them had no rule. strategies.ts **`towardSignal`**
+(`TOWARD` {look 15, awayPct 0.15, minR 1.5, stopAtr 0.15}): needs his bias (none → nothing); bearish: a candle pokes above the
+high of the 15 candles before it, at least 0.15% above his nearest level, and that candle or the next closes back under the
+old high on a red candle → sell, stop 0.15 ATR past the poke (≥ 0.3 ATR / the watcher's 0.08% floor), target his nearest level
+≥ 1.5R away (none → no trade); bullish mirrored. Fires once per poke. `postedLevelSignal` = absorption → retest → toward, so
+LevelWatch (1-minute) and the 15m pass both take it; `Signal.note` names the rule in the bot log ("sold high toward his
+level" / "break and retest of his level" / "absorbed at his level", `LevelTrade.why`). Same size / fee checks / profit lock as
+his other level trades (20%, ≤ 1% fee, fee ≤ 25% of the stop). NOT lab-tested — the owner's call; judge it on the
+`discord_kojiro_levels` P&L rows. Kojiro's 29,879 short itself: 01:41 UTC entry, high 29,903 at 01:52, 29,856 at 02:09, target
+not reached then. tests/forex-level-toward (3).
 ## v27.73 the coin bot's "NO strategies" line was wrong (Oct 28, owner: "both cryptos been rather silent today")
 VPS read 01:58 UTC: coin lab 0 Edge / 37 Maybe; `chosen` [] but 35 cells pass the deeper coin bar (`coinCellPass`: momentum_bar
 1h / 4h, news_drift 1h, bb_squeeze 1h, round_break 1h / 4h, keltner 1h, of_thrust 1h, inside_bar 1h, breakout_retest 1h,

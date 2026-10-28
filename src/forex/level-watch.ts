@@ -56,6 +56,8 @@ export interface LevelTrade {
   /** v27.72: the signal candle's close (the fee check) */
   entry: number;
   source: string;
+  /** v27.74: which rule fired, for the bot log */
+  why?: string;
 }
 
 /** Open trades at posted levels: one per candle (Redis NX — a candle seen twice never trades twice), one open at a time
@@ -78,7 +80,7 @@ export async function takeLevelTrades(redis: Redis, practice: Practice, acct: 'b
       .copyOpen({ pair: x.pair, side: x.side, stopNamed: null, hisPx: null, strategy, ref, riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: true, stop: x.stop, target: x.target }, acct)
       .catch((err: Error) => ({ ok: false as const, error: err.message, entry: undefined, stop: undefined, riskUsd: undefined }));
     if (r.ok) held.push(ref);
-    logBot([r.ok ? `Kojiro level: ${x.side === 1 ? 'bought' : 'sold'} ${x.pair} at ${r.entry} — absorbed at his level; stop ${r.stop}${x.target !== null ? `, target ${x.target}` : ''}, risking $${r.riskUsd}, tight trailing stop once in profit` : `Kojiro level on ${x.pair}: not taken — ${r.error}`]);
+    logBot([r.ok ? `Kojiro level: ${x.side === 1 ? 'bought' : 'sold'} ${x.pair} at ${r.entry} — ${x.why ?? 'absorbed at his level'}; stop ${r.stop}${x.target !== null ? `, target ${x.target}` : ''}, risking $${r.riskUsd}, tight trailing stop once in profit` : `Kojiro level on ${x.pair}: not taken — ${r.error}`]);
   }
 }
 
@@ -164,7 +166,7 @@ export class LevelWatch {
         let sig = null;
         for (const st of sets) if ((sig = postedLevelSignal(ctx, last, st.levels, st.t, st.side, st.dol, minRisk, st.all))) break;
         if (!sig) continue;
-        await takeLevelTrades(this.redis, this.practice, 'bot', [{ pair, side: sig.side, stop: sig.stop, target: sig.target, barT: bars[last]!.t, entry: bars[last]!.c, source: lv.source }], (l) => this.logBot(pair, l));
+        await takeLevelTrades(this.redis, this.practice, 'bot', [{ pair, side: sig.side, stop: sig.stop, target: sig.target, barT: bars[last]!.t, entry: bars[last]!.c, source: lv.source, why: sig.note }], (l) => this.logBot(pair, l));
       }
     } catch (err) {
       log.warn({ err: (err as Error).message }, 'level watch failed');

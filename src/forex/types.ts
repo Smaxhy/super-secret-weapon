@@ -138,6 +138,8 @@ export interface Signal {
   /** v15.1: trailing stop-loss — from the entry on, the stop follows the best close at this many R (starting stop
    * distances) behind it: it moves up with the trade, never back */
   trailR?: number | null;
+  /** v27.74: plain words for the bot log (which rule fired — the level trades carry it) */
+  note?: string;
 }
 
 export interface Trade {
