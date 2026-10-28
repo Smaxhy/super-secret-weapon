@@ -774,7 +774,8 @@ those rows once it lands). Card also shows (daily, `orderFlowEstimates`, display
 (NQ / GC / ES, schema `trades`) would cost — NOT downloaded without the owner's say-so (next step: real buy / sell delta for
 the order-flow strategies). Live CME prices need Databento's monthly plan (~$199/mo) — not wired. Feed 'databento' on the
 Data feeds card ('off' without a key). UNVERIFIED against the real API (sandbox can't reach it); endpoints / params taken from
-databento-python. tests/forex-databento (5).
+databento-python. tests/forex-databento (5). Also: the liquidation stream's Binance watchdog 90 s → 15 min
+(`DERIVS.watchdogMsBySrc`; Binance's `!forceOrder@arr` is quiet between liquidations — VPS showed 'binance: silent' reconnects).
 ## v27.90 code review fixes (Oct 28, owner: "re-read your own code, look for bugs, make future work smooth" — four independent
 reviewers: bot account, lab chooser / live path, backtest engine, process; each finding traced before fixing)
 Bot account (practice.ts): `usdPerPx(pair, mids)` = USD per 1.0 price move per unit at today's prices — every

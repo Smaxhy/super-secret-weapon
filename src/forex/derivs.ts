@@ -38,6 +38,9 @@ export const DERIVS = {
   liqKeepDays: 120,
   liqFlushMs: 60_000,
   watchdogMs: 90_000,
+  /** v27.91: Binance's liquidation stream only speaks when something is liquidated (and pings every ~3 min at the
+   *  protocol level, which we don't see) — a quiet 90 s is normal there, so it gets a longer leash */
+  watchdogMsBySrc: { binance: 15 * 60_000 } as Partial<Record<'binance' | 'bybit', number>>,
 };
 
 export type DerivKind = 'fund' | 'oi' | 'ls' | 'liq';
@@ -512,7 +515,7 @@ export class LiquidationLive {
       const now = this.clock();
       for (const src of ['binance', 'bybit'] as const) {
         const s = this.socks[src];
-        if (s && now - (this.lastMsg[src] ?? now) > DERIVS.watchdogMs) this.drop(src, 'silent');
+        if (s && now - (this.lastMsg[src] ?? now) > (DERIVS.watchdogMsBySrc[src] ?? DERIVS.watchdogMs)) this.drop(src, 'silent');
         if (src === 'bybit' && s) {
           try {
             s.send(JSON.stringify({ op: 'ping' }));
