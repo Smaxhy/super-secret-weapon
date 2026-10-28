@@ -758,6 +758,23 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.91 Databento CME history (Oct 28, owner: "can I just give you an API key and you do it for me")
+`src/forex/databento.ts`: historical HTTP API (`hist.databento.com/v0`, basic auth key:'' , dataset GLBX.MDP3, continuous
+front month by volume NQ.v.0 / ES / YM / RTY / GC / SI, `stype_in` continuous, CSV + pretty_px / pretty_ts). Key: Forex →
+Setup card **"Databento (CME futures data)"** (`components/DatabentoCard.tsx`; GET / PUT `/api/forex/databento` {key | clear |
+refresh}: tested on `metadata.list_datasets` (must list GLBX.MDP3), saved in BotConfig `_databento` (DB only, masked)), or
+`DATABENTO_API_KEY` in the VPS .env. NEVER take the key in chat — the owner pastes it into the card. `DatabentoSync` (main
+process, index.ts; 2 min after start, then every 6 h, at once after a key is saved): `refreshDatabento` = newest piece first
+(180 days), catch up to `metadata.get_dataset_range` end, then back-fill to `historyDays` 1100 (or until Databento has
+nothing older); EVERY request priced first with `metadata.get_cost`; a piece over $3 skipped; total spend capped at
+`DATABENTO_MAX_USD` (default $20 of the $125 free credit; spent in `fx:db:meta`); 3-min budget a run. Store Redis
+`fx:bars:db:<id>` [t,o,h,l,c,v]. Lab (`filledBars`, inline or child): futures → `stitchFutures` puts Databento's older hours in
+front of Yahoo's when the seam lines up (≤ 4 days, ≤ 0.6% apart) → ~3 years of index / metal history (expect ONE re-pick on
+those rows once it lands). Card also shows (daily, `orderFlowEstimates`, display only) what a year of every-trade data
+(NQ / GC / ES, schema `trades`) would cost — NOT downloaded without the owner's say-so (next step: real buy / sell delta for
+the order-flow strategies). Live CME prices need Databento's monthly plan (~$199/mo) — not wired. Feed 'databento' on the
+Data feeds card ('off' without a key). UNVERIFIED against the real API (sandbox can't reach it); endpoints / params taken from
+databento-python. tests/forex-databento (5).
 ## v27.90 code review fixes (Oct 28, owner: "re-read your own code, look for bugs, make future work smooth" — four independent
 reviewers: bot account, lab chooser / live path, backtest engine, process; each finding traced before fixing)
 Bot account (practice.ts): `usdPerPx(pair, mids)` = USD per 1.0 price move per unit at today's prices — every

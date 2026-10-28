@@ -21,6 +21,7 @@ import { CRYPTO_CLOCK, marketClock } from '../forex/calendar';
 import { loadOanda, maskToken, oandaReady, saveOanda, testOanda } from '../forex/oanda';
 import { feedHealth, feeds as fxFeeds } from '../forex/feeds';
 import { pythConf, pythKey, pythLive, savePythConf, testPythKey } from '../forex/pyth';
+import { DATABENTO, databentoConf, loadDbMeta, saveDatabentoKey, testDatabentoKey } from '../forex/databento';
 import { RISK_MODES, isRiskMode, ledgerSummary, limitsFor, pnlUsd, riskSummary } from '../forex/practice';
 import { buildPlan } from '../forex/plan';
 import { whyNoTrades } from '../forex/why';
@@ -515,7 +516,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         return {
           at: now,
           open,
-          feeds: feedHealth(fxFeeds.snapshot(), { now, open, oanda: oandaReady(await loadOanda()), pyth: !!pythKey(), paused: (p) => fxFeeds.pausedUntil(p) }),
+          feeds: feedHealth(fxFeeds.snapshot(), { now, open, oanda: oandaReady(await loadOanda()), pyth: !!pythKey(), databento: !!databentoConf().key, paused: (p) => fxFeeds.pausedUntil(p) }),
           dataAge: ages,
           calendarBlind: deps.fxCalendar?.blind(now) ?? null,
           labError: F.lab?.lastError ?? null,
@@ -548,6 +549,40 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       await savePythConf({ key, base: t.base });
       pythLive.restart();
       return { ok: true, host: new URL(t.base).host, pairs: t.pairs };
+    });
+    // v27.91: the Databento key, pasted on the dashboard: tested first, kept in this server's DB, shown masked
+    secured.get('/api/forex/databento', async () => {
+      const c = databentoConf();
+      const meta = await loadDbMeta(redis).catch(() => null);
+      return { connected: !!c.key, source: c.source, key: maskToken(c.key || null), maxUsd: DATABENTO.maxUsd, meta };
+    });
+    secured.put<{ Body: { key?: string; clear?: boolean; refresh?: boolean } }>('/api/forex/databento', async (req, reply) => {
+      const b = req.body ?? {};
+      if (b.clear) {
+        await saveDatabentoKey(null);
+        return { ok: true };
+      }
+      if (b.refresh) {
+        if (!databentoConf().key) {
+          reply.code(400);
+          return { ok: false, error: 'no Databento key saved yet' };
+        }
+        void deps.databento?.tick(true);
+        return { ok: true };
+      }
+      const key = String(b.key ?? '').trim();
+      if (!/^[A-Za-z0-9._-]{16,200}$/.test(key)) {
+        reply.code(400);
+        return { ok: false, error: 'paste the API key from your Databento portal (it starts with db-)' };
+      }
+      const t = await testDatabentoKey(key);
+      if (!t.ok) {
+        reply.code(400);
+        return { ok: false, error: `Databento said no: ${t.error}` };
+      }
+      await saveDatabentoKey(key);
+      void deps.databento?.tick(true);
+      return { ok: true, datasets: t.datasets };
     });
     secured.get('/api/forex/oanda', async () => {
       const s = await loadOanda();

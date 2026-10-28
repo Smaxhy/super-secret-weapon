@@ -28,6 +28,7 @@ import { moduleLogger } from '../lib/logger';
 import { refreshInstrument, refreshSeries, loadBars, loadFastBars, type FeedStatus } from './data';
 import { refreshCoinSeries } from './coinbase';
 import { gradeShadows, recordShadows, type ShadowTrade } from './shadow';
+import { loadDb, stitchFutures } from './databento';
 import { DK_META, refreshDkTail, installSpreadProfiles, loadDk, refreshDukascopy, stitchHistory, type DkMeta } from './dukascopy';
 import { hasSpreadProfile } from './spreads';
 import { carryAt, carrySeries, cotSeries, loadMacro, macroNow, refreshMacro, type MacroData } from './macro';
@@ -2016,6 +2017,8 @@ export class ForexLab {
       const dk = await loadDk(this.redis, id);
       const f = fillFromDk(id, yahooById.get(id) ?? [], dk, nowT);
       fillInfo[id] = { source: f.source, filled: f.filled.length };
+      // v27.91: futures get Databento's older CME hours in front of Yahoo's (when a key has downloaded them)
+      if (isFutures(id)) return stitchFutures(f.bars, await loadDb(this.redis, id), nowT);
       return stitchHistory(id, f.bars, dk, nowT);
     };
     for (const inst of this.insts) h1ById.set(inst.id, await filledBars(inst.id));

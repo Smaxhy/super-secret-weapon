@@ -1,5 +1,6 @@
 /** What the API routes need from the running bot. */
 import type { WeekendReview } from '../forex/weekend';
+import type { DatabentoSync } from '../forex/databento';
 import type { SellManager } from '../executor/sell-manager';
 import type { Executor } from '../executor/types';
 import type { LiveState } from '../scanner/live-state';
@@ -81,6 +82,8 @@ export interface ApiDeps {
   tradeWatch?: TradeWatch | null;
   /** v27.32: the weekend review (recap + Monday readiness) per desk */
   weekendReview?: WeekendReview | null;
+  /** v27.91: Databento CME history downloader (needs a key) */
+  databento?: DatabentoSync | null;
 }
 
 /** Classify a token for the live feed colour code. */

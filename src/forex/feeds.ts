@@ -7,8 +7,8 @@
  */
 import type Redis from 'ioredis';
 
-export type Provider = 'yahoo' | 'yahoo-stream' | 'dukascopy' | 'pyth' | 'oanda' | 'cftc' | 'bis' | 'forexfactory' | 'rss' | 'coinbase' | 'coinbase-stream' | 'hyperliquid-stream' | 'binance' | 'internal';
-export type FeedId = 'yahoo-1h' | 'yahoo-fast' | 'yahoo-quotes' | 'dk-history' | 'dk-quotes' | 'yahoo-live' | 'pyth-live' | 'coinbase-candles' | 'coinbase-live' | 'hyperliquid-live' | 'oanda' | 'cftc' | 'bis' | 'calendar' | 'headlines' | 'cb-press' | 'world-news' | 'lab' | 'fast-lab' | 'derivs' | 'liquidations';
+export type Provider = 'yahoo' | 'yahoo-stream' | 'dukascopy' | 'pyth' | 'oanda' | 'cftc' | 'bis' | 'forexfactory' | 'rss' | 'coinbase' | 'coinbase-stream' | 'hyperliquid-stream' | 'binance' | 'databento' | 'internal';
+export type FeedId = 'yahoo-1h' | 'yahoo-fast' | 'yahoo-quotes' | 'dk-history' | 'dk-quotes' | 'yahoo-live' | 'pyth-live' | 'coinbase-candles' | 'coinbase-live' | 'hyperliquid-live' | 'oanda' | 'cftc' | 'bis' | 'calendar' | 'headlines' | 'cb-press' | 'world-news' | 'lab' | 'fast-lab' | 'derivs' | 'liquidations' | 'databento';
 
 export interface FeedState {
   okAt: number | null;
@@ -53,6 +53,7 @@ export const FEED_INFO: Record<FeedId, FeedInfo> = {
   headlines: { label: 'Live headlines (ForexLive, FXStreet)', provider: 'rss', staleMin: 30, downMin: 180, marketHours: true, affects: 'no bot trades right after a big headline', fallback: 'a stricter price-shock check' },
   derivs: { label: 'Coin derivatives: funding, open interest, long / short accounts (Binance, Bybit)', provider: 'binance', staleMin: 150, downMin: 24 * 60, marketHours: false, affects: 'the coin lab\'s funding / open-interest / long-short filters and strategies, the signal judge, the coin market cards', fallback: 'the stored history (those checks go quiet when a reading is more than a few hours old)' },
   liquidations: { label: 'Live coin liquidations (Binance, Bybit)', provider: 'binance', staleMin: 6 * 60, downMin: 24 * 60, marketHours: false, affects: 'the coin market cards (liquidated longs / shorts per hour) — recorded for later testing, no rule uses it yet', fallback: 'nothing (no liquidation numbers shown)' },
+  databento: { label: 'CME futures history (Databento, needs an API key)', provider: 'databento', staleMin: 13 * 60, downMin: 3 * 24 * 60, marketHours: false, affects: 'about a year more of hourly Nasdaq / S&P / Dow / Russell / gold / silver history (with volume) for the lab to test on', fallback: 'Yahoo\'s 2 years of history' },
   lab: { label: 'Hourly test run', provider: 'internal', staleMin: 90, downMin: 180, marketHours: false, affects: 'every hourly decision of the bot', fallback: 'the last report; open trades keep their stops' },
   'fast-lab': { label: '15m / 1m test run', provider: 'internal', staleMin: 90, downMin: 180, marketHours: false, affects: 'which 15m / 1m strategies the bot trades', fallback: 'the last report' },
 };
@@ -180,13 +181,13 @@ export interface FeedHealth extends FeedState {
  * The feed table: ok / stale / down by the time since the last success; 'closed' for a market-hours feed while forex
  * is shut, 'off' for OANDA without a token / Pyth without an API key, 'never' for a feed that hasn't reported yet. Pure.
  */
-export function feedHealth(states: Partial<Record<FeedId, FeedState>>, x: { now: number; open: boolean; oanda: boolean; pyth?: boolean; paused?: (p: Provider) => number | null }): FeedHealth[] {
+export function feedHealth(states: Partial<Record<FeedId, FeedState>>, x: { now: number; open: boolean; oanda: boolean; pyth?: boolean; databento?: boolean; paused?: (p: Provider) => number | null }): FeedHealth[] {
   return (Object.keys(FEED_INFO) as FeedId[]).map((id) => {
     const info = FEED_INFO[id];
     const s = states[id] ?? empty();
     const ageMin = s.okAt === null ? null : Math.round((x.now - s.okAt) / 60_000);
     let status: FeedHealth['status'];
-    if ((id === 'oanda' && !x.oanda) || (id === 'pyth-live' && !x.pyth)) status = 'off';
+    if ((id === 'oanda' && !x.oanda) || (id === 'pyth-live' && !x.pyth) || (id === 'databento' && !x.databento)) status = 'off';
     else if (info.marketHours && !x.open) status = 'closed';
     else if (ageMin === null) status = s.fails ? 'down' : 'never';
     else status = ageMin >= info.downMin ? 'down' : ageMin >= info.staleMin || s.fails > 0 ? 'stale' : 'ok';

@@ -21,6 +21,7 @@ import { ControlRoom } from '../components/ControlRoom';
 import { FxNewsPage } from '../components/FxNewsPage';
 import { NewsTape } from '../components/NewsTape';
 import { PythCard } from '../components/PythCard';
+import { DatabentoCard } from '../components/DatabentoCard';
 import { fitBars, MarketChart, type ChartDrawings } from '../components/MarketChart';
 import { ENTRY_SHORT, EXIT_SHORT, FILTER_SHORT, MoodCard, StrengthCard, TrendArrows, type EntryKind, type EntrySummary, type ExitKind, type ExitSummary, type FilterKind, type FilterSummary, type FinancingSummary, type HonestReport, type JudgeReport, type LockSummary, type MoodNow, type NewsStudy, type PortfolioReport, type RowStat, type StrengthNow } from '../components/FxInsights';
 import { Badge, Button, Card, Chip, Drawer, Empty, ErrorBox, Loading, PageHeader, Row, Rows, Sparkline, Stack, StatTile, useStored } from '../components/ui';
@@ -119,7 +120,7 @@ export function Forex() {
       {section === 'news' && <FxNewsPage />}
       {section === 'room' && <ControlRoom />}
       {section === 'bot' && <FxBot />}
-      {section === 'setup' && <Stack><FxFeeds /><PythCard /><OandaCard />{r && <Setup r={r} fast={fast} />}</Stack>}
+      {section === 'setup' && <Stack><FxFeeds /><DatabentoCard /><PythCard /><OandaCard />{r && <Setup r={r} fast={fast} />}</Stack>}
       {labNeeded && !data && !error && <Loading kind="tiles" />}
       {labNeeded && data && !r && <Empty icon={<Icon name="globe" size={20} />}>{running ? 'First run: downloading 2 years of candles for 12 markets. About a minute.' : 'Not run yet. It starts by itself a minute after the bot starts, or press Update now.'}</Empty>}
       {labNeeded && r && (
