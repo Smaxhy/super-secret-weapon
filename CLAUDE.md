@@ -758,6 +758,11 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.88 the clash rule is always on (Oct 28, owner: "the bot ignored the strategies and messed it up, never do that again")
+`OPPOSED.always` true (confluence.ts): every bot trade (both desks, hourly lab) waits when another strategy's open lab trade
+entered the OTHER way on the same market within 2 candles ("X fired the other way here — strategies disagree, it skips this
+one (clash rule)"), whatever the lab's clash test says (it still measures and reports `opposed`). The Oct 28 BTC long would
+have been skipped (pivot_ladder / pivot_bounce / stoch_trend 4h shorts on the same close). Set false = lab-gated again.
 ## v27.87 the forward check: backtests must be confirmed by forward paper trades (Oct 28, owner: "trade quality is very shit,
 adjust yourself and improve")
 VPS read 14:00 UTC — coin bot's own closes Oct 21 → now: 53 trades, −6.5R, −$240 (most from rows no longer live: pivot_bounce:4h

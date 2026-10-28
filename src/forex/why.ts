@@ -47,7 +47,7 @@ const LABEL: Record<ReasonKind, string> = {
   agree: 'too few market checks (strength, bigger charts, mood) stood behind the setup',
   market_rec: 'the strategy has no winning tested record on that market',
   solo: 'the signal came alone (it needs a second setup the same way)',
-  clash: 'another strategy fired the other way on that market (lab-tested clash rule)',
+  clash: 'another strategy fired the other way on that market (clash rule: strategies disagree → no trade)',
   check_data: 'a check the strategy was tested with had no data (feed missing)',
   stale_feed: 'the price feed was lagging (candles behind) — no new trades on that market',
   clock: 'the market clock (closed, rollover, weekly open / close)',

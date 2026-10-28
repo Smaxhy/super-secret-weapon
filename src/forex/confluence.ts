@@ -99,6 +99,9 @@ export interface OpposedReport {
   why: string;
 }
 export const OPPOSED = {
+  /** v27.88 (owner: "never do that again"): skip clashing trades always, not only once the lab test says so (the test
+   * keeps measuring and reporting) */
+  always: true,
   bars: 2,
   minUnseen: 60,
   /** clear trades must beat clashing ones by this much a trade on the unseen part */
@@ -162,5 +165,5 @@ export function opposedStudy(picked: readonly ConfTrade[], idx: Map<string, Side
 /** The live wait text when the clash rule is on and another strategy's open lab trade points the other way. Pure. */
 export function clashWait(t: { strategy: string; pair: string; side: 1 | -1; entryT: number }, open: readonly SideEntry[], barMs: number): string | null {
   const o = opposedBy(t, entryIndex(open.filter((x) => x.pair === t.pair)), barMs);
-  return o ? `${o.strategy} fired the other way here — strategies disagree, it skips this one (lab-tested clash rule)` : null;
+  return o ? `${o.strategy} fired the other way here — strategies disagree, it skips this one (clash rule)` : null;
 }

@@ -15,7 +15,7 @@ import { PREP, prepNotes, studyRow, weekForecast, type PrepReport, type PrepRow,
 import type Redis from 'ioredis';
 import { howToWin, reviewLosses, tfOf, type LossReview } from './loss-review';
 import { excursionReport, type ExTrade, type ExcursionReport } from './excursion';
-import { clashWait, confluenceStudy, entryIndex, isTogether, opposedStudy, type ConfTrade, type ConfluenceReport, type OpposedReport, type SideEntry } from './confluence';
+import { OPPOSED, clashWait, confluenceStudy, entryIndex, isTogether, opposedStudy, type ConfTrade, type ConfluenceReport, type OpposedReport, type SideEntry } from './confluence';
 import { buildCorrBook, gradeHeat, HEAT, roundedMatrix, type HeatGrade } from './risk';
 import { luckDowngrade, luckFor } from './luck';
 import { learnFromLedger, type LearnKey } from './learner';
@@ -2590,7 +2590,7 @@ export class ForexLab {
       const marketRec = row ? marketRecOf(row.pairs.find((x) => x.pair === t.pair), cellFor(t), !!owned && owned.pair !== '*') : null;
       return toLabTrade(t, {
         order,
-        soloWait: soloWait(t, open, TF_MIN[t.tf as Timeframe] ?? 60) ?? (opposed.active ? clashWait(t, open, (TF_MIN[t.tf as Timeframe] ?? 60) * 60_000) : null),
+        soloWait: soloWait(t, open, TF_MIN[t.tf as Timeframe] ?? 60) ?? (opposed.active || OPPOSED.always ? clashWait(t, open, (TF_MIN[t.tf as Timeframe] ?? 60) * 60_000) : null),
         agree,
         marketRec,
         chosen: fwd(`${t.strategy}:${t.tf}`).ok && planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf, pooledOf(allRowOf.get(`${t.strategy}:${t.tf}`))),
