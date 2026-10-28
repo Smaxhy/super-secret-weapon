@@ -79,6 +79,7 @@ describe('v27.75 Dow / Russell names + the ones it could not match', async () =>
   const { lookalikes } = await import('../src/forex/hyperliquid');
   it('matches more Dow / Russell names and lists unknown index-like markets', () => {
     expect(matchFutures(['xyz:XYZ100', 'km:USA30', 'abc:R2K', 'xyz:GOLD'])).toMatchObject({ DJIUSD: 'km:USA30', RUTUSD: 'abc:R2K' });
+    expect(matchFutures(['xyz:XYZ100', 'mkts:SMALL2000', 'mkts:US500'])).toMatchObject({ RUTUSD: 'mkts:SMALL2000' }); // the VPS's list, Oct 28
     const found = matchFutures(['xyz:XYZ100', 'xyz:GOLD', 'zz:US30X', 'zz:NVDA']);
     expect(lookalikes(['xyz:XYZ100', 'xyz:GOLD', 'zz:US30X', 'zz:NVDA', 'BTC'], found)).toEqual(['zz:US30X']);
   });

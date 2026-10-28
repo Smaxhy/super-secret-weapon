@@ -774,6 +774,10 @@ never reached the dashboard push (they aren't the futures price), so their P&L o
 `Practice.liveFutTick(id)` (= `hlQuote`: + the measured gap, CME open only) → a second `startLivePush` in index.ts → the same
 'fx' bus event the currency pairs use → `useFxLive` moves the P&L between refreshes. Dow / Russell / silver have no live
 source, so they still move only with Yahoo's late price. tests in forex-hl-index (+2).
+First VPS line (02:27 UTC, 20d078d): live = NDXUSD xyz:XYZ100, SPXUSD xyz:SP500, XAUUSD xyz:GOLD, XAGUSD xyz:SILVER (gap
+0.039); late = DJIUSD, RUTUSD; other index-like: xyz:USAR, xyz:KR200, xyz:SPCX, mkts:US500, mkts:USBOND, mkts:SMALL2000,
+mkts:USTECH → `SMALL2000` added to the Russell names (the gap check — < 3% of the price, ≥ 10 shared minutes — refuses it
+if it doesn't track the RTY future). Hyperliquid lists no Dow market: DJIUSD stays on Yahoo (~10 min late).
 ## v27.74 sell high / buy low TOWARD his levels (Oct 28, owner: "he did post it, it's these levels" — his NQ short at 29,879 →
 29,804, in #signal-proofs: sold ABOVE his three levels 29,835 / 29,804 / 29,782.5 with his bearish lean and used them as targets)
 The bot only traded AT his levels (bounce / break-and-retest), so a sell above them had no rule. strategies.ts **`towardSignal`**
