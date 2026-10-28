@@ -758,6 +758,15 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.85 forex may trade Maybe strategies again, coins stay Edge-only (Oct 28, owner: "forex is allowed to use maybe
+strategies because crypto needs to be the safer and main priority")
+`FX_CONFIG.provenOnly.verdicts` {fx: ['edge','maybe'], crypto: ['edge']} (hourly chooser + fast `chosenOf` per desk) and
+`cells` {fx: true, crypto: false}. `toLabTrade(…, { edge })`: only Edge rows get the 20% all-in size; Maybe rows and forex cells
+trade at the risk mode's size, and `BOT.sizeToCap` / `capFloorAccts` now include the forex bot → every forex trade risks at
+most ~$19 (the $20 cap × 0.95) on its TESTED stop, the stop never pulled in. Still on both desks: the second-setup rule
+(v27.83), the live brake (v27.84), the judge, losing-market record, profit floor. Kojiro calls stay lab-only (v27.77) until
+the owner switches them back on. tests: forex-proven-only (verdicts, Maybe never all-in, chosenOf per desk), forex-ict
+(chooser source), forex-v15 / v16 set `BOT.sizeToCap.bot = false` (they test risk-mode sizing).
 ## v27.84 the live brake on the forex bot too (Oct 28, owner: "I only want working strategies, I don't care if it's one trade a
 week, I want what works") — `BOT.liveBrake.bot` {since Oct 28 13:00 UTC, minN 3, days 14}: a forex strategy × chart whose own
 live trades lose after 3 of them pauses 14 days, like the coin bot (v27.79). With v27.82 (Edge rows only) + v27.83 (second

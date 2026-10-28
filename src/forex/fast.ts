@@ -178,7 +178,7 @@ export const DEFAULT_FAST_SOURCE: FastSource = {
 /** The fast-chart strategies the bot trades: passed on unseen data, clear the profit floor (v27.1), not dropped for losing
  * in its account. Pure. */
 export const chosenOf = (rows: ReadonlyArray<Pick<Row, 'id' | 'tf' | 'verdict'> & Partial<Pick<Row, 'inSample' | 'outSample'>>>, dropped: readonly string[], ownerLive: readonly string[] = [], universe: 'fx' | 'crypto' = 'fx') =>
-  rows.filter((r) => r.id !== 'random' && onlyOk(universe, r.id, r.tf) && (FX_CONFIG.provenOnly.on ? r.verdict === 'edge' : r.verdict !== 'no' || ownerLive.includes(r.id)) && profitFloor(r).ok && !dropped.includes(`${r.id}:${r.tf}`)).map((r) => `${r.id}:${r.tf}`);
+  rows.filter((r) => r.id !== 'random' && onlyOk(universe, r.id, r.tf) && (FX_CONFIG.provenOnly.on ? FX_CONFIG.provenOnly.verdicts[universe].includes(r.verdict) : r.verdict !== 'no' || ownerLive.includes(r.id)) && profitFloor(r).ok && !dropped.includes(`${r.id}:${r.tf}`)).map((r) => `${r.id}:${r.tf}`);
 
 /** v17: filter-input coverage of one tested series on its first 70% (bars before `oosFrom`, as the hourly lab measures it). Pure. */
 export function testedCoverage(se: Pick<Series, 'ctx' | 'env'>, oosFrom: number): FilterCoverage {
@@ -577,7 +577,7 @@ export class FastLab {
             const dataWait = si >= 0 ? missingInput(row.filter ?? 'none', se.env, si, cov) : null;
             // v27.21: the strategy's record on this market — a losing one makes the trade wait (the hourly chart had it, this didn't)
             const marketRec = marketRecOf(row.pairs?.find((x) => x.pair === t.pair), row.markets?.find((c) => c.pair === t.pair));
-            labOpen.push(toLabTrade(t, { chosen: isChosen, rowChosen: keep.has(`${row.id}:${tf}`), sizeF, prio: focusPrio(t.pair, row.all.avgR), judge: null, conviction: { tier: b.tier, conf, of: maxConfirmations(tf, false), mult: b.mult, lev: b.lev }, dataWait, marketRec }));
+            labOpen.push(toLabTrade(t, { chosen: isChosen, rowChosen: keep.has(`${row.id}:${tf}`), edge: row.verdict === 'edge', sizeF, prio: focusPrio(t.pair, row.all.avgR), judge: null, conviction: { tier: b.tier, conf, of: maxConfirmations(tf, false), mult: b.mult, lev: b.lev }, dataWait, marketRec }));
             pairOpen.push(t);
           }
         }

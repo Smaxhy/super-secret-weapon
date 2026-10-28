@@ -81,7 +81,7 @@ export const BOT = {
   maxLossUsdByAcct: { cbot: 50, bot: 20 } as Partial<Record<string, number>>,
   /** v27.78 (owner raised the coin bot's cap to $50: "LINK usually does better"): on these accounts the excursion study's
    * per-strategy cap (kept $10–40) may not pull a trade in tighter than the account's cap — the owner's number is the floor */
-  capFloorAccts: { cbot: true } as Partial<Record<string, boolean>>,
+  capFloorAccts: { cbot: true, bot: true } as Partial<Record<string, boolean>>,
   /** v27.38 (owner: "max 5–10 trades per day"): new trades a bot may open per trading day (from 22:00 UTC = midnight
    * Central European summer time). The best-tested signals go first (`prio`); a weekend re-open of a paused trade is not
    * a new trade. 0 = no cap. */
@@ -116,7 +116,7 @@ export const BOT = {
   /** v27.79 (owner: "only take trades if you're certain … it needs to adjust itself properly"): on these accounts a trade's
    * size is cut so its TESTED stop loses at most the account's $ cap (× `headroom` for the exit spread) — the stop is never
    * pulled in, so the live trade is the one the lab graded */
-  sizeToCap: { cbot: true } as Partial<Record<string, boolean>>,
+  sizeToCap: { cbot: true, bot: true } as Partial<Record<string, boolean>>, // v27.85: the forex bot too (Maybe trades at the $20 cap)
   sizeToCapHeadroom: 0.95,
   /** v27.79: a strategy × chart whose own live trades (closed since `since`, the last `days`) lost money after `minN` of
    * them is paused on that account until those trades are older than `days` — lab evidence alone isn't "sure" */

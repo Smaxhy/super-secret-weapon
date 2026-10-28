@@ -11,7 +11,9 @@ import { buildCtx } from '../src/forex/ta';
 import { extraVotes, gradeSniper, SNIPER, type SniperRow } from '../src/forex/sniper';
 import { heatmapFor } from '../src/forex/heatmap';
 import { simulatePortfolio, type PTrade } from '../src/forex/portfolio';
-import { newAccount, Practice, type PracticeAccount, type Quote } from '../src/forex/practice';
+import { BOT, newAccount, Practice, type PracticeAccount, type Quote } from '../src/forex/practice';
+// v27.85: these tests size forex bot trades by the risk mode, before the $ cap
+BOT.sizeToCap.bot = false;
 import { MIGRATIONS } from '../src/config/migrations';
 import { INSTRUMENTS, STRENGTH_PAIRS, type Bar } from '../src/forex/types';
 

@@ -9,7 +9,9 @@ import { trimBars } from '../src/forex/data';
 import { upcomingFor, type CalEvent } from '../src/forex/calendar';
 import { FX_CONFIG, ForexLab, signalIndex, tradeKey, type MarketBook, type MarketNow, type RunNote } from '../src/forex/lab';
 import { FX_FAST, chosenOf, FastLab, nextOnGrid, type FastSource } from '../src/forex/fast';
-import { newAccount, newSyncReport, Practice, tfOfRef, tick, type LabOpenTrade, type PracticeAccount, type PracticePosition, type Quote } from '../src/forex/practice';
+import { BOT, newAccount, newSyncReport, Practice, tfOfRef, tick, type LabOpenTrade, type PracticeAccount, type PracticePosition, type Quote } from '../src/forex/practice';
+// v27.85: these tests size forex bot trades by the risk mode, before the $ cap
+BOT.sizeToCap.bot = false;
 import { buildPlan, leanOf, nextChecks, tradeLines, type PlanInputs } from '../src/forex/plan';
 import { marketClock } from '../src/forex/calendar';
 import { buildStrength } from '../src/forex/strength';

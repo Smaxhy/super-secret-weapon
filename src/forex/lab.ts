@@ -165,7 +165,11 @@ export const FX_CONFIG = {
    * (+ the $20 loss cap), not the all-in size — `cellAllIn` per desk; Edge rows stay all-in on both desks. v27.82 (owner:
    * "we don't settle for a maybe, we settle for: this strategy makes us money"): cells OFF on both desks — a one-market
    * record whose strategy is only Maybe / no across its markets is not proof (with ~1,000 market × strategy tries some pass
-   * by luck); only Edge rows trade. Set a desk back to true to let per-market cells trade again */ cells: { fx: false, crypto: false }, cellAllIn: { fx: true, crypto: false } },
+   * by luck); only Edge rows trade. Set a desk back to true to let per-market cells trade again. v27.85 (owner: "forex is
+   * allowed to use maybe strategies, crypto needs to be the safer and main priority"): forex cells back on; `verdicts` = the
+   * row verdicts each desk trades (forex Edge + Maybe, coins Edge only). Only Edge rows get the all-in size (`allIn` in
+   * toLabTrade); Maybe rows and cells trade at the risk mode's size, which `BOT.sizeToCap` keeps at the account's $ cap on
+   * the tested stop */ cells: { fx: true, crypto: false }, verdicts: { fx: ['edge', 'maybe'], crypto: ['edge'] } as Record<'fx' | 'crypto', ReadonlyArray<string>>, cellAllIn: { fx: true, crypto: false } },
   /** v27.30 (owner: "make it skip the charts it loses on"): per strategy × chart, the New York sessions and markets where
    * its FIRST 70% lost (8+ trades there, average R below 0) are left out — of its record, its unseen grade and live
    * trading. Picked on the first 70% only, so the unseen part still grades it honestly. Skipped only while what is left
@@ -967,11 +971,12 @@ export function soloWait(t: Pick<Trade, 'strategy' | 'pair' | 'side' | 'entryT'>
   return mate ? null : `${t.strategy} alone — waits for a second setup the same way on this market`;
 }
 
-export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction']; sniper?: LabOpenTrade['sniper']; dataWait?: string | null; soloWait?: string | null; order?: LabOpenTrade['order']; agree?: LabOpenTrade['agree']; marketRec?: LabOpenTrade['marketRec']; rowChosen?: boolean }): LabOpenTrade {
+export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: number; judge: LabOpenTrade['judge']; conviction?: LabOpenTrade['conviction']; sniper?: LabOpenTrade['sniper']; dataWait?: string | null; soloWait?: string | null; order?: LabOpenTrade['order']; agree?: LabOpenTrade['agree']; marketRec?: LabOpenTrade['marketRec']; rowChosen?: boolean; edge?: boolean }): LabOpenTrade {
   // v27.27: a chosen trade while only proven strategies trade → the big size; v27.34: unless it is live only through its
   // per-market cell on a desk whose cell trades practise at the normal size (coins)
   const po = FX_CONFIG.provenOnly;
-  const allIn = po.on && o.chosen && (o.rowChosen !== false || po.cellAllIn[isCrypto(t.pair) ? 'crypto' : 'fx']) ? po.riskPct : 0;
+  // v27.85: a Maybe row (forex) is chosen but never all-in — `edge` false; missing = the old behaviour (rows were Edge only)
+  const allIn = po.on && o.chosen && o.edge !== false && (o.rowChosen !== false || po.cellAllIn[isCrypto(t.pair) ? 'crypto' : 'fx']) ? po.riskPct : 0;
   return {
     ...(allIn ? { allIn } : {}),
     ...(o.order ? { order: o.order } : {}),
@@ -2347,7 +2352,7 @@ export class ForexLab {
     const mode = FX_CONFIG.strict.mode;
     const strict = mode !== 'off';
     const ownerLive = this.universe === 'fx' ? new Set(FX_CONFIG.ownerLive) : new Set<string>();
-    const chosenRows = rows.filter((x) => x.id !== 'random' && onlyOk(this.universe, x.id, x.tf) && !(this.universe === 'crypto' && NOT_FOR_CRYPTO.has(x.id)) && !rec.dropped.includes(`${x.id}:${x.tf}`) && profitFloor(x).ok && (FX_CONFIG.provenOnly.on ? x.verdict === 'edge' : ownerLive.has(x.id) || (mode === 'edge' ? x.verdict === 'edge' : mode === 'quality' ? !!x.quality?.ok : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`)))));
+    const chosenRows = rows.filter((x) => x.id !== 'random' && onlyOk(this.universe, x.id, x.tf) && !(this.universe === 'crypto' && NOT_FOR_CRYPTO.has(x.id)) && !rec.dropped.includes(`${x.id}:${x.tf}`) && profitFloor(x).ok && (FX_CONFIG.provenOnly.on ? FX_CONFIG.provenOnly.verdicts[this.universe].includes(x.verdict) : ownerLive.has(x.id) || (mode === 'edge' ? x.verdict === 'edge' : mode === 'quality' ? !!x.quality?.ok : rollLive ? rollLive.has(`${x.id}:${x.tf}`) : x.verdict !== 'no' || (FX_CONFIG.botAlways.includes(x.id) && !alwaysOff.has(`${x.id}:${x.tf}`)))));
     // v20.1 strict mode: say once per hour-of-change why the list is empty (the owner reads the Decisions log)
     if (FX_CONFIG.provenOnly.on && !chosenRows.length && this.chosen.length) this.logBot(['only proven strategies trade: none passes the strict test right now — the bot waits (the lab keeps testing the rest)']);
     else if (!strict && !chosenRows.length && this.chosen.length) this.logBot(['no strategy clears the profit floor right now (30+ unseen trades, 0.05R+ a trade, profit factor 1.2+) — the bot waits']);
@@ -2552,6 +2557,7 @@ export class ForexLab {
         marketRec,
         chosen: planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf, pooledOf(allRowOf.get(`${t.strategy}:${t.tf}`))),
         rowChosen: chosen.has(`${t.strategy}:${t.tf}`),
+        edge: row?.verdict === 'edge',
         sizeF,
         prio: focusPrio(t.pair, row ? row.all.avgR : -1),
         dataWait,
