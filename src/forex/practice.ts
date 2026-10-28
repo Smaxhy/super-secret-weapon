@@ -96,6 +96,11 @@ export const BOT = {
   allIn: {} as Partial<Record<string, Record<string, number>>>,
   /** v27.26: an all-in trade may use up to this share of the free margin (normal trades: SIZING.marginShare) */
   allInMarginShare: 0.9,
+  /** v27.98 (owner: "if the bot is sure even after all the checks … use like 10-20%" → chose "lose up to 10%"): a very-sure
+   * trade (an Edge strategy that also proved itself on THAT market and passed the forward check — the lab marks it `allIn`)
+   * is sized so its tested stop + round-trip fee loses at most this % of the account, instead of the $ cap. One such
+   * trade open (or waiting as an order) at a time; every other trade keeps the $ cap. 0 = off (all-in trades keep the $ cap). */
+  bigLossPct: { cbot: 10, bot: 10 } as Partial<Record<string, number>>,
   /** v27.23: one open trade (or resting order) per market and direction across all strategies — no doubled bets */
   onePerMarketSide: true,
   /** v27.44 (owner: "make it trade smarter … what it just did is an account drainer"; Oct 25 06:00 UTC it shorted BTC, XRP,
@@ -337,6 +342,9 @@ export interface ResumeItem {
   bankedUsd?: number;
   /** v17: USD the ORIGINAL trade risked at its stop (the whole trade stays one R unit across the pause) */
   riskUsd0?: number;
+  /** v27.98: a very-sure trade keeps its own $ loss cap across the pause */
+  allIn?: boolean;
+  maxLossUsd?: number;
   at: number;
 }
 
@@ -964,7 +972,7 @@ const copyRec = (p: PracticePosition) => (p.ref ? { ref: p.ref, ...(p.riskUsd0 ?
 
 /** v17: the weekend pause of a bot trade (re-opened after Monday's open while the lab still holds it). Pure. */
 function resumeItemOf(p: PracticePosition, leg: number, at: number): ResumeItem {
-  return { ref: p.ref!, ...(p.strategy ? { strategy: p.strategy } : {}), pair: p.pair, side: p.side, ...(p.riskPct !== undefined ? { riskPct: p.riskPct } : {}), scaled: !!p.scaled, tpHit: !!p.tpHit, lev: p.leverage, bankedUsd: Math.round(((p.bankedUsd ?? 0) + leg) * 100) / 100, ...(p.riskUsd0 ? { riskUsd0: p.riskUsd0 } : {}), at };
+  return { ref: p.ref!, ...(p.strategy ? { strategy: p.strategy } : {}), pair: p.pair, side: p.side, ...(p.riskPct !== undefined ? { riskPct: p.riskPct } : {}), scaled: !!p.scaled, tpHit: !!p.tpHit, lev: p.leverage, bankedUsd: Math.round(((p.bankedUsd ?? 0) + leg) * 100) / 100, ...(p.riskUsd0 ? { riskUsd0: p.riskUsd0 } : {}), ...(p.allIn ? { allIn: true } : {}), ...(p.maxLossUsd ? { maxLossUsd: p.maxLossUsd } : {}), at };
 }
 
 /** Close part of a position (a scale-out): realise its P&L, keep the rest open. Mutates `a`. */
@@ -1015,6 +1023,8 @@ export function fillOrder(a: PracticeAccount, o: RestingOrder, fill: number, mid
     riskPct: o.riskPct,
     ...(o.conviction ? { conviction: o.conviction } : {}),
     ...(o.sniper ? { sniper: o.sniper } : {}),
+    ...(o.allIn ? { allIn: true } : {}),
+    ...(o.maxLossUsd && o.maxLossUsd > 0 ? { maxLossUsd: o.maxLossUsd } : {}),
     ...(o.beAt != null ? { beAt: o.beAt } : {}),
     ...(o.scaleAt != null ? { scaleAt: o.scaleAt, scaleFrac: o.scaleFrac ?? 0.5, scaled: !!o.scaled } : {}),
     ...(o.tpTrailPx != null ? { tpTrailPx: o.tpTrailPx, tpFrac: o.tpFrac ?? 0, tpHit: !!o.tpHit } : {}),
@@ -1431,6 +1441,9 @@ export interface RestingOrder extends ExitPlan {
   riskPct: number;
   conviction?: Conviction | null;
   sniper?: { votes: number; of: number } | null;
+  /** v27.98: a very-sure trade — fills as an all-in position with this own $ loss cap */
+  allIn?: boolean;
+  maxLossUsd?: number;
 }
 
 /** v16: a trade's sniper votes. */
@@ -1987,7 +2000,7 @@ export class Practice {
         stopMovedT: quote.bars[quote.bars.length - 1]?.[0] ?? Math.floor(Date.now() / 60_000) * 60_000,
         ...(req.strategy ? { strategy: req.strategy } : {}),
         ...(req.ref ? { ref: req.ref } : {}),
-        ...(req.maxLossUsd && req.maxLossUsd > 0 && !req.allIn ? { maxLossUsd: req.maxLossUsd } : {}),
+        ...(req.maxLossUsd && req.maxLossUsd > 0 ? { maxLossUsd: req.maxLossUsd } : {}),
         ...(req.riskPct !== undefined ? { riskPct: req.riskPct } : {}),
         ...(req.conviction ? { conviction: req.conviction } : {}),
         ...(req.desk ? { desk: true } : {}),
@@ -2198,7 +2211,7 @@ export class Practice {
             done();
             continue;
           }
-          const res = await this.openIn(a, { pair: r.pair, side: r.side, marginUsd: margin, leverage: rlev, stop: lab.stop, target: lab.target, ...(r.strategy ? { strategy: r.strategy } : {}), ref: r.ref, riskPct: Math.round(risk * 100) / 100, ...planOf(lab), scaled: !!r.scaled || !!lab.scaled, tpHit: !!r.tpHit || !!lab.tpHit, bankedUsd: r.bankedUsd ?? 0, ...(r.riskUsd0 ? { riskUsd0: r.riskUsd0 } : {}), maxQuoteAgeMs: BOT.quoteAgeMsByTf[tfOfRef(r.ref)] ?? 10 * 60_000, feedDelayOk: ['1h', '4h'].includes(tfOfRef(r.ref)) });
+          const res = await this.openIn(a, { pair: r.pair, side: r.side, marginUsd: margin, leverage: rlev, stop: lab.stop, target: lab.target, ...(r.strategy ? { strategy: r.strategy } : {}), ref: r.ref, riskPct: Math.round(risk * 100) / 100, ...planOf(lab), scaled: !!r.scaled || !!lab.scaled, tpHit: !!r.tpHit || !!lab.tpHit, bankedUsd: r.bankedUsd ?? 0, ...(r.riskUsd0 ? { riskUsd0: r.riskUsd0 } : {}), ...(r.allIn ? { allIn: true } : {}), ...(r.maxLossUsd ? { maxLossUsd: r.maxLossUsd } : {}), maxQuoteAgeMs: BOT.quoteAgeMsByTf[tfOfRef(r.ref)] ?? 10 * 60_000, feedDelayOk: ['1h', '4h'].includes(tfOfRef(r.ref)) });
           if (res.ok) events.push(`re-opened ${r.side === 1 ? 'long' : 'short'} ${r.pair} (${r.strategy ?? 'bot'}) after the weekend`);
           else {
             // v17: a price hiccup is not the end of the trade — try again at the next check (4-day limit above)
@@ -2390,6 +2403,12 @@ export class Practice {
         // v27.26: an all-in strategy risks its own % (minus what other all-in trades already risk), past every cap
         const allInPct = t.allIn || BOT.allIn[acct]?.[`${t.strategy}:${tf}`]; // v27.27: set by the lab on proven trades
         const allInLeft = allInPct ? allInPct - a.open.filter((p) => p.allIn && p.tf !== 'signal').reduce((s, p) => s + (p.riskPct ?? 0), 0) : 0;
+        // v27.98: very-sure trades sized to lose ≤ bigLossPct of the account — one at a time (open or waiting as an order)
+        const bigPct = allInPct ? BOT.bigLossPct[acct] ?? 0 : 0;
+        if (bigPct > 0 && (a.open.some((p) => p.allIn && p.tf !== 'signal') || (a.orders ?? []).some((o) => o.allIn))) {
+          skip(t, 'a very-sure (big) trade is already open — one at a time', true);
+          continue;
+        }
         if (allInPct && allInLeft < 1) {
           skip(t, `already ${allInPct}% of the account riding on an all-in trade`, true);
           continue;
@@ -2427,9 +2446,12 @@ export class Practice {
         }
         // v27.79: size so the tested stop loses at most the $ cap — the cap never has to pull the stop in
         // v27.86: all-in (proven) trades too — one stopped BTC long cost 11% of the coin account ($133) past the owner's $50
-        if (BOT.sizeToCap[acct] && a.maxLossUsd && (!allInPct || BOT.sizeToCapAllIn[acct]) && v.equityUsd > 0) {
+        // v27.98: a very-sure trade's cap is bigLossPct of the account instead of the $ cap
+        const bigCapUsd = bigPct > 0 && v.equityUsd > 0 ? Math.round(((v.equityUsd * bigPct) / 100) * 100) / 100 : 0;
+        const sizeCap = bigCapUsd || a.maxLossUsd;
+        if (BOT.sizeToCap[acct] && sizeCap && (!allInPct || BOT.sizeToCapAllIn[acct]) && v.equityUsd > 0) {
           const ci = instrument(t.pair);
-          const capPct = Math.floor((capRiskUsd(a.maxLossUsd, dist / entry, ci ? (2 * feePctPerSide(ci)) / 100 : 0) / v.equityUsd) * 10_000) / 100;
+          const capPct = Math.floor((capRiskUsd(sizeCap, dist / entry, ci ? (2 * feePctPerSide(ci)) / 100 : 0) / v.equityUsd) * 10_000) / 100;
           if (riskPct > capPct) riskPct = capPct;
         }
         const notional = (v.equityUsd * riskPct) / 100 / (dist / entry);
@@ -2441,7 +2463,7 @@ export class Practice {
         }
         const actual = Math.round(((margin * lev * (dist / entry)) / v.equityUsd) * 10_000) / 100;
         if (resting) {
-          const order: RestingOrder = { id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, pair: t.pair, side: t.side, limit: resting.limit, kind: resting.kind, placedAt: Date.now(), expiresAt: resting.until, ref: t.ref, strategy: t.strategy, stop: t.stop, target: t.target, marginUsd: Math.round(margin * 100) / 100, leverage: lev, riskPct: actual, ...planOf(t), tf, ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}) };
+          const order: RestingOrder = { id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, pair: t.pair, side: t.side, limit: resting.limit, kind: resting.kind, placedAt: Date.now(), expiresAt: resting.until, ref: t.ref, strategy: t.strategy, stop: t.stop, target: t.target, marginUsd: Math.round(margin * 100) / 100, leverage: lev, riskPct: actual, ...planOf(t), tf, ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}), ...(bigCapUsd ? { allIn: true, maxLossUsd: bigCapUsd } : {}) };
           a.orders = [...(a.orders ?? []), order];
           openedToday++;
           openedHour++;
@@ -2456,8 +2478,8 @@ export class Practice {
         const capSl = !allInPct && slc?.active && a.maxLossUsd ? slc.byKey[`${t.strategy}:${tf}`] ?? slc.def : undefined;
         // v27.95: never above the account's cap (a $25 study cap used to outrank the owner's $20)
         const capFor = capSl !== undefined && a.maxLossUsd && (capSl >= a.maxLossUsd || BOT.capFloorAccts[acct]) ? undefined : capSl;
-        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, desk: !!t.desk, ...(allInPct ? { allIn: true } : {}), ...(capFor ? { maxLossUsd: capFor } : {}), ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}), maxQuoteAgeMs: BOT.quoteAgeMsByTf[tf] ?? 10 * 60_000, feedDelayOk: tf === '1h' || tf === '4h' });
-        const sure = allInPct ? ` — ALL-IN (${t.strategy} ${tf}, a proven strategy): risking ${actual}% at ${lev}× on its tested stop` : t.desk ? ` — DESK learning trade: ${t.desk.why}` : snipe ? ` — SNIPER: ${snipe.votes} of ${snipe.of} checks agree, risking ${actual}% at ${lev}×` : conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
+        const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, desk: !!t.desk, ...(allInPct ? { allIn: true } : {}), ...(bigCapUsd ? { maxLossUsd: bigCapUsd } : capFor ? { maxLossUsd: capFor } : {}), ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}), maxQuoteAgeMs: BOT.quoteAgeMsByTf[tf] ?? 10 * 60_000, feedDelayOk: tf === '1h' || tf === '4h' });
+        const sure = bigCapUsd ? ` — VERY SURE (${t.strategy} ${tf}: Edge, proven on ${t.pair}, forward check passed): big size, its tested stop loses ≤ $${bigCapUsd} (${bigPct}% of the account) at ${lev}×` : allInPct ? ` — ALL-IN (${t.strategy} ${tf}, a proven strategy): risking ${actual}% at ${lev}× on its tested stop` : t.desk ? ` — DESK learning trade: ${t.desk.why}` : snipe ? ` — SNIPER: ${snipe.votes} of ${snipe.of} checks agree, risking ${actual}% at ${lev}×` : conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
         events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${sure}${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}${heatNote}${capFor && capFor !== a.maxLossUsd ? `, loss cap $${capFor} (from how its past trades dipped)` : ''}` : `skipped ${t.pair}: ${r.error}`);
         if (r.ok) {
           openedToday++;

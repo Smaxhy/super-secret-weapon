@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.98 very-sure trades go big: their tested stop may lose 10% of the account (Oct 28, owner: "if the bot is sure even
+after all the checks … use like 10-20%" → chose "lose up to 10%")
+"Very sure" = the row is Edge (strict unseen test incl. luck twins + deflated Sharpe) AND, under `marketMustPass`, the strategy
+passed `cellPass` on THAT market (`toLabTrade` needs `marketRec.ok === true`) AND the forward check (already part of `chosen`).
+Such a lab trade carries `allIn` = `provenOnly.riskPct` (20 → 10). syncBot: `BOT.bigLossPct` {cbot 10, bot 10} → the trade is
+sized so its tested stop + round-trip fee lose ≤ 10% of equity × 0.9 headroom (`capRiskUsd`), opened with its own
+`maxLossUsd` = 10% of equity (openIn now keeps `maxLossUsd` on all-in trades, so `tick` trims against that, not the $20);
+ONE big trade open or waiting as an order at a time (wait "a very-sure (big) trade is already open"); resting orders
+(`RestingOrder.allIn / maxLossUsd`) and weekend pauses (`ResumeItem.allIn / maxLossUsd`) keep it. Every other trade (Maybe
+rows, forex cells, Kojiro copies) stays at the $20 cap. Bot log "VERY SURE (…): big size, its tested stop loses ≤ $X".
+`bigLossPct` 0 = all-in trades back on the $20 cap. As of Oct 28 no row on either desk is Edge → nothing trades big yet.
+tests in forex-proven-only (+1).
 ## v27.97 a strategy trades a market only where it proved itself on THAT market (Oct 28, owner: "stop trying to rush trades,
 REALLY think every trade through with extreme caution, I don't care if it's once a day, I need results")
 VPS read 20:42 UTC (coin bot): 11 Maybe rows chosen (all passed unseen PF ≥ 1.3 + the forward check), but a row approved on all

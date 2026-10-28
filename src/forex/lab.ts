@@ -173,7 +173,7 @@ export const FX_CONFIG = {
    * −0.58R on 12, momentum_bar:1h +0.10 → −0.62 on 13, of_thrust:1h +0.12 → −0.45 on 19), and the coin bot's own closes
    * since Oct 21 were −6.5R on 53 trades. Too few forward trades = it waits (the lab keeps paper-trading it). */
   forwardCheck: { on: true, minN: 10, minAvgR: 0.05, minPf: 1.2 },
-  provenOnly: { on: true, riskPct: 20, /** v27.31 (owner: "forex may still use the daily pivot R1 / S1, it performs too —
+  provenOnly: { on: true, riskPct: 10, /** v27.98: riskPct 20 → 10 (very-sure trades lose ≤ 10% at the stop, BOT.bigLossPct). v27.31 (owner: "forex may still use the daily pivot R1 / S1, it performs too —
    * just what definitely works"): per desk, a strategy that clears the STRICT per-market bar (`cellPass`: 30+ unseen
    * trades there, +0.1R, PF 1.3, positive before the line, Monte Carlo 95%) also trades on THAT market. v27.34 (owner: "switch
    * them on, I want crypto to be more experimental for now and keep practising, while forex is locked on only winners"): coin
@@ -1031,7 +1031,10 @@ export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: 
   // per-market cell on a desk whose cell trades practise at the normal size (coins)
   const po = FX_CONFIG.provenOnly;
   // v27.85: a Maybe row (forex) is chosen but never all-in — `edge` false; missing = the old behaviour (rows were Edge only)
-  const allIn = po.on && o.chosen && o.edge !== false && (o.rowChosen !== false || po.cellAllIn[isCrypto(t.pair) ? 'crypto' : 'fx']) ? po.riskPct : 0;
+  // v27.98: big size only when very sure — the row is Edge AND, under the per-market rule, the strategy proved itself on
+  // THIS market (marketRec ok = cellPass); the forward check is already part of `chosen`
+  const mkt = !FX_CONFIG.strict.marketMustPass[isCrypto(t.pair) ? 'crypto' : 'fx'] || o.marketRec?.ok === true;
+  const allIn = po.on && o.chosen && o.edge !== false && mkt && (o.rowChosen !== false || po.cellAllIn[isCrypto(t.pair) ? 'crypto' : 'fx']) ? po.riskPct : 0;
   return {
     ...(allIn ? { allIn } : {}),
     ...(o.order ? { order: o.order } : {}),

@@ -19,17 +19,21 @@ class NxRedis {
 }
 const quote = (mid: number): Quote => ({ id: 'BTCUSD', mid, bid: mid - 5, ask: mid + 5, t: Date.now(), bars: [[Date.now() - M, mid, mid, mid]], dayChangePct: 0, source: 'coinbase-live', priceT: Date.now() });
 afterEach(() => vi.useRealTimers());
+const OK = { n: 108, pf: 2.4, totalR: 20, ok: true };
 
 describe('v27.27 only proven strategies trade, big size', () => {
   it('only Edge rows are chosen; no side doors (per-market cells, owner picks); the per-desk list is empty', () => {
-    expect(FX_CONFIG.provenOnly).toEqual({ on: true, riskPct: 20, cells: { fx: true, crypto: false }, verdicts: { fx: ['edge', 'maybe'], crypto: ['edge', 'maybe'] }, maybeMinPf: { fx: 0, crypto: 1.3 }, cellAllIn: { fx: true, crypto: false } });
+    expect(FX_CONFIG.provenOnly).toEqual({ on: true, riskPct: 10, cells: { fx: true, crypto: false }, verdicts: { fx: ['edge', 'maybe'], crypto: ['edge', 'maybe'] }, maybeMinPf: { fx: 0, crypto: 1.3 }, cellAllIn: { fx: true, crypto: false } });
     // v27.82 / v27.85: coin cells off — even a strict per-market record doesn't trade without an Edge row; forex cells on
     const strict0 = { pair: 'BTCUSD', n: 108, avgR: 0.19, pf: 2.4, winPct: 50, inN: 60, inAvgR: 0.1, mcP: 0.99, mcP5: 0.05 } as never;
     expect(planChosen('pivot_bounce', 'BTCUSD', false, undefined, false, strict0, '4h', { n: 400, avgR: 0.05, pf: 1.2, verdict: 'maybe' as const })).toBe(false);
     // a Maybe row on forex is chosen but never all-in; an Edge row is
     const tr = { strategy: 'pivot_bounce', tf: '4h', pair: 'EURUSD', side: 1, entryT: NOW, keyT: NOW, entry: 1.1, stop: 1.09, target: 1.12 } as unknown as Trade;
     expect(toLabTrade(tr, { chosen: true, rowChosen: true, edge: false, sizeF: 1, prio: 0, judge: null }).allIn).toBeUndefined();
-    expect(toLabTrade(tr, { chosen: true, rowChosen: true, edge: true, sizeF: 1, prio: 0, judge: null }).allIn).toBe(20);
+    expect(toLabTrade(tr, { chosen: true, rowChosen: true, edge: true, sizeF: 1, prio: 0, judge: null, marketRec: OK }).allIn).toBe(10);
+    // v27.98: Edge but not proven on THIS market → normal size
+    expect(toLabTrade(tr, { chosen: true, rowChosen: true, edge: true, sizeF: 1, prio: 0, judge: null, marketRec: { ...OK, ok: false } }).allIn).toBeUndefined();
+    expect(toLabTrade(tr, { chosen: true, rowChosen: true, edge: true, sizeF: 1, prio: 0, judge: null }).allIn).toBeUndefined();
     FX_CONFIG.provenOnly.cells.fx = true;
     FX_CONFIG.provenOnly.cells.crypto = true;
     try {
@@ -68,13 +72,13 @@ describe('v27.27 only proven strategies trade, big size', () => {
 
   it('a chosen lab trade carries the big size; one that is not chosen does not', () => {
     const t = { strategy: 'rsi_dip', tf: '4h', pair: 'BTCUSD', side: 1, entryT: NOW, keyT: NOW, entry: 100_000, stop: 96_000, target: 108_000 } as unknown as Trade;
-    expect(toLabTrade(t, { chosen: true, sizeF: 1, prio: 0, judge: null }).allIn).toBe(20);
-    expect(toLabTrade(t, { chosen: false, sizeF: 1, prio: 0, judge: null }).allIn).toBeUndefined();
+    expect(toLabTrade(t, { chosen: true, sizeF: 1, prio: 0, judge: null, marketRec: OK }).allIn).toBe(10);
+    expect(toLabTrade(t, { chosen: false, sizeF: 1, prio: 0, judge: null, marketRec: OK }).allIn).toBeUndefined();
     // v27.34: a coin trade live only through its cell practises at the normal size; a forex cell trade stays all-in
-    expect(toLabTrade(t, { chosen: true, rowChosen: false, sizeF: 1, prio: 0, judge: null }).allIn).toBeUndefined();
-    expect(toLabTrade(t, { chosen: true, rowChosen: true, sizeF: 1, prio: 0, judge: null }).allIn).toBe(20);
+    expect(toLabTrade(t, { chosen: true, rowChosen: false, sizeF: 1, prio: 0, judge: null, marketRec: OK }).allIn).toBeUndefined();
+    expect(toLabTrade(t, { chosen: true, rowChosen: true, sizeF: 1, prio: 0, judge: null, marketRec: OK }).allIn).toBe(10);
     const fx = { ...t, pair: 'RUTUSD' } as Trade;
-    expect(toLabTrade(fx, { chosen: true, rowChosen: false, sizeF: 1, prio: 0, judge: null }).allIn).toBe(20);
+    expect(toLabTrade(fx, { chosen: true, rowChosen: false, sizeF: 1, prio: 0, judge: null, marketRec: OK }).allIn).toBe(10);
   });
 
   it('v27.34: per-market cells count as live setups in provenCells only where they trade', () => {
@@ -95,6 +99,9 @@ describe('v27.27 only proven strategies trade, big size', () => {
   });
 
   it('a proven coin trade is sized so its tested stop + fee lose ≤ the $20 cap (v27.86 / v27.95), and the cap never pulls the stop in', async () => {
+    const big0 = BOT.bigLossPct.cbot;
+    BOT.bigLossPct.cbot = 0; // the v27.95 behaviour; v27.98's very-sure size is tested below
+    onTestFinished(() => { BOT.bigLossPct.cbot = big0; });
     vi.useFakeTimers({ now: NOW });
     const r = new NxRedis();
     r.m.set('fx:practice:cbot', JSON.stringify(newAccount(1000)));
@@ -115,6 +122,31 @@ describe('v27.27 only proven strategies trade, big size', () => {
     tick(a, { BTCUSD: { ...quote(99_000), bars: [[m1, 99_500, 98_900, 99_000, 99_500]] } }, m1 + 30_000);
     expect(a.open[0]!.stop).toBe(96_000);
     expect(BOT.allIn).toEqual({});
+  });
+
+  it('v27.98: a very-sure trade loses ≤ 10% of the account at its tested stop (fee incl.), keeps that cap, one at a time', async () => {
+    vi.useFakeTimers({ now: NOW });
+    expect(BOT.bigLossPct).toEqual({ cbot: 10, bot: 10 });
+    const r = new NxRedis();
+    r.m.set('fx:practice:cbot', JSON.stringify(newAccount(1000)));
+    const p = new Practice(r as unknown as Redis);
+    (p as unknown as { quotes: () => Promise<Record<string, Quote>> }).quotes = async () => ({ BTCUSD: quote(100_000), ETHUSD: { ...quote(4_000), id: 'ETHUSD' } });
+    const lab = { allIn: 10, ref: `rsi_dip:4h:BTCUSD:${NOW - 2 * M}`, strategy: 'rsi_dip', tf: '4h', pair: 'BTCUSD', side: 1 as const, entryT: NOW - 2 * M, stop: 96_000, target: 108_000, chosen: true, sizeF: 0.5, prio: 0.4, judge: null };
+    const eth = { ...lab, ref: `rsi_dip:4h:ETHUSD:${NOW - 2 * M}`, pair: 'ETHUSD', side: -1 as const, stop: 4_160, target: 3_680 };
+    await p.syncBot([lab, eth], () => null, {}, { scope: ['1h', '4h'], acct: 'cbot' });
+    const a = JSON.parse(r.m.get('fx:practice:cbot')!) as PracticeAccount;
+    expect(a.open).toHaveLength(1); // the second big one waits — one at a time
+    const pos = a.open[0]!;
+    expect(pos.allIn).toBe(true);
+    expect(pos.maxLossUsd).toBe(100);
+    expect(pos.riskPct!).toBeGreaterThan(8.5);
+    const feeUsd = (2 * 0.045 * pos.marginUsd * pos.leverage) / 100;
+    expect(pos.units * (pos.entry - 96_000) + feeUsd).toBeLessThanOrEqual(100); // 10% of $1,000, with the 0.9 headroom for slips
+    // the $20 account cap doesn't trim it: its own $100 cap applies
+    const m1 = NOW + M;
+    tick(a, { BTCUSD: { ...quote(99_000), bars: [[m1, 99_500, 98_900, 99_000, 99_500]] } }, m1 + 30_000);
+    expect(a.open[0]!.units).toBe(pos.units);
+    expect(a.open[0]!.stop).toBe(96_000);
   });
 });
 
