@@ -703,6 +703,16 @@ async function main(): Promise<void> {
     };
     setTimeout(() => void replay(), 20_000).unref?.();
   }
+  // v27.86 (owner: "the bot was a mistake, revert the trade"): the coin bot's BTC round_break 4h long (12:31 at 80,801, stopped
+  // 13:48 at 80,302.81, −$132.95 = 11.1% of the account: all-in size past the $50 cap) struck as if it never happened
+  await oneTimeUpgrade('v27.86-strike-btc-round-break', async () => {
+    const ref = 'round_break:4h:BTCUSD:1793188800000';
+    const pick = (p: { ref?: string }) => p.ref === ref;
+    const label = 'coin bot: BTC round_break 4h long of Oct 28 12:31 (owner: a mistake)';
+    const lines = [await practice.undoPositions('cbot', pick, label), await practice.undoClosed('cbot', pick, label)];
+    cryptoLab.logBot(lines);
+    log.info({ lines }, 'BTC round_break struck');
+  });
   // v27.81 (owner: "revert them both, remove them, these were bad calls"): the replayed LINK keltner 10:09 and ETH donchian20
   // 09:09 longs struck as if they never happened (open legs, or the close if one already ended); refs → skipRefs
   await oneTimeUpgrade('v27.81-strike-link-eth', async () => {

@@ -772,6 +772,8 @@ only when clashing trades did ≥ 0.1R worse on the unseen part (60+ of them) an
 (`fx:opposed` / `cm:opposed`, `/api/<desk>/bot` `opposed`) hands such trades a `soloWait` "X fired the other way here —
 strategies disagree" (why.ts kind 'clash', shadow book scores them). Off = clashes trade as before. 15m charts not wired (not
 traded). Trades page loss-review card shows the clash verdict. tests/forex-clash (3), forex-proven-only (all-in sized to cap).
+Then (owner: "revert the trade"): one-time `v27.86-strike-btc-round-break` strikes that BTC trade (undoPositions + undoClosed,
+ref round_break:4h:BTCUSD:1793188800000 → skipRefs).
 ## v27.85 forex may trade Maybe strategies again, coins stay Edge-only (Oct 28, owner: "forex is allowed to use maybe
 strategies because crypto needs to be the safer and main priority")
 `FX_CONFIG.provenOnly.verdicts` {fx: ['edge','maybe'], crypto: ['edge']} (hourly chooser + fast `chosenOf` per desk) and
