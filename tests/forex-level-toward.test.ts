@@ -45,6 +45,13 @@ describe('sell high toward his levels', () => {
     expect(towardSignal(c, i, [29870, 29850], posted, -1, minRisk)).toBeNull();
   });
 
+  it('stretch is measured from ALL his levels: an older lower list does not let a short in just above his newest level (v27.76)', () => {
+    const older = [29783, 29765, 29736.25];
+    // this set alone is far below the poke, but his newest levels (targets) reach 29,880 → not stretched past them
+    expect(towardSignal(c, i, older, posted, -1, minRisk, [...older, 29880, 29835])).toBeNull();
+    expect(towardSignal(c, i, older, posted, -1, minRisk, [...older, ...LEVELS])).not.toBeNull();
+  });
+
   it('fires once: the next red candle after the signal does not sell again', () => {
     const more = [...bars, { t: bars[i]!.t + M, o: 29874, h: 29876, l: 29860, c: 29862 }];
     expect(towardSignal(buildCtx(more, 1, 'NDXUSD'), more.length - 1, LEVELS, posted, -1, minRisk)).toBeNull();

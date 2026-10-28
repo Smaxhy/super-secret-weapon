@@ -743,7 +743,9 @@ export function towardSignal(c: Ctx, i: number, levels: readonly number[], poste
   if (!onlySide || !ok(a) || a <= 0 || !levels.length || i < TOWARD.look + 2 || c.bars[i]!.t < postedT) return null;
   const side = onlySide;
   const p = sided(c, side); // written as the buy: below his levels, a poke under the lows that closes back above
-  const lowestLevel = Math.min(...levels.map((L) => side * L));
+  // v27.76: stretched past ALL his live levels (his newest list included), not only this set's — an older side list sat
+  // ~50 points under his newest levels and let a short in 21 points above 29,835 (Oct 28 02:32)
+  const lowestLevel = Math.min(...[...levels, ...targets].map((L) => side * L));
   for (const j of [i, i - 1]) {
     if (c.bars[j]!.t < postedT) continue;
     let prev = Infinity;

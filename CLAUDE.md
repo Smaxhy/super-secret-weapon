@@ -758,6 +758,13 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.76 "sell high toward his levels" measures from ALL his levels (Oct 28, owner: "is the current trade correct from the
+Kojiro call?")
+02:32 UTC the toward rule shorted NQ at 29,856.25 (stop 29,881, target 29,804) — his bearish lean and his target, but only
+21 points above his newest level 29,835: the poke (29,867) was measured against his older "Short Levels" list (top 29,783,
+Oct 27 17:35, still valid 24 h), whose levels the set loop tried first. `towardSignal` now takes the stretch from every live
+level (`levels` + `targets` = all his lists) → the price must be 0.15% past his nearest level of ANY list. The open trade was
+left running (owner's call). tests in forex-level-toward (+1).
 ## v27.75 which markets have a live price — said in the bot log and on the trade card (Oct 28, owner: "the live price updating is
 being delayed")
 VPS read 02:16 UTC: Hyperliquid live prices (gap measured) for NDXUSD / SPXUSD / XAUUSD only; DJIUSD, RUTUSD and XAGUSD had no
