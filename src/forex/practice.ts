@@ -78,7 +78,7 @@ export const BOT = {
    * an hourly / 4-hour trade on one may use this much delay on top of the limit when the feed declares none */
   futuresDelayMs: 15 * 60_000,
   /** v27.20: the most a single trade may lose, per account (the coin bot: $20; v27.22 the forex bot too) */
-  maxLossUsdByAcct: { cbot: 50, bot: 20 } as Partial<Record<string, number>>,
+  maxLossUsdByAcct: { cbot: 20, bot: 20 } as Partial<Record<string, number>>, // v27.95 (owner: "cut it all on 20"): $50 → $20
   /** v27.78 (owner raised the coin bot's cap to $50: "LINK usually does better"): on these accounts the excursion study's
    * per-strategy cap (kept $10–40) may not pull a trade in tighter than the account's cap — the owner's number is the floor */
   capFloorAccts: { cbot: true, bot: true } as Partial<Record<string, boolean>>,
@@ -117,7 +117,7 @@ export const BOT = {
    * size is cut so its TESTED stop loses at most the account's $ cap (× `headroom` for the exit spread) — the stop is never
    * pulled in, so the live trade is the one the lab graded */
   sizeToCap: { cbot: true, bot: true } as Partial<Record<string, boolean>>, // v27.85: the forex bot too (Maybe trades at the $20 cap)
-  sizeToCapHeadroom: 0.95,
+  sizeToCapHeadroom: 0.9, // v27.95: room for a gap fill — the stop + the round-trip fee lose ≤ 90% of the cap
   /** v27.86: the size-to-cap rule also sizes all-in (proven) trades on these accounts */
   sizeToCapAllIn: { cbot: true, bot: true } as Partial<Record<string, boolean>>,
   /** v27.79: a strategy × chart whose own live trades (closed since `since`, the last `days`) lost money after `minN` of
@@ -210,6 +210,15 @@ export interface Quote {
 
 /** v17: how old the price behind a quote is (ms; the broker / market time when known). Pure. */
 export const quoteAge = (q: Pick<Quote, 'priceT' | 'bars' | 't'>, now: number) => now - (q.priceT ?? q.bars[q.bars.length - 1]?.[0] ?? q.t);
+
+/** v27.95 (owner: "why did it AGAIN allow a −$51.98 loss … cut it all on 20"): the most a trade may risk on its stop so
+ * that the stop's loss PLUS the venue's round-trip fee stays within `capUsd` × `BOT.sizeToCapHeadroom`. Before, the size
+ * only counted the stop, so a $50-capped coin trade booked −$51.98 once the 0.045%-a-side fee was added. `stopFrac` =
+ * stop distance ÷ entry, `feeRate` = open + close fee as a share of the position. Pure. */
+export function capRiskUsd(capUsd: number, stopFrac: number, feeRate: number): number {
+  if (!(capUsd > 0) || !(stopFrac > 0)) return 0;
+  return (capUsd * BOT.sizeToCapHeadroom * stopFrac) / (stopFrac + Math.max(0, feeRate));
+}
 
 export interface PracticePosition {
   id: string;
@@ -1110,10 +1119,13 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
     // v27.20: the account's loss cap in USD — the stop is pulled in so this trade can't lose more (never loosened);
     // already past it → closed at the market now
     const capUsd = p.maxLossUsd ?? a.maxLossUsd; // v27.45: the trade's own cap first
-    if (capUsd && capUsd > 0 && !q.stale && !p.allIn) {
+    // v27.95: every trade (all-in and his calls too), and the round-trip fee counts inside the cap
+    const capInst = capUsd && capUsd > 0 ? instrument(p.pair) : undefined;
+    if (capUsd && capUsd > 0 && !q.stale) {
       const per = p.units * usdPerPx(p.pair, { ...mids, [p.pair]: mids[p.pair] ?? p.entry });
+      const room = Math.max(capUsd - (capInst ? feeUsd(capInst, p.marginUsd, p.leverage) : 0) - (p.bankedUsd && p.bankedUsd < 0 ? -p.bankedUsd : 0), capUsd * 0.25);
       if (per > 0) {
-        const capStop = p.entry - (p.side * capUsd) / per;
+        const capStop = p.entry - (p.side * room) / per;
         if (p.stop === null || (p.side === 1 ? capStop > p.stop : capStop < p.stop)) {
           const exitNow = p.side === 1 ? q.bid : q.ask;
           if (p.side === 1 ? exitNow <= capStop : exitNow >= capStop) {
@@ -2394,7 +2406,8 @@ export class Practice {
         // v27.79: size so the tested stop loses at most the $ cap — the cap never has to pull the stop in
         // v27.86: all-in (proven) trades too — one stopped BTC long cost 11% of the coin account ($133) past the owner's $50
         if (BOT.sizeToCap[acct] && a.maxLossUsd && (!allInPct || BOT.sizeToCapAllIn[acct]) && v.equityUsd > 0) {
-          const capPct = Math.floor(((a.maxLossUsd * BOT.sizeToCapHeadroom) / v.equityUsd) * 10_000) / 100;
+          const ci = instrument(t.pair);
+          const capPct = Math.floor((capRiskUsd(a.maxLossUsd, dist / entry, ci ? (2 * feePctPerSide(ci)) / 100 : 0) / v.equityUsd) * 10_000) / 100;
           if (riskPct > capPct) riskPct = capPct;
         }
         const notional = (v.equityUsd * riskPct) / 100 / (dist / entry);
@@ -2419,7 +2432,8 @@ export class Practice {
         // v27.45: the excursion study's $ loss cap for this strategy × chart (only once it has enough trades; never all-in)
         const slc = this.slCaps[acct];
         const capSl = !allInPct && slc?.active && a.maxLossUsd ? slc.byKey[`${t.strategy}:${tf}`] ?? slc.def : undefined;
-        const capFor = capSl !== undefined && BOT.capFloorAccts[acct] && a.maxLossUsd && capSl <= a.maxLossUsd ? undefined : capSl;
+        // v27.95: never above the account's cap (a $25 study cap used to outrank the owner's $20)
+        const capFor = capSl !== undefined && a.maxLossUsd && (capSl >= a.maxLossUsd || BOT.capFloorAccts[acct]) ? undefined : capSl;
         const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, desk: !!t.desk, ...(allInPct ? { allIn: true } : {}), ...(capFor ? { maxLossUsd: capFor } : {}), ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}), maxQuoteAgeMs: BOT.quoteAgeMsByTf[tf] ?? 10 * 60_000, feedDelayOk: tf === '1h' || tf === '4h' });
         const sure = allInPct ? ` — ALL-IN (${t.strategy} ${tf}, a proven strategy): risking ${actual}% at ${lev}× on its tested stop` : t.desk ? ` — DESK learning trade: ${t.desk.why}` : snipe ? ` — SNIPER: ${snipe.votes} of ${snipe.of} checks agree, risking ${actual}% at ${lev}×` : conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
         events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${sure}${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}${heatNote}${capFor && capFor !== a.maxLossUsd ? `, loss cap $${capFor} (from how its past trades dipped)` : ''}` : `skipped ${t.pair}: ${r.error}`);
@@ -2510,7 +2524,9 @@ export class Practice {
       const riding = a.open.filter((p) => p.tf === 'signal').reduce((s, p) => s + (p.riskPct ?? 0), 0);
       const left = Math.round((r.riskPct - riding) * 100) / 100;
       if (left < 0.5) return { ok: false, error: `already ${Math.round(riding * 10) / 10}% of the account riding on his calls (max ${r.riskPct}%)` };
-      const riskUsd = (v.equityUsd * left) / 100;
+      // v27.95 (owner: "cut it all on 20"): his calls too — the stop + the round-trip fee lose at most the account's $ cap
+      const capUsd = BOT.maxLossUsdByAcct[acct];
+      const riskUsd = Math.min((v.equityUsd * left) / 100, capUsd ? capRiskUsd(capUsd, stopDist / entry, (2 * feePctPerSide(inst)) / 100) : Infinity);
       // v27.72: the venue fee must leave the trade a chance (≤ 25% of its stop) and stay small next to the account (≤ 1%)
       const feePx = feePxOf(inst, entry);
       if (feePx > DISCORD_COPY.maxFeeShare * stopDist) return { ok: false, error: `the round-trip fee (${+feePx.toPrecision(3)} a unit) is ${Math.round((feePx / stopDist) * 100)}% of its ${+stopDist.toPrecision(3)} stop — can't win after fees` };

@@ -126,7 +126,7 @@ describe('trading at his levels', () => {
     const pos = (JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount).open[0]!;
     expect(pos).toMatchObject({ stop: 29_050, target: 29_220, strategy: 'discord_kojiro_levels', tf: 'signal' });
     expect(pos.lock).not.toBeNull();
-    expect((pos.entry - pos.stop!) * pos.units).toBeCloseTo(20, 0);
+    expect((pos.entry - pos.stop!) * pos.units).toBeCloseTo(18, 0); // v27.95: $20 cap × 0.9 incl. the fee
     // a price already past the stop is refused
     const past = await p.copyOpen({ pair: 'NDXUSD', side: 1, stopNamed: null, hisPx: null, strategy: 'discord_kojiro_levels', ref: 'discord_kojiro_levels:signal:NDXUSD:2', riskPct: 2, leverage: 50, profitLock: true, stop: 29_200, target: null }, 'bot');
     expect(past.ok).toBe(false);

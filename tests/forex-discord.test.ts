@@ -87,7 +87,7 @@ describe('handleSignal on the bot account', () => {
     const acct = () => JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount;
     return { r, p, acct, setMid: (x: number) => (mid = x) };
   };
-  it('opens a long on his post at 20% of the account (past the $20 cap), no target, copy profit lock; once per message', async () => {
+  it('opens a long on his post, at most the $20 cap (v27.95; was 20% of the account), no target, copy profit lock; once per message', async () => {
     const { r, p, acct } = setup();
     const row = await handleSignal(r as unknown as Redis, p, { id: '1300000000000000001', text: 'SIGNAL · NQ — LONG @ 29,026.25', at: NOW - 20_000 });
     expect(row.ok).toBe(true);
@@ -97,20 +97,28 @@ describe('handleSignal on the bot account', () => {
     expect(pos).toMatchObject({ pair: 'NDXUSD', side: 1, entry: 29_031, target: null, strategy: 'discord_kojiro', tf: 'signal' });
     expect(pos.lock).toBeUndefined(); // v27.61: the copy lock is worked out at the first check (looser than the bot's)
     expect(pos.ref).toBe('discord_kojiro:signal:NDXUSD:1300000000000000001');
-    expect((pos.entry - pos.stop!) * pos.units).toBeCloseTo(200, 0); // v27.57: the safety stop loses 20% ($200)
-    expect(pos.allIn).toBe(true); // the account's $20 loss cap leaves it alone
+    // v27.95 (owner: "cut it all on 20"): the safety stop + the round-trip fee lose ≤ $20 (was 20% = $200 in v27.57)
+    expect((pos.entry - pos.stop!) * pos.units).toBeCloseTo(18, 0);
+    expect((pos.entry - pos.stop!) * pos.units + (2 * 0.009 * pos.marginUsd * pos.leverage) / 100).toBeLessThanOrEqual(20);
+    expect(pos.allIn).toBe(true);
     expect(pos.maxLossUsd).toBeUndefined();
     const again = await handleSignal(r as unknown as Redis, p, { id: '1300000000000000001', text: 'SIGNAL · NQ — LONG @ 29,026.25', at: NOW - 20_000 });
     expect(again.kind).toBe('duplicate');
     expect(acct().open).toHaveLength(1);
   });
-  it('v27.57: all open copies together risk at most 20% — a second call while 20% rides is refused', async () => {
+  it('v27.57: all open copies together risk at most their % budget — a second call past it is refused', async () => {
     const { r, p, acct } = setup();
-    expect((await handleSignal(r as unknown as Redis, p, { id: '1300000000000000011', text: 'SIGNAL · NQ — LONG @ 29,026.25', at: NOW })).ok).toBe(true);
-    const second = await handleSignal(r as unknown as Redis, p, { id: '1300000000000000012', text: 'SIGNAL · NQ — SHORT @ 29,026.25', at: NOW });
-    expect(second.ok).toBe(false);
-    expect(second.what).toMatch(/riding on his calls/);
-    expect(acct().open).toHaveLength(1);
+    const pct = DISCORD_COPY.riskPct;
+    DISCORD_COPY.riskPct = 2; // v27.95: one $20-capped copy ≈ 1.8% of $1,000 → a 2% budget fits one
+    try {
+      expect((await handleSignal(r as unknown as Redis, p, { id: '1300000000000000011', text: 'SIGNAL · NQ — LONG @ 29,026.25', at: NOW })).ok).toBe(true);
+      const second = await handleSignal(r as unknown as Redis, p, { id: '1300000000000000012', text: 'SIGNAL · NQ — SHORT @ 29,026.25', at: NOW });
+      expect(second.ok).toBe(false);
+      expect(second.what).toMatch(/riding on his calls/);
+      expect(acct().open).toHaveLength(1);
+    } finally {
+      DISCORD_COPY.riskPct = pct;
+    }
   });
   it('closes the long on his SELL @ with reason signal; a SELL with nothing open does nothing', async () => {
     const { r, p, acct, setMid } = setup();
@@ -180,7 +188,7 @@ describe('v27.59 reenterCopy', () => {
     expect(pos.stop).toBeCloseTo(28_855, 0); // the original stop, not the profit-lock stop it closed on
     expect(pos.ref).toBe('discord_kojiro:signal:NDXUSD:9:re1');
     expect(pos.allIn).toBe(true);
-    expect((pos.entry - pos.stop!) * pos.units).toBeCloseTo(200, -1);
+    expect((pos.entry - pos.stop!) * pos.units).toBeCloseTo(18, 0); // v27.95: the $20 cap (incl. fee)
     expect(await p.reenterCopy('bot', 20)).toMatch(/already back in/);
   });
 });

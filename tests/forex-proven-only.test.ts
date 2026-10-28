@@ -94,7 +94,7 @@ describe('v27.27 only proven strategies trade, big size', () => {
     }
   });
 
-  it('a proven coin trade is sized so its tested stop loses ≤ the $50 cap (v27.86), and the cap never pulls the stop in', async () => {
+  it('a proven coin trade is sized so its tested stop + fee lose ≤ the $20 cap (v27.86 / v27.95), and the cap never pulls the stop in', async () => {
     vi.useFakeTimers({ now: NOW });
     const r = new NxRedis();
     r.m.set('fx:practice:cbot', JSON.stringify(newAccount(1000)));
@@ -106,7 +106,9 @@ describe('v27.27 only proven strategies trade, big size', () => {
     expect(a.open).toHaveLength(1);
     const pos = a.open[0]!;
     expect(pos.allIn).toBe(true);
-    expect(pos.riskPct!).toBeCloseTo(4.75, 1); // $47.50 of $1,000 at the tested stop
+    expect(pos.riskPct!).toBeCloseTo(1.76, 1); // v27.95: $20 × 0.9, minus the round-trip fee, at the tested stop
+    const feeUsd = (2 * 0.045 * pos.marginUsd * pos.leverage) / 100;
+    expect(pos.units * (pos.entry - 96_000) + feeUsd).toBeLessThanOrEqual(20);
     expect(pos.stop).toBe(96_000);
     expect(a.maxLossUsd).toBe(BOT.maxLossUsdByAcct.cbot);
     const m1 = NOW + M;

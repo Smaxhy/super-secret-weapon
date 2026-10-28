@@ -12,7 +12,7 @@ const long = (): PracticePosition => ({ id: 'p1', pair: 'BTCUSD', side: 1, units
 
 describe('per-trade USD loss cap', () => {
   it('the coin bot and (v27.22) the forex bot are capped at $20', () => {
-    expect(BOT.maxLossUsdByAcct.cbot).toBe(50);
+    expect(BOT.maxLossUsdByAcct.cbot).toBe(20); // v27.95 (was $50 from v27.78)
     expect(BOT.maxLossUsdByAcct.bot).toBe(20);
   });
   it('pulls a looser stop in to the $20 loss and never loosens a tighter one', () => {
@@ -44,6 +44,26 @@ describe('per-trade USD loss cap', () => {
     tick(b, { BTCUSD: q(98_800, [[m1 + 60_000, 99_900, 98_700, 98_800, 99_900]]) }, m1 + 90_000);
     expect(b.open).toHaveLength(0);
     expect(b.closed[0]!.pnlUsd).toBeCloseTo(-20, 1);
+  });
+});
+
+describe('v27.95 every trade, fee included, stays inside $20', () => {
+  it('pulls an all-in / copied trade in too, and leaves room for the round-trip fee', () => {
+    VENUE_FEES.on = true;
+    try {
+      const a = newAccount(1000);
+      a.maxLossUsd = 20;
+      a.open = [{ ...long(), allIn: true, tf: 'signal' }];
+      const m1 = T + 60_000;
+      tick(a, { BTCUSD: q(99_900, [[m1, 100_000, 99_800, 99_900, 100_000]]) }, m1 + 30_000);
+      const fee = (2 * 0.045 * 100 * 20) / 100; // $1.80 on a $2,000 position
+      expect(a.open[0]!.stop).toBeCloseTo(100_000 - (20 - fee) / 0.02, 4);
+      tick(a, { BTCUSD: q(98_000, [[m1 + 60_000, 99_900, 97_000, 98_000, 99_900]]) }, m1 + 90_000);
+      expect(a.open).toHaveLength(0);
+      expect(a.closed[0]!.pnlUsd).toBeGreaterThanOrEqual(-20.01);
+    } finally {
+      VENUE_FEES.on = false;
+    }
   });
 });
 

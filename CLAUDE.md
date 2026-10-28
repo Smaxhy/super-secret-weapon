@@ -758,6 +758,16 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.95 every trade capped at $20, fee included (Oct 28, owner: "why did the bot AGAIN allow a −$51.98 loss"; "cut it all on 20")
+The −$51.98: the coin bot's cap was $50 (v27.78) and size-to-cap only counted the stop ($47.50), not the 0.045%-a-side coin
+fee booked at the close. Now `BOT.maxLossUsdByAcct` {cbot: 20, bot: 20}; `capRiskUsd(cap, stopFrac, feeRate)` (practice.ts,
+pure) = the most a trade may risk on its stop so stop + round-trip venue fee ≤ cap × `sizeToCapHeadroom` (0.95 → **0.9**,
+room for a gap fill) — used by syncBot sizing (every trade incl. all-in) and by `copyOpen` (his SIGNAL calls, full-conviction
+calls, level trades: min(his % budget, the $20 cap) — they were 20% ≈ $200 a stop). `tick`'s cap pull-in now applies to
+EVERY position (all-in and his copies too, open ones included) and leaves room for the position's round-trip fee (and swap
+paid): the stop sits at (cap − fee) from the entry (≥ ¼ of the cap). The excursion study's per-strategy cap can no longer
+outrank the account cap (a $25 study cap used to give a trade $25). A gap through the stop can still book a little past $20.
+tests: forex-loss-cap (+1), forex-proven-only / forex-link-cap50 / forex-discord / forex-discord-levels updated.
 ## v27.94 his full-conviction calls are taken, lab-only or not (Oct 28 ~16:00 UTC, FOMC day; owner: "Fullport FOMC longs is
 also a call … make sure it happens at all costs")
 discord.ts `fullCall(up)` → `parseSignal` returns {kind 'open', price null, `conviction: 'full'`, `event`} for "fullport /
