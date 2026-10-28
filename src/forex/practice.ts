@@ -113,7 +113,25 @@ export const BOT = {
   /** v26.2: a held trade whose lab trade vanished WITHOUT finishing (a re-test changed the strategy's filter / exit) is kept
    * and run by its own stop / target / profit lock — closed after this many candles of its chart if nothing else ends it */
   orphanMaxBars: 30,
+  /** v27.79 (owner: "only take trades if you're certain … it needs to adjust itself properly"): on these accounts a trade's
+   * size is cut so its TESTED stop loses at most the account's $ cap (× `headroom` for the exit spread) — the stop is never
+   * pulled in, so the live trade is the one the lab graded */
+  sizeToCap: { cbot: true } as Partial<Record<string, boolean>>,
+  sizeToCapHeadroom: 0.95,
+  /** v27.79: a strategy × chart whose own live trades (closed since `since`, the last `days`) lost money after `minN` of
+   * them is paused on that account until those trades are older than `days` — lab evidence alone isn't "sure" */
+  liveBrake: { cbot: { since: Date.parse('2026-10-28T12:00:00Z'), minN: 3, days: 14 } } as Partial<Record<string, { since: number; minN: number; days: number }>>,
 };
+
+/** v27.79: the live brake for one strategy × chart from its R-ledger rows: paused when `minN`+ trades closed since
+ * `since` within the last `days` made less than 0R together; `until` = when the oldest of them ages out. Pure. */
+export function liveBrake(rows: readonly LedgerRow[] | undefined, now: number, cfg: { since: number; minN: number; days: number }): { n: number; r: number; paused: boolean; until: number | null } {
+  const from = Math.max(cfg.since, now - cfg.days * 86_400_000);
+  const recent = (rows ?? []).filter((x) => x[0] >= from && x[2] !== null && x[4] !== LEDGER_WHY.manual).sort((x, y) => x[0] - y[0]);
+  const r = Math.round(recent.reduce((n, x) => n + (x[2] ?? 0), 0) * 100) / 100;
+  const paused = recent.length >= cfg.minN && r < 0;
+  return { n: recent.length, r, paused, until: paused ? recent[0]![0] + cfg.days * 86_400_000 : null };
+}
 
 /** v18.7: minutes until the same strategy may trade the same market again after `closed`, or 0 when it may now */
 export function reentryWait(closed: readonly ClosedPractice[], strategy: string, tf: string, pair: string, now: number, bars = BOT.reentryCooldownBars): number {
@@ -2195,6 +2213,14 @@ export class Practice {
           skip(t, `just closed a trade here — cooling off for ${cool} min (${BOT.reentryCooldownBars} ${tf} candles)`, true);
           continue;
         }
+        const brakeCfg = BOT.liveBrake[acct];
+        const brake = brakeCfg ? liveBrake(a.ledger?.[`${t.strategy}:${tf}`], Date.now(), brakeCfg) : null;
+        if (brake?.paused) {
+          const until = new Date(brake.until!).toISOString().slice(5, 16).replace('T', ' ');
+          note(`${t.strategy}:${tf}:brake`, `paused ${t.strategy} ${tf}: its last ${brake.n} live trades made ${brake.r}R — not sure enough, back after ${until} UTC`);
+          skip(t, `its own live trades lost (${brake.n} trades, ${brake.r}R) — paused until ${until} UTC`, true);
+          continue;
+        }
         if ((perStrategy.get(sk) ?? 0) >= L.maxPerStrategy) {
           note(`${t.ref}:strat`, `skipped ${t.pair} (${t.strategy}): it already has ${L.maxPerStrategy} trades open`);
           skip(t, `its strategy already has ${L.maxPerStrategy} trades open`);
@@ -2333,6 +2359,11 @@ export class Practice {
             heatNote = ` (smaller: ${withWhat})`;
             riskPct = room;
           }
+        }
+        // v27.79: size so the tested stop loses at most the $ cap — the cap never has to pull the stop in
+        if (BOT.sizeToCap[acct] && a.maxLossUsd && !allInPct && v.equityUsd > 0) {
+          const capPct = Math.floor(((a.maxLossUsd * BOT.sizeToCapHeadroom) / v.equityUsd) * 10_000) / 100;
+          if (riskPct > capPct) riskPct = capPct;
         }
         const notional = (v.equityUsd * riskPct) / 100 / (dist / entry);
         let margin = notional / lev;

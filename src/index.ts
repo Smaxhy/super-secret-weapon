@@ -703,6 +703,23 @@ async function main(): Promise<void> {
     };
     setTimeout(() => void replay(), 20_000).unref?.();
   }
+  // v27.79 (owner: "same with eth/usd"): the coin bot's donchian20 1h ETH long of Oct 28 (09:09 → −$20.00 at 11:06 on the
+  // $20 cap stop, $8 under the entry while the tested stop was $26 under) replayed like the LINK trades with a $50 cap
+  {
+    let tries = 0;
+    const replay = async (): Promise<void> => {
+      const ok = await oneTimeUpgrade('v27.79-eth-cap50', async () => {
+        const inst = INSTRUMENTS.find((x) => x.id === 'ETHUSD')!;
+        const bars = (await fetchCoinbaseFast(inst, '1m', Date.parse('2026-10-28T09:00:00Z'))).filter((b) => b.t + 60_000 <= Date.now());
+        if (bars.length < 120 || bars[0]!.t > Date.parse('2026-10-28T09:10:00Z')) throw new Error(`only ${bars.length} 1-minute ETH candles`);
+        const line = await practice.replayBotTrade('cbot', 'donchian20:1h:ETHUSD:1793178000000', 50, bars);
+        cryptoLab.logBot([line, 'coin bot: trades are now sized so the tested stop loses at most $50 (the stop is never pulled in), and a strategy whose own live trades lose after 3 of them is paused for 14 days']);
+        log.info({ line }, 'ETH trade replayed with a $50 cap');
+      });
+      if (!ok && ++tries < 10) setTimeout(() => void replay(), 60_000).unref?.();
+    };
+    setTimeout(() => void replay(), 25_000).unref?.();
+  }
   // v27.77 (owner: "do as if it never happened and keep all Kojiro calls in labs for now"): the 02:32 UTC NQ short of the
   // "sell high toward his level" rule (entered 21 points above his newest level — v27.76) struck; Kojiro calls are lab only
   await oneTimeUpgrade('v27.77-strike-kojiro-toward-nq', async () => {

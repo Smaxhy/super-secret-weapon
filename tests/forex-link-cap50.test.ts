@@ -53,3 +53,29 @@ describe('v27.78 replay a capped bot trade with a $50 cap', () => {
     expect(a.open[0]!.stop).toBeCloseTo(11.8435 - 46.49 / 366.49, 5);
   });
 });
+
+import { liveBrake, LEDGER_WHY } from '../src/forex/practice';
+describe('v27.79 coin bot: size to the cap + live brake', () => {
+  const cfg = { since: 1_000, minN: 3, days: 14 };
+  const now = 10 * 86_400_000;
+  it('pauses a strategy whose live trades lost after 3, until the oldest ages out', () => {
+    const rows: Array<[number, number, number | null, string, number]> = [
+      [now - 3 * 3_600_000, -20, -0.4, 'a', 0],
+      [now - 2 * 3_600_000, 10, 0.2, 'b', 1],
+      [now - 3_600_000, -20, -0.4, 'c', 0],
+    ];
+    const b = liveBrake(rows, now, cfg);
+    expect(b.paused).toBe(true);
+    expect(b.until).toBe(now - 3 * 3_600_000 + 14 * 86_400_000);
+  });
+  it('not paused under 3 trades, when they made money, or for manual closes / older trades', () => {
+    expect(liveBrake([[now - 1, -20, -1, 'a', 0], [now - 2, -20, -1, 'b', 0]], now, cfg).paused).toBe(false);
+    expect(liveBrake([[now - 1, -20, -1, 'a', 0], [now - 2, 50, 1.5, 'b', 1], [now - 3, -5, -0.1, 'c', 0]], now, cfg).paused).toBe(false);
+    expect(liveBrake([[now - 1, -20, -1, 'a', LEDGER_WHY.manual], [now - 2, -20, -1, 'b', 0], [now - 3, -5, -0.1, 'c', 0]], now, cfg).paused).toBe(false);
+    expect(liveBrake([[500, -20, -1, 'a', 0], [now - 2, -20, -1, 'b', 0], [now - 3, -5, -0.1, 'c', 0]], now, cfg).paused).toBe(false);
+  });
+  it('the coin bot sizes to its cap', () => {
+    expect(BOT.sizeToCap.cbot).toBe(true);
+    expect(BOT.liveBrake.cbot?.minN).toBe(3);
+  });
+});

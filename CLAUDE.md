@@ -758,6 +758,19 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.79 coin bot: the tested stop, never a pulled-in one + a live brake; the ETH trade replayed (Oct 28, owner: "same with
+eth/usd … do whatever is needed so profit is doable, as small as amounts may be, adjust itself properly, only take trades if
+the bot is sure")
+VPS read 11:29 UTC: one ETH trade — donchian20 1h long (ETH cell 463 unseen, +0.15R, PF 1.76) 09:09 at 2367.66, the $20 cap
+put its stop at 2359.55 ($8 under; tested 2341.31, $26 under) → −$20.00 at 11:06; the lab's trade still open (low 2356.5).
+Coin bot's own R ledger, 14 days: 55 trades, −7.6R (pivot_bounce:4h −2.59R / 8, round_break:1h −2.30R / 7, donchian20:1h
+−1.65R / 4; news_drift:1h +2.15R / 4) — run with stops ~¼ of the tested ones. practice.ts `BOT.sizeToCap` {cbot}: risk % cut
+so the TESTED stop loses ≤ the account cap × `sizeToCapHeadroom` 0.95 ($47.50 of $50) → the cap never pulls the stop in, the
+live trade is the graded one (smaller trades when the tested stop is wide). `BOT.liveBrake` {cbot: since Oct 28 12:00 UTC,
+minN 3, days 14} + `liveBrake(rows, now, cfg)` (pure, R ledger, manual closes ignored): a strategy × chart whose own live
+trades made < 0R after 3+ of them is paused (syncBot wait "its own live trades lost … paused until …") until the oldest of
+them is 14 days old. One-time `v27.79-eth-cap50`: `replayBotTrade` on ref donchian20:1h:ETHUSD:1793178000000, $50.
+tests in forex-link-cap50 (+3).
 ## v27.78 coin bot loss cap $50 + the two LINK trades replayed (Oct 28, owner: "what went wrong in the last 2 trades"; "redo
 those 2 trades with a limit of 50 loss and let it grow properly as if it never closed")
 VPS read 11:05 UTC: both were keltner 1h LINK longs (a proven cell: 288 unseen, +0.16R, PF 1.63) stopped by the $20 cap —
