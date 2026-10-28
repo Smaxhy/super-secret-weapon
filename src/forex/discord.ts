@@ -125,7 +125,9 @@ export function levelSets(x: PostedLevels): LevelSet[] {
 /** His daily plan post ("🔍 Bias: bullish · 💧 DOL: Around 29,385.25 · 🧠 Narrative: …"), or null. Pure. */
 export function parseBias(raw: string): { pair: string; bias: 1 | -1 | 0 | null; dol: number | null } | null {
   const up = raw.replace(/[*_`~>|]/g, ' ').toUpperCase();
-  const b = /\bBIAS\b\W*(BULLISH|BULL|LONG|BEARISH|BEAR|SHORT|NEUTRAL|NONE)/.exec(up);
+  // v27.69: "Leaning towards bearish" / "leaning bullish" / "leaning short" is his bias too (Oct 27: missed → the bot kept
+  // the morning's bullish plan and only bought at his evening levels while he was short)
+  const b = /\bBIAS\b\W*(BULLISH|BULL|LONG|BEARISH|BEAR|SHORT|NEUTRAL|NONE)/.exec(up) ?? /\bLEANING\b(?:\s+(?:TOWARDS?|TO|MORE|SLIGHTLY|A\s+BIT))*\W*(BULLISH|BULL|LONGS?|BEARISH|BEAR|SHORTS?)\b/.exec(up);
   const d = /\bDOL\b\W*(?:AROUND|AT|NEAR|~)?\s*([0-9][0-9,]*(?:\.[0-9]+)?)/.exec(up);
   if (!b && !d) return null;
   const word = b?.[1] ?? '';
@@ -330,7 +332,7 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
     if (lv) {
       await savePosted(redis, lv.pair, { levels: lv.levels, t: s.at, msgId: s.id, source, ...(lv.side ? { side: lv.side } : {}) });
       const which = lv.side === -1 ? 'SHORT levels (shorts only)' : lv.side === 1 ? 'LONG levels (longs only)' : 'levels';
-      said.push(`${lv.pair} ${which} saved for today: ${lv.levels.map(fmt).join(' · ')}${POSTED_LEVELS.trade ? ' — the bot trades a reversal at them (live 1-minute candles)' : ''}`);
+      said.push(`${lv.pair} ${which} saved for today: ${lv.levels.map(fmt).join(' · ')}${POSTED_LEVELS.trade ? ' — the bot trades a bounce or a break-and-retest at them (live 1-minute candles)' : ''}`);
     }
     return done({ ...base, kind: 'levels', pair: (lv ?? plan)!.pair, ok: true, what: said.join('; ') });
   }

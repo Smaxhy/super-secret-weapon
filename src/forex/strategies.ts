@@ -685,6 +685,48 @@ export function postedLevelSignal(c: Ctx, i: number, levels: readonly number[], 
     const tgt = dol !== null && side * dol - px >= risk ? side * dol : targets.map((L) => side * L).filter((T) => T - px >= risk).sort((x, y) => x - y)[0];
     return { side, stop: side * (px - risk), target: tgt === undefined ? null : side * tgt, maxBars: Math.max(4, Math.round(1440 / c.barMin)) };
   }
+  return retestSignal(c, i, levels, postedT, onlySide, dol, minRisk, targets);
+}
+
+/** v27.69 break and retest at his levels (Oct 27: "Break and retest"; his levels were broken, came back and held — the
+ * bounce rule above can't see it: the level was touched just before and the retest isn't a new 10-candle extreme). */
+export const RETEST = { lookMin: 180, minLook: 6, maxLook: 60, leaveAtr: 0.5, touchAtr: 0.1 };
+
+/** A candle closed through one of his levels (after his post), the price left it by ½ ATR, and THIS candle is the first
+ * to come back to it, holds (≤ ½ ATR through) and closes on the break's side → trade the break's way; stop 0.15 ATR past
+ * the retest candle, target his DOL / next level ≥ 1R. Pure, causal. */
+export function retestSignal(c: Ctx, i: number, levels: readonly number[], postedT: number, onlySide: 1 | -1 | 0 = 0, dol: number | null = null, minRisk = 0, targets: readonly number[] = levels): Signal | null {
+  const a = c.atr14[i]!;
+  if (!ok(a) || a <= 0 || !levels.length || c.bars[i]!.t < postedT) return null;
+  const look = Math.min(RETEST.maxLook, Math.max(RETEST.minLook, Math.round(RETEST.lookMin / c.barMin)));
+  for (const side of [1, -1] as const) {
+    if (onlySide && side !== onlySide) continue;
+    const p = sided(c, side);
+    for (const L of levels.map((x) => side * x)) {
+      if (!(p.l(i) <= L + RETEST.touchAtr * a && p.l(i) >= L - ASIA.through * a && p.c(i) > L)) continue;
+      // the break: the newest candle (after his post) that closed through L from the other side
+      let k = -1;
+      for (let j = i - 1; j >= Math.max(1, i - look); j--) {
+        if (c.bars[j]!.t < postedT) break;
+        if (p.c(j) > L && p.c(j - 1) <= L) {
+          k = j;
+          break;
+        }
+      }
+      if (k < 0) continue;
+      let left = false;
+      let clean = true;
+      for (let j = k + 1; j < i; j++) {
+        if (p.l(j) <= L + RETEST.touchAtr * a) clean = false; // came back already: this isn't the first retest
+        if (p.h(j) >= L + RETEST.leaveAtr * a) left = true;
+      }
+      if (!clean || !(left || p.h(k) >= L + RETEST.leaveAtr * a)) continue;
+      const px = p.c(i);
+      const risk = Math.max(px - (p.l(i) - 0.15 * a), 0.3 * a, minRisk);
+      const tgt = dol !== null && side * dol - px >= risk ? side * dol : targets.map((T) => side * T).filter((T) => T - px >= risk).sort((x, y) => x - y)[0];
+      return { side, stop: side * (px - risk), target: tgt === undefined ? null : side * tgt, maxBars: Math.max(4, Math.round(1440 / c.barMin)) };
+    }
+  }
   return null;
 }
 

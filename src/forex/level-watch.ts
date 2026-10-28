@@ -9,7 +9,7 @@
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
 import { clockFor } from './calendar';
-import { DISCORD_COPY, POSTED_LEVELS, levelSets, levelStrategy, loadLevels } from './discord';
+import { DISCORD_COPY, POSTED_LEVELS, levelSets, levelStrategy, loadLevels, type LevelSet } from './discord';
 import { hlCandles, loadHlFutures } from './hyperliquid';
 import type { Practice } from './practice';
 import { postedLevelSignal } from './strategies';
@@ -60,6 +60,31 @@ export async function takeLevelTrades(redis: Redis, practice: Practice, acct: 'b
 /** Live 1-minute candles moved onto the futures price; only finished minutes. Pure. */
 export function shiftedMinutes(live: readonly Bar[], gap: number, now: number): Bar[] {
   return live.filter((b) => b.t + 60_000 <= now).map((b) => ({ ...b, o: b.o + gap, h: b.h + gap, l: b.l + gap, c: b.c + gap }));
+}
+
+/** v27.69 (owner: "it legit had levels but the bot didn't take em — go in them at the exact time, pull yourself back to
+ * learn from it"): the 1-minute candles since his post replayed with today's rules (bounce or break-and-retest at his
+ * levels, his side); every trade the watcher would have opened — one at a time, the next only after the last closed —
+ * is booked on the bot account as if taken at that minute's close. Returns the lines for the bot log. */
+export async function replayMissedLevels(redis: Redis, practice: Pick<Practice, 'bookLevelTrade'>, pair: string, source: string, sets: readonly LevelSet[], fromT: number, bars: readonly Bar[], maxTrades = 3): Promise<string[]> {
+  const ctx = buildCtx([...bars], 1, pair);
+  const strategy = levelStrategy(source);
+  const lines: string[] = [];
+  let after = fromT;
+  for (let i = 60; i < bars.length && lines.length < maxTrades; i++) {
+    if (bars[i]!.t < after) continue;
+    const minRisk = (bars[i]!.c * LEVEL_WATCH.minStopPct) / 100;
+    let sig = null;
+    for (const st of sets) if ((sig = postedLevelSignal(ctx, i, st.levels, st.t, st.side, st.dol, minRisk, st.all))) break;
+    if (!sig) continue;
+    const ref = `${strategy}:signal:${pair}:${bars[i]!.t}`;
+    await redis.set(`fx:discord:lvdone:${ref}`, '1', 'EX', 2 * 86_400, 'NX').catch(() => null);
+    const res = await practice.bookLevelTrade('bot', { pair, side: sig.side, entry: bars[i]!.c, stop: sig.stop, target: sig.target, openedAt: bars[i]!.t + 60_000, ref, strategy, riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage }, bars.slice(i + 1));
+    lines.push(res.line);
+    if (res.closedAt === null) break;
+    after = res.closedAt;
+  }
+  return lines;
 }
 
 export class LevelWatch {

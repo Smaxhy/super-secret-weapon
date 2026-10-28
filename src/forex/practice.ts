@@ -704,6 +704,58 @@ export function bookMissedCopy(a: PracticeAccount, r: { pair: string; side: 1 | 
   return `${r.pair} ${r.side === 1 ? 'long' : 'short'} call booked as if copied: ${units.toFixed(3)} units ${r.entry} → ${r.exit}, ${pl >= 0 ? '+' : '−'}$${Math.abs(pl).toFixed(2)} after fees`;
 }
 
+/** v27.69: how a trade opened at `entry` would have gone on these minutes (after its entry): the stop first when a
+ * candle touches both, the profit lock arming on the best price and moving the stop from the NEXT minute on. Pure. */
+export function walkTrade(side: 1 | -1, entry: number, stop0: number, target: number | null, bars: readonly Bar[], half: number): { exitIdx: number; exit: number; reason: 'stop' | 'target' | null; stop: number; best: number; locked: boolean; lock: LockPlan | null } {
+  const lock = lockPlan(side, entry, stop0, target, half, PROFIT_LOCK);
+  let stop = stop0;
+  let best = entry;
+  let locked = false;
+  for (let k = 0; k < bars.length; k++) {
+    const b = bars[k]!;
+    const adv = side === 1 ? b.l : b.h;
+    const fav = side === 1 ? b.h : b.l;
+    if (side * (adv - stop) <= 0) return { exitIdx: k, exit: side * (b.o - stop) < 0 ? b.o : stop, reason: 'stop', stop, best, locked, lock };
+    if (target !== null && side * (fav - target) >= 0) return { exitIdx: k, exit: target, reason: 'target', stop, best, locked, lock };
+    best = side === 1 ? Math.max(best, fav) : Math.min(best, fav);
+    if (lock && side * (best - lock.at) >= 0) {
+      stop = lockedStop(side, lock, best, stop);
+      locked = true;
+    }
+  }
+  return { exitIdx: -1, exit: NaN, reason: null, stop, best, locked, lock };
+}
+
+/** v27.69 (owner: "it legit had levels but the bot didn't take em — go in them at the exact time"): book a level trade
+ * the bot missed as if it had taken it at `openedAt` / `entry` (sized like his level trades: `riskPct` on its stop, ≤ the
+ * copy margin share); the minutes since decide whether it is already closed (stop / target / locked stop) or still
+ * running (then it stays open from the last minute on, the normal checks take over). Mutates `a`. */
+export function bookLevelTrade(a: PracticeAccount, r: { pair: string; side: 1 | -1; entry: number; stop: number; target: number | null; openedAt: number; ref: string; strategy: string; riskPct: number; leverage: number }, after: readonly Bar[]): { line: string; closedAt: number | null } {
+  const inst = instrument(r.pair);
+  if (!inst) return { line: `unknown market ${r.pair}`, closedAt: null };
+  if (a.closed.some((c) => c.ref === r.ref) || a.open.some((p) => p.ref === r.ref)) return { line: `${r.pair} level trade ${r.ref} is already booked`, closedAt: null };
+  const mids = { [r.pair]: r.entry };
+  const stopDist = Math.abs(r.entry - r.stop);
+  if (!(stopDist > 0) || r.side * (r.entry - r.stop) <= 0) return { line: `${r.pair}: stop on the wrong side`, closedAt: null };
+  const perUnit = unitsFor(inst, 1, mids);
+  const usdPerUnitMove = Math.abs(pnlUsd({ pair: r.pair, side: 1, units: 1, entry: r.entry }, r.entry + 1, mids));
+  const lev = Math.max(1, Math.min(Math.round(r.leverage), MAX_LEVERAGE, maxLeverageFor(inst.id)));
+  const size = copySize({ riskUsd: (a.balanceUsd * r.riskPct) / 100, stopDist, usdPerUnitMove, notionalPerUnit: perUnit ? 1 / perUnit : 0, leverage: lev, freeMarginUsd: a.balanceUsd, marginShare: DISCORD_COPY.marginShare });
+  if (!(size.marginUsd > 0)) return { line: 'no room to size it', closedAt: null };
+  const units = unitsFor(inst, size.marginUsd * lev, mids) ?? 0;
+  if (!(units > 0)) return { line: 'no price to size it', closedAt: null };
+  const bars = after.filter((b) => b.t >= r.openedAt);
+  const w = walkTrade(r.side, r.entry, r.stop, r.target, bars, (inst.spreadPips * inst.pip) / 2);
+  const p: PracticePosition = { id: `lvl-${r.ref.split(':').pop()}`, pair: r.pair, side: r.side, units, entry: r.entry, marginUsd: size.marginUsd, leverage: lev, stop: w.stop, target: r.target, openedAt: r.openedAt, checkedT: bars.length ? bars[bars.length - 1]!.t + 60_000 : r.openedAt, strategy: r.strategy, ref: r.ref, tf: 'signal', allIn: true, riskPct: r.riskPct, riskUsd0: size.riskUsd, lock: w.lock, locked: w.locked, lockBest: w.locked ? w.best : null };
+  a.open.push(p);
+  const what = `${r.pair} ${r.side === 1 ? 'long' : 'short'} at his level booked as if taken at ${new Date(r.openedAt).toISOString().slice(11, 16)} UTC: ${units.toFixed(3)} units at ${r.entry}, stop ${+r.stop.toFixed(2)}${r.target !== null ? `, target ${r.target}` : ''}`;
+  if (w.exitIdx < 0) return { line: `${what} — still running (stop now ${+w.stop.toFixed(2)})`, closedAt: null };
+  const at = bars[w.exitIdx]!.t + 60_000;
+  const pl = closePos(a, p, w.exit, { [r.pair]: w.exit }, w.reason ?? 'stop', at);
+  a.peakUsd = Math.max(a.peakUsd ?? a.balanceUsd, a.balanceUsd);
+  return { line: `${what} — closed at ${+w.exit.toFixed(2)} (${w.reason === 'target' ? 'target' : w.locked ? 'locked-in stop' : 'stop'}) at ${new Date(at).toISOString().slice(11, 16)} UTC, ${pl >= 0 ? '+' : '−'}$${Math.abs(pl).toFixed(2)} after fees`, closedAt: at };
+}
+
 /**
  * v20.1 (owner: "revert all current active trades"): strike every OPEN trade from an account as if it never happened —
  * the positions, their parts already taken (USD back out of the balance), their overnight rolls, resting orders and
@@ -2590,6 +2642,15 @@ export class Practice {
       const line = bookMissedCopy(a, r);
       await this.save(a, acct);
       return line;
+    });
+  }
+
+  async bookLevelTrade(acct: AcctId, r: Parameters<typeof bookLevelTrade>[1], after: readonly Bar[]): Promise<{ line: string; closedAt: number | null }> {
+    return this.serial(async () => {
+      const a = await this.load(acct);
+      const res = bookLevelTrade(a, r, after);
+      await this.save(a, acct);
+      return res;
     });
   }
 

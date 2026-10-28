@@ -75,7 +75,7 @@ import { loadPythConf, pythConf, pythKey, pythLive, setPythConf, testPythKey } f
 import { yahooLive } from './forex/yahoo-live';
 import { coinbaseLive } from './forex/coinbase';
 import { HL_FUTURES_KEY, hyperliquidLive } from './forex/hyperliquid';
-import { LevelWatch } from './forex/level-watch';
+import { LevelWatch, replayMissedLevels } from './forex/level-watch';
 import { startLivePush } from './forex/live-push';
 import { ForexCalendar, marketClock } from './forex/calendar';
 import { ForexHeadlines } from './forex/headlines';
@@ -643,6 +643,35 @@ async function main(): Promise<void> {
     forex.logBot([`Kojiro copy (missed, booked by hand): ${line}`]);
     log.info({ line }, 'missed Kojiro call booked');
   });
+  // v27.69 (owner: "it legit had levels but the bot didn't take em, go in them at the exact time"): his NQ levels of
+  // 23:59 UTC Oct 27 (29,835 · 29,804 · 29,782.5) + "Leaning towards bearish" (00:08) + "Break and retest" — the bot
+  // read the lean as nothing (bias stayed the morning's bullish → longs only) and had no break-and-retest rule. The bias
+  // is saved now; the minutes since his post are replayed with the new rules (shorts only, his levels) and every trade
+  // the watcher would have taken is booked as if taken then (still open → it keeps running). Retried while no candles.
+  {
+    const postedT = Date.parse('2026-10-27T23:59:06Z');
+    const leanT = Date.parse('2026-10-28T00:08:44Z');
+    let tries = 0;
+    const replay = async () => {
+      const ok = await oneTimeUpgrade('v27.69-kojiro-levels-oct28', async () => {
+        await savePosted(redis, 'NDXUSD', { bias: -1, dol: null, biasT: leanT, source: 'kojiro' }, true);
+        const { bars } = await practice.candles('NDXUSD', 'M1', 900);
+        const done = bars.filter((b) => b.t + 60_000 <= Date.now());
+        if (done.length < 120 || done[done.length - 1]!.t < postedT + 30 * 60_000) throw new Error(`only ${done.length} 1-minute candles so far`);
+        const levels = [29835, 29804, 29782.5];
+        const lv = (await loadLevels(redis)).NDXUSD;
+        const all = [...new Set([...levels, ...(lv?.shortLevels ?? [])])];
+        const lines = await replayMissedLevels(redis, practice, 'NDXUSD', 'kojiro', [{ levels, side: -1, t: postedT, dol: null, all }], postedT, done);
+        forex.logBot([
+          'Kojiro: "Leaning towards bearish" (00:08 UTC) saved as his NDXUSD bias — level trades are shorts only now; break-and-retest at his levels added',
+          ...(lines.length ? lines.map((l) => `Kojiro level (missed, booked as if taken): ${l}`) : ['Kojiro levels of 23:59 UTC replayed: no setup at them that the bot would have taken']),
+        ]);
+        log.info({ lines }, 'missed Kojiro level trades replayed');
+      });
+      if (!ok && ++tries < 10) setTimeout(() => void replay(), 60_000).unref?.();
+    };
+    setTimeout(() => void replay(), 90_000).unref?.();
+  }
   // v20.1 (owner: "revert all current active trades"): every open bot trade is struck as if it never happened, once
   await oneTimeUpgrade('v20.1-revert-open', async () => {
     const line = await practice.undoOpen('bot');

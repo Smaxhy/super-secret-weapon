@@ -758,6 +758,24 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.69 his "Leaning towards bearish" + break and retest at his levels; tonight's missed trades booked (Oct 28, owner: "it legit
+had levels but the bot didn't take em, go in them at the exact time, pull yourself back to learn from it, DO BETTER")
+VPS read 00:22 UTC: his NQ levels 29,835 / 29,804 / 29,782.5 (23:59:06 UTC) were saved and watched on live 1-minute candles,
+but "Leaning towards bearish" (00:08:44) and "Break and retest" (23:51) were logged as "not a trade message" → the stored bias
+stayed the morning's bullish (longs only), and the 00:00–00:20 break under 29,835 + retest from below (15m high 29,842.75,
+close back under) had no rule at all (the bounce rule needs a fresh untouched level + a new 10-candle extreme). Fixes:
+`parseBias` also reads "Leaning (towards / more / slightly) bearish / bullish / shorts / longs"; strategies.ts
+**`retestSignal`** (`RETEST` {lookMin 180 → 6…60 candles, leaveAtr 0.5, touchAtr 0.1}): a candle after his post closed
+through one of his levels, the price left it by ½ ATR, THIS candle is the first back to it, holds (≤ ½ ATR through) and closes
+on the break's side → trade the break's way, stop 0.15 ATR past the retest candle (≥ 0.3 ATR / the watcher's 0.08% floor),
+target his DOL / next level ≥ 1R; `postedLevelSignal` falls back to it (so LevelWatch + the 15m pass both take it). Booking:
+practice.ts `walkTrade` (pure: stop first when a minute touches both, the profit lock moving the stop from the next minute)
++ `bookLevelTrade` / `Practice.bookLevelTrade` (sized like his level trades, closed at stop / target / locked stop on the
+minutes since, else left open from the last minute on); level-watch.ts `replayMissedLevels` (the minutes since his post with
+today's rules, one trade at a time, ≤ 3, ref = the signal minute, `lvdone` key set). index.ts one-time
+`v27.69-kojiro-levels-oct28` (90 s after start, retried every 60 s ×10 until Yahoo has the 1-minute candles): NDXUSD bias −1
+at 00:08:44 (force) + replay of 29,835 / 29,804 / 29,782.5 shorts only from 23:59:06 → bot-log lines "Kojiro level (missed,
+booked as if taken): …". tests/forex-level-retest (6).
 ## v27.68 Kojiro's history upload retries (Oct 27, VPS read 16:25 UTC: copier heartbeat fine, but `study` posts 0)
 The copier's first history upload ran right after a deploy, while the bot itself was still starting (both restart
 together) → every POST failed → nothing saved, and the next try was 12 h away. bot.py `backfill_history()` now returns
