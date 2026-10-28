@@ -5,7 +5,7 @@
  * closed (a broker stop-out). Stops / targets are checked against every 1-minute high / low since the last check.
  * Redis `fx:practice` (one account). Nothing here touches a real broker.
  */
-import { feeUsd } from './venue-fees';
+import { feePctPerSide, feePxOf, feeUsd } from './venue-fees';
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
 import { bus, type FxNotice } from '../lib/bus';
@@ -24,7 +24,7 @@ import type { Tier } from './conviction';
 import { SNIPER } from './sniper';
 import { parsePnlRow, pnlRowOf, type PnlRow } from './pnl';
 import { liveFeed } from './live-feed';
-import { COPY_LOCK, lockedStop, lockPlan, PROFIT_LOCK, type LockPlan } from './profit-lock';
+import { COPY_LOCK, lockedStop, lockPlanNet, PROFIT_LOCK, type LockPlan } from './profit-lock';
 import { FINANCING, rollsBetween, swapGain } from './financing';
 import { tradesNews } from './strategies';
 import { DISCORD_COPY, copySize, copyStop, type CopyBook } from './discord';
@@ -743,8 +743,8 @@ export function bookMissedCopy(a: PracticeAccount, r: { pair: string; side: 1 | 
 
 /** v27.69: how a trade opened at `entry` would have gone on these minutes (after its entry): the stop first when a
  * candle touches both, the profit lock arming on the best price and moving the stop from the NEXT minute on. Pure. */
-export function walkTrade(side: 1 | -1, entry: number, stop0: number, target: number | null, bars: readonly Bar[], half: number): { exitIdx: number; exit: number; reason: 'stop' | 'target' | null; stop: number; best: number; locked: boolean; lock: LockPlan | null } {
-  const lock = lockPlan(side, entry, stop0, target, half, PROFIT_LOCK);
+export function walkTrade(side: 1 | -1, entry: number, stop0: number, target: number | null, bars: readonly Bar[], half: number, fee = 0): { exitIdx: number; exit: number; reason: 'stop' | 'target' | null; stop: number; best: number; locked: boolean; lock: LockPlan | null } {
+  const lock = lockPlanNet(side, entry, stop0, target, half, fee, PROFIT_LOCK);
   let stop = stop0;
   let best = entry;
   let locked = false;
@@ -782,7 +782,7 @@ export function bookLevelTrade(a: PracticeAccount, r: { pair: string; side: 1 | 
   const units = unitsFor(inst, size.marginUsd * lev, mids) ?? 0;
   if (!(units > 0)) return { line: 'no price to size it', closedAt: null };
   const bars = after.filter((b) => b.t >= r.openedAt);
-  const w = walkTrade(r.side, r.entry, r.stop, r.target, bars, (inst.spreadPips * inst.pip) / 2);
+  const w = walkTrade(r.side, r.entry, r.stop, r.target, bars, (inst.spreadPips * inst.pip) / 2, feePxOf(inst, r.entry));
   const p: PracticePosition = { id: `lvl-${r.ref.split(':').pop()}`, pair: r.pair, side: r.side, units, entry: r.entry, marginUsd: size.marginUsd, leverage: lev, stop: w.stop, target: r.target, openedAt: r.openedAt, checkedT: bars.length ? bars[bars.length - 1]!.t + 60_000 : r.openedAt, strategy: r.strategy, ref: r.ref, tf: 'signal', allIn: true, riskPct: r.riskPct, riskUsd0: size.riskUsd, lock: w.lock, locked: w.locked, lockBest: w.locked ? w.best : null };
   a.open.push(p);
   const what = `${r.pair} ${r.side === 1 ? 'long' : 'short'} at his level booked as if taken at ${new Date(r.openedAt).toISOString().slice(11, 16)} UTC: ${units.toFixed(3)} units at ${r.entry}, stop ${+r.stop.toFixed(2)}${r.target !== null ? `, target ${r.target}` : ''}`;
@@ -966,7 +966,7 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
       // v27.61: Kojiro's calls (no target) get the looser copy lock — wide early, tight once well in profit
       const copy = p.tf === 'signal' && p.target === null;
       const cfg = copy && p.copyLock !== 'tight' ? COPY_LOCK : PROFIT_LOCK;
-      p.lock = a.profitLock !== false && cfg.on ? lockPlan(p.side, p.entry, p.stop, p.target, half, cfg) : null;
+      p.lock = a.profitLock !== false && cfg.on ? lockPlanNet(p.side, p.entry, p.stop, p.target, half, feePxOf(inst, p.entry), cfg) : null;
       if (mv) mv.moved = true;
     }
     // v27.66 (owner: "a tight trailing SL in moments of need"): big news for a Kojiro copy's market within 20 minutes →
@@ -976,7 +976,7 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
       if (why) {
         const per = Math.abs(pnlUsd({ pair: p.pair, side: 1, units: 1, entry: p.entry }, p.entry + 1, mids));
         const d0 = p.riskUsd0 && p.units > 0 && per > 0 ? p.riskUsd0 / (p.units * per) : p.stop !== null ? Math.abs(p.entry - p.stop) : 0;
-        const plan = d0 > 0 ? lockPlan(p.side, p.entry, p.entry - p.side * d0, null, half, PROFIT_LOCK) : null;
+        const plan = d0 > 0 ? lockPlanNet(p.side, p.entry, p.entry - p.side * d0, null, half, feePxOf(inst, p.entry), PROFIT_LOCK) : null;
         if (plan) {
           p.lock = plan;
           p.copyLock = 'tight';
@@ -2383,7 +2383,17 @@ export class Practice {
       const left = Math.round((r.riskPct - riding) * 100) / 100;
       if (left < 0.5) return { ok: false, error: `already ${Math.round(riding * 10) / 10}% of the account riding on his calls (max ${r.riskPct}%)` };
       const riskUsd = (v.equityUsd * left) / 100;
+      // v27.72: the venue fee must leave the trade a chance (≤ 25% of its stop) and stay small next to the account (≤ 1%)
+      const feePx = feePxOf(inst, entry);
+      if (feePx > DISCORD_COPY.maxFeeShare * stopDist) return { ok: false, error: `the round-trip fee (${+feePx.toPrecision(3)} a unit) is ${Math.round((feePx / stopDist) * 100)}% of its ${+stopDist.toPrecision(3)} stop — can't win after fees` };
       const size = copySize({ riskUsd, stopDist, usdPerUnitMove, notionalPerUnit: perUnit ? 1 / perUnit : 0, leverage: lev, freeMarginUsd: v.freeMarginUsd, marginShare: DISCORD_COPY.marginShare });
+      const feeRate = 2 * feePctPerSide(inst) / 100;
+      const maxFee = (v.equityUsd * DISCORD_COPY.maxFeePctOfEquity) / 100;
+      if (feeRate > 0 && size.marginUsd * lev * feeRate > maxFee) {
+        const k = maxFee / (size.marginUsd * lev * feeRate);
+        size.marginUsd = Math.floor(size.marginUsd * k * 100) / 100;
+        size.riskUsd = Math.round(size.riskUsd * k * 100) / 100;
+      }
       if (!(size.marginUsd > 0)) return { ok: false, error: `no room (free margin $${v.freeMarginUsd})` };
       const riskPct = v.equityUsd > 0 ? Math.round((size.riskUsd / v.equityUsd) * 10_000) / 100 : 0;
       const res = await this.openIn(a, { pair: inst.id, side: r.side, marginUsd: size.marginUsd, leverage: lev, stop, target, strategy: r.strategy, ref: r.ref, riskPct, tf: 'signal', allIn: true, maxQuoteAgeMs: 2 * 60_000, feedDelayOk: true, noLock: !r.profitLock, ...(r.copyLock === 'tight' ? { copyLock: 'tight' as const } : {}) });

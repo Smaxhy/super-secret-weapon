@@ -513,7 +513,7 @@ export class FastLab {
       const ages: Record<string, DataAge> = {};
       // v27.51: Kojiro's posted levels (15-minute chart only) → a trade where the price is absorbed at one of them
       const posted: Record<string, PostedLevels> = tf === '15m' && POSTED_LEVELS.trade && DISCORD_COPY.on ? await loadLevels(this.redis, now) : {};
-      const levelTrades: Array<{ pair: string; side: 1 | -1; stop: number; target: number | null; barT: number; source: string }> = [];
+      const levelTrades: Array<{ pair: string; side: 1 | -1; stop: number; target: number | null; barT: number; entry: number; source: string }> = [];
       const hlMap = tf === '15m' ? await loadHlFutures(this.redis) : {};
       for (const inst of this.insts) {
         let all = this.series(tf, inst.id);
@@ -539,7 +539,7 @@ export class FastLab {
         if (lv && levelSets(lv).length && bars[last]!.t + 3 * TF_MIN[tf] * MIN >= now) {
           let ps = null;
           for (const st of levelSets(lv)) if ((ps = postedLevelSignal(se.ctx, last, st.levels, st.t, st.side, st.dol, 0, st.all))) break;
-          if (ps) levelTrades.push({ pair: inst.id, side: ps.side, stop: ps.stop, target: ps.target, barT: bars[last]!.t, source: lv.source });
+          if (ps) levelTrades.push({ pair: inst.id, side: ps.side, stop: ps.stop, target: ps.target, barT: bars[last]!.t, entry: bars[last]!.c, source: lv.source });
         }
         const fired: FastFiring['byPair'][string] = [];
         for (const s of STRATEGIES) {

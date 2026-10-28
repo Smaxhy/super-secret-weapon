@@ -35,6 +35,11 @@ export function feePctPerSide(inst: Pick<Instrument, 'id' | 'kind'>): number {
   return FX_MAJORS.has(inst.id) ? VENUE_FEES.majorPct : VENUE_FEES.minorPct;
 }
 
+/** v27.72: open + close fee of a trade in price units (2 × fee% a side × entry). Pure. */
+export function feePxOf(inst: Pick<Instrument, 'id' | 'kind'>, entry: number): number {
+  return entry > 0 ? (2 * feePctPerSide(inst) * entry) / 100 : 0;
+}
+
 /** Open + close fee of a trade in R (its starting stop distance): 2 × fee% × entry ÷ |entry − stop|. Pure. */
 export function feeR(inst: Pick<Instrument, 'id' | 'kind'>, entry: number, risk: number): number {
   const pct = feePctPerSide(inst);

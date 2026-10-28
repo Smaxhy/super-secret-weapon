@@ -758,6 +758,19 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.72 gold level trades struck + no trade the fee can eat (Oct 28, owner: "it got in a weird signal, longed it then
+insta sold, lost 90"; "super big trades with insane fees"; "+50 pips but −40")
+VPS read 01:04 UTC: his GC levels (4,072.7 / 4,074.4, 23:39) made the level watcher buy gold twice — 12 oz ≈ $50k at 50× on a
+$1k account, stop ~$3.3 while the round-trip gold fee (0.05% a side) is ~$4.07 an ounce = ~$50 a trade: 00:49 +$0.56 (lock),
+01:01 −$93.60 in 45 s (stop $43 + fee $50). They could not win after fees. Fixes: level-watch.ts `feeTooBig` (round-trip fee
+> `LEVEL_WATCH.maxFeeShare` 25% of the stop → "not taken", also in the missed-level replay; `LevelTrade.entry`); practice
+`copyOpen` (his SIGNAL copies + level trades): refused when the fee is > `DISCORD_COPY.maxFeeShare` 25% of the stop, and
+made smaller until the round-trip fee is ≤ `maxFeePctOfEquity` 1% of the account (`DISCORD_COPY_MAX_FEE_PCT`); the LIVE
+profit lock counts the venue fee (`lockPlanNet`, profit-lock.ts: locked stop past entry + spread + round-trip fee; when that
+is past the normal arming price it arms one trail-gap later instead of never) in `tick`, the news-tight lock and
+`walkTrade` — the lab engine keeps `lockPlan` (fees come out of R there). One-time `v27.72-strike-gold-levels`: every
+`discord_kojiro_levels` XAUUSD trade opened Oct 27 20:00 – Oct 28 06:00 UTC struck (open + closed). His NQ level shorts
+(asked for in v27.69) stay. venue-fees.ts `feePxOf`. tests/forex-level-fees (4).
 ## v27.71 the old index fee given back on every closed index trade (Oct 28, owner: "yes revert it … also on the one today, I
 need it accurate")
 VPS read 00:46 UTC (b77c552): the wrong-side 00:33 long was struck (open, never closed); the v27.69 replay (run by 71d2f6d,

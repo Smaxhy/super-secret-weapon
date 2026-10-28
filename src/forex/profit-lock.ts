@@ -69,6 +69,21 @@ export function lockPlan(side: 1 | -1, entry: number, stop0: number | null, targ
   return plan;
 }
 
+/**
+ * v27.72: the live lock with the venue fee counted (owner: a "locked" exit must not lose money after fees). The
+ * locked stop sits past entry + spread + the round-trip fee; when that is beyond the normal arming price, the lock
+ * arms one trail-gap further out instead of not at all. The lab engine keeps `lockPlan` (fees are taken from R there).
+ */
+export function lockPlanNet(side: 1 | -1, entry: number, stop0: number | null, target0: number | null, halfPx: number, feePx: number, cfg: typeof PROFIT_LOCK & { tightAtFrac?: number; tightGapFrac?: number } = PROFIT_LOCK): LockPlan | null {
+  const cost = Math.max(0, halfPx) + Math.max(0, feePx);
+  const plan = lockPlan(side, entry, stop0, target0, cost, cfg);
+  if (plan || !(feePx > 0)) return plan;
+  const base = lockPlan(side, entry, stop0, target0, 0, cfg);
+  if (!base) return null;
+  const to = entry + side * (cost + (side * (base.to - entry)));
+  return { ...base, to, at: to + side * base.gap };
+}
+
 /** The stop after the best price moved to `best` (armed lock): never looser than `stop` or the locked level. Pure. */
 export function lockedStop(side: 1 | -1, plan: LockPlan, best: number, stop: number | null): number {
   const gap = plan.tight && side * (best - plan.tight.from) >= 0 ? plan.tight.gap : plan.gap;

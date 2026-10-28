@@ -29,6 +29,11 @@ export const DISCORD_COPY = {
   leverage: num(process.env.DISCORD_COPY_LEVERAGE, 50),
   /** at most this share of free margin per copy (v27.57: 0.9, like an all-in cell trade) */
   marginShare: 0.9,
+  /** v27.72 (owner: "super big trades with insane fees … +50 pips but −40"): a copy whose round-trip venue fee is more
+   * than this share of its stop distance is refused (it can't win after fees) … */
+  maxFeeShare: 0.25,
+  /** … and a copy is made smaller until its round-trip fee is at most this % of the account (gold at 50× paid ~$50) */
+  maxFeePctOfEquity: num(process.env.DISCORD_COPY_MAX_FEE_PCT, 1),
   /** our (delayed) price this far past his price, in stop distances → the symbol is probably mapped wrong: refused */
   maxMismatchStops: 1.5,
   /** a message older than this when it reaches us is not opened (a reconnect replaying old posts) */

@@ -658,6 +658,18 @@ async function main(): Promise<void> {
     forex.logBot([...lines, 'Kojiro: "Leaning towards bearish" (00:08 UTC) saved as his NDXUSD bias — level trades are shorts only now']);
     log.info({ lines }, 'wrong-side Kojiro level trade struck');
   });
+  // v27.72 (owner: "it got in a weird signal and longed it then insta sold, just lost 90"): tonight's gold buys at his GC
+  // levels had a ~$3.3 stop while the round-trip gold fee is ~$4 a unit — they could not win after fees. Struck once;
+  // such trades are now refused (level-watch.ts feeTooBig) and the profit lock counts the fee.
+  await oneTimeUpgrade('v27.72-strike-gold-levels', async () => {
+    const from = Date.parse('2026-10-27T20:00:00Z');
+    const to = Date.parse('2026-10-28T06:00:00Z');
+    const pick = (p: { ref?: string; openedAt: number }) => !!p.ref?.startsWith('discord_kojiro_levels:signal:XAUUSD:') && p.openedAt >= from && p.openedAt < to;
+    const label = 'Kojiro level: gold buys of Oct 28 night (stop smaller than the round-trip fee)';
+    const lines = [await practice.undoPositions('bot', pick, label), await practice.undoClosed('bot', pick, label)];
+    forex.logBot(lines);
+    log.info({ lines }, 'gold level trades struck');
+  });
   // v27.71 (owner: "yes revert it … also on the one today, I need it accurate"): every closed index trade that paid the old
   // guessed 0.03% a side gets the difference to Hyperliquid's real 0.009% back (balance, P&L log, record, R ledger)
   await oneTimeUpgrade('v27.71-refund-index-fees', async () => {

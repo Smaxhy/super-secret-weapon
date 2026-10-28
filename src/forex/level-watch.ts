@@ -14,7 +14,8 @@ import { hlCandles, loadHlFutures } from './hyperliquid';
 import type { Practice } from './practice';
 import { postedLevelSignal } from './strategies';
 import { buildCtx } from './ta';
-import { isFutures, type Bar } from './types';
+import { instrument, isFutures, type Bar } from './types';
+import { feePxOf } from './venue-fees';
 
 const log = moduleLogger('level-watch');
 
@@ -26,7 +27,24 @@ export const LEVEL_WATCH = {
   maxLagMs: 3 * 60_000,
   /** stop floor, % of the price: a 1-minute stop is a few points, and the venue fee (a share of the position) would eat it */
   minStopPct: 0.08,
+  /** v27.72: a level trade whose open + close venue fee is more than this share of its stop distance is skipped (Oct 28:
+   * a gold level long with a $3.46 stop paid a ~$4 fee a unit — it lost ~$90 on a 3-dollar wiggle) */
+  maxFeeShare: 0.25,
 };
+
+/** Open + close venue fee of a trade, in price units (2 × fee% a side × entry). Pure. */
+export function feePx(pair: string, entry: number): number {
+  const inst = instrument(pair);
+  return inst ? feePxOf(inst, entry) : 0;
+}
+
+/** Why a level trade isn't worth taking after fees, or null. Pure. */
+export function feeTooBig(pair: string, entry: number, stop: number): string | null {
+  const fee = feePx(pair, entry);
+  const risk = Math.abs(entry - stop);
+  if (!(risk > 0) || fee <= LEVEL_WATCH.maxFeeShare * risk) return null;
+  return `the venue fee (${+fee.toPrecision(3)} a unit round trip) is ${Math.round((fee / risk) * 100)}% of its ${+risk.toPrecision(3)} stop — not worth it after fees`;
+}
 
 export interface LevelTrade {
   pair: string;
@@ -35,6 +53,8 @@ export interface LevelTrade {
   target: number | null;
   /** the signal candle's open time (one trade per candle) */
   barT: number;
+  /** v27.72: the signal candle's close (the fee check) */
+  entry: number;
   source: string;
 }
 
@@ -49,6 +69,11 @@ export async function takeLevelTrades(redis: Redis, practice: Practice, acct: 'b
     const ref = `${strategy}:signal:${x.pair}:${x.barT}`;
     const first = await redis.set(`fx:discord:lvdone:${ref}`, '1', 'EX', 2 * 86_400, 'NX').catch(() => null);
     if (first !== 'OK') continue;
+    const tooBig = feeTooBig(x.pair, x.entry, x.stop);
+    if (tooBig) {
+      logBot([`Kojiro level on ${x.pair}: not taken — ${tooBig}`]);
+      continue;
+    }
     const r = await practice
       .copyOpen({ pair: x.pair, side: x.side, stopNamed: null, hisPx: null, strategy, ref, riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: true, stop: x.stop, target: x.target }, acct)
       .catch((err: Error) => ({ ok: false as const, error: err.message, entry: undefined, stop: undefined, riskUsd: undefined }));
@@ -76,7 +101,7 @@ export async function replayMissedLevels(redis: Redis, practice: Pick<Practice, 
     const minRisk = (bars[i]!.c * LEVEL_WATCH.minStopPct) / 100;
     let sig = null;
     for (const st of sets) if ((sig = postedLevelSignal(ctx, i, st.levels, st.t, st.side, st.dol, minRisk, st.all))) break;
-    if (!sig) continue;
+    if (!sig || feeTooBig(pair, bars[i]!.c, sig.stop)) continue;
     const ref = `${strategy}:signal:${pair}:${bars[i]!.t}`;
     await redis.set(`fx:discord:lvdone:${ref}`, '1', 'EX', 2 * 86_400, 'NX').catch(() => null);
     const res = await practice.bookLevelTrade('bot', { pair, side: sig.side, entry: bars[i]!.c, stop: sig.stop, target: sig.target, openedAt: bars[i]!.t + 60_000, ref, strategy, riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage }, bars.slice(i + 1));
@@ -139,7 +164,7 @@ export class LevelWatch {
         let sig = null;
         for (const st of sets) if ((sig = postedLevelSignal(ctx, last, st.levels, st.t, st.side, st.dol, minRisk, st.all))) break;
         if (!sig) continue;
-        await takeLevelTrades(this.redis, this.practice, 'bot', [{ pair, side: sig.side, stop: sig.stop, target: sig.target, barT: bars[last]!.t, source: lv.source }], (l) => this.logBot(pair, l));
+        await takeLevelTrades(this.redis, this.practice, 'bot', [{ pair, side: sig.side, stop: sig.stop, target: sig.target, barT: bars[last]!.t, entry: bars[last]!.c, source: lv.source }], (l) => this.logBot(pair, l));
       }
     } catch (err) {
       log.warn({ err: (err as Error).message }, 'level watch failed');
