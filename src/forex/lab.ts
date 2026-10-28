@@ -45,7 +45,7 @@ import { drawingsFor, type Drawings } from './drawings';
 import { applyDesks, buildDesks, type MarketDesk } from './desks';
 import { ledgerRows, pnlUsd } from './practice';
 import { bySession, sessionOf, cellPass, cellTry, marketCells, monteCarlo, seedOf, type MarketCell, type McResult } from './montecarlo';
-import { INSTRUMENTS, MOOD_SYMBOLS, STRENGTH_PAIRS, TF_MIN, type Bar, type Instrument, type Signal, type Timeframe, type Trade, isCrypto, isFutures } from './types';
+import { INSTRUMENTS, MOOD_SYMBOLS, OFF_MARKETS, STRENGTH_PAIRS, TF_MIN, type Bar, type Instrument, type Signal, type Timeframe, type Trade, isCrypto, isFutures } from './types';
 import { buildStrength, gapSeries, scoreAt, strengthNow, type StrengthBook, type StrengthNow } from './strength';
 import { buildStretch, crowdPxSeries, type StretchBook } from './stretch';
 import { filterHmm, hmmRegime, hmmReturns, type HmmModel } from './hmm';
@@ -1481,7 +1481,7 @@ export class ForexLab {
     private readonly redis: Redis,
     readonly universe: Universe = 'fx',
   ) {
-    this.insts = INSTRUMENTS.filter((i) => (universe === 'crypto' ? i.kind === 'crypto' : i.kind !== 'crypto'));
+    this.insts = INSTRUMENTS.filter((i) => !OFF_MARKETS.has(i.id) && (universe === 'crypto' ? i.kind === 'crypto' : i.kind !== 'crypto'));
     this.acct = universe === 'crypto' ? 'cbot' : 'bot';
   }
   /** v22.1: this lab's Redis key — the forex lab keeps `fx:…`, the coin lab writes `cm:…` (shared stores like the bars,

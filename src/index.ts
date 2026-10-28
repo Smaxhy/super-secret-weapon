@@ -703,6 +703,19 @@ async function main(): Promise<void> {
     };
     setTimeout(() => void replay(), 20_000).unref?.();
   }
+  // v27.80 (owner: "skip the Dow charts, remove it, also stop the current Dow trades"): the Dow is out of the forex desk
+  // (OFF_MARKETS) and its open bot trades are closed at the market once (a pending close if there is no price yet)
+  await oneTimeUpgrade('v27.80-close-dow', async () => {
+    const a = await practice.rawAccount('bot');
+    const dow = a.open.filter((p) => p.pair === 'DJIUSD');
+    const lines: string[] = [];
+    for (const p of dow) {
+      const r = await practice.close(p.id, 'bot');
+      lines.push(`Dow ${p.side === 1 ? 'long' : 'short'} (${p.strategy ?? 'bot'} ${p.tf ?? ''}) closed: ${r.ok ? 'done' : r.error}`);
+    }
+    forex.logBot([...lines, 'Dow 30 removed from the forex desk: no live price (Yahoo is ~10 min late) — no charts, lab rows or new trades until it has one']);
+    log.info({ lines }, 'Dow removed');
+  });
   // v27.79 (owner: "same with eth/usd"): the coin bot's donchian20 1h ETH long of Oct 28 (09:09 → −$20.00 at 11:06 on the
   // $20 cap stop, $8 under the entry while the tested stop was $26 under) replayed like the LINK trades with a $50 cap
   {

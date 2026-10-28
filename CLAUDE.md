@@ -758,6 +758,15 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.80 the Dow is off the forex desk + its open trade closed (Oct 28, owner: "skip the Dow charts, remove it, also stop
+the current trades of Dow")
+VPS read 11:45 UTC: the forex bot's DJIUSD round_break 1h short (11:40, risking $117.94, all-in cell path) filled 19 points
+worse than the lab's entry on Yahoo's ~10-min-late YM=F price = −0.16R at the door vs the DJI cell's +0.10R a trade
+(458 unseen, PF 1.48); Hyperliquid lists no Dow market. types.ts `OFF_MARKETS` {DJIUSD}: `ForexLab.insts` and plan.ts
+skip it → no candles refreshed, no lab rows / market card / plan row, no trades (fast lab too, via `lab.insts`). One-time
+`v27.80-close-dow`: every open bot DJIUSD position closed at the market (`Practice.close`, reason manual — learners ignore
+it), bot-log lines. Bring it back = remove the id from `OFF_MARKETS` once a live Dow price exists (DIA on the Yahoo stream,
+an OANDA / IG demo, or Databento CME — options given to the owner). tests: forex-ict plan count 18 → 17.
 ## v27.79 coin bot: the tested stop, never a pulled-in one + a live brake; the ETH trade replayed (Oct 28, owner: "same with
 eth/usd … do whatever is needed so profit is doable, as small as amounts may be, adjust itself properly, only take trades if
 the bot is sure")

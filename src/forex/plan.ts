@@ -11,7 +11,7 @@ import type { MarketNow, RunNote } from './lab';
 import type { MoodNow } from './mood';
 import type { PracticePosition, ResumeItem, SyncReport } from './practice';
 import { tfOfRef } from './practice';
-import { INSTRUMENTS, TF_MIN, digitsOf, instrument, isCrypto, type Timeframe } from './types';
+import { INSTRUMENTS, OFF_MARKETS, TF_MIN, digitsOf, instrument, isCrypto, type Timeframe } from './types';
 import { STRENGTH_MIN } from './filters';
 
 const MIN = 60_000;
@@ -318,7 +318,7 @@ export function buildPlan(x: PlanInputs): BotPlan {
   const byId = new Map(x.markets.map((m) => [m.id, m]));
   const markets: PlanMarket[] = [];
   // v22.1 fix: each desk's plan lists only ITS markets (the forex plan had the coins in it and the coin plan the 14 forex pairs)
-  const insts = x.universe ? INSTRUMENTS.filter((i) => (x.universe === 'crypto' ? i.kind === 'crypto' : i.kind !== 'crypto')) : INSTRUMENTS;
+  const insts = x.universe ? INSTRUMENTS.filter((i) => !OFF_MARKETS.has(i.id) && (x.universe === 'crypto' ? i.kind === 'crypto' : i.kind !== 'crypto')) : INSTRUMENTS;
   for (const inst of insts) {
     const m = byId.get(inst.id);
     const pos = x.positions.filter((p) => p.pair === inst.id);

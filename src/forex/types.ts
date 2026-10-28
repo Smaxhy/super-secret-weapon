@@ -61,6 +61,12 @@ export const INSTRUMENTS: Instrument[] = [
   { id: 'AVAXUSD', label: 'AVAX/USD', yahoo: 'AVAX-USD', pip: 0.001, spreadPips: 15, kind: 'crypto' },
 ];
 
+/** v27.80 (owner: "skip the Dow charts, remove it"): markets the desks leave out entirely — no candles, no lab rows, no
+ * market card, no trades. The Dow has no live price (Hyperliquid lists none; Yahoo's YM=F is ~10 min late), and the late
+ * fill cost more than its setup earned. Remove an id here to bring the market back. */
+export const OFF_MARKETS: ReadonlySet<string> = new Set(['DJIUSD']);
+
+
 /** v22: a crypto market (always open, priced in USD, 1 unit = 1 coin). */
 export const isCrypto = (id: string) => INSTRUMENTS.some((i) => i.id === id && i.kind === 'crypto');
 /** v22: crypto limits — coins move 3–5× what a currency pair does, so leverage is capped whatever the risk mode */

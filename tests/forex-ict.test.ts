@@ -220,7 +220,8 @@ describe('wiring', () => {
     const plan = buildPlan(base as unknown as Parameters<typeof buildPlan>[0]);
     // v22.1 fix: each desk's plan lists only its own markets
     expect(plan.markets.length).toBe(26); // v27: + 4 stock indices
-    expect(buildPlan({ ...base, universe: 'fx' } as unknown as Parameters<typeof buildPlan>[0]).markets.length).toBe(18);
+    expect(buildPlan({ ...base, universe: 'fx' } as unknown as Parameters<typeof buildPlan>[0]).markets.length).toBe(17); // v27.80: the Dow is off
+    expect(buildPlan({ ...base, universe: 'fx' } as unknown as Parameters<typeof buildPlan>[0]).markets.some((m) => m.id === 'DJIUSD')).toBe(false);
     expect(buildPlan({ ...base, universe: 'crypto' } as unknown as Parameters<typeof buildPlan>[0]).markets.map((m) => m.id)).toEqual(['BTCUSD', 'ETHUSD', 'SOLUSD', 'XRPUSD', 'DOGEUSD', 'ADAUSD', 'LINKUSD', 'AVAXUSD']);
     const sigs = plan.markets.find((m) => m.id === 'EURUSD')!.signals;
     expect(sigs.find((s) => s.name === 'Judas')!.verdict).not.toMatch(/lab only/);
