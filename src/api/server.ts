@@ -284,6 +284,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         losses: lossSummary(Array.isArray(lossReviews) ? lossReviews : []),
         // v27.24: the "two strategies agree" (doubling up) test and whether it sizes trades up
         confluence: parse(await redis.get(K('fx:confluence')).catch(() => null), null as unknown),
+        opposed: parse(await redis.get(K('fx:opposed')).catch(() => null), null as unknown),
         // v20: per-market desks (ranked strategies on that market, today's trades, the learning pick)
         desks: parse<{ at: number; desks: unknown[] } | null>(desksRaw, null),
         // v18.12: why the plan is missing (the Today card says so instead of going quiet)

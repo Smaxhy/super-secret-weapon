@@ -118,6 +118,8 @@ export const BOT = {
    * pulled in, so the live trade is the one the lab graded */
   sizeToCap: { cbot: true, bot: true } as Partial<Record<string, boolean>>, // v27.85: the forex bot too (Maybe trades at the $20 cap)
   sizeToCapHeadroom: 0.95,
+  /** v27.86: the size-to-cap rule also sizes all-in (proven) trades on these accounts */
+  sizeToCapAllIn: { cbot: true, bot: true } as Partial<Record<string, boolean>>,
   /** v27.79: a strategy × chart whose own live trades (closed since `since`, the last `days`) lost money after `minN` of
    * them is paused on that account until those trades are older than `days` — lab evidence alone isn't "sure" */
   liveBrake: { cbot: { since: Date.parse('2026-10-28T12:00:00Z'), minN: 3, days: 14 }, bot: { since: Date.parse('2026-10-28T13:00:00Z'), minN: 3, days: 14 } } as Partial<Record<string, { since: number; minN: number; days: number }>>,
@@ -2361,7 +2363,8 @@ export class Practice {
           }
         }
         // v27.79: size so the tested stop loses at most the $ cap — the cap never has to pull the stop in
-        if (BOT.sizeToCap[acct] && a.maxLossUsd && !allInPct && v.equityUsd > 0) {
+        // v27.86: all-in (proven) trades too — one stopped BTC long cost 11% of the coin account ($133) past the owner's $50
+        if (BOT.sizeToCap[acct] && a.maxLossUsd && (!allInPct || BOT.sizeToCapAllIn[acct]) && v.equityUsd > 0) {
           const capPct = Math.floor(((a.maxLossUsd * BOT.sizeToCapHeadroom) / v.equityUsd) * 10_000) / 100;
           if (riskPct > capPct) riskPct = capPct;
         }

@@ -21,6 +21,7 @@ export type ReasonKind =
   | 'agree'
   | 'market_rec'
   | 'solo'
+  | 'clash'
   | 'check_data'
   | 'stale_feed'
   | 'clock'
@@ -45,7 +46,8 @@ const LABEL: Record<ReasonKind, string> = {
   judge_no: 'the signal judge scored the setup too low',
   agree: 'too few market checks (strength, bigger charts, mood) stood behind the setup',
   market_rec: 'the strategy has no winning tested record on that market',
-  solo: 'a Fibonacci signal came alone (it needs a second setup the same way)',
+  solo: 'the signal came alone (it needs a second setup the same way)',
+  clash: 'another strategy fired the other way on that market (lab-tested clash rule)',
   check_data: 'a check the strategy was tested with had no data (feed missing)',
   stale_feed: 'the price feed was lagging (candles behind) — no new trades on that market',
   clock: 'the market clock (closed, rollover, weekly open / close)',
@@ -74,6 +76,7 @@ export function classify(why: string): ReasonKind {
   if (w.includes('market checks agree')) return 'agree';
   if (w.includes('record on this market')) return 'market_rec';
   if (w.includes('waits for a second setup')) return 'solo';
+  if (w.includes('strategies disagree')) return 'clash';
   if (w.includes('signal judge')) return 'judge_no';
   if (w.includes('check has no data') || w.includes('feed missing')) return 'check_data';
   if (w.includes('candles behind') || w.includes('price data for') || w.includes('feed is lagging') || w.includes('no fresh')) return 'stale_feed';

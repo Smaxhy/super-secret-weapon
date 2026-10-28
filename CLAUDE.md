@@ -758,6 +758,20 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.86 proven trades obey the $ cap + the clash test (Oct 28, owner after the BTC round_break 4h long stopped at −$132.95
+= −1R, 11.1% of the coin account: "that was a stupid trade going long against BTC like that")
+VPS read 13:51 UTC: opened 12:31 at 80,801 (pullback order already through its limit → market fill), stop 80,302.81 = the tested
+stop, closed 13:48; round_break:4h coins = Edge (1,259 unseen, +0.23R, PF 2.91, 88% won, exit 'tight'), BTC cell 439 / +0.19R.
+mtf at the 12:00 close: 1h up, 4h flat, daily up — not against the trend; but on the SAME 4h close pivot_ladder / pivot_bounce /
+stoch_trend fired SHORT (and round_break / ifvg_cisd 1h short at 13:00); the confluence mates were donchian20 / inside_bar 4h longs.
+(1) `BOT.sizeToCapAllIn` {cbot, bot}: the v27.79 size-to-cap rule now sizes all-in (Edge) trades too → the tested stop loses ≤
+$47.50 on coins / ≤ $19 on forex (was up to 20% of the account). (2) confluence.ts **clash test** (`OPPOSED` {bars 2, minUnseen
+60, minEdgeR 0.1}, `entryIndex`, `opposedBy`, `opposedStudy`, `clashWait`): the picked strategies' trades split by "another
+strategy (any row, not random) entered the OTHER way on that market within 2 candles" vs not, first 70% / unseen 30%; active
+only when clashing trades did ≥ 0.1R worse on the unseen part (60+ of them) and worse before the line too → hourly lab
+(`fx:opposed` / `cm:opposed`, `/api/<desk>/bot` `opposed`) hands such trades a `soloWait` "X fired the other way here —
+strategies disagree" (why.ts kind 'clash', shadow book scores them). Off = clashes trade as before. 15m charts not wired (not
+traded). Trades page loss-review card shows the clash verdict. tests/forex-clash (3), forex-proven-only (all-in sized to cap).
 ## v27.85 forex may trade Maybe strategies again, coins stay Edge-only (Oct 28, owner: "forex is allowed to use maybe
 strategies because crypto needs to be the safer and main priority")
 `FX_CONFIG.provenOnly.verdicts` {fx: ['edge','maybe'], crypto: ['edge']} (hourly chooser + fast `chosenOf` per desk) and

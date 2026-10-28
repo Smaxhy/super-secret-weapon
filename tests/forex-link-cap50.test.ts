@@ -77,5 +77,6 @@ describe('v27.79 coin bot: size to the cap + live brake', () => {
   it('the coin bot sizes to its cap', () => {
     expect(BOT.sizeToCap.cbot).toBe(true);
     expect(BOT.liveBrake.cbot?.minN).toBe(3);
+    expect(BOT.sizeToCapAllIn.cbot).toBe(true); // v27.86: proven (all-in) coin trades too
   });
 });

@@ -15,7 +15,7 @@ import { PREP, prepNotes, studyRow, weekForecast, type PrepReport, type PrepRow,
 import type Redis from 'ioredis';
 import { howToWin, reviewLosses, tfOf, type LossReview } from './loss-review';
 import { excursionReport, type ExTrade, type ExcursionReport } from './excursion';
-import { confluenceStudy, isTogether, type ConfTrade, type ConfluenceReport } from './confluence';
+import { clashWait, confluenceStudy, entryIndex, isTogether, opposedStudy, type ConfTrade, type ConfluenceReport, type OpposedReport, type SideEntry } from './confluence';
 import { buildCorrBook, gradeHeat, HEAT, roundedMatrix, type HeatGrade } from './risk';
 import { luckDowngrade, luckFor } from './luck';
 import { learnFromLedger, type LearnKey } from './learner';
@@ -2056,6 +2056,8 @@ export class ForexLab {
     const statInputs: StatInput[] = [];
     /** v27.24: the picked strategies' finished trades, for the "two strategies agree" (doubling up) test */
     const confPool: ConfTrade[] = [];
+    /** v27.86: every strategy's tested entries (the opponents in the clash test) */
+    const oppAll: SideEntry[] = [];
     // v27.37 retired strategies: skipped on weekdays, all re-tested at the weekend
     const weekendRun = deskWeekend(this.universe, Date.now());
     const retiredPrev = await loadRetired(this.redis, this.k(FX_RETIRED));
@@ -2064,6 +2066,7 @@ export class ForexLab {
       const ev = await evaluateTf(series.filter((se) => se.tf === tf), tf, { oosFrom, since, weeks, prev: prevChosen, skip }, (x) => {
         statInputs.push({ key: x.key, isRandom: x.s.id === 'random', done: x.done });
         if (x.s.id === 'random') return;
+        for (const t of x.done) oppAll.push({ strategy: x.s.id, pair: t.pair, side: t.side, entryT: t.entryT });
         // the judge's view of every trade: its context at the signal bar (and the strategy's last 10 results before it)
         const byExitT = [...x.done].sort((a, b) => a.exitT - b.exitT);
         const exitTs = byExitT.map((t) => t.exitT);
@@ -2445,6 +2448,10 @@ export class ForexLab {
     // v27.24: does a second strategy firing the same way make a trade win more? (graded first 70% / unseen 30%)
     const confluence: ConfluenceReport = confluenceStudy(confPool, oosFrom);
     await this.redis.set(this.k('fx:confluence'), JSON.stringify(confluence)).catch(() => undefined);
+    // v27.86: does a strategy firing the OTHER way make a trade lose more? (graded first 70% / unseen 30%)
+    const opposed: OpposedReport = opposedStudy(confPool, entryIndex(oppAll), oosFrom);
+    oppAll.length = 0;
+    await this.redis.set(this.k('fx:opposed'), JSON.stringify(opposed)).catch(() => undefined);
     const report: FxReport = {
       retired: retired.map(({ id, name, why }) => ({ id, name, why })),
       at: Date.now(),
@@ -2552,7 +2559,7 @@ export class ForexLab {
       const marketRec = row ? marketRecOf(row.pairs.find((x) => x.pair === t.pair), cellFor(t), !!owned && owned.pair !== '*') : null;
       return toLabTrade(t, {
         order,
-        soloWait: soloWait(t, open, TF_MIN[t.tf as Timeframe] ?? 60),
+        soloWait: soloWait(t, open, TF_MIN[t.tf as Timeframe] ?? 60) ?? (opposed.active ? clashWait(t, open, (TF_MIN[t.tf as Timeframe] ?? 60) * 60_000) : null),
         agree,
         marketRec,
         chosen: planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf, pooledOf(allRowOf.get(`${t.strategy}:${t.tf}`))),

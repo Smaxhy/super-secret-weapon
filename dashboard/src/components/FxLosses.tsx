@@ -27,7 +27,7 @@ const VERDICT: Record<LossReviewRow['verdict'], { label: string; tone: 'down' | 
   unknown: { label: 'No tested copy', tone: 'neutral' },
 };
 
-export function LossReviewCard({ s, names, conf }: { s: LossSummary | null | undefined; names?: Record<string, string>; conf?: ConfluenceReport | null }) {
+export function LossReviewCard({ s, names, conf, opposed }: { s: LossSummary | null | undefined; names?: Record<string, string>; conf?: ConfluenceReport | null; opposed?: { active: boolean; why: string } | null }) {
   if (!s) return null;
   const n = s.by.normal.n + s.by.avoidable.n + s.by.pending.n + s.by.unknown.n;
   const head = n === 0
@@ -38,6 +38,7 @@ export function LossReviewCard({ s, names, conf }: { s: LossSummary | null | und
       <p className="mb-2 text-sm font-medium text-ink">{head}</p>
       {s.winKinds && Object.keys(s.winKinds).length > 0 && <p className="mb-2 text-xs text-ink-2">What would have won them: {Object.entries(s.winKinds).map(([k, n]) => `${WIN[k] ?? k} ×${n}`).join(' · ')}</p>}
       {conf && <p className="mb-2 text-xs text-ink-2">Two strategies agreeing (doubling up), lab test: {conf.why}</p>}
+      {opposed && <p className="mb-2 text-xs text-ink-2">A strategy firing the other way (clash), lab test: {opposed.why}</p>}
       {s.capStops > 0 && <p className="mb-3 text-xs text-ink-2">The $20 loss cap stopped {s.capStops} trade{s.capStops === 1 ? '' : 's'}: {s.capSavedUsd >= 0 ? `saved ${usd(s.capSavedUsd)}` : `cost ${usd(s.capSavedUsd)}`} against the tested trades. {s.capVerdict ?? ''}</p>}
       {s.newest.length ? (
         <Rows>

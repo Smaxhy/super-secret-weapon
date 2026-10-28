@@ -39,7 +39,7 @@ interface RunNote { t: number; tf: string; signals: number; chosen: number; open
 interface BotPlan { at: number; summary: string; next: Array<{ tf: string; at: number }>; markets: PlanMarket[]; trades: PlanTrade[]; timeline: RunNote[]; trading: Record<string, number> }
 type RiskMode = 'normal' | 'aggressive' | 'max' | 'turbo';
 interface RiskLimits { label: string; riskPct: number; leverage: number; maxOpen: number; ccyCapPct: number; maxPerStrategy: number; convMaxRiskPct: number }
-interface Data { shadow?: ShadowSummary | null; losses?: LossSummary | null; confluence?: ConfluenceReport | null; why?: import('./ControlRoom').WhyReport | null; labError?: { t: number; msg: string } | null; planError?: string | null; desk?: DeskReport | null; rolling?: RollReport | null; chooser?: string; ledger?: Ledger; names?: Record<string, string>; sniper?: SniperReport | null; riskMode?: RiskMode; riskModes?: Record<RiskMode, RiskLimits>; plan?: BotPlan | null; account: Acct | null; risk?: RiskSummary | null; portfolio?: PortfolioReport | null; judge?: JudgeReport | null; conviction?: Partial<Record<'hourly' | '15m' | '1m', ConvictionReport | null>> | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
+interface Data { shadow?: ShadowSummary | null; losses?: LossSummary | null; confluence?: ConfluenceReport | null; opposed?: { active: boolean; why: string } | null; why?: import('./ControlRoom').WhyReport | null; labError?: { t: number; msg: string } | null; planError?: string | null; desk?: DeskReport | null; rolling?: RollReport | null; chooser?: string; ledger?: Ledger; names?: Record<string, string>; sniper?: SniperReport | null; riskMode?: RiskMode; riskModes?: Record<RiskMode, RiskLimits>; plan?: BotPlan | null; account: Acct | null; risk?: RiskSummary | null; portfolio?: PortfolioReport | null; judge?: JudgeReport | null; conviction?: Partial<Record<'hourly' | '15m' | '1m', ConvictionReport | null>> | null; log: Array<{ t: number; e: string }>; chosen: string[]; dropped?: string[] }
 
 const dp = digitsOf;
 const usd = (x: number) => `${x < 0 ? '−' : ''}$${Math.abs(x).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -103,7 +103,7 @@ export function FxBot() {
       <RiskModeCard mode={data?.riskMode ?? 'normal'} modes={data?.riskModes} portfolio={data?.portfolio ?? null} onChange={() => void reload()} />
       <MarketsCard plan={plan} />
       <ChecksCard plan={plan} log={data?.log ?? []} />
-      <LossReviewCard s={data?.losses} names={data?.names} conf={data?.confluence} />
+      <LossReviewCard s={data?.losses} names={data?.names} conf={data?.confluence} opposed={data?.opposed} />
       <ExcursionCard names={data?.names} />
       <ShadowCard s={data?.shadow} names={data?.names} />
       <AdvancedFold>

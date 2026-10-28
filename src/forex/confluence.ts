@@ -76,3 +76,91 @@ export function confluenceStudy(trades: readonly ConfTrade[], oosFrom: number, n
 }
 
 const fmt = (x: number | null) => (x === null ? '—' : `${x >= 0 ? '+' : '−'}${Math.abs(x).toFixed(2)}R`);
+
+/**
+ * v27.86 the clash test (owner, after a BTC 4h long stopped out while three 4h strategies fired SHORT on the same candle:
+ * "that was a stupid trade going long against BTC like that"). When another strategy entered the OTHER way on the same
+ * market within a couple of candles, does the trade lose more than one nobody argued with? Same grading as the
+ * confluence test: the picked strategies' trades, first 70% (finished before the line) and the unseen 30%, opponents =
+ * every strategy's tested trades (as the live check sees every strategy's open lab trades). Only when the unseen part
+ * says clashing trades do worse — and the first part points the same way — does the bot skip them. Pure.
+ */
+export interface SideEntry {
+  strategy: string;
+  pair: string;
+  side: 1 | -1;
+  entryT: number;
+}
+export interface OpposedReport {
+  at: number;
+  first: { opposed: ConfSide; clear: ConfSide };
+  unseen: { opposed: ConfSide; clear: ConfSide };
+  active: boolean;
+  why: string;
+}
+export const OPPOSED = {
+  bars: 2,
+  minUnseen: 60,
+  /** clear trades must beat clashing ones by this much a trade on the unseen part */
+  minEdgeR: 0.1,
+};
+
+/** Entries per market, sorted by time, for fast window lookups. */
+export function entryIndex(all: readonly SideEntry[]): Map<string, SideEntry[]> {
+  const m = new Map<string, SideEntry[]>();
+  for (const e of all) {
+    const a = m.get(e.pair) ?? [];
+    a.push(e);
+    m.set(e.pair, a);
+  }
+  for (const a of m.values()) a.sort((x, y) => x.entryT - y.entryT);
+  return m;
+}
+
+/** The first other strategy that entered the other way on this market within `bars` candles of t, else null. Pure. */
+export function opposedBy(t: { strategy: string; pair: string; side: 1 | -1; entryT: number }, idx: Map<string, SideEntry[]>, barMs: number, bars = OPPOSED.bars): SideEntry | null {
+  const a = idx.get(t.pair);
+  if (!a?.length) return null;
+  const span = bars * barMs;
+  let lo = 0;
+  let hi = a.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (a[mid]!.entryT < t.entryT - span) lo = mid + 1;
+    else hi = mid;
+  }
+  for (let i = lo; i < a.length && a[i]!.entryT <= t.entryT + span; i++) {
+    const o = a[i]!;
+    if (o.side !== t.side && o.strategy !== t.strategy && o.strategy !== 'random') return o;
+  }
+  return null;
+}
+
+export function opposedStudy(picked: readonly ConfTrade[], idx: Map<string, SideEntry[]>, oosFrom: number, now = Date.now()): OpposedReport {
+  const fO: number[] = [], fC: number[] = [], uO: number[] = [], uC: number[] = [];
+  for (const t of picked) {
+    const opp = !!opposedBy({ strategy: t.key.split(':')[0]!, pair: t.pair, side: t.side, entryT: t.entryT }, idx, t.barMs);
+    if (t.entryT >= oosFrom) (opp ? uO : uC).push(t.r);
+    else if (t.exitT < oosFrom) (opp ? fO : fC).push(t.r);
+  }
+  const first = { opposed: side(fO), clear: side(fC) };
+  const unseen = { opposed: side(uO), clear: side(uC) };
+  const dU = unseen.opposed.avgR !== null && unseen.clear.avgR !== null ? unseen.clear.avgR - unseen.opposed.avgR : null;
+  const dF = first.opposed.avgR !== null && first.clear.avgR !== null ? first.clear.avgR - first.opposed.avgR : null;
+  let why: string;
+  let active = false;
+  if (unseen.opposed.n < OPPOSED.minUnseen) why = `too few clashing trades on the unseen part (${unseen.opposed.n}, needs ${OPPOSED.minUnseen}) — clashes still trade`;
+  else if (dU === null || dU < OPPOSED.minEdgeR) why = `trades with a strategy firing the other way did not do worse on the unseen part (${fmt(unseen.opposed.avgR)} vs ${fmt(unseen.clear.avgR)} without) — clashes still trade`;
+  else if (dF === null || dF <= 0) why = `clashing trades did worse on the unseen part but not before it (${fmt(first.opposed.avgR)} vs ${fmt(first.clear.avgR)}) — could be luck, clashes still trade`;
+  else {
+    active = true;
+    why = `trades with a strategy firing the other way did worse on both parts (unseen ${fmt(unseen.opposed.avgR)} vs ${fmt(unseen.clear.avgR)}, before ${fmt(first.opposed.avgR)} vs ${fmt(first.clear.avgR)}) — the bot skips them`;
+  }
+  return { at: now, first, unseen, active, why };
+}
+
+/** The live wait text when the clash rule is on and another strategy's open lab trade points the other way. Pure. */
+export function clashWait(t: { strategy: string; pair: string; side: 1 | -1; entryT: number }, open: readonly SideEntry[], barMs: number): string | null {
+  const o = opposedBy(t, entryIndex(open.filter((x) => x.pair === t.pair)), barMs);
+  return o ? `${o.strategy} fired the other way here — strategies disagree, it skips this one (lab-tested clash rule)` : null;
+}
