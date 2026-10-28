@@ -26,6 +26,7 @@ import { parsePnlRow, pnlRowOf, type PnlRow } from './pnl';
 import { liveFeed } from './live-feed';
 import { COPY_LOCK, lockedStop, lockPlanNet, PROFIT_LOCK, type LockPlan } from './profit-lock';
 import { FINANCING, rollsBetween, swapGain } from './financing';
+import type { LiveTick } from './pyth';
 import { tradesNews } from './strategies';
 import { DISCORD_COPY, copySize, copyStop, type CopyBook } from './discord';
 
@@ -1602,6 +1603,13 @@ export class Practice {
     if (b === null) return null;
     const prev = this.cache.get(inst.id);
     return { id: inst.id, mid: (book.bid + book.ask) / 2 + b, bid: book.bid + b, ask: book.ask + b, t: now, bars: shiftBars(this.hl.futBars(inst.id), b), dayChangePct: prev?.dayChangePct ?? null, source: 'hyperliquid', priceT: book.t, ...(prev?.prevClose ? { prevClose: prev.prevClose } : {}) };
+  }
+  /** v27.75: a futures market's live price (Hyperliquid + the gap) for the dashboard's ticking P&L — the same price the
+   * account itself uses (null when it wouldn't: no book, CME closed, no gap measured) */
+  liveFutTick(id: string, now = Date.now()): LiveTick | null {
+    const inst = instrument(id);
+    const q = inst ? this.hlQuote(inst, now) : null;
+    return q ? { id, mid: q.mid, conf: (q.ask - q.bid) / 2, t: q.priceT ?? now } : null;
   }
   /** v27.47: the measured gaps, for Setup */
   basisNow(): Record<string, BasisRow & { src: 'oanda' | 'hl' }> {

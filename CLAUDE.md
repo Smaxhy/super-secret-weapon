@@ -768,7 +768,12 @@ line once per change "live prices: NDXUSD ← Hyperliquid xyz:XYZ100 … · stil
 markets there: …" (read it after deploy; add a listed name to `HL_FUTURES` if it is the right market). Practice `snapshot`
 positions carry `priceAgeMs` (`quoteAge`), `botStatus` passes it; dashboard active-trade card "Price now" sub reads "price N min
 late" when ≥ 3 min and no live tick. NOT done (owner to decide): stop new trades on markets without a live price.
-tests in forex-hl-index (+1).
+**Ticking P&L for Nasdaq / S&P / gold** (owner: "the profits are delayed too, not only the chart"): the builder markets' moves
+never reached the dashboard push (they aren't the futures price), so their P&L only moved on the 5-s page refresh.
+`HyperliquidLive.onFutTicks` (raw futures-market moves, a separate listener set — `onTicks` / `get()` still never see them) →
+`Practice.liveFutTick(id)` (= `hlQuote`: + the measured gap, CME open only) → a second `startLivePush` in index.ts → the same
+'fx' bus event the currency pairs use → `useFxLive` moves the P&L between refreshes. Dow / Russell / silver have no live
+source, so they still move only with Yahoo's late price. tests in forex-hl-index (+2).
 ## v27.74 sell high / buy low TOWARD his levels (Oct 28, owner: "he did post it, it's these levels" — his NQ short at 29,879 →
 29,804, in #signal-proofs: sold ABOVE his three levels 29,835 / 29,804 / 29,782.5 with his bearish lean and used them as targets)
 The bot only traded AT his levels (bounce / break-and-retest), so a sell above them had no rule. strategies.ts **`towardSignal`**

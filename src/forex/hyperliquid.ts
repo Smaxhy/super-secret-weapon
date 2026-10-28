@@ -105,6 +105,8 @@ export class HyperliquidLive {
   private latest = new Map<string, HlBook & { at: number }>();
   private bars = new Map<string, MinuteBar[]>();
   private listeners = new Set<(ticks: LiveTick[]) => void>();
+  /** v27.75: raw (unshifted) mids of the index / metal builder markets — the practice account moves them onto the futures */
+  private futListeners = new Set<(ticks: LiveTick[]) => void>();
   private sock: LiveSocket | null = null;
   private stopped = true;
   private fails = 0;
@@ -236,6 +238,11 @@ export class HyperliquidLive {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
   }
+  /** v27.75: every move of an index / metal builder market (raw, NOT the futures price — add the measured gap) */
+  onFutTicks(fn: (ticks: LiveTick[]) => void): () => void {
+    this.futListeners.add(fn);
+    return () => this.futListeners.delete(fn);
+  }
 
   get(id: string, now = this.clock()): { px: number; t: number; bars: MinuteBar[] } | null {
     const p = this.latest.get(id);
@@ -298,9 +305,9 @@ export class HyperliquidLive {
     this.lastTickAt = now;
     feeds.ok('hyperliquid-live', { items: this.latest.size, asOf: b.t });
     // the book republishes every block: only a moved mid is a tick
-    if ((prev && (prev.bid + prev.ask) / 2 === mid) || this.isFut(b.id)) return;
+    if (prev && (prev.bid + prev.ask) / 2 === mid) return;
     const out: LiveTick[] = [{ id: b.id, mid, conf: (b.ask - b.bid) / 2, t: b.t }];
-    for (const fn of this.listeners) {
+    for (const fn of this.isFut(b.id) ? this.futListeners : this.listeners) {
       try {
         fn(out);
       } catch (err) {

@@ -34,6 +34,12 @@ describe('finding the index / metal markets', () => {
     expect(live.book('NDXUSD')).toMatchObject({ bid: 28949, ask: 28951 });
     expect(live.get('NDXUSD')).toBeNull(); // never the raw price
     expect(ticks).toHaveLength(0);
+    // v27.75: the raw move goes to the futures listeners only (the account adds the gap)
+    const fut: unknown[] = [];
+    live.onFutTicks((t) => fut.push(...t));
+    h.message!(JSON.stringify({ channel: 'l2Book', data: { coin: 'xyz:XYZ100', time: NOW, levels: [[{ px: '28955' }], [{ px: '28957' }]] } }));
+    expect(fut).toEqual([{ id: 'NDXUSD', mid: 28956, conf: 1, t: NOW }]);
+    expect(ticks).toHaveLength(0);
     expect(await live.candles('NDXUSD')).toEqual([[NOW - 60_000, 28950]]);
     live.stop();
   });
@@ -56,6 +62,7 @@ describe('practice prices from Hyperliquid', () => {
     expect(q).toMatchObject({ source: 'hyperliquid', mid: 29_030, bid: 29_029, ask: 29_031, priceT: NOW });
     expect(q.bars[0]).toEqual([NOW - 60_000, 29_040, 29_020, 29_030, 29_025]);
     expect(p.basisNow().NDXUSD).toMatchObject({ basis: 80, src: 'hl' });
+    expect(p.liveFutTick('NDXUSD')).toMatchObject({ id: 'NDXUSD', mid: 29_030 }); // v27.75: the dashboard's ticking P&L
     vi.useRealTimers();
   });
   it('not on a weekend (the CME market is shut, the builder market keeps moving)', async () => {

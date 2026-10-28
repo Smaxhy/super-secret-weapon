@@ -439,6 +439,14 @@ async function main(): Promise<void> {
     });
   } else if (pythKey()) pythLive.start();
   const stopLivePush = startLivePush();
+  // v27.75 (owner: "the profits are delayed, not only the chart"): Nasdaq / S&P / gold tick on the dashboard too — the
+  // Hyperliquid builder market's move, shifted onto the futures price by the measured gap (the account's own price)
+  const stopFutPush = startLivePush({
+    onTicks: (fn) => hyperliquidLive.onFutTicks((ts) => {
+      const out = ts.map((t) => practice.liveFutTick(t.id)).filter((t): t is NonNullable<typeof t> => !!t);
+      if (out.length) fn(out);
+    }),
+  });
   forex.practice = practice;
   const fxCalendar = new ForexCalendar(redis);
   void fxCalendar.start();
@@ -1300,6 +1308,7 @@ async function main(): Promise<void> {
       coinbaseLive.stop();
       hyperliquidLive.stop();
       stopLivePush();
+      stopFutPush();
       await fxFeeds.persist(redis, true).catch(() => undefined);
       fxCalendar.stop();
       fxNews.stop();
