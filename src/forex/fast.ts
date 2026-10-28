@@ -34,7 +34,7 @@ import { newSyncReport, type LabOpenTrade } from './practice';
 import { withEnd } from './mtf';
 import { cellPass } from './montecarlo';
 import { vixFactor, vixNowOf } from './mood';
-import { FX_CONFIG, FX_RETIRED, RETIRE, deskWeekend, loadRetired, onlyOk, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, focusPrio, marketRecOf, pickedOnInSample, planChosen, plannedStrategies, pooledOf, prevPicks, profitFloor, signalIndex, slimTrade, soloWait, toLabTrade, tradeKey, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
+import { FX_CONFIG, FX_RETIRED, RETIRE, deskWeekend, loadRetired, onlyOk, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, focusPrio, marketRecOf, pickedOnInSample, planChosen, plannedStrategies, pooledOf, prevPicks, profitFloor, signalIndex, slimTrade, soloWait, needsMate, toLabTrade, tradeKey, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
 import type { HmmModel } from './hmm';
 import { agreeCount, boostFor, gradeConviction, maxConfirmations, tierOf, type ConvictionReport, type ConvRow } from './conviction';
 
@@ -586,7 +586,7 @@ export class FastLab {
         const barMs = TF_MIN[tf] * 60_000;
         const mates = [...pairOpen, ...fired.map((f) => ({ strategy: f.id, pair: inst.id, side: f.side, entryT: bars[last]!.t + barMs }))];
         for (const lt of labOpen) {
-          if (lt.pair !== inst.id || !FX_CONFIG.needsConfluence.includes(lt.strategy)) continue;
+          if (lt.pair !== inst.id || !needsMate(lt.strategy, lt.pair)) continue;
           const w = soloWait(lt, mates, TF_MIN[tf]);
           if (w) lt.soloWait = w;
         }

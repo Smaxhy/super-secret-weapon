@@ -758,6 +758,19 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.83 coins wait for the pullback; no lone signals on either desk (Oct 28, owner: "wait for good entries, I don't want
+weak ones")
+VPS read 12:09 UTC (coin report 11:45), the 12 coin rows holding a deeper-bar cell: unseen total R by entry — pullback best on
+10 of 12 (e.g. momentum_bar 4h .44R vs market .26, round_break 1h 380R vs 244, bb_squeeze 1h .28 vs .17), market best only on
+momentum_bar 1h, donchian20 1h a tie; fills limit 96–99%, pullback 84–96%, confirm 23–50% (confirm earned least). Confluence
+study (cm): unseen together 57,234 trades +0.071R vs alone 4,984 −0.138R (first 70% +0.137 / −0.181); forex Oct 23 +0.02 /
+−0.13. (1) `FX_CONFIG.liveEntries` → per desk {fx: false, crypto: true}; evaluateTf reads the desk from its series; `chooseEntry`
+still picks per row on the FIRST 70% and the row is then graded on that entry's trades (v18.4 resting orders, unchanged
+code). (2) `FX_CONFIG.requireConfluence` {fx: true, crypto: true} + `needsMate(strategy, pair)`: every strategy's trade
+waits (soloWait, both labs) unless another strategy has an open lab trade / a signal the same way on the same market within
+`confluenceBars` 2 candles; the v24 doubling-up 1.5× size stays. Coin bot record Oct 25 08:00 → now (before v27.81): 12
+trades +0.31R +$9.92; the 10:09 LINK copy hit the tested stop at 12:03 (−$46.49) before v27.81 deployed — that strike
+removes it too. tests: forex-strict (liveEntries shape), forex-ict (+requireConfluence).
 ## v27.82 only Edge rows trade, both desks (Oct 28, owner: "we don't settle for a maybe, we settle for: this strategy makes
 us money")
 `FX_CONFIG.provenOnly.cells` {fx: false, crypto: false} (was true / true): a per-market cell (`cellPass` / `coinCellPass`)

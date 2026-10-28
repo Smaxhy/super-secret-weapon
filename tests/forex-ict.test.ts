@@ -260,7 +260,19 @@ describe('v25 owner rules: ICT live, Fibonacci never alone', () => {
     expect(soloWait(fib, [{ strategy: 'random', pair: 'USDJPY', side: 1, entryT: 100 * H }], 60)).toMatch(/alone/); // yardstick
     expect(soloWait(fib, [{ strategy: 'pin_bar', pair: 'USDJPY', side: 1, entryT: 95 * H }], 60)).toMatch(/alone/); // too long ago
     expect(soloWait(fib, [{ strategy: 'pin_bar', pair: 'USDJPY', side: 1, entryT: 98 * H }], 60)).toBeNull();
-    expect(soloWait({ ...fib, strategy: 'pin_bar' }, [], 60)).toBeNull(); // only listed strategies
+    const { FX_CONFIG } = await import('../src/forex/lab');
+    const was = { ...FX_CONFIG.requireConfluence };
+    try {
+      // v27.83: by default every strategy waits for a second setup, on both desks
+      expect(soloWait({ ...fib, strategy: 'pin_bar' }, [], 60)).toMatch(/alone/);
+      expect(soloWait({ ...fib, strategy: 'keltner', pair: 'LINKUSD' }, [], 60)).toMatch(/alone/);
+      expect(soloWait({ ...fib, strategy: 'keltner', pair: 'LINKUSD' }, [{ strategy: 'momentum_bar', pair: 'LINKUSD', side: 1, entryT: 100 * H }], 60)).toBeNull();
+      FX_CONFIG.requireConfluence.fx = false;
+      expect(soloWait({ ...fib, strategy: 'pin_bar' }, [], 60)).toBeNull(); // off → only listed strategies
+      expect(soloWait(fib, [], 60)).toMatch(/alone/);
+    } finally {
+      Object.assign(FX_CONFIG.requireConfluence, was);
+    }
   });
 
   it('the wait is its own reason in the why / shadow buckets', async () => {

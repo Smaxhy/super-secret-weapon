@@ -81,8 +81,12 @@ export const FX_CONFIG = {
   pick: { minN: 40, minAvgR: 0.05, minPf: 1.15 },
   /** v18.4: let a strategy trade with a limit / pullback entry once that proved better on its first 70% (entries.ts).
    * v20.1 (owner: "trade only what will work"): OFF — market entries only until the entry lab proves itself on real data
-   * (a pullback order fills on the signals that came back against the trade and misses the ones that ran). */
-  liveEntries: false,
+   * (a pullback order fills on the signals that came back against the trade and misses the ones that ran).
+   * v27.83 (owner: "wait for good entries, I don't want weak ones"): per desk — coins ON: on the coin lab's unseen trades
+   * (Oct 28 11:45 report) a ¼-ATR pullback entry made the most total R on 10 of the 12 coin rows with a deeper-bar cell
+   * (fills 84–96% of the signals; confirm entries fill 23–50% and earned least); `chooseEntry` still picks per row on the
+   * FIRST 70% only, so a row switches only where it tested better. Forex stays market until its own numbers are read. */
+  liveEntries: { fx: false, crypto: true } as Record<'fx' | 'crypto', boolean>,
   /** v20.1 strict mode (owner: "I want to win, make it trade only what will work with proper research"):
    * mode (v20.4, below) — which rows the bot may trade; in 'edge' / 'quality' the always-on four and the rolling
    *   picker's list no longer let a row in on their own;
@@ -138,6 +142,11 @@ export const FX_CONFIG = {
    * strategy (any, tested or not; never the random yardstick) has a signal the SAME way on the SAME market within
    * `confluenceBars` candles of its chart; alone → the trade waits (shadow book kind 'solo'). */
   needsConfluence: ['fib_pullback'] as string[],
+  /** v27.83 (owner: "only take trades if the bot is sure"): per desk, EVERY strategy waits for a second setup (the same
+   * rule as `needsConfluence`). The confluence study (confluence.ts, picked rows' trades): coins unseen "together" 57,234
+   * trades +0.071R vs "alone" 4,984 trades −0.138R (first 70% +0.137 / −0.181); forex (Oct 23 read) together +0.02R vs
+   * alone −0.13R — lone signals lose on both desks. ~8% of coin signals stand alone. */
+  requireConfluence: { fx: true, crypto: true } as Record<'fx' | 'crypto', boolean>,
   /** v27.26 (owner: "I don't need 100 strategies, just 1 that sticks"): when a desk's list is set, its bot trades ONLY these
    * strategy:chart rows (every other row stays graded and shown; held trades of others run out on their own stops).
    * Coins: rsi_dip 4h — the only row on either desk that passed the strict test (deflated Sharpe 89%, Oct 23). Empty = off. */
@@ -949,8 +958,10 @@ export const tradeKey = (t: { strategy: string; tf: string; pair: string; entryT
  * open lab trade the same way on the same market whose entry is within `confluenceBars` candles of this one's.
  * Returns the wait text when it stands alone, else null. Pure.
  */
+/** v27.83: does this strategy's trade on this market need a second setup the same way? */
+export const needsMate = (strategy: string, pair: string): boolean => FX_CONFIG.needsConfluence.includes(strategy) || FX_CONFIG.requireConfluence[isCrypto(pair) ? 'crypto' : 'fx'];
 export function soloWait(t: Pick<Trade, 'strategy' | 'pair' | 'side' | 'entryT'>, others: ReadonlyArray<Pick<Trade, 'strategy' | 'pair' | 'side' | 'entryT'>>, barMin: number): string | null {
-  if (!FX_CONFIG.needsConfluence.includes(t.strategy)) return null;
+  if (!needsMate(t.strategy, t.pair)) return null;
   const span = FX_CONFIG.confluenceBars * barMin * 60_000;
   const mate = others.find((o) => o.strategy !== t.strategy && o.strategy !== 'random' && o.pair === t.pair && o.side === t.side && Math.abs(o.entryT - t.entryT) <= span);
   return mate ? null : `${t.strategy} alone — waits for a second setup the same way on this market`;
@@ -1314,7 +1325,8 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
     // v18.4: the way in it trades with — a limit / pullback entry only once it proved better on the first 70%. The row's
     // record (and its paper trades) become that variant's; the signals on the newest bar stay market trades carrying
     // the resting order the bot should place (a limit sim can't know yet whether that order fills).
-    const entry: EntryKind = s.id !== 'random' && FX_CONFIG.liveEntries && entryVariants ? chooseEntry(entryVariants, prev?.n) : 'market';
+    const desk = seriesTf[0]?.inst.kind === 'crypto' ? 'crypto' : 'fx';
+    const entry: EntryKind = s.id !== 'random' && FX_CONFIG.liveEntries[desk] && entryVariants ? chooseEntry(entryVariants, prev?.n) : 'market';
     const eb = entry !== 'market' ? byEntry.get(entry) : undefined;
     let chR = eb ? statsOf(eb.trades, o.oosFrom) : ch;
     let vR = eb ? { trades: [...eb.trades, ...v.trades.filter((t) => t.reason === 'open')], perPair: eb.perPair } : v;
