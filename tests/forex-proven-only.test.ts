@@ -81,7 +81,7 @@ describe('v27.27 only proven strategies trade, big size', () => {
     expect(pos.riskPct!).toBeGreaterThan(19.5);
     expect(pos.riskPct!).toBeLessThanOrEqual(20.1);
     expect(pos.stop).toBe(96_000);
-    expect(a.maxLossUsd).toBe(20);
+    expect(a.maxLossUsd).toBe(BOT.maxLossUsdByAcct.cbot);
     const m1 = NOW + M;
     tick(a, { BTCUSD: { ...quote(99_000), bars: [[m1, 99_500, 98_900, 99_000, 99_500]] } }, m1 + 30_000);
     expect(a.open[0]!.stop).toBe(96_000);

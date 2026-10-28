@@ -12,7 +12,7 @@ const long = (): PracticePosition => ({ id: 'p1', pair: 'BTCUSD', side: 1, units
 
 describe('per-trade USD loss cap', () => {
   it('the coin bot and (v27.22) the forex bot are capped at $20', () => {
-    expect(BOT.maxLossUsdByAcct.cbot).toBe(20);
+    expect(BOT.maxLossUsdByAcct.cbot).toBe(50);
     expect(BOT.maxLossUsdByAcct.bot).toBe(20);
   });
   it('pulls a looser stop in to the $20 loss and never loosens a tighter one', () => {

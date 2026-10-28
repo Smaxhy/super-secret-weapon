@@ -78,7 +78,10 @@ export const BOT = {
    * an hourly / 4-hour trade on one may use this much delay on top of the limit when the feed declares none */
   futuresDelayMs: 15 * 60_000,
   /** v27.20: the most a single trade may lose, per account (the coin bot: $20; v27.22 the forex bot too) */
-  maxLossUsdByAcct: { cbot: 20, bot: 20 } as Partial<Record<string, number>>,
+  maxLossUsdByAcct: { cbot: 50, bot: 20 } as Partial<Record<string, number>>,
+  /** v27.78 (owner raised the coin bot's cap to $50: "LINK usually does better"): on these accounts the excursion study's
+   * per-strategy cap (kept $10–40) may not pull a trade in tighter than the account's cap — the owner's number is the floor */
+  capFloorAccts: { cbot: true } as Partial<Record<string, boolean>>,
   /** v27.38 (owner: "max 5–10 trades per day"): new trades a bot may open per trading day (from 22:00 UTC = midnight
    * Central European summer time). The best-tested signals go first (`prio`); a weekend re-open of a paused trade is not
    * a new trade. 0 = no cap. */
@@ -744,8 +747,8 @@ export function bookMissedCopy(a: PracticeAccount, r: { pair: string; side: 1 | 
 
 /** v27.69: how a trade opened at `entry` would have gone on these minutes (after its entry): the stop first when a
  * candle touches both, the profit lock arming on the best price and moving the stop from the NEXT minute on. Pure. */
-export function walkTrade(side: 1 | -1, entry: number, stop0: number, target: number | null, bars: readonly Bar[], half: number, fee = 0): { exitIdx: number; exit: number; reason: 'stop' | 'target' | null; stop: number; best: number; locked: boolean; lock: LockPlan | null } {
-  const lock = lockPlanNet(side, entry, stop0, target, half, fee, PROFIT_LOCK);
+export function walkTrade(side: 1 | -1, entry: number, stop0: number, target: number | null, bars: readonly Bar[], half: number, fee = 0, lockFrom = stop0): { exitIdx: number; exit: number; reason: 'stop' | 'target' | null; stop: number; best: number; locked: boolean; lock: LockPlan | null } {
+  const lock = lockPlanNet(side, entry, lockFrom, target, half, fee, PROFIT_LOCK);
   let stop = stop0;
   let best = entry;
   let locked = false;
@@ -762,6 +765,55 @@ export function walkTrade(side: 1 | -1, entry: number, stop0: number, target: nu
     }
   }
   return { exitIdx: -1, exit: NaN, reason: null, stop, best, locked, lock };
+}
+
+/**
+ * v27.78 (owner: "redo those 2 trades with a limit of 50 loss and let it grow properly as if it never closed"): a closed
+ * bot trade is struck and replayed from its entry on the 1-minute candles since (`after`) as if it had opened with a
+ * `capUsd` loss cap — stop = its tested stop, pulled in only as far as that cap (never tighter); the profit lock measured
+ * on the tested stop (as the live check does); `closeAt` (the time the bot would have followed the lab's exit) closes it
+ * at that minute's close. Ended → booked at its exit; still running → left open from the last minute on. Pure.
+ */
+export function replayBotTrade(a: PracticeAccount, ref: string, capUsd: number, after: readonly Bar[], closeAt: number | null = null): { ids: string[]; line: string } {
+  const row = a.closed.filter((c) => c.ref === ref && c.reason !== 'partial').sort((x, y) => y.closedAt - x.closedAt)[0];
+  if (!row) return { ids: [], line: `no closed trade ${ref} to replay` };
+  if (a.open.some((p) => p.ref === ref)) return { ids: [], line: `${row.pair} ${ref} is already open` };
+  const inst = instrument(row.pair);
+  const per = Math.abs(pnlUsd({ pair: row.pair, side: 1, units: 1, entry: row.entry }, row.entry + 1, { [row.pair]: row.entry }));
+  const d0 = row.riskUsd0 && row.units > 0 && per > 0 ? row.riskUsd0 / (row.units * per) : 0;
+  if (!inst || !(d0 > 0)) return { ids: [], line: `${row.pair} ${ref}: no tested stop to replay from` };
+  const { ids, usd } = undoClosed(a, (c) => c.id === row.id);
+  a.skipRefs = (a.skipRefs ?? []).filter((r) => r !== ref);
+  const side = row.side;
+  const tested = row.entry - side * d0;
+  const capStop = row.entry - (side * capUsd) / (row.units * per);
+  const stop0 = side * (capStop - tested) > 0 ? capStop : tested;
+  const half = (inst.spreadPips * inst.pip) / 2;
+  const fee = feePxOf(inst, row.entry);
+  const start = Math.floor(row.openedAt / 60_000) * 60_000 + 60_000;
+  let bars = after.filter((b) => b.t >= start);
+  let cut: number | null = null;
+  if (closeAt !== null) {
+    const k = bars.findIndex((b) => b.t >= closeAt);
+    if (k >= 0) { cut = k; bars = bars.slice(0, k + 1); }
+  }
+  const w = walkTrade(side, row.entry, stop0, row.target, bars, half, fee, tested);
+  const { exit: _x, closedAt: _c, pnlUsd: _p, reason: _r, feeUsd: _f, ...pos } = row;
+  void _x; void _c; void _p; void _r; void _f;
+  const p: PracticePosition = { ...pos, stop: w.stop, maxLossUsd: capUsd, lock: w.lock, locked: w.locked, lockBest: w.locked ? w.best : null, stopMovedT: null, closePending: null, checkedT: bars.length ? bars[bars.length - 1]!.t : row.openedAt };
+  a.open.push(p);
+  const was = `${usd >= 0 ? '+' : '−'}$${Math.abs(usd).toFixed(2)}`;
+  const what = `${row.pair} ${side === 1 ? 'long' : 'short'} (${row.strategy ?? 'bot'} ${row.tf ?? ''}) replayed with a $${capUsd} cap — entry ${row.entry}, stop ${stop0.toPrecision(6)} (tested ${tested.toPrecision(6)}); its ${was} close struck`;
+  const endIdx = w.exitIdx >= 0 ? w.exitIdx : cut;
+  if (endIdx === null) return { ids, line: `${what} — still running, stop now ${w.stop.toPrecision(6)}` };
+  const b = bars[endIdx]!;
+  const px = w.exitIdx >= 0 ? w.exit : b.c - side * half;
+  const reason: ClosedPractice['reason'] = w.exitIdx >= 0 ? (w.reason ?? 'stop') : 'signal';
+  const at = b.t + 60_000;
+  const pl = closePos(a, p, px, { [row.pair]: px }, reason, at);
+  a.peakUsd = Math.max(a.peakUsd ?? a.balanceUsd, a.balanceUsd);
+  const how = w.exitIdx < 0 ? 'the lab closed its trade' : w.reason === 'target' ? 'target' : w.locked ? 'profit-lock stop' : 'stop';
+  return { ids, line: `${what} — closed at ${px.toPrecision(6)} (${how}) at ${new Date(at).toISOString().slice(11, 16)} UTC: ${pl >= 0 ? '+' : '−'}$${Math.abs(pl).toFixed(2)}` };
 }
 
 /** v27.69 (owner: "it legit had levels but the bot didn't take em — go in them at the exact time"): book a level trade
@@ -2303,7 +2355,8 @@ export class Practice {
         }
         // v27.45: the excursion study's $ loss cap for this strategy × chart (only once it has enough trades; never all-in)
         const slc = this.slCaps[acct];
-        const capFor = !allInPct && slc?.active && a.maxLossUsd ? slc.byKey[`${t.strategy}:${tf}`] ?? slc.def : undefined;
+        const capSl = !allInPct && slc?.active && a.maxLossUsd ? slc.byKey[`${t.strategy}:${tf}`] ?? slc.def : undefined;
+        const capFor = capSl !== undefined && BOT.capFloorAccts[acct] && a.maxLossUsd && capSl <= a.maxLossUsd ? undefined : capSl;
         const r = await this.openIn(a, { pair: t.pair, side: t.side, marginUsd: margin, leverage: lev, stop: t.stop, target: t.target, strategy: t.strategy, ref: t.ref, riskPct: actual, ...planOf(t), tf, desk: !!t.desk, ...(allInPct ? { allIn: true } : {}), ...(capFor ? { maxLossUsd: capFor } : {}), ...(t.conviction ? { conviction: t.conviction } : {}), ...(snipe ? { sniper: { votes: snipe.votes, of: snipe.of } } : {}), maxQuoteAgeMs: BOT.quoteAgeMsByTf[tf] ?? 10 * 60_000, feedDelayOk: tf === '1h' || tf === '4h' });
         const sure = allInPct ? ` — ALL-IN (${t.strategy} ${tf}, a proven strategy): risking ${actual}% at ${lev}× on its tested stop` : t.desk ? ` — DESK learning trade: ${t.desk.why}` : snipe ? ` — SNIPER: ${snipe.votes} of ${snipe.of} checks agree, risking ${actual}% at ${lev}×` : conv ? ` — ${conv.tier === 'verySure' ? 'very sure' : 'sure'} (${conv.conf} of ${conv.of} checks agree): bigger size at ${lev}×` : '';
         events.push(r.ok ? `opened ${t.side === 1 ? 'long' : 'short'} ${t.pair} (${t.strategy}, ${tf}), risking ${actual}% of the account${sure}${ddF < 1 ? ` (smaller: ${ddPct.toFixed(0)}% under its peak)` : ''}${heatNote}${capFor && capFor !== a.maxLossUsd ? `, loss cap $${capFor} (from how its past trades dipped)` : ''}` : `skipped ${t.pair}: ${r.error}`);
@@ -2733,6 +2786,29 @@ export class Practice {
       const res = bookLevelTrade(a, r, after);
       await this.save(a, acct);
       return res;
+    });
+  }
+
+  /** v27.78: `replayBotTrade` on an account; the struck close leaves the P&L log, the replayed close (if any) is logged by closePos. */
+  async replayBotTrade(acct: AcctId, ref: string, capUsd: number, after: readonly Bar[], closeAt: number | null = null): Promise<string> {
+    return this.serial(async () => {
+      const a = await this.load(acct);
+      const r = replayBotTrade(a, ref, capUsd, after, closeAt);
+      if (r.ids.length && this.pnlLogs()) {
+        const key = pnlKey(acct);
+        const raw = await this.redis.lrange(key, 0, -1);
+        const keep = raw.filter((x) => {
+          const row = parsePnlRow(x);
+          return row !== null && !r.ids.includes(row.id);
+        });
+        const m = this.redis.multi().del(key);
+        if (keep.length) m.rpush(key, ...keep);
+        await m.exec();
+        this.pnlReady.add(acct);
+        this.pnlDirty(acct);
+      }
+      await this.save(a, acct);
+      return r.line;
     });
   }
 

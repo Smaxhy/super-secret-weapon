@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.78 coin bot loss cap $50 + the two LINK trades replayed (Oct 28, owner: "what went wrong in the last 2 trades"; "redo
+those 2 trades with a limit of 50 loss and let it grow properly as if it never closed")
+VPS read 11:05 UTC: both were keltner 1h LINK longs (a proven cell: 288 unseen, +0.16R, PF 1.63) stopped by the $20 cap —
+04:07 entry 11.717, cap stop 11.6775 (0.34%, the tested stop was 11.5838 / 1.4%) → −$20.04 at 04:28 while the lab's same
+trade won +0.42R (trail, 08:00 hour; loss review: AVOIDABLE loss_cap, capDelta −$48); 10:09 entry 11.8435, cap stop 11.789
+→ −$20.00 at 10:35, lab trade still open. At turbo size the $20 cap left ~¼ of the tested stop room = inside one normal
+15-minute LINK candle. `BOT.maxLossUsdByAcct.cbot` 20 → **50**; `BOT.capFloorAccts` {cbot}: the excursion study's per-strategy
+cap ($10–40) may not pull a coin trade tighter than the account's $50. `replayBotTrade(a, ref, capUsd, after, closeAt)`
+(practice.ts, pure) + `Practice.replayBotTrade`: strike the close, re-walk from the entry on 1-minute candles with stop =
+the tested stop pulled in only to the cap, the profit lock measured on the tested stop (`walkTrade` 8th param `lockFrom`),
+`closeAt` = when the bot would have followed the lab's exit; ended → booked, else left open. One-time `v27.78-link-cap50`
+(Coinbase 1-minute candles from 04:00, retried ×10): A with closeAt 09:09 UTC, B open-ended. tests/forex-link-cap50 (4).
 ## v27.77 Kojiro calls are LAB ONLY; the 02:32 NQ short struck (Oct 28, owner: "do as if it never happened and keep all Kojiro
 calls in labs for now — they always work out for him but apparently not for us")
 - discord.ts: `DISCORD_COPY.live` (env `DISCORD_COPY_LIVE=on`, default OFF): his SIGNAL posts are parsed, gated and logged

@@ -73,7 +73,7 @@ import { FastLab } from './forex/fast';
 import { ledgerRows, Practice } from './forex/practice';
 import { loadPythConf, pythConf, pythKey, pythLive, setPythConf, testPythKey } from './forex/pyth';
 import { yahooLive } from './forex/yahoo-live';
-import { coinbaseLive } from './forex/coinbase';
+import { coinbaseLive, fetchCoinbaseFast } from './forex/coinbase';
 import { HL_FUTURES_KEY, hyperliquidLive } from './forex/hyperliquid';
 import { INSTRUMENTS, isFutures } from './forex/types';
 import { LevelWatch, replayMissedLevels } from './forex/level-watch';
@@ -679,6 +679,30 @@ async function main(): Promise<void> {
     forex.logBot([...lines, 'Kojiro: "Leaning towards bearish" (00:08 UTC) saved as his NDXUSD bias — level trades are shorts only now']);
     log.info({ lines }, 'wrong-side Kojiro level trade struck');
   });
+  // v27.78 (owner: "redo those 2 trades with a limit of 50 loss and let it grow properly as if it never closed"): the coin
+  // bot's two LINK keltner 1h longs of Oct 28 that the $20 cap stopped (04:07 → −$20.04, 10:09 → −$20.00) are struck and
+  // replayed minute by minute on Coinbase's candles with a $50 cap (stop = the tested stop, pulled in only to $50) and the
+  // normal profit lock; the first also ends where the bot would have followed the lab's exit (its 09:09 run). Retried
+  // while Coinbase's 1-minute candles don't reach back.
+  {
+    let tries = 0;
+    const replay = async (): Promise<void> => {
+      const ok = await oneTimeUpgrade('v27.78-link-cap50', async () => {
+        const inst = INSTRUMENTS.find((x) => x.id === 'LINKUSD')!;
+        const from = Date.parse('2026-10-28T04:00:00Z');
+        const bars = (await fetchCoinbaseFast(inst, '1m', from)).filter((b) => b.t + 60_000 <= Date.now());
+        if (bars.length < 300 || bars[0]!.t > Date.parse('2026-10-28T04:08:00Z')) throw new Error(`only ${bars.length} 1-minute LINK candles`);
+        const lines = [
+          await practice.replayBotTrade('cbot', 'keltner:1h:LINKUSD:1793160000000', 50, bars, Date.parse('2026-10-28T09:09:00Z')),
+          await practice.replayBotTrade('cbot', 'keltner:1h:LINKUSD:1793181600000', 50, bars),
+        ];
+        cryptoLab.logBot([...lines, 'coin bot loss cap raised to $50 a trade (was $20); the smart per-strategy caps can no longer go under it']);
+        log.info({ lines }, 'LINK trades replayed with a $50 cap');
+      });
+      if (!ok && ++tries < 10) setTimeout(() => void replay(), 60_000).unref?.();
+    };
+    setTimeout(() => void replay(), 20_000).unref?.();
+  }
   // v27.77 (owner: "do as if it never happened and keep all Kojiro calls in labs for now"): the 02:32 UTC NQ short of the
   // "sell high toward his level" rule (entered 21 points above his newest level — v27.76) struck; Kojiro calls are lab only
   await oneTimeUpgrade('v27.77-strike-kojiro-toward-nq', async () => {
