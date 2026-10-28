@@ -202,6 +202,13 @@ export interface CtxExt {
   cot?: Float64Array;
   /** v17: price stretch (positioning stand-in from prices only), same scale (NaN = unknown) */
   crowdPx?: Float64Array;
+  /** v27.89 coins: perpetual-futures readings at each close (derivs.ts; NaN = unknown) — funding % per 8 h and its
+   * z-score, open-interest 24 h change % and its z-score, long ÷ short accounts z-score */
+  fund?: Float64Array;
+  fundZ?: Float64Array;
+  oiChg?: Float64Array;
+  oiZ?: Float64Array;
+  lsZ?: Float64Array;
 }
 
 /** Everything a strategy may read at bar i, computed once per series. */

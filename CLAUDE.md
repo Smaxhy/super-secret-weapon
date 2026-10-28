@@ -758,6 +758,30 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.89 coin derivatives data (Oct 28, owner: "get all the data you can and build it properly")
+`src/forex/derivs.ts` (free public APIs, no account): funding history (Binance `/fapi/v1/fundingRate`, fallback Bybit
+`/v5/market/funding/history`), hourly open interest (Bybit `/v5/market/open-interest` paged back, fallback Binance
+`openInterestHist` — 30 days only), hourly long / short account ratio (Bybit `/v5/market/account-ratio`, fallback Binance
+`globalLongShortAccountRatio` — 30 days). `refreshDerivs` (coin lab `computeRun` on a refreshing run, 90 s budget, pages
+back toward `DERIVS.historyDays` 1100 over a few runs, ≤ 400 pages a series, one source per series — two exchanges' OI don't
+line up) → Redis `fx:deriv:<fund|oi|ls>:<id>` rows [t, value] + `fx:deriv:meta` {src, full, okAt, error}; feed `derivs`.
+Live liquidations: `LiquidationLive` (index.ts) on Binance `!forceOrder@arr` (SELL = a long liquidated; Binance sends at
+most one per symbol a second) + Bybit `allLiquidation.<SYM>` (Buy = a long), summed per coin per hour → `fx:deriv:liq:<id>`
+[hour, long USD, short USD] (120 days), feed `liquidations` — display only (no free history to test on).
+Causal per-bar series (`derivSeriesFor`: newest row stamped ≤ the bar's close; funding > 12 h / hourly rows > 3 h old =
+NaN): `fund` (% per 8 h), `fundZ` (vs the last 90 settlements), `oiChg` (24 h %), `oiZ`, `lsZ` (log ratio vs 30 days) →
+`ctx.ext` + `FilterEnv` via `makeSeries` (`MarketBook.derivs`; the fast lab reads the same book). Lab-graded uses (picked on
+the first 70% like everything): filters **funding** (no long with longs crowded + paying, fundZ ≥ 2 / mirror), **oi** (trend
+rules need OI rising over 24 h, fades need it falling), **ls** (no long with accounts unusually long, lsZ ≥ 2 / mirror) —
+16 filter variants; on markets without the data `allowFor` returns undefined and evaluateTf REUSES the unfiltered trades
+(copied), so the forex lab pays nothing; strategies `funding_squeeze` (fundZ ≤ −2 & funding < 0 + break of the 6-candle
+high → long, 2 ATR stop, 2R, 3 ATR trail, 3 days; mirror) and `oi_flush` (oiZ ≤ −2 after a ≥ 2 ATR day down + a green
+candle closing above the previous high → long, stop under the 12-candle low, 2R, 2 days; mirror) — `ONLY_CRYPTO` in
+`runsOn`, no rows in the forex lab; judge features `fundZ` / `oiChg` / `lsZ` (appended, signed by side, in `JUDGE_SOFT` so a
+dead feed falls to the backup judge). Market card (coins): `MarketNow.derivs` (`derivNow`) → Markets drawer rows
+"Funding", "Open interest", "Long / short accounts", "Liquidated in 24 h", "Futures read". Expect one coin re-pick event
+(3 new filter choices) and a ~20% longer coin lab run. Binance / Bybit block US IPs — Setup → Data feeds says what arrived.
+tests/forex-derivs (7), forex-judge-fallback (soft list).
 ## v27.88 the clash rule is always on (Oct 28, owner: "the bot ignored the strategies and messed it up, never do that again")
 `OPPOSED.always` true (confluence.ts): every bot trade (both desks, hourly lab) waits when another strategy's open lab trade
 entered the OTHER way on the same market within 2 candles ("X fired the other way here — strategies disagree, it skips this

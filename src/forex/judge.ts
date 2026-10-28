@@ -56,6 +56,10 @@ export const JUDGE_FEATURES = [
   'vaPos',
   'cmf',
   'relVol',
+  // v27.89 coins: perpetual-futures readings (appended)
+  'fundZ',
+  'oiChg',
+  'lsZ',
 ] as const;
 export type JudgeFeature = (typeof JUDGE_FEATURES)[number];
 
@@ -98,6 +102,9 @@ export const JUDGE_LABEL: Record<JudgeFeature, string> = {
   vaPos: 'where it sits in the value area, on its side',
   cmf: 'money flow (buy − sell volume), on its side',
   relVol: 'volume vs normal',
+  fundZ: 'funding vs normal, on its side (coins)',
+  oiChg: 'open interest 24 h change (coins)',
+  lsZ: 'long / short accounts vs normal, on its side (coins)',
 };
 
 export const JUDGE_CONFIG = {
@@ -181,6 +188,10 @@ export function judgeFeatures(c: Ctx, env: FilterEnv | null, i: number, side: 1 
   if (vp && vp.vah > vp.val) set('vaPos', (side * (px - (vp.vah + vp.val) / 2)) / ((vp.vah - vp.val) / 2));
   set('cmf', side * fin(fl.cmf[i]));
   set('relVol', fin(fl.relVol[i]));
+  // v27.89 coins: funding and accounts signed so + = the crowd leans its way (NaN on every other market)
+  set('fundZ', side * fin(env?.fundZ?.[i]));
+  set('oiChg', fin(env?.oiChg?.[i]));
+  set('lsZ', side * fin(env?.lsZ?.[i]));
   if (inst && risk > 0) set('costR', (inst.spreadPips * inst.pip * spreadMultAt(c.pair, c.bars[i]!.t, i > 0 ? c.bars[i - 1]!.t : null)) / risk);
   return x;
 }
@@ -221,7 +232,7 @@ export const JUDGE_PRESENCE = 0.9;
  * the Yahoo mood symbols). A signal missing only these is scored by the backup model instead of waiting, so a
  * reporting halt can't stop every trade.
  */
-export const JUDGE_SOFT: JudgeFeature[] = ['mood', 'carry', 'cot'];
+export const JUDGE_SOFT: JudgeFeature[] = ['mood', 'carry', 'cot', 'fundZ', 'oiChg', 'lsZ'];
 const SOFT_IDX = JUDGE_SOFT.map((f) => JUDGE_FEATURES.indexOf(f));
 const isSoft = (f: number) => SOFT_IDX.includes(f);
 const TF_IDX = JUDGE_FEATURES.indexOf('tf');

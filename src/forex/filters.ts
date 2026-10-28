@@ -26,9 +26,9 @@ import { STRETCH } from './stretch';
 import type { Style } from './strategies';
 import type { Timeframe } from './types';
 
-export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'volf' | 'hurst' | 'crowd' | 'stretch' | 'hmm' | 'vix' | 'absorb' | 'all';
-export const FILTERS: FilterKind[] = ['none', 'strength', 'mtf', 'mood', 'regime', 'volf', 'hurst', 'crowd', 'stretch', 'hmm', 'vix', 'absorb', 'all'];
-export const FILTER_LABEL: Record<FilterKind, string> = { none: 'no filter', strength: 'strong vs weak currency', mtf: 'bigger chart agrees', mood: 'market mood', regime: 'right market regime', volf: 'volatility forecast fits', hurst: 'trend / chop measure fits', crowd: 'not on the crowded side', stretch: 'not overstretched (price)', hmm: 'regime model (hidden states) fits', vix: 'VIX not in panic', absorb: 'sellers / buyers absorbed at the entry', all: 'strength + bigger chart + mood' };
+export type FilterKind = 'none' | 'strength' | 'mtf' | 'mood' | 'regime' | 'volf' | 'hurst' | 'crowd' | 'stretch' | 'hmm' | 'vix' | 'absorb' | 'funding' | 'oi' | 'ls' | 'all';
+export const FILTERS: FilterKind[] = ['none', 'strength', 'mtf', 'mood', 'regime', 'volf', 'hurst', 'crowd', 'stretch', 'hmm', 'vix', 'absorb', 'funding', 'oi', 'ls', 'all'];
+export const FILTER_LABEL: Record<FilterKind, string> = { none: 'no filter', strength: 'strong vs weak currency', mtf: 'bigger chart agrees', mood: 'market mood', regime: 'right market regime', volf: 'volatility forecast fits', hurst: 'trend / chop measure fits', crowd: 'not on the crowded side', stretch: 'not overstretched (price)', hmm: 'regime model (hidden states) fits', vix: 'VIX not in panic', absorb: 'sellers / buyers absorbed at the entry', funding: 'not with the crowd paying funding', oi: 'open interest fits the move', ls: 'not with the crowded accounts', all: 'strength + bigger chart + mood' };
 /** v16 thresholds */
 export const VOLF_UP = 1;
 export const VOLF_CALM = 1.05;
@@ -71,7 +71,15 @@ export interface FilterEnv {
   /** v27.36: 1 where sellers (absorbUp) / buyers (absorbDn) were absorbed at that close (flow.ts `absorptionAt`) */
   absorbUp?: Uint8Array;
   absorbDn?: Uint8Array;
+  /** v27.89 coins: funding % per 8 h + its z-score, open-interest 24 h change %, long / short accounts z (derivs.ts) */
+  fund?: Float64Array;
+  fundZ?: Float64Array;
+  oiChg?: Float64Array;
+  lsZ?: Float64Array;
 }
+
+/** v27.89 coin derivatives thresholds */
+export const DERIV_F = { fundZ: 2, lsZ: 2 };
 
 const passStrength = (e: FilterEnv, i: number, side: 1 | -1) => {
   const g = e.gap[i]!;
@@ -129,6 +137,26 @@ export const passAbsorb = (e: FilterEnv, i: number, side: 1 | -1) => {
   return !a || a[i] === 1;
 };
 
+/** v27.89: no long while longs are crowded and paying unusually high funding (z ≥ 2), no short in the mirror case */
+export const passFunding = (e: FilterEnv, i: number, side: 1 | -1) => {
+  const z = e.fundZ?.[i];
+  const f = e.fund?.[i];
+  if (!fin(z) || !fin(f)) return true;
+  return !(side * z >= DERIV_F.fundZ && side * f > 0);
+};
+/** v27.89: trend / breakout trades need open interest rising over 24 h (new money behind the move), fades need it
+ * falling (positions unwinding); pullback and neutral rules pass */
+export const passOi = (e: FilterEnv, i: number, style: Style) => {
+  const c = e.oiChg?.[i];
+  if (!fin(c) || style === 'neutral' || style === 'pullback') return true;
+  return style === 'trend' ? c > 0 : c <= 0;
+};
+/** v27.89: no long while accounts are unusually long (z ≥ 2 over 30 days), no short when unusually short */
+export const passLs = (e: FilterEnv, i: number, side: 1 | -1) => {
+  const z = e.lsZ?.[i];
+  return !fin(z) || side * z < DERIV_F.lsZ;
+};
+
 /** Why a filter would block this entry (null = allowed). Pure. */
 export function blockReason(kind: FilterKind, e: FilterEnv, i: number, side: 1 | -1, style: Style = 'neutral'): string | null {
   if (kind === 'none') return null;
@@ -140,6 +168,9 @@ export function blockReason(kind: FilterKind, e: FilterEnv, i: number, side: 1 |
   if (kind === 'hmm') return hmmBlockReason(e.hmmHi?.[i], e.hmmLo?.[i], style);
   if (kind === 'vix') return passVix(e, i) ? null : 'the VIX is in its most fearful 10% of the past year (panic market)';
   if (kind === 'absorb') return passAbsorb(e, i, side) ? null : `no ${side === 1 ? 'sellers' : 'buyers'} absorbed at this candle yet`;
+  if (kind === 'funding') return passFunding(e, i, side) ? null : `${side === 1 ? 'longs' : 'shorts'} are crowded and paying unusually high funding`;
+  if (kind === 'oi') return passOi(e, i, style) ? null : style === 'trend' ? 'open interest is falling: no new money behind the move' : 'open interest is rising: positions are still building';
+  if (kind === 'ls') return passLs(e, i, side) ? null : `accounts are unusually ${side === 1 ? 'long' : 'short'} already`;
   if ((kind === 'strength' || kind === 'all') && !passStrength(e, i, side)) return 'the currency it buys is not the stronger one';
   if ((kind === 'mtf' || kind === 'all') && !passMtf(e, i, side)) return 'the bigger chart does not agree';
   if ((kind === 'mood' || kind === 'all') && !passMood(e, i, side)) return 'the market mood is against it';
@@ -158,12 +189,15 @@ const FILTER_INPUTS: Partial<Record<FilterKind, Array<[keyof FilterEnv, string]>
   stretch: [['crowdPx', 'price stretch']],
   hmm: [['hmmHi', 'regime model']],
   vix: [['vixRank', 'VIX fear index']],
+  funding: [['fundZ', 'funding rate']],
+  oi: [['oiChg', 'open interest']],
+  ls: [['lsZ', 'long / short accounts']],
 };
 
 /** Share of the first `upTo` bars where each filter input is known (pure). */
 export function filterCoverage(e: FilterEnv, upTo: number): Partial<Record<keyof FilterEnv, number>> {
   const out: Partial<Record<keyof FilterEnv, number>> = {};
-  for (const k of ['gap', 'mood', 'er', 'volF', 'hurst', 'cot', 'crowdPx', 'hmmHi', 'vixRank'] as const) {
+  for (const k of ['gap', 'mood', 'er', 'volF', 'hurst', 'cot', 'crowdPx', 'hmmHi', 'vixRank', 'fundZ', 'oiChg', 'lsZ'] as const) {
     const a = e[k] as Float64Array | undefined;
     if (!a) continue;
     const n = Math.min(upTo, a.length);
@@ -205,6 +239,10 @@ export function allowFor(kind: FilterKind, e: FilterEnv | null, style: Style = '
   if (kind === 'regime' && (style === 'neutral' || style === 'pullback')) return undefined;
   if (kind === 'hurst' && (style === 'neutral' || style === 'pullback')) return undefined;
   if (kind === 'volf' && style === 'pullback') return undefined;
+  // v27.89: a coin-derivatives filter on a market without that data (forex, metals, indices) can't block anything
+  if (kind === 'funding' && !e.fundZ) return undefined;
+  if (kind === 'oi' && (!e.oiChg || style === 'neutral' || style === 'pullback')) return undefined;
+  if (kind === 'ls' && !e.lsZ) return undefined;
   return (i, side) => blockReason(kind, e, i, side, style) === null;
 }
 

@@ -51,7 +51,7 @@ const live = (strength: number, cot = 0.5) => {
 
 describe('v17 judge backup model (soft outside feeds)', () => {
   it('soft features are the slow outside feeds', () => {
-    expect([...JUDGE_SOFT].sort()).toEqual(['carry', 'cot', 'mood']);
+    expect([...JUDGE_SOFT].sort()).toEqual(['carry', 'cot', 'fundZ', 'lsZ', 'mood', 'oiChg']); // v27.89: + the coin futures feeds
   });
 
   it('a signal missing only a soft feed is scored by the backup and held to the backup’s own bar', () => {

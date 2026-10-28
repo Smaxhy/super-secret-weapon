@@ -74,6 +74,7 @@ import { ledgerRows, Practice } from './forex/practice';
 import { loadPythConf, pythConf, pythKey, pythLive, setPythConf, testPythKey } from './forex/pyth';
 import { yahooLive } from './forex/yahoo-live';
 import { coinbaseLive, fetchCoinbaseFast } from './forex/coinbase';
+import { LiquidationLive } from './forex/derivs';
 import { HL_FUTURES_KEY, hyperliquidLive } from './forex/hyperliquid';
 import { INSTRUMENTS, isFutures } from './forex/types';
 import { LevelWatch, replayMissedLevels } from './forex/level-watch';
@@ -416,6 +417,9 @@ async function main(): Promise<void> {
   // no account); Pyth only with an API key (Hermes refuses keyless requests since August 2026)
   yahooLive.start();
   coinbaseLive.start();
+  // v27.89: live coin liquidations (Binance + Bybit), summed per coin per hour into Redis for the coin market cards
+  const liquidations = new LiquidationLive(redis, INSTRUMENTS);
+  void liquidations.start().catch((err: Error) => log.warn({ err: err.message }, 'liquidation stream failed to start'));
   hyperliquidLive.onDiscover = (found) => void redis.set(HL_FUTURES_KEY, JSON.stringify(found)).catch(() => undefined); // v27.52: for the labs' live candles
   // v27.75 (owner: "the live price updating is being delayed"): say once per change which futures markets have a live
   // Hyperliquid price and which still run on Yahoo's ~10-minute-late CME price
@@ -1389,6 +1393,7 @@ async function main(): Promise<void> {
       pythLive.stop();
       yahooLive.stop();
       coinbaseLive.stop();
+      await liquidations.stop().catch(() => undefined);
       hyperliquidLive.stop();
       stopLivePush();
       stopFutPush();

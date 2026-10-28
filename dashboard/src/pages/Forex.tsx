@@ -35,7 +35,9 @@ interface ExitVariantRow extends Omit<VariantRow, 'filter'> { exit: ExitKind }
 interface EntryVariantRow { entry: EntryKind; inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number; outTotalR: number }
 interface RowT { id: string; name: string; family: string; desc: string; tf: string; filter?: FilterKind; variants?: VariantRow[]; exit?: ExitKind; exitVariants?: ExitVariantRow[]; entryVariants?: EntryVariantRow[]; entry?: EntryKind; fin?: { inAvgR: number; outAvgR: number; known: boolean }; all: RStats; inSample: RStats; outSample: RStats; tradesPerWeek: number; risk: Risk[]; pairs: Array<{ pair: string } & RStats>; verdict: 'edge' | 'maybe' | 'no'; why: string; luck?: { pctl: number; twinsP90: number; twinPassPct: number }; stats?: RowStat; mc?: McResult | null; markets?: MarketCell[]; sess?: Array<[number, number]>; dead?: boolean; skip?: { sessions: number[]; pairs: string[]; cut: [number, number] } }
 interface Trade { strategy: string; tf: string; pair: string; side: 1 | -1; entryT: number; exitT: number; entry: number; exit: number; r: number; reason: string; stop: number; stop0: number; target: number | null }
-interface MarketNow { id: string; label: string; price: number; t: number; change24hPct: number; closes: number[]; trend: 'up' | 'down' | 'flat'; rsi: number; atrPips: number; firing: Array<{ id: string; name: string; tf: string; side: 1 | -1; allowed?: boolean; why?: string | null }>; openPaper: number; bars: number[][]; drawings: ChartDrawings; mtf?: { h1: number; h4: number; d1: number }; strength?: { base: string; quote: string; baseScore: number | null; quoteScore: number | null; gap: number | null }; risk?: number; heat?: Heatmap }
+interface MarketNow { id: string; label: string; price: number; t: number; change24hPct: number; closes: number[]; trend: 'up' | 'down' | 'flat'; rsi: number; atrPips: number; firing: Array<{ id: string; name: string; tf: string; side: 1 | -1; allowed?: boolean; why?: string | null }>; openPaper: number; bars: number[][]; drawings: ChartDrawings; mtf?: { h1: number; h4: number; d1: number }; strength?: { base: string; quote: string; baseScore: number | null; quoteScore: number | null; gap: number | null }; risk?: number; heat?: Heatmap; derivs?: DerivNow | null }
+/** v27.89 coins: perpetual-futures readings now */
+interface DerivNow { fund: number | null; fundAnnPct: number | null; fundZ: number | null; oiChg24: number | null; oiZ: number | null; ls: number | null; lsZ: number | null; liq1h: { long: number; short: number } | null; liq24h: { long: number; short: number } | null; note: string }
 interface HeatLevel { price: number; kind: 'round' | 'half' | 'swing' | 'yesterday' | 'expiry'; label: string; weight: number; distAtr: number }
 interface Heatmap { levels: HeatLevel[]; read: { positioning: number | null; stretch?: number | null; carry: number | null; volF: number | null; hurst: number | null; long: number; short: number; of: number; why: string[] } }
 interface ExtFeeds { dukascopy: { at: number; ids: Record<string, { bars: number; firstT: number | null; lastT: number | null; error: string | null }> } | null; spreadProfiles: string[]; macro: { cot: Array<{ ccy: string; score: number; net: number; asOf: number }>; rates: Array<{ ccy: string; rate: number }>; errors: string[]; at: number | null }; historyFrom: number }
@@ -262,6 +264,7 @@ function MarketDetail({ m, r }: { m: MarketNow; r: Report }) {
             {m.drawings.profile && <Row label={`Volume profile (${m.drawings.profile.byVolume ? 'traded volume' : 'time at price — no volume on this market'})`} sub={`value area ${m.drawings.profile.val.toFixed(DIGITS(m.id))} – ${m.drawings.profile.vah.toFixed(DIGITS(m.id))}${m.drawings.read?.inValue === true ? ' · price inside it (balanced)' : m.drawings.read?.inValue === false ? ' · price outside it (one side in control)' : ''}`} value={`POC ${m.drawings.profile.poc.toFixed(DIGITS(m.id))}`} />}
             {m.drawings.read?.lrZ != null && <Row label="Regression channel (50 candles)" sub={`${(m.drawings.read.r2 ?? 0) >= 0.6 ? 'clean trend' : (m.drawings.read.r2 ?? 0) < 0.3 ? 'no trend (flat / choppy)' : 'loose trend'} · R² ${m.drawings.read.r2}`} value={`${m.drawings.read.lrZ > 0 ? '+' : ''}${m.drawings.read.lrZ} SD from the line`} />}
             {m.drawings.read?.cmf != null && <Row label="Order flow (from candles)" sub={`volume ${m.drawings.read.relVol ?? '–'}× normal`} value={<span className={m.drawings.read.cmf > 0.05 ? 'text-up' : m.drawings.read.cmf < -0.05 ? 'text-down' : ''}>{m.drawings.read.cmf > 0.05 ? 'buyers' : m.drawings.read.cmf < -0.05 ? 'sellers' : 'balanced'} {m.drawings.read.cmf > 0 ? '+' : ''}{m.drawings.read.cmf}</span>} />}
+            {m.derivs && <DerivRows d={m.derivs} />}
             {m.mtf && <Row label="Trend on the bigger charts" sub="1-hour · 4-hour · daily (close and 20 EMA vs the 50 EMA)" value={<TrendArrows mtf={m.mtf} />} />}
             {m.strength && m.strength.quoteScore !== null && <Row label="Currency strength" sub="buy the stronger currency, sell the weaker" value={<span className="text-xs"><StrengthLine m={m} /></span>} />}
             {m.risk !== undefined && r.mood && <Row label="Market mood fit" sub={`buying ${m.label} is ${m.risk > 0.4 ? 'a risk-on trade' : m.risk < -0.4 ? 'a safe-haven trade' : 'mood-neutral'}`} value={<span className={r.mood.label === 'risk-off' ? 'text-down' : r.mood.label === 'risk-on' ? 'text-up' : 'text-muted'}>{r.mood.label}</span>} />}
@@ -705,5 +708,20 @@ function Setup({ r, fast }: { r: Report; fast: FastReport | null }) {
         </ol>
       </Card>
     </Stack>
+  );
+}
+
+const usdK = (x: number) => (x >= 1e6 ? `$${(x / 1e6).toFixed(1)}M` : `$${Math.round(x / 1000)}k`);
+const zTone = (z: number | null) => (z === null ? 'text-muted' : z >= 2 ? 'text-down' : z <= -2 ? 'text-up' : '');
+/** v27.89: what the coin's perpetual futures say (funding, open interest, accounts, liquidations) */
+function DerivRows({ d }: { d: DerivNow }) {
+  return (
+    <>
+      {d.fund !== null && <Row label="Funding (perpetual futures)" sub={`${d.fundAnnPct !== null ? `${d.fundAnnPct > 0 ? '+' : ''}${d.fundAnnPct}% a year · ` : ''}${d.fund > 0 ? 'longs pay shorts' : d.fund < 0 ? 'shorts pay longs' : 'flat'}${d.fundZ !== null ? ` · ${d.fundZ > 0 ? '+' : ''}${d.fundZ} vs normal` : ''}`} value={<span className={zTone(d.fundZ)}>{d.fund > 0 ? '+' : ''}{d.fund.toFixed(4)}% / 8h</span>} />}
+      {d.oiChg24 !== null && <Row label="Open interest, last 24 h" sub={d.oiZ !== null ? `${d.oiZ > 0 ? '+' : ''}${d.oiZ} vs normal · ${d.oiChg24 > 0 ? 'positions building' : 'positions closing'}` : 'positions open on the futures'} value={<span className={d.oiChg24 > 0 ? 'text-up' : 'text-down'}>{d.oiChg24 > 0 ? '+' : ''}{d.oiChg24}%</span>} />}
+      {d.ls !== null && <Row label="Long / short accounts" sub={d.lsZ !== null ? `${d.lsZ > 0 ? '+' : ''}${d.lsZ} vs normal` : 'share of accounts long ÷ short'} value={<span className={zTone(d.lsZ)}>{d.ls.toFixed(2)}</span>} />}
+      {d.liq24h && <Row label="Liquidated in 24 h (Binance + Bybit)" sub={d.liq1h ? `last hour: longs ${usdK(d.liq1h.long)}, shorts ${usdK(d.liq1h.short)}` : undefined} value={<span className="text-xs">longs {usdK(d.liq24h.long)} · shorts {usdK(d.liq24h.short)}</span>} />}
+      <Row label="Futures read" value={<span className="text-xs text-ink-2">{d.note}</span>} />
+    </>
   );
 }

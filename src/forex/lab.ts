@@ -31,6 +31,7 @@ import { gradeShadows, recordShadows, type ShadowTrade } from './shadow';
 import { DK_META, refreshDkTail, installSpreadProfiles, loadDk, refreshDukascopy, stitchHistory, type DkMeta } from './dukascopy';
 import { hasSpreadProfile } from './spreads';
 import { carryAt, carrySeries, cotSeries, loadMacro, macroNow, refreshMacro, type MacroData } from './macro';
+import { derivNow, derivSeriesFor, loadDerivs, refreshDerivs, type DerivBook, type DerivNow } from './derivs';
 import { FINANCING } from './financing';
 import { RISK_MODES, newSyncReport, type HeatLive, type LabOpenTrade, type Practice, type SyncReport } from './practice';
 import { clockFor, marketClock, type ForexCalendar } from './calendar';
@@ -38,7 +39,7 @@ import { hlCandles, loadHlFutures } from './hyperliquid';
 import { extendWithLive } from './basis';
 import type { ForexHeadlines } from './headlines';
 import { DEFAULT_SIM, equityCurve, rStats, signalsFor, simulate, type RiskResult, type RStats } from './engine';
-import { NOT_FOR_CRYPTO, STRATEGIES, tradesNews, runsOn, strategyById, styleOf, type Family, type Strategy, type Style } from './strategies';
+import { NOT_FOR_CRYPTO, ONLY_CRYPTO, STRATEGIES, tradesNews, runsOn, strategyById, styleOf, type Family, type Strategy, type Style } from './strategies';
 import { buildCtx, to4h, type Ctx } from './ta';
 import { absorptionAt } from './flow';
 import { drawingsFor, type Drawings } from './drawings';
@@ -415,6 +416,8 @@ export interface MarketNow {
   strength: { base: string; quote: string; baseScore: number | null; quoteScore: number | null; gap: number | null };
   /** v13: how risk-on buying this market is (+ risk-on, − safe haven) */
   risk: number;
+  /** v27.89 coins: funding, open interest, long / short accounts, liquidations now */
+  derivs?: DerivNow | null;
 }
 
 export interface FilterSummary {
@@ -1093,6 +1096,8 @@ export interface MarketBook {
   macro?: MacroData | null;
   /** v17: price stretch per currency (no outside feed) */
   stretch?: StretchBook | null;
+  /** v27.89 coins: funding / open interest / long-short / liquidations per coin (derivs.ts) */
+  derivs?: DerivBook | null;
 }
 
 /** A bigger chart's finished bars and its trend. */
@@ -1125,6 +1130,12 @@ export function makeSeries(inst: Instrument, tf: Timeframe, bars: Bar[], book: M
   env.carry = ctx.ext.carry;
   env.cot = ctx.ext.cot;
   env.crowdPx = ctx.ext.crowdPx;
+  // v27.89 coins: perpetual-futures readings (funding, open interest, long / short accounts)
+  const dv = inst.kind === 'crypto' ? derivSeriesFor(book.derivs?.[inst.id], bars, barMin) : null;
+  if (dv) {
+    Object.assign(ctx.ext, { fund: dv.fund, fundZ: dv.fundZ, oiChg: dv.oiChg, oiZ: dv.oiZ, lsZ: dv.lsZ });
+    Object.assign(env, { fund: dv.fund, fundZ: dv.fundZ, oiChg: dv.oiChg, lsZ: dv.lsZ });
+  }
   if (ctx.quant) {
     env.volF = ctx.quant.volF;
     env.hurst = ctx.quant.hurst;
@@ -1241,6 +1252,8 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
   }
   for (const s of STRATEGIES) {
     if (!runsOn(s, tf) || o.skip?.has(s.id)) continue;
+    // v27.89: a rule that runs on none of these markets (coin-only rules in the forex lab) gets no row
+    if (ONLY_CRYPTO.has(s.id) && !seriesTf.some((se) => runsOn(s, tf, se.inst.id))) continue;
     const style = styleOf(s);
     const key = `${s.id}:${tf}`;
     const prev = o.prev[key];
@@ -1252,7 +1265,18 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
       const sigs = signalsFor(se.ctx, s);
       sigsBy.set(se, sigs);
       for (const f of FILTERS) {
-        const ts = simulate(se.inst, tf, se.ctx, s.id, sigs, allowFor(f, se.env, style));
+        // v27.89: a filter that can't block anything on this series (e.g. coin funding on a currency pair) = the
+        // unfiltered trades (copied, so no two variants share a trade object)
+        const allow = allowFor(f, se.env, style);
+        const same = f !== 'none' && !allow ? designedBy.get(`${se.inst.id}:none`) : undefined;
+        const ts = same ? same.map((t) => ({ ...t })) : simulate(se.inst, tf, se.ctx, s.id, sigs, allow);
+        if (same) {
+          designedBy.set(`${se.inst.id}:${f}`, ts);
+          const b = byFilter.get(f)!;
+          b.trades.push(...ts);
+          b.perPair.push({ pair: se.inst.id, ...rStats(ts) });
+          continue;
+        }
         designedBy.set(`${se.inst.id}:${f}`, ts);
         const b = byFilter.get(f)!;
         b.trades.push(...ts);
@@ -1924,6 +1948,17 @@ export class ForexLab {
   private learnLoaded: Promise<unknown> = Promise.resolve();
   learnSig = '';
 
+  /** v27.89: refresh (on a refreshing run; the deep history fills over a few runs) and load the coin derivatives data */
+  private async coinDerivs(refresh: boolean): Promise<DerivBook | null> {
+    try {
+      if (refresh) await refreshDerivs(this.redis, this.insts);
+      return await loadDerivs(this.redis, this.insts.map((i) => i.id));
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'coin derivatives failed (the lab runs without them this hour)');
+      return null;
+    }
+  }
+
   /** v17.2: everything of an hourly run except the bot sync (runs inline, or in a child process — `lab-worker.ts`). */
   async computeRun(refresh: boolean): Promise<RunOutput | null> {
     const t0 = Date.now();
@@ -2003,6 +2038,8 @@ export class ForexLab {
       spxMtd: moodInput.SPX ? mtdSeries(moodInput.SPX) : null,
       h1: h1ById,
       macro: await loadMacro(this.redis),
+      // v27.89: the coin lab refreshes + reads the coins' perpetual-futures data (funding, open interest, accounts)
+      derivs: this.universe === 'crypto' ? await this.coinDerivs(refresh) : null,
       // v17: price stretch (how far each currency has run vs its own last 2 years) — the no-feed positioning stand-in
       stretch: buildStretch(strengthInput),
     };
@@ -2449,6 +2486,7 @@ export class ForexLab {
         drawings: dr,
         heat: heatmapFor(c, se.env, dr, this.headlines?.expiries() ?? []),
         mtf: trendNow.get(inst.id) ?? { h1: 0, h4: 0, d1: 0 },
+        ...(inst.kind === 'crypto' ? { derivs: derivNow(book.derivs?.[inst.id], derivSeriesFor(book.derivs?.[inst.id], c.bars, c.barMin), Date.now()) } : {}),
         strength: { base: inst.id.slice(0, 3), quote: inst.id.slice(3, 6), baseScore: fin(baseScore), quoteScore: fin(quoteScore), gap: fin(gap) },
         risk: Math.round(riskOfLong(inst.id) * 10) / 10,
       });

@@ -1715,6 +1715,61 @@ export const STRATEGIES: Strategy[] = [
       return null;
     },
   },
+  // ── v27.89 coin derivatives (owner: "get all the data you can and build it properly"): perpetual-futures readings from
+  //    Binance / Bybit (derivs.ts). Coins only; graded like every other rule, nothing trades until it passes. ──
+  {
+    id: 'funding_squeeze',
+    name: 'Funding squeeze',
+    family: 'flow',
+    style: 'neutral',
+    slow: true,
+    desc: 'Perpetual futures: when shorts are crowded and paying unusually high funding (funding z-score ≤ −2 over ~30 days, rate below zero) and the price breaks above the last 6 candles\' high, the short squeeze tends to run (mirror for crowded longs); 2 ATR stop, 2R target, trails 3 ATR, out after 3 days.',
+    signal(c, i) {
+      const z = c.ext?.fundZ?.[i];
+      const f = c.ext?.fund?.[i];
+      if (z === undefined || f === undefined || !Number.isFinite(z) || !Number.isFinite(f) || i < 8) return null;
+      let hi = -Infinity;
+      let lo = Infinity;
+      for (let k = i - 6; k < i; k++) {
+        hi = Math.max(hi, c.bars[k]!.h);
+        lo = Math.min(lo, c.bars[k]!.l);
+      }
+      const px = c.close[i]!;
+      const prev = c.close[i - 1]!;
+      const maxBars = Math.round((3 * 1440) / c.barMin);
+      if (z <= -2 && f < 0 && px > hi && prev <= hi) return atrSig(c, i, 1, 2, 2, { trailAtr: 3, maxBars });
+      if (z >= 2 && f > 0 && px < lo && prev >= lo) return atrSig(c, i, -1, 2, 2, { trailAtr: 3, maxBars });
+      return null;
+    },
+  },
+  {
+    id: 'oi_flush',
+    name: 'Open-interest flush reversal',
+    family: 'flow',
+    style: 'revert',
+    slow: true,
+    desc: 'Perpetual futures: when open interest drops unusually fast (24 h change z-score ≤ −2: positions force-closed) while the price fell 2+ ATR in a day, the first candle that closes back above the one before marks the end of the flush → buy, stop under the 12-candle low, 2R (mirror after a short squeeze); out after 2 days.',
+    signal(c, i) {
+      const z = c.ext?.oiZ?.[i];
+      const n = Math.max(2, Math.round(1440 / c.barMin));
+      if (z === undefined || !Number.isFinite(z) || z > -2 || i < Math.max(n, 13)) return null;
+      const a = c.atr14[i]!;
+      if (!ok(a) || !(a > 0)) return null;
+      const move = c.close[i - 1]! - c.close[i - 1 - n]!;
+      const b = c.bars[i]!;
+      const p = c.bars[i - 1]!;
+      const maxBars = Math.round((2 * 1440) / c.barMin);
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let k = i - 12; k <= i; k++) {
+        lo = Math.min(lo, c.bars[k]!.l);
+        hi = Math.max(hi, c.bars[k]!.h);
+      }
+      if (move <= -2 * a && b.c > b.o && b.c > p.h) return levelSig(c, i, 1, lo - 0.2 * a, 2, { maxBars });
+      if (move >= 2 * a && b.c < b.o && b.c < p.l) return levelSig(c, i, -1, hi + 0.2 * a, 2, { maxBars });
+      return null;
+    },
+  },
   // ── v23 ICT / smart-money concepts (owner: "ICT quarterly theory, order flow, a Judas swing at the New York open") ──
   // All read the clock in New York time (`c.nyMin` = minutes since NY midnight at the bar's open). Graded like every
   // other rule: picked on the first 70%, judged on the unseen 30%; nothing trades until it clears the quality bar.
@@ -1981,8 +2036,11 @@ export const NOT_FOR_CRYPTO = new Set(['london_breakout', 'ny_open', 'orb_ny', '
  * month-end re-hedging, local currency hours) or one named cross never run on a stock index. Session / ICT rules do:
  * the New York open is the index market's own open. */
 export const NOT_FOR_INDEX = new Set(['local_hours', 'fix_flow', 'month_end_flow', 'carry_trend', 'cot_squeeze', 'stretch_squeeze', 'ccy_momentum', 'stat_arb', 'oil_cad', 'yield_jpy', 'stocks_jpy', 'dollar_gold', 'asian_fade']);
+/** v27.89: rules that read coin perpetual-futures data — coins only */
+export const ONLY_CRYPTO = new Set(['funding_squeeze', 'oi_flush']);
 export function runsOn(s: Pick<Strategy, 'onlyHourly' | 'slow' | 'id' | 'charts'>, tf: string, pair?: string): boolean {
   if (pair && isCrypto(pair) && NOT_FOR_CRYPTO.has(s.id)) return false;
+  if (pair && !isCrypto(pair) && ONLY_CRYPTO.has(s.id)) return false;
   if (pair && isIndex(pair) && NOT_FOR_INDEX.has(s.id)) return false;
   if (s.charts) return s.charts.includes(tf);
   if (s.onlyHourly) return tf === '1h';
