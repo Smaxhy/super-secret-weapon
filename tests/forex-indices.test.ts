@@ -37,7 +37,7 @@ describe('v27 stock indices', () => {
   });
 
   it('pays the index venue fee and is a risk-on asset', () => {
-    expect(feePctPerSide(NDX)).toBe(0.03);
+    expect(feePctPerSide(NDX)).toBe(0.009);
     expect(riskOfLong('NDXUSD')).toBeGreaterThan(1);
   });
 

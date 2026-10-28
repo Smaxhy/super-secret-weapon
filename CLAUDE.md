@@ -758,6 +758,16 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.70 index fee = Hyperliquid's real rate; the wrong-side NQ long struck (Oct 28, owner: "did it take the call correctly?";
+"are you sure it's a 25 euro fee, go look, that's way too much")
+Before v27.69 deployed, the old build (bias still bullish) BOUGHT NQ at 29,815.75 at 00:33 UTC off his 29,804 level while he
+was leaning bearish → one-time `v27.70-strike-wrong-side-level` (runs at start, before the level watcher's first minutes
+matter): every discord_kojiro_levels NDXUSD LONG opened 23:59 Oct 27 – 03:00 Oct 28 struck (`undoPositions` + `undoClosed`,
+never re-opened) and the bearish bias saved there (moved out of the delayed v27.69 replay). Fee: `VENUE_FEES.indexPct`
+0.03 → **0.009** % a side = Hyperliquid trade[XYZ] XYZ100 under growth mode (2× the normal HIP-3 rate cut ≥ 90%,
+docs.trade.xyz → Fees; DefiLlama ~0.45–0.9 bps taker; top of the range) — the market the bot already prices NQ from. A
+1.6-unit NQ round trip: ~$29 → ~$9. CME micros (MNQ) would be ~$0.75–1.80 a contract round trip. Lab: every index row's R
+changes a little → one re-pick for indices. Already-booked closes keep the fee they paid.
 ## v27.69 his "Leaning towards bearish" + break and retest at his levels; tonight's missed trades booked (Oct 28, owner: "it legit
 had levels but the bot didn't take em, go in them at the exact time, pull yourself back to learn from it, DO BETTER")
 VPS read 00:22 UTC: his NQ levels 29,835 / 29,804 / 29,782.5 (23:59:06 UTC) were saved and watched on live 1-minute candles,

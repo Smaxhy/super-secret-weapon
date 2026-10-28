@@ -15,8 +15,11 @@ export const VENUE_FEES = {
   majorPct: 0.012,
   minorPct: 0.016,
   metalPct: 0.05,
-  /** v27: US indices — NOT confirmed from gTrade's docs (search found no index rate); between FX majors and gold */
-  indexPct: 0.03,
+  /** US indices. v27.70 (owner: "$25 is way too much, go look"): the market the bot prices the Nasdaq from — Hyperliquid's
+   * trade[XYZ] XYZ100 — charges 2× the normal Hyperliquid rate cut ≥ 90% under its growth mode (docs.trade.xyz → Fees;
+   * DefiLlama ~0.45–0.9 bps taker) → 0.009% a side, the top of that range. Was 0.03% (an unconfirmed gTrade guess: ~$29
+   * a round trip on a 1.6-unit NQ trade; now ~$9). CME micros (MNQ) would be ~$0.75–1.80 a contract round trip. */
+  indexPct: 0.009,
   cryptoPct: 0,
 };
 
