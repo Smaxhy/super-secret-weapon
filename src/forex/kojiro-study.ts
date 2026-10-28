@@ -282,15 +282,20 @@ export async function saveHistory(redis: Redis, items: readonly HistPost[]): Pro
 export async function loadHistory(redis: Redis): Promise<HistPost[]> {
   const raw = (await redis.hgetall(KSTUDY.histKey).catch(() => ({}))) as Record<string, string>;
   const out: HistPost[] = [];
+  const bad: string[] = [];
   for (const [id, v] of Object.entries(raw)) {
     try {
       const x = JSON.parse(v) as { at: number; text: string };
       out.push({ id, at: x.at, text: x.text });
     } catch {
-      /* skip */
+      bad.push(id);
     }
   }
-  return out.sort((a, b) => b.at - a.at).slice(0, KSTUDY.maxPosts);
+  out.sort((a, b) => b.at - a.at);
+  // v27.90 (code review): the hash never shrank — posts past the newest `maxPosts` (and unreadable ones) are deleted
+  const drop = [...bad, ...out.slice(KSTUDY.maxPosts).map((x) => x.id)];
+  if (drop.length) await redis.hdel(KSTUDY.histKey, ...drop).catch(() => undefined);
+  return out.slice(0, KSTUDY.maxPosts);
 }
 
 export async function loadCard(redis: Redis): Promise<KCard | null> {
@@ -302,8 +307,14 @@ export async function loadCard(redis: Redis): Promise<KCard | null> {
   }
 }
 
+/** v27.90 (code review): one study at a time (the hourly timer and an upload used to run two at once) */
+let studyRun: Promise<KCard> | null = null;
 /** Rebuild the card from everything stored (his history + live calls) on the bot's candles → Redis. */
-export async function runKojiroStudy(redis: Redis, now = Date.now()): Promise<KCard> {
+export function runKojiroStudy(redis: Redis, now = Date.now()): Promise<KCard> {
+  if (!studyRun) studyRun = studyOnce(redis, now).finally(() => (studyRun = null));
+  return studyRun;
+}
+async function studyOnce(redis: Redis, now: number): Promise<KCard> {
   const posts = await loadHistory(redis);
   const pairs = [...new Set(callsFrom(posts).map((c) => c.pair))];
   const bars: Record<string, { bars: readonly Bar[]; barMs: number }[]> = {};

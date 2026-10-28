@@ -3,7 +3,9 @@
  * WHOLE position (margin × leverage), once to open and once to close. gTrade (Gains Network) per-side rates as quoted from
  * docs.gains.trade "Fees & Spread" (via search, Oct 20 2026 — the docs host was unreachable from the sandbox; re-check the
  * live page before going live): forex majors 0.012%, minors / crosses 0.016%, gold 0.05% (silver taken at gold's rate).
- * Coins pay 0 here: their `spreadPips` (types.ts) was already set to a perp taker cost, so charging again would double it.
+ * Coins: v27.90 (code review: a fixed spread in price units was a 0.03% round trip on BTC at $80k but 0.1% in 2023 — it
+ * flattered the recent, unseen part) — the taker fee is now a % of the position like every venue (Hyperliquid / Binance
+ * perps ≈ 0.045–0.05% a side) and `spreadPips` (types.ts) is only the spread.
  * Not modelled: gTrade's borrowing / funding fees (the engine's overnight financing stands in) and price impact on open.
  */
 import type { Instrument } from './types';
@@ -20,7 +22,7 @@ export const VENUE_FEES = {
    * DefiLlama ~0.45–0.9 bps taker) → 0.009% a side, the top of that range. Was 0.03% (an unconfirmed gTrade guess: ~$29
    * a round trip on a 1.6-unit NQ trade; now ~$9). CME micros (MNQ) would be ~$0.75–1.80 a contract round trip. */
   indexPct: 0.009,
-  cryptoPct: 0,
+  cryptoPct: 0.045,
 };
 
 /** the seven USD majors; every other currency pair is a minor / cross on gTrade */

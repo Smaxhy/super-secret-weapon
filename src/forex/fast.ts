@@ -34,7 +34,7 @@ import { newSyncReport, type LabOpenTrade } from './practice';
 import { withEnd } from './mtf';
 import { cellPass } from './montecarlo';
 import { vixFactor, vixNowOf } from './mood';
-import { FX_CONFIG, FX_RETIRED, RETIRE, deskWeekend, loadRetired, onlyOk, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, focusPrio, marketRecOf, pickedOnInSample, planChosen, plannedStrategies, pooledOf, prevPicks, profitFloor, signalIndex, slimTrade, soloWait, needsMate, toLabTrade, tradeKey, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
+import { FX_CONFIG, FX_RETIRED, forwardOk, RETIRE, deskWeekend, loadRetired, onlyOk, applyHmm, bigChart, evaluateTf, makeSeries, paperSince, focusPrio, marketRecOf, pickedOnInSample, planChosen, plannedStrategies, pooledOf, prevPicks, profitFloor, signalIndex, slimTrade, soloWait, needsMate, toLabTrade, tradeKey, type BigChart, type ChosenStore, type ForexLab, type MarketBook, type PaperRow, type Row, type Series } from './lab';
 import type { HmmModel } from './hmm';
 import { agreeCount, boostFor, gradeConviction, maxConfirmations, tierOf, type ConvictionReport, type ConvRow } from './conviction';
 
@@ -177,8 +177,11 @@ export const DEFAULT_FAST_SOURCE: FastSource = {
 
 /** The fast-chart strategies the bot trades: passed on unseen data, clear the profit floor (v27.1), not dropped for losing
  * in its account. Pure. */
-export const chosenOf = (rows: ReadonlyArray<Pick<Row, 'id' | 'tf' | 'verdict'> & Partial<Pick<Row, 'inSample' | 'outSample'>>>, dropped: readonly string[], ownerLive: readonly string[] = [], universe: 'fx' | 'crypto' = 'fx') =>
-  rows.filter((r) => r.id !== 'random' && onlyOk(universe, r.id, r.tf) && (FX_CONFIG.provenOnly.on ? FX_CONFIG.provenOnly.verdicts[universe].includes(r.verdict) : r.verdict !== 'no' || ownerLive.includes(r.id)) && profitFloor(r).ok && !dropped.includes(`${r.id}:${r.tf}`)).map((r) => `${r.id}:${r.tf}`);
+export const chosenOf = (rows: ReadonlyArray<Pick<Row, 'id' | 'tf' | 'verdict'> & Partial<Pick<Row, 'inSample' | 'outSample'>>>, dropped: readonly string[], ownerLive: readonly string[] = [], universe: 'fx' | 'crypto' = 'fx', paper?: ReadonlyArray<Pick<PaperRow, 'id' | 'tf' | 'stats'>>) => {
+  // v27.90: the forward check too (as the hourly chooser) when the paper rows are known
+  const fwdOf = paper ? new Map(paper.map((p) => [`${p.id}:${p.tf}`, p.stats])) : null;
+  return rows.filter((r) => r.id !== 'random' && onlyOk(universe, r.id, r.tf) && (FX_CONFIG.provenOnly.on ? FX_CONFIG.provenOnly.verdicts[universe].includes(r.verdict) : r.verdict !== 'no' || ownerLive.includes(r.id)) && profitFloor(r).ok && !dropped.includes(`${r.id}:${r.tf}`) && (!fwdOf || forwardOk(fwdOf.get(`${r.id}:${r.tf}`)).ok)).map((r) => `${r.id}:${r.tf}`);
+};
 
 /** v17: filter-input coverage of one tested series on its first 70% (bars before `oosFrom`, as the hourly lab measures it). Pure. */
 export function testedCoverage(se: Pick<Series, 'ctx' | 'env'>, oosFrom: number): FilterCoverage {
@@ -255,7 +258,7 @@ export class FastLab {
       .then((raw) => {
         if (raw && !this.report) {
           this.report = JSON.parse(raw) as FastReport;
-          this.chosen = chosenOf(this.report.rows, this.lab.dropped, this.ownerLive(), this.lab.universe);
+          this.chosen = chosenOf(this.report.rows, this.lab.dropped, this.ownerLive(), this.lab.universe, this.report.paper?.rows);
         }
       })
       .catch(() => undefined);
@@ -265,22 +268,29 @@ export class FastLab {
         for (const tf of FX_FAST.tfs) await this.refresh(tf, Date.now());
       })
       .catch(() => undefined);
-    this.after('eval0', 5 * MIN, () => this.evaluate());
-    this.every('eval', (now) => nextOnGrid(now, HOUR, 31 * MIN), () => this.evaluate());
+    // v27.90 (code review): the coin desk's test runs 10 minutes after the forex desk's — both in the main process at
+    // :31 doubled the heap / event-loop load
+    const off = this.lab.universe === 'crypto' ? 10 * MIN : 0;
+    this.after('eval0', 5 * MIN + off, () => this.evaluate());
+    this.every('eval', (now) => nextOnGrid(now, HOUR, 31 * MIN + off), () => this.evaluate());
     if (FX_FAST.tfs.includes('15m')) this.every('15m', (now) => nextOnGrid(now, 15 * MIN, 40_000), () => this.decide('15m'));
     if (FX_FAST.tfs.includes('1m')) this.every('1m', (now) => nextOnGrid(now, (this.oandaOn ? FX_FAST.oneMinuteEverySec.oanda : FX_FAST.oneMinuteEverySec.yahoo) * 1000, 20_000), () => this.decide('1m'));
     this.every('persist', (now) => now + 10 * MIN, () => this.persist());
   }
   stop(): void {
+    this.stopped = true;
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();
     void this.persist().catch(() => undefined);
   }
+  /** v27.90: a job still running at stop() must not re-arm its timer */
+  private stopped = false;
   private after(name: string, ms: number, fn: () => Promise<unknown>): void {
     this.timers.set(name, setTimeout(() => void fn().catch(() => undefined), ms));
   }
   private every(name: string, nextAt: (now: number) => number, fn: () => Promise<unknown>): void {
     const arm = () => {
+      if (this.stopped) return;
       const now = Date.now();
       this.timers.set(
         name,
@@ -469,7 +479,7 @@ export class FastLab {
         ? `${rows.length} strategy × chart combinations on the ${FX_FAST.tfs.map((tf) => (tf === '15m' ? `15-minute (${days('15m')} days of history)` : `1-minute (${days('1m')} days)`)).join(' and ')} chart${FX_FAST.tfs.length > 1 ? 's' : ''}, same spreads as everywhere. ${pass} pass on their unseen last 30%. Short histories: the paper results decide.`
         : 'Not enough 15-minute / 1-minute candles yet (the server keeps collecting them).',
     };
-    this.chosen = chosenOf(rows, this.lab.dropped, this.ownerLive(), this.lab.universe);
+    this.chosen = chosenOf(rows, this.lab.dropped, this.ownerLive(), this.lab.universe, this.report.paper?.rows);
     await this.redis.set(this.k(FX_FAST_REPORT), JSON.stringify(this.report)).catch(() => undefined);
     const chosenStore: ChosenStore = {
       oosFrom: Object.fromEntries(FX_FAST.tfs.flatMap((tf) => (spans[tf].oosFrom !== null ? [[tf, spans[tf].oosFrom]] : []))),
@@ -492,7 +502,7 @@ export class FastLab {
       await this.refresh(tf, now);
       const rowsTf = (this.report?.rows ?? []).filter((r) => r.tf === tf && r.id !== 'random');
       const rec = await this.lab.botRecord();
-      const keep = new Set(chosenOf(rowsTf, rec.dropped, this.ownerLive(), this.lab.universe));
+      const keep = new Set(chosenOf(rowsTf, rec.dropped, this.ownerLive(), this.lab.universe, this.report?.paper?.rows));
       const chosenRows = rowsTf.filter((r) => keep.has(`${r.id}:${r.tf}`));
       this.chosen = [...this.chosen.filter((k) => !k.endsWith(`:${tf}`)), ...keep];
       // strategies the bot still holds a trade from on this chart keep being followed (their stop, their exit) even

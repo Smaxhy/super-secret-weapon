@@ -127,6 +127,9 @@ const log = logger.child({ module: 'main' });
 installProcessGuards(log, undefined, { onError: (m) => recordError(m), onFatal: (r) => recordExit(r) });
 
 async function main(): Promise<void> {
+  /** v27.90 (code review): a destructive one-time step only ever runs in the days it was written for — if its marker
+   * were lost later (a failed write, a race) it must not strike the trades of a later day */
+  const pastWindow = (until: number) => Date.now() >= until;
   log.info({ mode: env.TRADING_MODE, env: env.NODE_ENV }, '🚀 Pump.fun bot starting');
 
   // 1. Database
@@ -575,6 +578,7 @@ async function main(): Promise<void> {
   // v27.29 (owner: "only trade rsi, revert the results from today"): every coin-bot trade closed today (Oct 23 UTC) that
   // wasn't rsi_dip is struck from the account and the P&L log, and the still-open trades of strategies now off are struck too
   await oneTimeUpgrade('v27.29-undo-coin-oct23', async () => {
+    if (pastWindow(Date.UTC(2026, 9, 24, 0))) return; // v27.90: a lost marker must never strike today's trades
     const from = Date.UTC(2026, 9, 23, 0);
     const to = Date.UTC(2026, 9, 24, 0);
     const label = 'coin bot: today\'s non-rsi_dip results (owner: only rsi_dip trades now)';
@@ -590,6 +594,7 @@ async function main(): Promise<void> {
   // close at 06:00 UTC on Oct 25; the burst after it (15m / 1h shorts, three −$20 cap stops) gave back $39. Every coin-bot
   // close after that point and every open coin-bot trade is struck as if it never happened; their signals never re-open.
   await oneTimeUpgrade('v27.42-undo-coin-after-peak', async () => {
+    if (pastWindow(Date.UTC(2026, 9, 26, 0))) return; // v27.90: a lost marker must never strike today's trades
     const from = Date.UTC(2026, 9, 25, 6, 0);
     const lines = [
       await practice.undoClosed('cbot', (c) => c.closedAt >= from && !(c.pair === 'LINKUSD' && c.strategy === 'stoch_trend'), 'coin bot: trades after today\'s +$63 peak (owner)'),
@@ -814,12 +819,14 @@ async function main(): Promise<void> {
   }
   // v20.1 (owner: "revert all current active trades"): every open bot trade is struck as if it never happened, once
   await oneTimeUpgrade('v20.1-revert-open', async () => {
+    if (pastWindow(Date.UTC(2026, 9, 21, 0))) return; // v27.90: a lost marker must never strike today's trades
     const line = await practice.undoOpen('bot');
     forex.logBot([line, 'strict mode on: only strategies that passed the unseen exam, 2+ market checks per trade, market entries only, desks study only']);
     log.info({ line }, 'forex bot: open trades struck');
   });
   // v26.5 (owner: "use more risk when you trade for more profit"): the forex bot account moves to Turbo (8% a trade) once
   await oneTimeUpgrade('v26.5-turbo', async () => {
+    if (pastWindow(Date.UTC(2026, 9, 22, 0))) return; // v27.90: never override a risk mode chosen since
     await practice.setRiskMode('turbo', 'bot');
     forex.logBot(['risk mode set to Turbo (8% of the account a trade, up to 500×) — the owner asked for more risk']);
   });

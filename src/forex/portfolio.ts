@@ -210,8 +210,10 @@ export function simulatePortfolio(trades: readonly PTrade[], o: PortfolioOpts): 
     ev.push({ t: tr.entryT, kind: 0, tr });
     ev.push({ t: tr.exitT, kind: 1, tr });
   }
-  // exits first at the same time (frees margin and exposure); then, if prioritising, the best-tested entries first
-  ev.sort((a, b) => a.t - b.t || b.kind - a.kind || (o.prioritise && a.kind === 0 ? (b.tr.prio ?? 0) - (a.tr.prio ?? 0) : 0));
+  // exits first at the same time (frees margin and exposure); then, if prioritising, the best-tested entries first.
+  // v27.90: a trade that ends in its own entry bar exits AFTER its entry (it used to stay open forever, holding a slot)
+  const rank = (e: Ev) => (e.kind === 0 ? 1 : e.tr.exitT <= e.tr.entryT ? 2 : 0);
+  ev.sort((a, b) => a.t - b.t || rank(a) - rank(b) || (o.prioritise && a.kind === 0 && b.kind === 0 ? (b.tr.prio ?? 0) - (a.tr.prio ?? 0) : 0));
   const open = new Map<PTrade, { riskAbs: number; marginAbs: number }>();
   const perStrategy = new Map<string, number>();
   const skipped: PortfolioResult['skipped'] = { full: 0, ccy: 0, margin: 0, strategy: 0, ...(o.heat ? { heat: 0 } : {}) };

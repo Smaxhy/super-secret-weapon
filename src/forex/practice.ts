@@ -410,6 +410,18 @@ export function pnlUsd(p: Pick<PracticePosition, 'pair' | 'side' | 'units' | 'en
   return q ? inQuote * q : 0;
 }
 
+/**
+ * v27.90: USD per 1.0 move of the price, per unit, at these prices (the pair's own mid stays as it is). Before, callers
+ * asked `pnlUsd(…, entry + 1)`, which also swaps the pair's own mid for entry + 1 while converting its quote currency —
+ * fine for xxx/USD, but USD/CAD and USD/CHF came out 0.4–2.3× off (the $ loss cap pulled a USD/CAD short's stop to ~29% of
+ * the tested distance and never capped a USD/CHF short). Metals, coins and indices are priced in USD: 1. Pure.
+ */
+export function usdPerPx(pair: string, mids: Record<string, number>): number {
+  const inst = instrument(pair);
+  if (!inst || inst.kind !== 'fx') return 1;
+  return usdPer(quoteOf(inst), mids) ?? 0;
+}
+
 /** Exit price for a position given a mid (sell at bid when long, buy at ask when short). Pure. */
 export function exitPx(p: Pick<PracticePosition, 'pair' | 'side'>, mid: number, half?: number): number {
   const inst = instrument(p.pair)!;
@@ -675,7 +687,7 @@ export function resizeCopies(a: PracticeAccount, pct: number, mids: Record<strin
   const copies = a.open.filter((p) => p.tf === 'signal' && !p.closePending);
   let left = pct;
   for (const p of copies) {
-    const per = Math.abs(pnlUsd({ pair: p.pair, side: 1, units: 1, entry: p.entry }, p.entry + 1, { ...mids, [p.pair]: mids[p.pair] ?? p.entry }));
+    const per = usdPerPx(p.pair, { ...mids, [p.pair]: mids[p.pair] ?? p.entry });
     const nowStopDist = p.stop === null ? 0 : p.side * (p.entry - p.stop);
     const d0 = p.riskUsd0 && p.units > 0 && per > 0 ? p.riskUsd0 / (p.units * per) : nowStopDist;
     if (!(per > 0) || !(d0 > 0)) {
@@ -728,7 +740,7 @@ export function reviveCopy(a: PracticeAccount, ref: string, pct: number): { ids:
   a.skipRefs = (a.skipRefs ?? []).filter((r) => r !== ref);
   const { exit: _x, closedAt, pnlUsd: _p, reason: _r, feeUsd: _f, ...pos } = row;
   void _x; void _p; void _r; void _f;
-  const per = Math.abs(pnlUsd({ pair: row.pair, side: 1, units: 1, entry: row.entry }, row.entry + 1, { [row.pair]: row.entry }));
+  const per = usdPerPx(row.pair, { [row.pair]: row.entry });
   const d0 = row.riskUsd0 && row.units > 0 && per > 0 ? row.riskUsd0 / (row.units * per) : 0;
   // v27.61: lock left unset → the next check works out the (looser) copy lock from the original stop
   const back: PracticePosition = { ...pos, stop: d0 > 0 ? row.entry - row.side * d0 : row.stop, locked: false, lockBest: null, stopMovedT: null, closePending: null, checkedT: closedAt - 60_000 };
@@ -752,7 +764,7 @@ export function bookMissedCopy(a: PracticeAccount, r: { pair: string; side: 1 | 
   const stop = copyStop(r.side, r.entry, null);
   const stopDist = Math.abs(r.entry - stop);
   const perUnit = unitsFor(inst, 1, mids);
-  const usdPerUnitMove = Math.abs(pnlUsd({ pair: r.pair, side: 1, units: 1, entry: r.entry }, r.entry + 1, mids));
+  const usdPerUnitMove = usdPerPx(r.pair, { ...mids, [r.pair]: mids[r.pair] ?? r.entry });
   const lev = Math.max(1, Math.min(Math.round(r.leverage), MAX_LEVERAGE, maxLeverageFor(inst.id)));
   const size = copySize({ riskUsd: (a.balanceUsd * r.riskPct) / 100, stopDist, usdPerUnitMove, notionalPerUnit: perUnit ? 1 / perUnit : 0, leverage: lev, freeMarginUsd: a.balanceUsd, marginShare: DISCORD_COPY.marginShare });
   if (!(size.marginUsd > 0)) return 'no room to size it';
@@ -799,7 +811,7 @@ export function replayBotTrade(a: PracticeAccount, ref: string, capUsd: number, 
   if (!row) return { ids: [], line: `no closed trade ${ref} to replay` };
   if (a.open.some((p) => p.ref === ref)) return { ids: [], line: `${row.pair} ${ref} is already open` };
   const inst = instrument(row.pair);
-  const per = Math.abs(pnlUsd({ pair: row.pair, side: 1, units: 1, entry: row.entry }, row.entry + 1, { [row.pair]: row.entry }));
+  const per = usdPerPx(row.pair, { [row.pair]: row.entry });
   const d0 = row.riskUsd0 && row.units > 0 && per > 0 ? row.riskUsd0 / (row.units * per) : 0;
   if (!inst || !(d0 > 0)) return { ids: [], line: `${row.pair} ${ref}: no tested stop to replay from` };
   const { ids, usd } = undoClosed(a, (c) => c.id === row.id);
@@ -848,7 +860,7 @@ export function bookLevelTrade(a: PracticeAccount, r: { pair: string; side: 1 | 
   const stopDist = Math.abs(r.entry - r.stop);
   if (!(stopDist > 0) || r.side * (r.entry - r.stop) <= 0) return { line: `${r.pair}: stop on the wrong side`, closedAt: null };
   const perUnit = unitsFor(inst, 1, mids);
-  const usdPerUnitMove = Math.abs(pnlUsd({ pair: r.pair, side: 1, units: 1, entry: r.entry }, r.entry + 1, mids));
+  const usdPerUnitMove = usdPerPx(r.pair, { ...mids, [r.pair]: mids[r.pair] ?? r.entry });
   const lev = Math.max(1, Math.min(Math.round(r.leverage), MAX_LEVERAGE, maxLeverageFor(inst.id)));
   const size = copySize({ riskUsd: (a.balanceUsd * r.riskPct) / 100, stopDist, usdPerUnitMove, notionalPerUnit: perUnit ? 1 / perUnit : 0, leverage: lev, freeMarginUsd: a.balanceUsd, marginShare: DISCORD_COPY.marginShare });
   if (!(size.marginUsd > 0)) return { line: 'no room to size it', closedAt: null };
@@ -904,7 +916,7 @@ export const SPIKE_EXIT = {
 /** The reason to sell into a spike now, or null. Pure. */
 export function spikeExitFor(p: PracticePosition, q: Pick<Quote, 'mid' | 'bars'>, mids: Record<string, number>, half: number, now: number): string | null {
   if (!SPIKE_EXIT.on || !p.ref || p.tf === 'signal' || !(p.riskUsd0 && p.riskUsd0 > 0) || !(p.units > 0)) return null;
-  const per = Math.abs(pnlUsd({ pair: p.pair, side: 1, units: 1, entry: p.entry }, p.entry + 1, mids));
+  const per = usdPerPx(p.pair, { ...mids, [p.pair]: mids[p.pair] ?? p.entry });
   const d0 = per > 0 ? p.riskUsd0 / (p.units * per) : 0;
   if (!(d0 > 0)) return null;
   const recent = q.bars.filter((b) => b[0] >= now - SPIKE_EXIT.windowMs && b[0] >= p.openedAt - 60_000);
@@ -966,7 +978,7 @@ function closePart(a: PracticeAccount, p: PracticePosition, frac: number, px: nu
 
 /** v18.4: turn a resting order into a position at `fill` (the position looks exactly like one `openIn` makes). Returns an
  * error when it can't (a gap through the stop, no margin left). Mutates `a`. */
-export function fillOrder(a: PracticeAccount, o: RestingOrder, fill: number, mids: Record<string, number>, now: number, checkedT: number): string | null {
+export function fillOrder(a: PracticeAccount, o: RestingOrder, fill: number, mids: Record<string, number>, now: number, checkedT: number, stopMovedT?: number): string | null {
   const inst = instrument(o.pair);
   if (!inst) return 'unknown market';
   if (o.side === 1 ? o.stop >= fill : o.stop <= fill) return 'the price gapped past its stop';
@@ -988,6 +1000,7 @@ export function fillOrder(a: PracticeAccount, o: RestingOrder, fill: number, mid
     target: o.target,
     openedAt: now,
     checkedT,
+    ...(stopMovedT !== undefined ? { stopMovedT } : {}),
     strategy: o.strategy,
     ref: o.ref,
     riskPct: o.riskPct,
@@ -1047,7 +1060,7 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
     if (p.tf === 'signal' && p.target === null && p.lock && p.copyLock !== 'tight' && tightNow) {
       const why = tightNow(p.pair, now);
       if (why) {
-        const per = Math.abs(pnlUsd({ pair: p.pair, side: 1, units: 1, entry: p.entry }, p.entry + 1, mids));
+        const per = usdPerPx(p.pair, { ...mids, [p.pair]: mids[p.pair] ?? p.entry });
         const d0 = p.riskUsd0 && p.units > 0 && per > 0 ? p.riskUsd0 / (p.units * per) : p.stop !== null ? Math.abs(p.entry - p.stop) : 0;
         const plan = d0 > 0 ? lockPlanNet(p.side, p.entry, p.entry - p.side * d0, null, half, feePxOf(inst, p.entry), PROFIT_LOCK) : null;
         if (plan) {
@@ -1098,7 +1111,7 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
     // already past it → closed at the market now
     const capUsd = p.maxLossUsd ?? a.maxLossUsd; // v27.45: the trade's own cap first
     if (capUsd && capUsd > 0 && !q.stale && !p.allIn) {
-      const per = pnlUsd({ pair: p.pair, side: p.side, units: p.units, entry: p.entry }, p.entry + p.side, mids);
+      const per = p.units * usdPerPx(p.pair, { ...mids, [p.pair]: mids[p.pair] ?? p.entry });
       if (per > 0) {
         const capStop = p.entry - (p.side * capUsd) / per;
         if (p.stop === null || (p.side === 1 ? capStop > p.stop : capStop < p.stop)) {
@@ -1126,7 +1139,8 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
       // v17: a minute that OPENS past the level fills at that open (a gap), not at the level
       const openX = o !== undefined && Number.isFinite(o) ? o - p.side * half : null;
       if (p.stop !== null && (p.side === 1 ? worst <= p.stop : worst >= p.stop)) {
-        const gapped = openX !== null && (p.side === 1 ? openX < p.stop : openX > p.stop);
+        // v27.90: in the minute the stop was moved its open came BEFORE the move — no gap fill there, only the new stop
+        const gapped = t !== p.stopMovedT && openX !== null && (p.side === 1 ? openX < p.stop : openX > p.stop);
         closePos(a, p, gapped ? openX : p.stop, mids, 'stop', now);
         events.push(`${p.pair} stop hit${gapped ? ' (the price gapped past it: filled at the open)' : ''}`);
         break;
@@ -1151,7 +1165,9 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
             events.push(`${p.pair} trailing stop hit`);
             break;
           }
-          p.checkedT = t;
+          // v27.90: a forming minute is judged again (its close only) on the next tick
+          p.stopMovedT = t;
+          if (t + 60_000 <= now) p.checkedT = t;
           continue;
         }
         const gappedT = openX !== null && (p.side === 1 ? openX > p.target : openX < p.target);
@@ -1228,20 +1244,28 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
       const inst = instrument(o.pair)!;
       const half = halves[o.pair] ?? (inst.spreadPips * inst.pip) / 2;
       let fill: number | null = null;
-      for (const [t, h, l, , op] of q.bars) {
-        if (t < o.placedAt - 60_000) continue;
+      let fillT = 0;
+      // v27.90: never on prices from before the order existed — in the minute it was placed only that minute's close counts
+      const placeMin = Math.floor(o.placedAt / 60_000) * 60_000;
+      for (const [t, h, l, cl, op] of q.bars) {
+        if (t < placeMin) continue;
+        const first = t === placeMin;
+        const lo = first ? cl : l;
+        const hi = first ? cl : h;
         // a buy limit sits on the ask (mid + half), a sell limit on the bid (mid − half)
-        const touched = o.side === 1 ? l + half <= o.limit : h - half >= o.limit;
+        const touched = o.side === 1 ? lo + half <= o.limit : hi - half >= o.limit;
         if (!touched) continue;
-        const openX = op !== undefined && Number.isFinite(op) ? op + o.side * half : null;
+        const openX = !first && op !== undefined && Number.isFinite(op) ? op + o.side * half : null;
         fill = openX !== null && (o.side === 1 ? openX < o.limit : openX > o.limit) ? openX : o.limit;
+        fillT = t;
         break;
       }
       if (fill === null) {
         keep.push(o);
         continue;
       }
-      const err = fillOrder(a, o, fill, mids, now, q.bars[q.bars.length - 1]?.[0] ?? now);
+      // v27.90: the fill minute is judged again (its close only) — the rest of it may come after the fill
+      const err = fillOrder(a, o, fill, mids, now, fillT - 60_000, fillT);
       events.push(err ? `${o.pair} (${o.strategy}): limit order not filled — ${err}` : `filled ${o.side === 1 ? 'long' : 'short'} ${o.pair} (${o.strategy}) on its ${o.kind === 'pullback' ? 'pullback' : 'limit'} order at ${fill.toPrecision(6)}`);
     }
     a.orders = keep;
@@ -1854,9 +1878,11 @@ export class Practice {
   }
 
   async snapshot(acct: AcctId = 'me'): Promise<{ account: AccountView; quotes: Record<string, Quote> }> {
+    // v27.90 (code review): prices are fetched BEFORE taking the account lock (a hanging Yahoo used to hold every account's
+    // stop checks and bot syncs for ~20 s)
+    const q = await this.quotes(INSTRUMENTS.map((i) => i.id), 20_000);
     return this.serial(async () => {
       const a = await this.load(acct);
-      const q = await this.quotes(INSTRUMENTS.map((i) => i.id), 20_000);
       const mv = { moved: false };
       if (tick(a, q, Date.now(), mv, this.carryFor, this.tightNow).length || mv.moved) await this.save(a, acct);
       const mids: Record<string, number> = {};
@@ -1921,7 +1947,10 @@ export class Practice {
         stop,
         target,
         openedAt: Date.now(),
-        checkedT: quote.bars[quote.bars.length - 1]?.[0] ?? Date.now(),
+        // v27.90: the entry minute is still forming — check it again (only its close: its low / high may have come
+        // before the fill), so a stop / target touched later in that minute isn't skipped
+        checkedT: (quote.bars[quote.bars.length - 1]?.[0] ?? Math.floor(Date.now() / 60_000) * 60_000) - 60_000,
+        stopMovedT: quote.bars[quote.bars.length - 1]?.[0] ?? Math.floor(Date.now() / 60_000) * 60_000,
         ...(req.strategy ? { strategy: req.strategy } : {}),
         ...(req.ref ? { ref: req.ref } : {}),
         ...(req.maxLossUsd && req.maxLossUsd > 0 && !req.allIn ? { maxLossUsd: req.maxLossUsd } : {}),
@@ -2475,7 +2504,7 @@ export class Practice {
       if (r.hisPx && Math.abs(entry - r.hisPx) > DISCORD_COPY.maxMismatchStops * stopDist) return { ok: false, error: `our price ${entry} is far from his ${r.hisPx} — wrong market?` };
       const v = view(a, mids, { [inst.id]: (quote.ask - quote.bid) / 2 });
       const perUnit = unitsFor(inst, 1, mids);
-      const usdPerUnitMove = Math.abs(pnlUsd({ pair: inst.id, side: 1, units: 1, entry }, entry + 1, mids));
+      const usdPerUnitMove = usdPerPx(inst.id, { ...mids, [inst.id]: mids[inst.id] ?? entry });
       const lev = Math.max(1, Math.min(Math.round(r.leverage), MAX_LEVERAGE, maxLeverageFor(inst.id)));
       // v27.57: his calls are all-in like a proven cell — `riskPct` (20) is shared by every open copy, the $ loss cap doesn't apply
       const riding = a.open.filter((p) => p.tf === 'signal').reduce((s, p) => s + (p.riskPct ?? 0), 0);
@@ -2554,6 +2583,13 @@ export class Practice {
       const a = await this.load(acct);
       const p = a.open.find((x) => x.id === id);
       if (!p) return { ok: false, error: 'no such position' };
+      // v27.90 (code review): reject a stop / target that isn't a number or sits on the wrong side of the ENTRY (a NaN used
+      // to be saved as "no stop"; a stop on the wrong side was then filled at its own, better-than-market, price)
+      if (stop !== null && !(Number.isFinite(stop) && stop > 0)) return { ok: false, error: 'the stop must be a price' };
+      if (target !== null && !(Number.isFinite(target) && target > 0)) return { ok: false, error: 'the target must be a price' };
+      if (target !== null && (p.side === 1 ? target <= p.entry : target >= p.entry)) return { ok: false, error: `the target must be ${p.side === 1 ? 'above' : 'below'} the entry` };
+      const q = (await this.quotes([p.pair], 20_000).catch(() => ({} as Record<string, Quote>)))[p.pair];
+      if (stop !== null && q && (p.side === 1 ? stop >= q.bid : stop <= q.ask)) return { ok: false, error: `the stop must be ${p.side === 1 ? 'below' : 'above'} the current price` };
       p.stop = stop;
       p.target = target;
       // v17.11: a new target / stop → the profit lock is worked out again (unless it already armed)
@@ -2782,7 +2818,7 @@ export class Practice {
     const last = [...a.closed].filter((c) => c.tf === 'signal' && c.reason !== 'partial' && pick(c)).sort((x, y) => y.closedAt - x.closedAt)[0];
     if (!last) return 'no closed Kojiro copy to re-enter';
     if (a.open.some((p) => p.tf === 'signal' && p.pair === last.pair && p.side === last.side)) return `already back in a ${last.side === 1 ? 'long' : 'short'} ${last.pair} copy`;
-    const per = Math.abs(pnlUsd({ pair: last.pair, side: 1, units: 1, entry: last.entry }, last.entry + 1, { [last.pair]: last.entry }));
+    const per = usdPerPx(last.pair, { [last.pair]: last.entry });
     const d0 = last.riskUsd0 && last.units > 0 && per > 0 ? last.riskUsd0 / (last.units * per) : last.stop !== null ? Math.abs(last.entry - last.stop) : 0;
     if (!(d0 > 0)) return `${last.pair}: no original stop to re-enter with`;
     const stop = last.entry - last.side * d0;

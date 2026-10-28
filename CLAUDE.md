@@ -758,6 +758,35 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.90 code review fixes (Oct 28, owner: "re-read your own code, look for bugs, make future work smooth" — four independent
+reviewers: bot account, lab chooser / live path, backtest engine, process; each finding traced before fixing)
+Bot account (practice.ts): `usdPerPx(pair, mids)` = USD per 1.0 price move per unit at today's prices — every
+`pnlUsd(…, entry + 1)` probe swapped the pair's own mid for entry + 1, so USD/CAD / USD/CHF were 0.4–2.3× off (the $ cap
+pulled a USD/CAD short's stop to ~29% of the tested distance, never capped a USD/CHF short; spike exit / news lock / copy
+sizing too); a stop moved inside the forming minute no longer "gaps" at that minute's earlier open (a lock hit in the same
+minute booked a loss); the entry / fill minute is re-checked (only its close — `stopMovedT`), `checkedT` only past complete
+minutes on the trailing-TP path; resting orders never fill on prices from before they were placed (placement minute: its
+close only); manual edit rejects NaN / wrong-side stops and targets; `snapshot` fetches prices before taking the lock.
+Engine: a trade that ends in its own entry bar now counts in `equityCurve` and frees its slot in `simulatePortfolio` (it was
+lost / held a slot forever — the honest test, rolling picker, heat grade); a limit / pullback fill inside a candle gets no
+credit for the high (long, red candle) / low (short, green candle) that came before the fill (`Pos.limIdx`; coins choose
+pullback entries on these numbers — expect pullback to look less good); one more venue-fee round trip per weekend crossing
+(the bot closes and re-opens); coins: taker fee 0.045% a side as a % of the position (`VENUE_FEES.cryptoPct`), spreads
+cut to the real exchange spread (BTC 2, ETH 2, SOL 2, XRP 1, DOGE 2, ADA 2, LINK 3, AVAX 3 pips) — the old fixed spread
+was 3–4× cheaper in % on today's prices than in 2023 (flattered the unseen 30%); coin closes now pay the fee live too.
+Lab: no duplicate open trades for limit / pullback rows (only market trades whose order would still be alive at the newest
+close and not already held by the entry variant); an expired resting order is never handed over as a market buy
+(`orderGone`); confluence / clash look only at trades entered at or BEFORE the trade (look-ahead in the studies), live mates
+= the strategies the study counted (picked on the first 70%), opponents / mates include just-finished paper trades; owner
+trials and rolling-picker sizes off while provenOnly; the worker child gets the parent's "said once" log memory + chosen
+list; fast `chosenOf` applies the forward check; derivs: OI / account rows count from their hour's END, Binance funding in
+1000-hour windows, a late liquidation adds to its hour. Process: coin 15-minute test at :41 (forex :31), Dukascopy + CFTC /
+BIS refreshed by the forex lab only, `oneTimeUpgrade` writes its marker in one serialized read-modify-write, destructive old
+upgrades (v20.1, v26.5, v27.29, v27.42) refuse to run after their window (`pastWindow`), lab / fast timers don't re-arm after
+stop(), Kojiro post history trimmed to 5,000, one Kojiro study at a time. EXPECT one re-pick event on both desks (fees,
+fills, one-sided confluence). Not changed (owner's call): after two heavy (out-of-memory) worker failures the lab still
+runs inline for 6 hours (v18.5) — risk of a parent out-of-memory restart; funding is still not charged on coin trades.
+tests/forex-review-v27-90 (4) + updated: forex-clash, forex-v27-24, forex-venue-fees, forex-coverage.
 ## v27.89 coin derivatives data (Oct 28, owner: "get all the data you can and build it properly")
 `src/forex/derivs.ts` (free public APIs, no account): funding history (Binance `/fapi/v1/fundingRate`, fallback Bybit
 `/v5/market/funding/history`), hourly open interest (Bybit `/v5/market/open-interest` paged back, fallback Binance

@@ -13,9 +13,11 @@ describe('v27.86 clash test', () => {
       { strategy: 'pivot_bounce', pair: 'ETHUSD', side: -1, entryT: 0 },
     ]);
     expect(opposedBy({ strategy: 'round_break', pair: 'BTCUSD', side: 1, entryT: 0 }, idx, 4 * H)).toBeNull();
-    const idx2 = entryIndex([{ strategy: 'pivot_bounce', pair: 'BTCUSD', side: -1, entryT: 8 * H }]);
-    expect(opposedBy({ strategy: 'round_break', pair: 'BTCUSD', side: 1, entryT: 0 }, idx2, 4 * H)?.strategy).toBe('pivot_bounce');
-    expect(opposedBy({ strategy: 'round_break', pair: 'BTCUSD', side: 1, entryT: 0 }, idx2, 1 * H)).toBeNull();
+    const idx2 = entryIndex([{ strategy: 'pivot_bounce', pair: 'BTCUSD', side: -1, entryT: 0 }]);
+    expect(opposedBy({ strategy: 'round_break', pair: 'BTCUSD', side: 1, entryT: 8 * H }, idx2, 4 * H)?.strategy).toBe('pivot_bounce');
+    expect(opposedBy({ strategy: 'round_break', pair: 'BTCUSD', side: 1, entryT: 8 * H }, idx2, 1 * H)).toBeNull();
+    // v27.90: an opponent that enters AFTER the trade isn't counted (no look-ahead)
+    expect(opposedBy({ strategy: 'round_break', pair: 'BTCUSD', side: 1, entryT: -H }, idx2, 4 * H)).toBeNull();
   });
 
   it('switches on only when clashing trades lose more on both parts', () => {

@@ -36,7 +36,9 @@ describe('v27.24 losing streak', () => {
 describe('v27.24 doubling-up test', () => {
   const t = (key: string, pair: string, entryT: number, r: number): ConfTrade => ({ key, pair, side: 1, entryT, exitT: entryT + H, r, barMs: H });
   it('finds a second strategy the same way within 2 candles', () => {
-    expect(isTogether(t('a:1h', 'EURUSD', 0, 1), [t('b:1h', 'EURUSD', H, 1)])).toBe(true);
+    expect(isTogether(t('a:1h', 'EURUSD', H, 1), [t('b:1h', 'EURUSD', 0, 1)])).toBe(true);
+    // v27.90: a mate that enters AFTER the trade isn't seen live → not counted (no look-ahead)
+    expect(isTogether(t('a:1h', 'EURUSD', 0, 1), [t('b:1h', 'EURUSD', H, 1)])).toBe(false);
     expect(isTogether(t('a:1h', 'EURUSD', 0, 1), [t('a:4h', 'EURUSD', H, 1), t('b:1h', 'EURUSD', 5 * H, 1)])).toBe(false);
   });
   it('switches on only when double signals win more on both parts', () => {

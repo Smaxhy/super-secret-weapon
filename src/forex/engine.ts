@@ -145,6 +145,8 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
     lockBest: number;
     /** v18: R earned / paid as financing so far (inside `realized`) */
     fin: number;
+    /** v27.90: the bar a limit / pullback order filled inside (not at its open) */
+    limIdx?: number;
   };
   let pos: Pos | null = null;
   const carry = o.financing ? c.ext?.carry : undefined;
@@ -244,7 +246,10 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
       } else {
         const L = pd.limit!;
         if (s === 1 ? b.l <= L : b.h >= L) {
+          const atOpen = s === 1 ? b.o <= L : b.o >= L;
           pos = openAt(pd.sig, pd.sigIdx, i, (s === 1 ? Math.min(b.o, L) : Math.max(b.o, L)) + (s * spr(i)) / 2);
+          // v27.90: filled inside the bar (not at its open) → in this bar only what came after the fill may count
+          if (pos && !atOpen) pos.limIdx = i;
           pend = null;
         }
       }
@@ -259,7 +264,11 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
       if (through) {
         p.frac = 0; // flat over the weekend and the gap went past a level: the trade ended at Friday's close
         finish(i - 1, legOut, 'weekend');
-      } else p.legEntry = b.o + (p.side * spr(i)) / 2;
+      } else {
+        p.legEntry = b.o + (p.side * spr(i)) / 2;
+        // v27.90: the bot closes and re-opens over the weekend — one more round trip of the venue fee on the open share
+        if (o.venueFees) p.realized -= p.frac * feeR(inst, p.legEntry, p.risk);
+      }
     }
     if (pos && pos.entryIdx <= i) {
       const p: Pos = pos;
@@ -269,8 +278,14 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
         p.fin += f;
         p.realized += f;
       }
+      // v27.90: on the bar a limit / pullback order filled inside, the candle's path decides what came after the fill: a
+      // long fills on the way down — on a red candle (open → high → low → close) its high came BEFORE the fill, so only
+      // the close can count in its favour (mirror for a short on a green candle). The stop side keeps the full bar.
+      const lim = p.limIdx === i && (p.side === 1 ? b.c < b.o : b.c > b.o);
+      const bh = lim && p.side === 1 ? b.c : b.h;
+      const bl = lim && p.side === -1 ? b.c : b.l;
       const hitStop = p.side === 1 ? b.l <= p.stop : b.h >= p.stop;
-      const hitTgt = p.target !== null && (p.side === 1 ? b.h >= p.target : b.l <= p.target);
+      const hitTgt = p.target !== null && (p.side === 1 ? bh >= p.target : bl <= p.target);
       if (hitStop) finish(i, exitFill(i, p.side, p.side === 1 ? Math.min(b.o, p.stop) : Math.max(b.o, p.stop), true), stopReason(p));
       else if (hitTgt && p.tpDist !== null && !p.tpHit) {
         // v15 trailing take-profit: the target is not the end. Part off (if any), the stop locks behind the target
@@ -304,7 +319,7 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
       else {
         // take part off / move the stop to break-even (checked after the stop: the pessimistic order)
         let toBe = false;
-        if (!p.scaled && p.scaleAt !== null && (p.side === 1 ? b.h >= p.scaleAt : b.l <= p.scaleAt)) {
+        if (!p.scaled && p.scaleAt !== null && (p.side === 1 ? bh >= p.scaleAt : bl <= p.scaleAt)) {
           const fill = exitFill(i, p.side, p.side === 1 ? Math.max(b.o, p.scaleAt) : Math.min(b.o, p.scaleAt), false);
           // a share of what is still open (a trailing take-profit may already have taken part off)
           const part = p.frac * p.scaleFrac;
@@ -313,7 +328,7 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
           p.scaled = true;
           toBe = true;
         }
-        if (!p.be && p.beAt !== null && (p.side === 1 ? b.h >= p.beAt : b.l <= p.beAt)) toBe = true;
+        if (!p.be && p.beAt !== null && (p.side === 1 ? bh >= p.beAt : bl <= p.beAt)) toBe = true;
         if (toBe && !p.be) {
           const beStop = p.entry + p.side * spr(i);
           if (p.side === 1 ? beStop > p.stop : beStop < p.stop) p.stop = beStop;
@@ -326,7 +341,7 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
         // After the candle's best price only the rest of the candle can hit it: a long's green candle (open → low →
         // high → close) only its close, a red one (open → high → low → close) its low.
         if (pos && p.lock) {
-          const ext = p.side === 1 ? b.h : b.l;
+          const ext = p.side === 1 ? bh : bl;
           if (!p.locked && (p.side === 1 ? ext >= p.lock.at : ext <= p.lock.at)) {
             p.locked = true;
             p.be = true;
@@ -496,8 +511,10 @@ export function equityCurve(ts: readonly Trade[], riskPct: number, maxLev: numbe
     ev.push({ t: tr.entryT, kind: 0, tr });
     ev.push({ t: tr.exitT, kind: 1, tr });
   }
-  // exits before entries at the same time (frees the equity first)
-  ev.sort((a, b) => a.t - b.t || b.kind - a.kind);
+  // exits before entries at the same time (frees the equity first) — v27.90: except a trade's exit in its own entry bar,
+  // which must come after its entry (it used to run first: the trade's R was lost)
+  const rank = (e: Ev) => (e.kind === 0 ? 1 : e.tr.exitT <= e.tr.entryT ? 2 : 0);
+  ev.sort((a, b) => a.t - b.t || rank(a) - rank(b));
   const riskOf = new Map<Trade, number>();
   const levs: number[] = [];
   let eq = 1;

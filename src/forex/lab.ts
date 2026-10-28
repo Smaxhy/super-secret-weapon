@@ -568,6 +568,10 @@ export interface WorkerInput {
   breakers?: Partial<Record<Provider, BreakerState>>;
   /** v22.1: which lab the child should be (forex or the coins) */
   universe?: Universe;
+  /** v27.90: the parent's "said once" log memory + chosen list (else every hourly child logs the same lines again) */
+  fwdNoted?: string;
+  pausedNoted?: string[];
+  chosen?: string[];
 }
 /** v17.2: what the live bot (parent) needs after a run in the child. */
 export interface WorkerState {
@@ -585,6 +589,9 @@ export interface WorkerState {
   heat: { active: boolean; idx: Record<string, number>; m: number[] | null } | null;
   book: MarketBook | null;
   logs: string[];
+  /** v27.90: the child's "said once" log memory, kept by the parent for the next child */
+  fwdNoted?: string;
+  pausedNoted?: string[];
 }
 export type WorkerResult =
   | { ok: true; out: RunOutput | null; state: WorkerState; feeds: Partial<Record<FeedId, FeedState>>; /** v17: the child's breakers (newer update wins in the parent) */ breakers?: Partial<Record<Provider, BreakerState>> }
@@ -705,7 +712,7 @@ export function planChosen(strategy: string, pair: string, rowChosen: boolean, r
   // v27.27: only the strict-test (Edge) rows; v27.31: + strategies proven on THIS market on the strict market bar (forex);
   // v27.44: a coin cell must also clear the deeper coin bar (`coinCellPass`)
   if (FX_CONFIG.provenOnly.on) return rowChosen || (FX_CONFIG.provenOnly.cells[isCrypto(pair) ? 'crypto' : 'fx'] && cellPass(cell) && (!isCrypto(pair) || coinCellPass(cell, pooled)));
-  if (tf && ownerTrialOf(strategy, tf, pair)) return true; // v27.11
+  if (tf && !FX_CONFIG.provenOnly.on && ownerTrialOf(strategy, tf, pair)) return true; // v27.11 (v27.90: no trials while only proven strategies trade)
   // v27.4: a strategy that proved itself on THIS market on its own (cellPass) trades here even when its pooled row doesn't;
   // v27.9: the looser trial bar is enough (at a smaller size, see `focusTrial`); v27.10 (owner: "if a chart has good
   // strategies use them"): such a strategy also trades past the focus list and next to a market plan's own strategies
@@ -987,7 +994,8 @@ export const needsMate = (strategy: string, pair: string): boolean => FX_CONFIG.
 export function soloWait(t: Pick<Trade, 'strategy' | 'pair' | 'side' | 'entryT'>, others: ReadonlyArray<Pick<Trade, 'strategy' | 'pair' | 'side' | 'entryT'>>, barMin: number): string | null {
   if (!needsMate(t.strategy, t.pair)) return null;
   const span = FX_CONFIG.confluenceBars * barMin * 60_000;
-  const mate = others.find((o) => o.strategy !== t.strategy && o.strategy !== 'random' && o.pair === t.pair && o.side === t.side && Math.abs(o.entryT - t.entryT) <= span);
+  // v27.90: a mate entered at or before this trade (as the confluence study counts it)
+  const mate = others.find((o) => o.strategy !== t.strategy && o.strategy !== 'random' && o.pair === t.pair && o.side === t.side && o.entryT <= t.entryT && t.entryT - o.entryT <= span);
   return mate ? null : `${t.strategy} alone — waits for a second setup the same way on this market`;
 }
 
@@ -1375,7 +1383,14 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
     const entry: EntryKind = s.id !== 'random' && FX_CONFIG.liveEntries[desk] && entryVariants ? chooseEntry(entryVariants, prev?.n) : 'market';
     const eb = entry !== 'market' ? byEntry.get(entry) : undefined;
     let chR = eb ? statsOf(eb.trades, o.oosFrom) : ch;
-    let vR = eb ? { trades: [...eb.trades, ...v.trades.filter((t) => t.reason === 'open')], perPair: eb.perPair } : v;
+    // v27.90 (code review): from the market simulation only the running trades whose resting order would still be alive
+    // at the newest close (signal close + the order's life), and never one the entry variant already holds (same key) —
+    // before, every running market trade was added: duplicates of filled pullbacks, and a limit that expired unfilled
+    // came back an hour later as a market buy of exactly the signals the graded variant had skipped
+    const lastClose = new Map(seriesTf.map((se) => [se.inst.id, (se.ctx.bars[se.ctx.bars.length - 1]?.t ?? 0) + se.ctx.barMin * 60_000]));
+    const life = (entry === 'limit' ? ENTRY.limitBars : ENTRY.pullbackBars) * TF_MIN[tf] * 60_000;
+    const ebKeys = eb ? new Set(eb.trades.map(tradeKey)) : null;
+    let vR = eb ? { trades: [...eb.trades, ...v.trades.filter((t) => t.reason === 'open' && !ebKeys!.has(tradeKey(t)) && (t.keyT ?? t.entryT) + life >= (lastClose.get(t.pair) ?? 0))], perPair: eb.perPair } : v;
     let doneR = eb ? eb.trades.filter((t) => t.reason !== 'open') : done;
     byEntry.clear();
     // v27.30: leave out the sessions / markets its first 70% lost on — the record, the unseen grade, the paper trades and
@@ -1508,6 +1523,9 @@ export async function refreshAll(redis: Redis, cfg = REFRESH, insts: readonly In
 export class ForexLab {
   private timer: NodeJS.Timeout | null = null;
   private dkTimer: NodeJS.Timeout | null = null;
+  /** v27.90: the first run 45 s after start, and whether stop() was called (no timer re-arms after it) */
+  private firstTimer: NodeJS.Timeout | null = null;
+  private stopped = false;
   private running: Promise<FxReport | null> | null = null;
   /** set by index.ts: the account the bot auto-trades */
   practice: Practice | null = null;
@@ -1577,10 +1595,14 @@ export class ForexLab {
         }
       })
       .catch(() => undefined);
-    setTimeout(() => void this.run().catch(() => undefined), 45_000);
+    // v27.90: kept so stop() can cancel it (a shutdown within 45 s of start used to still launch a run)
+    this.firstTimer = setTimeout(() => void this.run().catch(() => undefined), 45_000);
     // v16: Dukascopy history + real spreads — installed from Redis at once, refreshed 3 min after start, then daily
     void installSpreadProfiles(this.redis).catch(() => undefined);
+    // v27.90 (code review): Dukascopy + CFTC / BIS are shared data — refreshed by the forex lab only (the coin lab ran a
+    // second, simultaneous copy of both)
     const dk = () => {
+      if (this.universe !== 'fx') return;
       void refreshDukascopy(this.redis).catch((err: Error) => log.warn({ err: err.message }, 'dukascopy failed'));
       // v16: CFTC positioning + central-bank rates (each refreshes itself at most every 12 h)
       void refreshMacro(this.redis).catch((err: Error) => log.warn({ err: err.message }, 'macro failed'));
@@ -1591,6 +1613,7 @@ export class ForexLab {
     }, 3 * 60_000);
     // then 90 s after every full hour: the hourly candle has just closed (Yahoo / OANDA publish it within a minute)
     const next = () => {
+      if (this.stopped) return;
       const now = Date.now();
       const at = Math.ceil((now - 90_000) / 3_600_000) * 3_600_000 + 90_000;
       this.timer = setTimeout(() => {
@@ -1601,7 +1624,9 @@ export class ForexLab {
     next();
   }
   stop(): void {
+    this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
+    if (this.firstTimer) clearTimeout(this.firstTimer);
     if (this.dkTimer) clearTimeout(this.dkTimer as NodeJS.Timeout);
   }
   isRunning(): boolean {
@@ -1651,7 +1676,7 @@ export class ForexLab {
    */
   private async runInWorker(refresh: boolean): Promise<RunOutput | null> {
     const t0 = Date.now();
-    const input: WorkerInput = { learned: this.learned, learnSig: this.learnSig, chosenSig: this.chosenSig, heatActive: this.heatNow?.active ?? null, breakers: feeds.breakerSnapshot(), universe: this.universe };
+    const input: WorkerInput = { learned: this.learned, learnSig: this.learnSig, chosenSig: this.chosenSig, heatActive: this.heatNow?.active ?? null, breakers: feeds.breakerSnapshot(), universe: this.universe, fwdNoted: this.fwdNoted, pausedNoted: [...this.pausedNoted], chosen: this.chosen };
     this.forkLearnSig = input.learnSig;
     try {
       const r = await forkLabRun(refresh, input, { ...LAB_WORKER, heapMb: heapFor(this.workerStreak) });
@@ -1699,6 +1724,9 @@ export class ForexLab {
     this.learnSig = x.learnSig;
     this.chosenSig = x.chosenSig;
     if (x.heatActive !== null) this.heatNow = { active: x.heatActive, book: { idx: {} }, m: null };
+    if (x.fwdNoted !== undefined) this.fwdNoted = x.fwdNoted;
+    if (x.pausedNoted) this.pausedNoted = new Set(x.pausedNoted);
+    if (x.chosen) this.chosen = x.chosen;
     this.collectLog = [];
   }
   /** v17.2 (child): the state the parent's live bot needs. */
@@ -1718,6 +1746,8 @@ export class ForexLab {
       heat: this.heatNow ? { active: this.heatNow.active, idx: this.heatNow.book.idx, m: this.heatNow.m ? Array.from(this.heatNow.m) : null } : null,
       book: this.book,
       logs: this.collectLog ?? [],
+      fwdNoted: this.fwdNoted,
+      pausedNoted: [...this.pausedNoted],
     };
   }
   /**
@@ -1738,6 +1768,8 @@ export class ForexLab {
     this.labOpen = s.labOpen;
     this.chosen = s.chosen;
     this.chooser = s.chooser;
+    if (s.fwdNoted !== undefined) this.fwdNoted = s.fwdNoted;
+    if (s.pausedNoted) this.pausedNoted = new Set(s.pausedNoted);
     this.dataAge = s.dataAge;
     this.dropped = s.dropped;
     if (!keepParent) {
@@ -2112,6 +2144,8 @@ export class ForexLab {
     const statInputs: StatInput[] = [];
     /** v27.24: the picked strategies' finished trades, for the "two strategies agree" (doubling up) test */
     const confPool: ConfTrade[] = [];
+    /** v27.90: the strategies the confluence study counts as mates (picked on the first 70%) — live mates must be one too */
+    const pickedKeys = new Set<string>();
     /** v27.86: every strategy's tested entries (the opponents in the clash test) */
     const oppAll: SideEntry[] = [];
     // v27.37 retired strategies: skipped on weekdays, all re-tested at the weekend
@@ -2151,6 +2185,7 @@ export class ForexLab {
         };
         const always = FX_CONFIG.botAlways.includes(x.s.id);
         const picked = always || pickedOnInSample(x.ch.inSample);
+        if (picked && x.s.id !== 'random') pickedKeys.add(x.key);
         for (const t of x.trades) {
           const se = seriesOf.get(`${t.pair}:${tf}`);
           if (!se) continue;
@@ -2404,7 +2439,8 @@ export class ForexLab {
     //    published four; minus what lost in its own account ──
     const rec = await this.botRecord();
     this.dropped = rec.dropped;
-    const rollLive = rolling?.active && rollKeys ? new Set(rollKeys) : null;
+    // v27.90: the rolling picker's list / sizes don't apply while only proven strategies trade (the chooser ignores it)
+    const rollLive = !FX_CONFIG.provenOnly.on && rolling?.active && rollKeys ? new Set(rollKeys) : null;
 
     // v18.9: an always-on row rests while its own last 26 weeks lose money (the rolling picker's record, same rule live)
     const alwaysOff = new Set((rolling?.thisWeek.paused ?? []).map((p) => p.key));
@@ -2593,7 +2629,7 @@ export class ForexLab {
       // v27.13: works on this market across all its tested trades → the work size
       const work = !chosen.has(`${t.strategy}:${t.tf}`) && workTrial(t.pair, cellFor(t), row?.pairs.find((p) => p.pair === t.pair));
       // v27.11: the owner's trial (Judas swing on the Nasdaq) → its own size
-      const owned = ownerTrialOf(t.strategy, t.tf, t.pair);
+      const owned = FX_CONFIG.provenOnly.on ? undefined : ownerTrialOf(t.strategy, t.tf, t.pair); // v27.90: no trials under provenOnly
       // v27.24: a second chosen strategy fires the same way here within 2 candles and the lab proved that wins more →
       // one bigger trade (the one-bet-per-market-and-direction rule keeps it to one)
       const together = confluence.active && isTogether({ key: `${t.strategy}:${t.tf}`, pair: t.pair, side: t.side, entryT: t.entryT, barMs: (TF_MIN[t.tf as Timeframe] ?? 60) * 60_000 }, open.filter((o) => chosen.has(`${o.strategy}:${o.tf}`)).map((o) => ({ key: `${o.strategy}:${o.tf}`, pair: o.pair, side: o.side, entryT: o.entryT })));
@@ -2622,16 +2658,20 @@ export class ForexLab {
         const barMs = se.ctx.barMin * 60_000;
         return { kind: row.entry, limit, until: b.t + barMs * (1 + (row.entry === 'limit' ? ENTRY.limitBars : ENTRY.pullbackBars)) };
       })();
+      // v27.90: its tested way in is a resting order whose life is over → no market fill as a stand-in (not handed over)
+      const orderGone = !!order && order.until <= Date.now();
       // v20.1: how many market checks stand behind the trade at its signal close (strict mode needs `need` of them)
       const agree = { n: openAgree.get(tradeKey(t)) ?? 0, of: maxConfirmations(t.tf, false), need: FX_CONFIG.strict.minAgree };
       // v20.4 / v24.1: the strategy's own tested record on THIS market — a losing record here → the trade waits
       const marketRec = row ? marketRecOf(row.pairs.find((x) => x.pair === t.pair), cellFor(t), !!owned && owned.pair !== '*') : null;
       return toLabTrade(t, {
         order,
-        soloWait: soloWait(t, open, TF_MIN[t.tf as Timeframe] ?? 60) ?? (opposed.active || OPPOSED.always ? clashWait(t, open, (TF_MIN[t.tf as Timeframe] ?? 60) * 60_000) : null),
+        // v27.90: mates as the study counted them (picked strategies); opponents = every strategy's trades, still running or
+        // just finished (the study counted finished ones too)
+        soloWait: soloWait(t, [...open, ...recent].filter((m) => pickedKeys.has(`${m.strategy}:${m.tf}`)), TF_MIN[t.tf as Timeframe] ?? 60) ?? (opposed.active || OPPOSED.always ? clashWait(t, [...open, ...recent], (TF_MIN[t.tf as Timeframe] ?? 60) * 60_000) : null),
         agree,
         marketRec,
-        chosen: fwd(`${t.strategy}:${t.tf}`).ok && planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf, pooledOf(allRowOf.get(`${t.strategy}:${t.tf}`))),
+        chosen: !orderGone && fwd(`${t.strategy}:${t.tf}`).ok && planChosen(t.strategy, t.pair, chosen.has(`${t.strategy}:${t.tf}`), row?.pairs.find((x) => x.pair === t.pair), rec.dropped.includes(`${t.strategy}:${t.tf}`), cellFor(t), t.tf, pooledOf(allRowOf.get(`${t.strategy}:${t.tf}`))),
         rowChosen: chosen.has(`${t.strategy}:${t.tf}`),
         edge: row?.verdict === 'edge',
         sizeF,

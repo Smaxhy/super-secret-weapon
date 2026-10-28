@@ -8,12 +8,12 @@ const inst = (id: string) => instrument(id)!;
 const q = (id: string, mid: number, bars: Array<[number, number, number, number]> = []): Quote => ({ id, mid, bid: mid - 0.00004, ask: mid + 0.00004, t: 0, bars, dayChangePct: null, source: 'yahoo' });
 
 describe('v26 venue fees (gTrade)', () => {
-  it('rates per market group: majors, crosses, metals; coins already pay theirs in the spread', () => {
+  it('rates per market group: majors, crosses, metals; coins a % taker fee (v27.90)', () => {
     expect(feePctPerSide(inst('EURUSD'))).toBe(0.012);
     expect(feePctPerSide(inst('USDJPY'))).toBe(0.012);
     expect(feePctPerSide(inst('EURJPY'))).toBe(0.016);
     expect(feePctPerSide(inst('XAUUSD'))).toBe(0.05);
-    expect(feePctPerSide(inst('BTCUSD'))).toBe(0);
+    expect(feePctPerSide(inst('BTCUSD'))).toBe(0.045);
   });
 
   it('in R: wider stops pay a smaller share; on $25k of EUR/USD the round trip is $6', () => {

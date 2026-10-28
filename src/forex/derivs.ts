@@ -88,7 +88,9 @@ const SOURCES: Record<Exclude<DerivKind, 'liq'>, Array<[DerivSource, Older]>> = 
     [
       'binance',
       async (sym, beforeT, get) => {
-        const url = `https://fapi.binance.com/fapi/v1/fundingRate?symbol=${sym}&startTime=${beforeT - 1000 * 8 * HOUR}&endTime=${beforeT - 1}&limit=1000`;
+        // v27.90 (code review): a 1000-hour window — Binance returns the FIRST `limit` rows from startTime, so an 8-hour window
+        // could miss the newest rows of a symbol that ever settled hourly
+        const url = `https://fapi.binance.com/fapi/v1/fundingRate?symbol=${sym}&startTime=${beforeT - 1000 * HOUR}&endTime=${beforeT - 1}&limit=1000`;
         return asc(binanceArr(await get(url)).map((r) => [num(r.fundingTime), num(r.fundingRate) * 100] as Row)).filter((r) => r[0] < beforeT);
       },
     ],
@@ -339,11 +341,13 @@ export function derivSeriesFor(d: DerivData | undefined, bars: readonly Bar[], b
   const fv = d.fund.map((r) => r[1]);
   const fund = d.fund.length ? alignRows(ft, fv, bars, barMin, DERIVS.fundMaxAgeMs) : nan();
   const fundZ = d.fund.length ? alignRows(ft, rollingZ(fv, DERIVS.fundLookback, DERIVS.fundMin), bars, barMin, DERIVS.fundMaxAgeMs) : nan();
-  const ot = d.oi.map((r) => r[0]);
+  // v27.90 (code review): hourly open-interest / account rows may be stamped at the START of their hour — counted only
+  // from the hour's end (an hour later at worst, never early)
+  const ot = d.oi.map((r) => r[0] + HOUR);
   const oc = change24(d.oi);
   const oiChg = d.oi.length ? alignRows(ot, oc, bars, barMin, DERIVS.hourMaxAgeMs) : nan();
   const oiZ = d.oi.length ? alignRows(ot, rollingZ(oc, DERIVS.hourLookback, DERIVS.hourMin), bars, barMin, DERIVS.hourMaxAgeMs) : nan();
-  const lt = d.ls.map((r) => r[0]);
+  const lt = d.ls.map((r) => r[0] + HOUR);
   const lsZ = d.ls.length ? alignRows(lt, rollingZ(d.ls.map((r) => Math.log(r[1])), DERIVS.hourLookback, DERIVS.hourMin), bars, barMin, DERIVS.hourMaxAgeMs) : nan();
   return { fund, fundZ, oiChg, oiZ, lsZ };
 }
@@ -450,10 +454,11 @@ export function parseBybitLiq(raw: string, ids: ReadonlySet<string>): LiqEvent[]
 /** Add an event to a coin's hourly rows (kept `liqKeepDays`). Pure. */
 export function addLiq(rows: LiqRow[], e: LiqEvent): LiqRow[] {
   const h = Math.floor(e.t / HOUR) * HOUR;
-  const last = rows[rows.length - 1];
-  if (last && last[0] === h) {
-    if (e.side === 1) last[1] += e.usd;
-    else last[2] += e.usd;
+  // v27.90 (code review): a late event for an earlier hour adds to that hour's row (it used to replace it)
+  const same = rows.find((r) => r[0] === h);
+  if (same) {
+    if (e.side === 1) same[1] += e.usd;
+    else same[2] += e.usd;
     return rows;
   }
   const out = rows.filter((r) => r[0] >= h - DERIVS.liqKeepDays * DAY && r[0] !== h);

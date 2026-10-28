@@ -874,14 +874,21 @@ export const STRATEGY_SINCE_KEY = '_strategySince';
 const UPGRADES_KEY = '_upgrades';
 
 /** Run a one-time step once per database (recorded in the `_upgrades` row). Never throws. */
+/** v27.90 (code review): one marker write at a time in this process — two upgrades finishing together used to each write
+ * back the list they read first, so one could drop the other's marker (and run again on the next start) */
+let markerChain: Promise<unknown> = Promise.resolve();
+const readDone = async () => ((await prisma.botConfig.findUnique({ where: { key: UPGRADES_KEY } }))?.value as { done?: string[] } | null)?.done ?? [];
 export async function oneTimeUpgrade(id: string, step: () => Promise<void>): Promise<boolean> {
   try {
-    const row = await prisma.botConfig.findUnique({ where: { key: UPGRADES_KEY } });
-    const done = ((row?.value as { done?: string[] } | null)?.done ?? []).slice();
-    if (done.includes(id)) return false;
+    if ((await readDone()).includes(id)) return false;
     await step();
-    done.push(id);
-    await prisma.botConfig.upsert({ where: { key: UPGRADES_KEY }, update: { value: { done } }, create: { key: UPGRADES_KEY, value: { done } } });
+    const write = markerChain.then(async () => {
+      const done = (await readDone()).slice();
+      if (!done.includes(id)) done.push(id);
+      await prisma.botConfig.upsert({ where: { key: UPGRADES_KEY }, update: { value: { done } }, create: { key: UPGRADES_KEY, value: { done } } });
+    });
+    markerChain = write.catch(() => undefined);
+    await write;
     log.info({ id }, 'one-time upgrade applied');
     return true;
   } catch (err) {

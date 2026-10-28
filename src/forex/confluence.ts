@@ -43,7 +43,9 @@ const side = (rs: number[]): ConfSide => ({ n: rs.length, avgR: rs.length ? Math
 /** Is another strategy's trade on the same market and direction entering within `bars` candles of this one? Pure. */
 export function isTogether(t: Pick<ConfTrade, 'key' | 'pair' | 'side' | 'entryT' | 'barMs'>, others: readonly Pick<ConfTrade, 'key' | 'pair' | 'side' | 'entryT'>[], bars = CONFLUENCE.bars): boolean {
   const strat = t.key.split(':')[0];
-  return others.some((o) => o.pair === t.pair && o.side === t.side && o.key.split(':')[0] !== strat && Math.abs(o.entryT - t.entryT) <= bars * t.barMs);
+  // v27.90 (code review): only mates that entered at or BEFORE this trade (within `bars` candles) — a later one can't be
+  // seen live when the trade opens, so counting it graded the rule with look-ahead
+  return others.some((o) => o.pair === t.pair && o.side === t.side && o.key.split(':')[0] !== strat && o.entryT <= t.entryT && t.entryT - o.entryT <= bars * t.barMs);
 }
 
 export function confluenceStudy(trades: readonly ConfTrade[], oosFrom: number, now = Date.now()): ConfluenceReport {
@@ -132,7 +134,8 @@ export function opposedBy(t: { strategy: string; pair: string; side: 1 | -1; ent
     if (a[mid]!.entryT < t.entryT - span) lo = mid + 1;
     else hi = mid;
   }
-  for (let i = lo; i < a.length && a[i]!.entryT <= t.entryT + span; i++) {
+  // v27.90: entered at or before this trade only (no look-ahead)
+  for (let i = lo; i < a.length && a[i]!.entryT <= t.entryT; i++) {
     const o = a[i]!;
     if (o.side !== t.side && o.strategy !== t.strategy && o.strategy !== 'random') return o;
   }

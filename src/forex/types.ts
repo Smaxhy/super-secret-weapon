@@ -49,16 +49,17 @@ export const INSTRUMENTS: Instrument[] = [
   { id: 'SPXUSD', label: 'S&P 500', yahoo: 'ES=F', pip: 0.1, spreadPips: 5, kind: 'index' },
   { id: 'DJIUSD', label: 'Dow 30', yahoo: 'YM=F', pip: 1, spreadPips: 3, kind: 'index' },
   { id: 'RUTUSD', label: 'Russell 2000', yahoo: 'RTY=F', pip: 0.1, spreadPips: 4, kind: 'index' },
-  // v22: crypto majors against the dollar (Yahoo spot candles, 24/7). Spreads = a typical perp / exchange taker cost.
-  { id: 'BTCUSD', label: 'BTC/USD', yahoo: 'BTC-USD', pip: 1, spreadPips: 25, kind: 'crypto' },
-  { id: 'ETHUSD', label: 'ETH/USD', yahoo: 'ETH-USD', pip: 0.1, spreadPips: 15, kind: 'crypto' },
-  { id: 'SOLUSD', label: 'SOL/USD', yahoo: 'SOL-USD', pip: 0.01, spreadPips: 6, kind: 'crypto' },
+  // v22: crypto majors against the dollar (24/7). v27.90: spreads = the exchange spread only; the taker fee is a % of the
+  // position (venue-fees.ts `cryptoPct`), so the cost stays the same share of the price as the price moves.
+  { id: 'BTCUSD', label: 'BTC/USD', yahoo: 'BTC-USD', pip: 1, spreadPips: 2, kind: 'crypto' },
+  { id: 'ETHUSD', label: 'ETH/USD', yahoo: 'ETH-USD', pip: 0.1, spreadPips: 2, kind: 'crypto' },
+  { id: 'SOLUSD', label: 'SOL/USD', yahoo: 'SOL-USD', pip: 0.01, spreadPips: 2, kind: 'crypto' },
   // v24 (owner: "crypto more hardworking"): five more liquid majors on Coinbase; spreads ≈ 0.08–0.1% (a touch wider than the top three)
-  { id: 'XRPUSD', label: 'XRP/USD', yahoo: 'XRP-USD', pip: 0.0001, spreadPips: 5, kind: 'crypto' },
-  { id: 'DOGEUSD', label: 'DOGE/USD', yahoo: 'DOGE-USD', pip: 0.00001, spreadPips: 15, kind: 'crypto' },
-  { id: 'ADAUSD', label: 'ADA/USD', yahoo: 'ADA-USD', pip: 0.0001, spreadPips: 5, kind: 'crypto' },
-  { id: 'LINKUSD', label: 'LINK/USD', yahoo: 'LINK-USD', pip: 0.001, spreadPips: 10, kind: 'crypto' },
-  { id: 'AVAXUSD', label: 'AVAX/USD', yahoo: 'AVAX-USD', pip: 0.001, spreadPips: 15, kind: 'crypto' },
+  { id: 'XRPUSD', label: 'XRP/USD', yahoo: 'XRP-USD', pip: 0.0001, spreadPips: 1, kind: 'crypto' },
+  { id: 'DOGEUSD', label: 'DOGE/USD', yahoo: 'DOGE-USD', pip: 0.00001, spreadPips: 2, kind: 'crypto' },
+  { id: 'ADAUSD', label: 'ADA/USD', yahoo: 'ADA-USD', pip: 0.0001, spreadPips: 2, kind: 'crypto' },
+  { id: 'LINKUSD', label: 'LINK/USD', yahoo: 'LINK-USD', pip: 0.001, spreadPips: 3, kind: 'crypto' },
+  { id: 'AVAXUSD', label: 'AVAX/USD', yahoo: 'AVAX-USD', pip: 0.001, spreadPips: 3, kind: 'crypto' },
 ];
 
 /** v27.80 (owner: "skip the Dow charts, remove it"): markets the desks leave out entirely — no candles, no lab rows, no
