@@ -758,6 +758,15 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.82 only Edge rows trade, both desks (Oct 28, owner: "we don't settle for a maybe, we settle for: this strategy makes
+us money")
+`FX_CONFIG.provenOnly.cells` {fx: false, crypto: false} (was true / true): a per-market cell (`cellPass` / `coinCellPass`)
+whose strategy row is only Maybe / no no longer trades — with ~1,000 market × strategy tries graded, some pass by luck
+(the LINK keltner / ETH donchian20 / DJI round_break trades of Oct 28 were all cell trades on Maybe / no rows). Only rows
+with verdict 'edge' (30+ unseen, both halves positive, PF 1.2+, beats random, luck twins, deflated Sharpe ≥ 50%, profit
+floor, not dropped by the learner) trade, all-in 20% as before. Open cell trades run out on their own stops. Expect long
+idle stretches: as of Oct 28 neither desk had an Edge row. tests in forex-proven-only (cells switched on inside the two
+cell tests).
 ## v27.81 the two reopened coin trades struck (Oct 28, owner: "revert them both, remove them, these were bad calls")
 One-time `v27.81-strike-link-eth` (index.ts): `undoPositions` + `undoClosed` on cbot for refs keltner:1h:LINKUSD:1793181600000
 and donchian20:1h:ETHUSD:1793178000000 (the v27.78 / v27.79 replays, −$33.53 / −$14.61 open at 11:45) — as if never taken;

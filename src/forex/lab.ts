@@ -153,7 +153,10 @@ export const FX_CONFIG = {
    * trades there, +0.1R, PF 1.3, positive before the line, Monte Carlo 95%) also trades on THAT market. v27.34 (owner: "switch
    * them on, I want crypto to be more experimental for now and keep practising, while forex is locked on only winners"): coin
    * cells on too, but a coin trade that is live ONLY through its cell (its row isn't Edge) uses the risk mode's normal size
-   * (+ the $20 loss cap), not the all-in size — `cellAllIn` per desk; Edge rows stay all-in on both desks */ cells: { fx: true, crypto: true }, cellAllIn: { fx: true, crypto: false } },
+   * (+ the $20 loss cap), not the all-in size — `cellAllIn` per desk; Edge rows stay all-in on both desks. v27.82 (owner:
+   * "we don't settle for a maybe, we settle for: this strategy makes us money"): cells OFF on both desks — a one-market
+   * record whose strategy is only Maybe / no across its markets is not proof (with ~1,000 market × strategy tries some pass
+   * by luck); only Edge rows trade. Set a desk back to true to let per-market cells trade again */ cells: { fx: false, crypto: false }, cellAllIn: { fx: true, crypto: false } },
   /** v27.30 (owner: "make it skip the charts it loses on"): per strategy × chart, the New York sessions and markets where
    * its FIRST 70% lost (8+ trades there, average R below 0) are left out — of its record, its unseen grade and live
    * trading. Picked on the first 70% only, so the unseen part still grades it honestly. Skipped only while what is left

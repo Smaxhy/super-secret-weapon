@@ -22,7 +22,13 @@ afterEach(() => vi.useRealTimers());
 
 describe('v27.27 only proven strategies trade, big size', () => {
   it('only Edge rows are chosen; no side doors (per-market cells, owner picks); the per-desk list is empty', () => {
-    expect(FX_CONFIG.provenOnly).toEqual({ on: true, riskPct: 20, cells: { fx: true, crypto: true }, cellAllIn: { fx: true, crypto: false } });
+    expect(FX_CONFIG.provenOnly).toEqual({ on: true, riskPct: 20, cells: { fx: false, crypto: false }, cellAllIn: { fx: true, crypto: false } });
+    // v27.82: cells off by default — even a strict per-market record doesn't trade without an Edge row
+    const strict0 = { pair: 'RUTUSD', n: 108, avgR: 0.19, pf: 2.4, winPct: 50, inN: 60, inAvgR: 0.1, mcP: 0.99, mcP5: 0.05 } as never;
+    expect(planChosen('pivot_bounce', 'RUTUSD', false, undefined, false, strict0, '4h')).toBe(false);
+    FX_CONFIG.provenOnly.cells.fx = true;
+    FX_CONFIG.provenOnly.cells.crypto = true;
+    try {
     expect(FX_CONFIG.only).toEqual({ fx: [], crypto: [] });
     expect(onlyOk('crypto', 'pivot_bounce', '4h')).toBe(true);
     const cell = { pair: 'RUTUSD', n: 108, avgR: 0.19, pf: 2.4, inN: 60, inAvgR: 0.1, mc: { pProfit: 1 } } as never;
@@ -44,6 +50,10 @@ describe('v27.27 only proven strategies trade, big size', () => {
     expect(planChosen('rsi_dip', 'BTCUSD', true, undefined, true, null, '4h')).toBe(false); // the learner can still drop it
     const rows = [{ id: 'rsi_dip', tf: '15m', verdict: 'edge' as const }, { id: 'news_drift', tf: '15m', verdict: 'maybe' as const }, { id: 'judas_swing', tf: '15m', verdict: 'no' as const }];
     expect(chosenOf(rows, [], ['judas_swing'], 'fx')).toEqual(['rsi_dip:15m']);
+    } finally {
+      FX_CONFIG.provenOnly.cells.fx = false;
+      FX_CONFIG.provenOnly.cells.crypto = false;
+    }
   });
 
   it('a chosen lab trade carries the big size; one that is not chosen does not', () => {
@@ -60,10 +70,18 @@ describe('v27.27 only proven strategies trade, big size', () => {
   it('v27.34: per-market cells count as live setups in provenCells only where they trade', () => {
     const cell = (pair: string) => ({ pair, n: 108, avgR: 0.19, pf: 2.4, winPct: 50, inN: 60, inAvgR: 0.1, mcP: 0.99, mcP5: 0.05, sess: [] });
     const pooled = { n: 400, winPct: 50, avgR: 0.05, medianR: 0, pf: 1.2, totalR: 20, maxDdR: 5 };
+    expect(provenCells([{ id: 'news_drift', tf: '1h', outSample: pooled, verdict: 'maybe', markets: [cell('ETHUSD'), cell('RUTUSD')] }])).toEqual({}); // v27.82: cells off
+    FX_CONFIG.provenOnly.cells.fx = true;
+    FX_CONFIG.provenOnly.cells.crypto = true;
+    try {
     const out = provenCells([{ id: 'news_drift', tf: '1h', outSample: pooled, verdict: 'maybe', markets: [cell('ETHUSD'), cell('RUTUSD'), { ...cell('BTCUSD'), mcP: 0.8 }, { ...cell('XRPUSD'), avgR: 0.12 }] }]);
     expect(out).toEqual({ ETHUSD: ['news_drift:1h'], RUTUSD: ['news_drift:1h'] });
     // v27.44: without a pooled record (or with a losing one) a coin cell doesn't count; forex cells are unchanged
     expect(provenCells([{ id: 'news_drift', tf: '1h', markets: [cell('ETHUSD'), cell('RUTUSD')] }])).toEqual({ RUTUSD: ['news_drift:1h'] });
+    } finally {
+      FX_CONFIG.provenOnly.cells.fx = false;
+      FX_CONFIG.provenOnly.cells.crypto = false;
+    }
   });
 
   it('a proven coin trade risks 20% on its tested stop and the $20 cap leaves it alone', async () => {
