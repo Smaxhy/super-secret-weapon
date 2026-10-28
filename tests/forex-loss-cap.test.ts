@@ -15,14 +15,18 @@ describe('per-trade USD loss cap', () => {
     expect(BOT.maxLossUsdByAcct.cbot).toBe(20); // v27.95 (was $50 from v27.78)
     expect(BOT.maxLossUsdByAcct.bot).toBe(20);
   });
-  it('pulls a looser stop in to the $20 loss and never loosens a tighter one', () => {
+  it('v27.96: trims a trade whose tested stop loses more than $20 (the stop stays where it was tested)', () => {
     const a = newAccount(1000);
     a.maxLossUsd = 20;
     a.open = [long()];
     const m1 = T + 60_000;
     const ev = tick(a, { BTCUSD: q(99_900, [[m1, 100_000, 99_800, 99_900, 100_000]]) }, m1 + 30_000);
-    expect(ev.join(' ')).toMatch(/\$20 loss cap/);
-    expect(a.open[0]!.stop).toBeCloseTo(99_000, 6); // $20 ÷ 0.02 BTC = $1,000 below the entry
+    expect(ev.join(' ')).toMatch(/trimmed to 20%/);
+    const p = a.open[0]!;
+    expect(p.stop).toBe(96_000); // never pulled in
+    expect(p.units).toBeCloseTo(0.02 * (15.9 / 77.9), 8);
+    // the part sold now + the rest at the tested stop = $18 (90% of the cap, room for a gap fill)
+    expect(-(p.bankedUsd ?? 0) + p.units * 4_000).toBeCloseTo(18, 1);
     const b = newAccount(1000);
     b.maxLossUsd = 20;
     b.open = [{ ...long(), stop: 99_500 }];
@@ -42,13 +46,15 @@ describe('per-trade USD loss cap', () => {
     b.open = [long()];
     tick(b, { BTCUSD: q(99_900, [[m1, 100_000, 99_800, 99_900, 100_000]]) }, m1 + 30_000);
     tick(b, { BTCUSD: q(98_800, [[m1 + 60_000, 99_900, 98_700, 98_800, 99_900]]) }, m1 + 90_000);
+    expect(b.open).toHaveLength(1); // a dip that doesn't reach the tested stop no longer stops it out (v27.96)
+    tick(b, { BTCUSD: q(96_500, [[m1 + 120_000, 98_800, 95_900, 96_500, 98_800]]) }, m1 + 190_000);
     expect(b.open).toHaveLength(0);
-    expect(b.closed[0]!.pnlUsd).toBeCloseTo(-20, 1);
+    expect(b.closed.reduce((n, c) => n + c.pnlUsd, 0)).toBeGreaterThanOrEqual(-20);
   });
 });
 
 describe('v27.95 every trade, fee included, stays inside $20', () => {
-  it('pulls an all-in / copied trade in too, and leaves room for the round-trip fee', () => {
+  it('trims an all-in / copied trade too, and leaves room for the round-trip fee', () => {
     VENUE_FEES.on = true;
     try {
       const a = newAccount(1000);
@@ -56,11 +62,14 @@ describe('v27.95 every trade, fee included, stays inside $20', () => {
       a.open = [{ ...long(), allIn: true, tf: 'signal' }];
       const m1 = T + 60_000;
       tick(a, { BTCUSD: q(99_900, [[m1, 100_000, 99_800, 99_900, 100_000]]) }, m1 + 30_000);
-      const fee = (2 * 0.045 * 100 * 20) / 100; // $1.80 on a $2,000 position
-      expect(a.open[0]!.stop).toBeCloseTo(100_000 - (20 - fee) / 0.02, 4);
+      expect(a.open[0]!.stop).toBe(96_000);
+      expect(a.open[0]!.units).toBeLessThan(0.02 * 0.2);
       tick(a, { BTCUSD: q(98_000, [[m1 + 60_000, 99_900, 97_000, 98_000, 99_900]]) }, m1 + 90_000);
+      expect(a.open).toHaveLength(1);
+      tick(a, { BTCUSD: q(96_500, [[m1 + 120_000, 98_000, 95_900, 96_500, 98_000]]) }, m1 + 190_000);
       expect(a.open).toHaveLength(0);
-      expect(a.closed[0]!.pnlUsd).toBeGreaterThanOrEqual(-20.01);
+      // the part sold + the stopped rest, both fees included
+      expect(a.closed.reduce((n, c) => n + c.pnlUsd, 0)).toBeGreaterThanOrEqual(-20.01);
     } finally {
       VENUE_FEES.on = false;
     }
@@ -89,6 +98,7 @@ describe('v27.45 a trade can carry its own loss cap', () => {
     a.open = [{ ...long(), maxLossUsd: 30 }];
     const m1 = T + 60_000;
     tick(a, { BTCUSD: q(99_900, [[m1, 100_000, 99_800, 99_900, 100_000]]) }, m1 + 30_000);
-    expect(a.open[0]!.stop).toBeCloseTo(98_500, 6); // $30 ÷ 0.02 BTC = $1,500 below the entry
+    expect(a.open[0]!.stop).toBe(96_000); // v27.96: trimmed, not pulled in
+    expect(-(a.open[0]!.bankedUsd ?? 0) + a.open[0]!.units * 4_000).toBeCloseTo(27, 1); // 90% of $30
   });
 });

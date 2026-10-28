@@ -729,6 +729,18 @@ async function main(): Promise<void> {
   });
   // v27.81 (owner: "revert them both, remove them, these were bad calls"): the replayed LINK keltner 10:09 and ETH donchian20
   // 09:09 longs struck as if they never happened (open legs, or the close if one already ended); refs → skipRefs
+  // v27.96 (owner: "remove the 2 out of 3"): the coin bot's BTC + LINK ifvg_cisd 1h longs of Oct 28, stopped at −$20 by a
+  // stop the v27.95 cap had pulled in to ~⅓ of the tested distance (their tested stops were never reached) — struck as if
+  // never taken; the −$51.98 LINK pivot_bounce short stays
+  await oneTimeUpgrade('v27.96-strike-capped-ifvg', async () => {
+    const from = Date.parse('2026-10-28T20:16:00Z');
+    const to = Date.parse('2026-10-28T21:30:00Z');
+    const pick = (c: { strategy?: string; tf?: string; pair: string; closedAt: number; pnlUsd: number; reason: string }) =>
+      c.strategy === 'ifvg_cisd' && c.tf === '1h' && (c.pair === 'BTCUSD' || c.pair === 'LINKUSD') && c.reason === 'stop' && c.closedAt >= from && c.closedAt <= to && c.pnlUsd < 0;
+    const line = await practice.undoClosed('cbot', pick, 'coin bot: BTC + LINK ifvg_cisd longs stopped by the pulled-in $20 cap stop (owner: remove)');
+    cryptoLab.logBot([line]);
+    log.info({ line }, 'capped ifvg_cisd trades struck');
+  });
   await oneTimeUpgrade('v27.81-strike-link-eth', async () => {
     const refs = new Set(['keltner:1h:LINKUSD:1793181600000', 'donchian20:1h:ETHUSD:1793178000000']);
     const pick = (p: { ref?: string }) => !!p.ref && refs.has(p.ref);

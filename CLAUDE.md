@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.96 the $ cap trims a trade, never pulls its stop in; the two capped ifvg_cisd longs struck (Oct 28, owner: "wtf is this … remove
+the 2 out of 3 and never let it happen again")
+The v27.95 tick pull-in moved the stops of trades opened under the old $50 rules to ~⅓ of their tested distance: the coin bot's
+BTC + LINK ifvg_cisd 1h longs (opened 20:11 / before the 20:16 deploy) were stopped at −$20.00 at 20:28 / 20:46 UTC by those
+pulled-in stops; their tested stops (BTC ≈ 80,231) were never reached. practice.ts `tick`: when a trade's stop would lose more
+than its cap (`p.maxLossUsd ?? a.maxLossUsd`; loss = price move + the position's round-trip venue fee + swap paid), the EXCESS is
+sold at the market as a part (`closePart`, reason 'partial') so the part sold now + the rest at the TESTED stop lose ≤ cap ×
+`sizeToCapHeadroom` 0.9 (`keep = (0.9·cap − lossNow) ÷ (lossAtStop − lossNow)`; already at the cap / keep < 5% → closed at
+the market); the stop stays where it was tested; a trade without a stop gets one at the cap. Bot-log "X trimmed to N% so its
+tested stop loses ≤ $20 (…; stop kept at …)". New trades never need it (syncBot / copyOpen size to the cap incl. the fee).
+One-time `v27.96-strike-capped-ifvg` (index.ts): `undoClosed('cbot', ifvg_cisd 1h BTCUSD / LINKUSD stop losses closed Oct 28
+20:16–21:30 UTC)` → refs on skipRefs; the −$51.98 LINK pivot_bounce short stays. tests: forex-loss-cap rewritten for trimming.
 ## v27.95 every trade capped at $20, fee included (Oct 28, owner: "why did the bot AGAIN allow a −$51.98 loss"; "cut it all on 20")
 The −$51.98: the coin bot's cap was $50 (v27.78) and size-to-cap only counted the stop ($47.50), not the 0.045%-a-side coin
 fee booked at the close. Now `BOT.maxLossUsdByAcct` {cbot: 20, bot: 20}; `capRiskUsd(cap, stopFrac, feeRate)` (practice.ts,

@@ -1119,25 +1119,47 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
     // v27.20: the account's loss cap in USD — the stop is pulled in so this trade can't lose more (never loosened);
     // already past it → closed at the market now
     const capUsd = p.maxLossUsd ?? a.maxLossUsd; // v27.45: the trade's own cap first
-    // v27.95: every trade (all-in and his calls too), and the round-trip fee counts inside the cap
+    // v27.95: every trade (all-in and his calls too), and the round-trip fee counts inside the cap.
+    // v27.96 (owner: "never let it happen again" — the BTC / LINK ifvg_cisd longs of Oct 28 were stopped at −$20 by a stop
+    // the cap had pulled to ~⅓ of the tested distance): a trade whose stop would lose more than the cap is made SMALLER
+    // (the excess sold at the market as a part) and keeps its tested stop; the stop is never pulled in. Only a trade with
+    // no stop gets one at the cap.
     const capInst = capUsd && capUsd > 0 ? instrument(p.pair) : undefined;
     if (capUsd && capUsd > 0 && !q.stale) {
-      const per = p.units * usdPerPx(p.pair, { ...mids, [p.pair]: mids[p.pair] ?? p.entry });
-      const room = Math.max(capUsd - (capInst ? feeUsd(capInst, p.marginUsd, p.leverage) : 0) - (p.bankedUsd && p.bankedUsd < 0 ? -p.bankedUsd : 0), capUsd * 0.25);
-      if (per > 0) {
-        const capStop = p.entry - (p.side * room) / per;
-        if (p.stop === null || (p.side === 1 ? capStop > p.stop : capStop < p.stop)) {
-          const exitNow = p.side === 1 ? q.bid : q.ask;
+      const exitNow = p.side === 1 ? q.bid : q.ask;
+      const paid = p.bankedUsd && p.bankedUsd < 0 ? -p.bankedUsd : 0;
+      const fee = capInst ? feeUsd(capInst, p.marginUsd, p.leverage) : 0;
+      const lossAt = (px: number) => -pnlUsd(p, px, mids) + fee + paid;
+      if (p.stop !== null) {
+        const lStop = lossAt(p.stop);
+        if (lStop > capUsd) {
+          const lNow = Math.max(0, lossAt(exitNow));
+          const keep = lNow >= capUsd * BOT.sizeToCapHeadroom ? 0 : (capUsd * BOT.sizeToCapHeadroom - lNow) / (lStop - lNow);
+          if (keep < 0.05) {
+            const pl = closePos(a, p, exitNow, mids, 'stop', now);
+            events.push(`${p.pair} closed: it reached the $${capUsd} loss cap (${pl >= 0 ? '+' : '−'}$${Math.abs(pl).toFixed(2)})`);
+            continue;
+          }
+          if (keep < 1) {
+            const pl = closePart(a, p, 1 - keep, exitNow, mids, now);
+            if (mv) mv.moved = true;
+            events.push(`${p.pair} trimmed to ${Math.round(keep * 100)}% so its tested stop loses ≤ $${capUsd} (part sold ${pl >= 0 ? '+' : '−'}$${Math.abs(pl).toFixed(2)}; stop kept at ${p.stop.toPrecision(6)})`);
+          }
+        }
+      } else {
+        const per = p.units * usdPerPx(p.pair, { ...mids, [p.pair]: mids[p.pair] ?? p.entry });
+        const room = Math.max(capUsd - fee - paid, capUsd * 0.25);
+        if (per > 0) {
+          const capStop = p.entry - (p.side * room) / per;
           if (p.side === 1 ? exitNow <= capStop : exitNow >= capStop) {
             closePos(a, p, exitNow, mids, 'stop', now);
             events.push(`${p.pair} closed: it reached the $${capUsd} loss cap`);
             continue;
           }
           p.stop = capStop;
-          const lastT = q.bars.length ? q.bars[q.bars.length - 1]![0] : now;
-          p.stopMovedT = lastT;
+          p.stopMovedT = q.bars.length ? q.bars[q.bars.length - 1]![0] : now;
           if (mv) mv.moved = true;
-          events.push(`${p.pair} stop pulled in to the $${capUsd} loss cap (${capStop.toPrecision(6)})`);
+          events.push(`${p.pair} had no stop: one set at the $${capUsd} loss cap (${capStop.toPrecision(6)})`);
         }
       }
     }
