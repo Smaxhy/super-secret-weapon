@@ -120,6 +120,13 @@ export const FX_CONFIG = {
      * profit factor under 0.9). Was "only a winning one (PF 1.1+)", which also refused every market with a thin or
      * break-even record — half the chosen rows' markets. */
     market: { minN: 12, losingPf: 0.9, badN: 5, badPf: 0.6, cellMinN: 4 },
+    /** v27.97 (owner: "stop rushing trades, think every trade through with extreme caution, I don't care if it's once a
+     * day"): a strategy trades a market only where ITS OWN record on that market clears the strict per-market bar
+     * (`cellPass`: 30+ unseen trades there, +0.1R a trade, PF 1.3, 20+ trades before the test line and positive there,
+     * Monte Carlo 95%) — on top of the row's own approval, the forward check, the second setup, the judge and the live brake.
+     * Before, a row approved on all markets together traded every market (Oct 28: trendline_break on BTC −0.04R, ifvg_cisd
+     * on BTC +0.03R). */
+    marketMustPass: { fx: true, crypto: true } as Record<'fx' | 'crypto', boolean>,
   },
   /** v18.7 (owner: "we can't fast trade these charts, they take time"): the bot account trades the 1h + 4h charts only.
    * The 15m / 1m charts stay lab-tested (Strategies / Lab) but place no bot trades while this is off.
@@ -743,13 +750,21 @@ export function planChosen(strategy: string, pair: string, rowChosen: boolean, r
  * here (cellPass / trial bars) — its unseen trades here (4+) lose on average. v27.21 (owner: "stupid crypto trades"):
  * three coin mss_sweep 15m shorts lost −$79 on coins where that rule had PF 0.06–0.62; the 15m chart never had this check.
  */
-export function marketRecOf(rec: { n: number; pf: number | null; totalR: number } | undefined, cell: MarketCell | null | undefined, ownerTrial = false): NonNullable<LabOpenTrade['marketRec']> {
+export function marketRecOf(rec: { n: number; pf: number | null; totalR: number } | undefined, cell: MarketCell | null | undefined, ownerTrial = false, pair?: string): NonNullable<LabOpenTrade['marketRec']> {
   const m = FX_CONFIG.strict.market;
   const n = rec?.n ?? 0;
   const pf = rec?.pf ?? null;
   const losing = !!rec && ((n >= m.minN && (pf ?? 99) < m.losingPf) || (n >= m.badN && (pf ?? 99) < m.badPf));
   const proven = cellPass(cell) || (!!cell && (focusTrial(cell.pair, cell) || workTrial(cell.pair, cell, rec)));
   const cellLosing = !proven && !!cell && cell.n >= m.cellMinN && cell.avgR < 0;
+  const mkt = pair ?? cell?.pair;
+  // v27.97: the strict per-market bar is required (no owner trial / trial / work bar stands in for it)
+  if (mkt && FX_CONFIG.strict.marketMustPass[isCrypto(mkt) ? 'crypto' : 'fx'] && !cellPass(cell)) {
+    const why = cell
+      ? `its own record on this market isn't strong enough (${cell.n} unseen trades here, ${cell.avgR >= 0 ? '+' : ''}${cell.avgR.toFixed(2)}R a trade, PF ${cell.pf ?? '—'}, ${cell.inN} before the test line at ${cell.inAvgR >= 0 ? '+' : ''}${cell.inAvgR.toFixed(2)}R, Monte Carlo ${Math.round((cell.mcP ?? 0) * 100)}%; needs 30+ at +0.1R, PF 1.3, positive before the line, 95%)`
+      : 'no tested record of its own on this market';
+    return { n, pf, totalR: rec?.totalR ?? 0, ok: false, why };
+  }
   return { n, pf, totalR: rec?.totalR ?? 0, ok: ownerTrial || !(losing || cellLosing) };
 }
 /** v27.30 pure: the sessions (montecarlo.ts `sessionOf`) and markets where a row's FIRST 70% (finished before `oosFrom`)
@@ -2677,7 +2692,7 @@ export class ForexLab {
       // v20.1: how many market checks stand behind the trade at its signal close (strict mode needs `need` of them)
       const agree = { n: openAgree.get(tradeKey(t)) ?? 0, of: maxConfirmations(t.tf, false), need: FX_CONFIG.strict.minAgree };
       // v20.4 / v24.1: the strategy's own tested record on THIS market — a losing record here → the trade waits
-      const marketRec = row ? marketRecOf(row.pairs.find((x) => x.pair === t.pair), cellFor(t), !!owned && owned.pair !== '*') : null;
+      const marketRec = row ? marketRecOf(row.pairs.find((x) => x.pair === t.pair), cellFor(t), !!owned && owned.pair !== '*', t.pair) : null;
       return toLabTrade(t, {
         order,
         // v27.90: mates as the study counted them (picked strategies); opponents = every strategy's trades, still running or

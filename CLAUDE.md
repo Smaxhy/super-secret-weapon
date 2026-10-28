@@ -758,6 +758,17 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v27.97 a strategy trades a market only where it proved itself on THAT market (Oct 28, owner: "stop trying to rush trades,
+REALLY think every trade through with extreme caution, I don't care if it's once a day, I need results")
+VPS read 20:42 UTC (coin bot): 11 Maybe rows chosen (all passed unseen PF ≥ 1.3 + the forward check), but a row approved on all
+coins together traded every coin — trendline_break:1h's BTC cell is −0.04R / PF 0.85, ifvg_cisd:1h BTC +0.03R, pivot_bounce:1h
+BTC +0.04R. `FX_CONFIG.strict.marketMustPass` {fx: true, crypto: true} + `marketRecOf(…, pair)` (lab.ts; both labs pass
+`t.pair`): `marketRec.ok` needs `cellPass` on that market (30+ unseen trades there, +0.1R, PF 1.3, 20+ before the test line
+and positive there, Monte Carlo 95%); no trial / work / owner bar stands in; `marketRec.why` → syncBot wait "its own record on
+this market isn't strong enough (…)" (practice.ts uses `why` when set). On top of: the row's verdict (+ coin Maybe PF 1.3),
+profit floor, forward check, second setup (confluence), judge, live brake, the $20 cap. `BOT.maxSameSide.cbot` 2 → 1 (one coin
+trade per direction at a time — coins move together). Expect far fewer trades on both desks. tests: forex-market-rec,
+forex-strict, forex-proven-only (maxSameSide rule tested at 2).
 ## v27.96 the $ cap trims a trade, never pulls its stop in; the two capped ifvg_cisd longs struck (Oct 28, owner: "wtf is this … remove
 the 2 out of 3 and never let it happen again")
 The v27.95 tick pull-in moved the stops of trades opened under the old $50 rules to ~⅓ of their tested distance: the coin bot's

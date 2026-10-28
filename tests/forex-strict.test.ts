@@ -76,7 +76,7 @@ afterEach(() => vi.useRealTimers());
 
 describe('v20.1 strict mode is the default', () => {
   it('edge only, 2 market checks, no desk trades, market entries only', () => {
-    expect(FX_CONFIG.strict).toEqual({ mode: 'off', minAgree: 0, deskTrades: false, market: { minN: 12, losingPf: 0.9, badN: 5, badPf: 0.6, cellMinN: 4 } });
+    expect(FX_CONFIG.strict).toEqual({ mode: 'off', minAgree: 0, deskTrades: false, market: { minN: 12, losingPf: 0.9, badN: 5, badPf: 0.6, cellMinN: 4 }, marketMustPass: { fx: true, crypto: true } });
     expect(FX_CONFIG.liveEntries).toEqual({ fx: false, crypto: true }); // v27.83
   });
 });

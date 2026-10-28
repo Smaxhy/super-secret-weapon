@@ -1,6 +1,6 @@
 /** v27.26 / v27.27 (owner: "only trade what's actually profitable, forex and crypto, with a big size like rsi_dip; keep
  * testing the rest"): both bots trade only Edge rows (the strict test), at 20% of the account on the tested stop. */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type Redis from 'ioredis';
 import { FX_CONFIG, onlyOk, planChosen, provenCells, toLabTrade } from '../src/forex/lab';
 import type { Trade } from '../src/forex/types';
@@ -137,7 +137,10 @@ describe('v27.28 tight trail once in profit (owner: "trail its SL VERY tightly")
 describe('v27.44 the coin bot counts a market move once', () => {
   it('at most 2 open trades the same way across the coins (best-tested first); the other way still opens', async () => {
     vi.useFakeTimers({ now: NOW });
-    expect(BOT.maxSameSide.cbot).toBe(2);
+    expect(BOT.maxSameSide.cbot).toBe(1); // v27.97 (was 2) — the rule is tested at 2 below
+    const sameSide = BOT.maxSameSide.cbot;
+    BOT.maxSameSide.cbot = 2;
+    onTestFinished(() => { BOT.maxSameSide.cbot = sameSide; });
     const r = new NxRedis();
     r.m.set('fx:practice:cbot', JSON.stringify(newAccount(1000)));
     const p = new Practice(r as unknown as Redis);

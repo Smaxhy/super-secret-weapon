@@ -101,7 +101,7 @@ export const BOT = {
   /** v27.44 (owner: "make it trade smarter … what it just did is an account drainer"; Oct 25 06:00 UTC it shorted BTC, XRP,
    * SOL, LINK at once — coins move together, so that was one bet placed six times): at most this many open trades (+ resting
    * orders) in the same direction across the whole account; the best-tested signals go first. 0 = no cap. */
-  maxSameSide: { cbot: 2 } as Partial<Record<string, number>>,
+  maxSameSide: { cbot: 1 } as Partial<Record<string, number>>, // v27.97 (owner: "extreme caution"): 2 → 1
   /** v27.24 (owner: "every bot can lose but 4 losses in a row is different"): 3 bot losses in a row → half size until a
    * win; 4 → no new trades for `pauseHours` after the last one (a safety rule, not graded — like the VIX brake).
    * v27.25 OFF (owner: "there doesn't have to be a cooling-off system, just a max loss system") — the per-trade loss
@@ -1407,7 +1407,7 @@ export interface LabOpenTrade {
    * `of`; the bot waits while `n < need` (strict mode) */
   agree?: { n: number; of: number; need: number } | null;
   /** v20.4: the strategy's own tested record on this market (`ok` = enough trades, winning); the bot waits while not ok */
-  marketRec?: { n: number; pf: number | null; totalR: number; ok: boolean } | null;
+  marketRec?: { n: number; pf: number | null; totalR: number; ok: boolean; /** v27.97 */ why?: string } | null;
 }
 
 /** v18.4: a resting limit order on the bot account (entries.ts, picked on the first 70%); filled by `tick` against the
@@ -2316,7 +2316,7 @@ export class Practice {
         }
         if (t.marketRec && !t.marketRec.ok && !t.desk) {
           // v20.4 / v24.1: the strategy's tested record on this market is a losing one → it does not trade it here
-          const w = `losing record on this market (${t.marketRec.n} tested trades here, profit factor ${t.marketRec.pf ?? '—'}, ${t.marketRec.totalR}R)`;
+          const w = t.marketRec.why ?? `losing record on this market (${t.marketRec.n} tested trades here, profit factor ${t.marketRec.pf ?? '—'}, ${t.marketRec.totalR}R)`;
           note(`${t.ref}:market`, `waiting on ${t.pair} (${t.strategy}): ${w}`);
           skip(t, w, true);
           continue;

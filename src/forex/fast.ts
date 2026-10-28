@@ -586,7 +586,7 @@ export class FastLab {
             cov = cov ?? liveCoverage(this.report, tf, inst.id, se);
             const dataWait = si >= 0 ? missingInput(row.filter ?? 'none', se.env, si, cov) : null;
             // v27.21: the strategy's record on this market — a losing one makes the trade wait (the hourly chart had it, this didn't)
-            const marketRec = marketRecOf(row.pairs?.find((x) => x.pair === t.pair), row.markets?.find((c) => c.pair === t.pair));
+            const marketRec = marketRecOf(row.pairs?.find((x) => x.pair === t.pair), row.markets?.find((c) => c.pair === t.pair), false, t.pair);
             labOpen.push(toLabTrade(t, { chosen: isChosen, rowChosen: keep.has(`${row.id}:${tf}`), edge: row.verdict === 'edge', sizeF, prio: focusPrio(t.pair, row.all.avgR), judge: null, conviction: { tier: b.tier, conf, of: maxConfirmations(tf, false), mult: b.mult, lev: b.lev }, dataWait, marketRec }));
             pairOpen.push(t);
           }

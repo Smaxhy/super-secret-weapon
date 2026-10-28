@@ -20,8 +20,10 @@ describe('v27.21 losing record on a market', () => {
     expect(marketRecOf({ n: 406, pf: 1.9, totalR: 60 }, cell('SOLUSD', 188, 0.16, 2.19, 200, 0.12, 1)).ok).toBe(true);
     // nothing tested here yet → passes
     expect(marketRecOf(undefined, null).ok).toBe(true);
-    // 3 unseen losers is too thin to judge
-    expect(marketRecOf({ n: 8, pf: 1.1, totalR: 0.5 }, cell('ETHUSD', 3, -0.5, 0.4)).ok).toBe(true);
+    // 3 unseen losers is too thin to judge — v27.97: and too thin to trade (the strict per-market bar is required now)
+    const thin = marketRecOf({ n: 8, pf: 1.1, totalR: 0.5 }, cell('ETHUSD', 3, -0.5, 0.4));
+    expect(thin.ok).toBe(false);
+    expect(thin.why).toMatch(/isn't strong enough \(3 unseen trades here/);
     // the owner's one-market trial overrides
     expect(marketRecOf({ n: 172, pf: 0.89, totalR: -8.9 }, null, true).ok).toBe(true);
   });
