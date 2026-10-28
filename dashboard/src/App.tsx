@@ -71,6 +71,7 @@ const WS: Record<Ws, { label: string; icon: IconName; home: string; groups: Grou
         label: 'Deeper',
         items: [
           { to: '/forex/lab', label: 'Lab', icon: 'flask', desc: 'Every test it runs on itself: what is live, what is still proving itself' },
+          { to: '/forex/replay', label: 'Replay', icon: 'play', desc: 'Play history candle by candle and watch the strategies trade it' },
           { to: '/forex/strategies', label: 'Strategies', icon: 'sliders', desc: 'Every strategy tested on 15m, 1h and 4h charts' },
           { to: '/forex/paper', label: 'Paper results', icon: 'clock', desc: 'Every strategy traded on paper since the start' },
           { to: '/forex/setup', label: 'Setup', icon: 'plug', desc: 'Price feeds, Pyth key, going live' },
@@ -100,6 +101,7 @@ const WS: Record<Ws, { label: string; icon: IconName; home: string; groups: Grou
         label: 'Deeper',
         items: [
           { to: '/crypto/lab', label: 'Lab', icon: 'flask', desc: 'Every self-test and the playbook' },
+          { to: '/crypto/replay', label: 'Replay', icon: 'play', desc: 'Play history candle by candle and watch the strategies trade it' },
           { to: '/crypto/strategies', label: 'Strategies', icon: 'sliders', desc: 'Every strategy on each coin chart' },
           { to: '/crypto/paper', label: 'Paper results', icon: 'clock', desc: 'The live forward test' },
         ],

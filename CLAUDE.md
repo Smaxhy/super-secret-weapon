@@ -758,6 +758,28 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28 a fast live chart instead of TradingView + Replay (FX Replay's idea, built in) (Oct 28, owner: "look into FX Replay as
+well, I want the bot better and faster instead of TradingView" → chose both)
+FX Replay (fxreplay.com) is a manual chart-replay website with NO public API — nothing to plug the bot into; its idea was built
+on the bot's own data. (1) **FastChart** (`dashboard/src/components/FastChart.tsx`): TradingView's open-source Lightweight
+Charts (`lightweight-charts` 5.2.1 pinned, Apache-2.0 — keep its attribution logo on; dep fancy-canvas, no install scripts):
+canvas candles from the bot's own `/api/forex/candles` + the live 'fx' tick overlay, `update()` on a tick / new candle and
+`setData()` only on a new market / candle size (`fitKey`), price lines (entry / stop / target / lock) kept in view
+(`autoscaleInfoProvider`), markers snapped onto their candle (`snapTime`), times in the viewer's clock (`chartTime`), locale
+guarded (`safeLocale`: headless Chromium reports "en-US@posix", which Intl rejects and blanked the chart). Active-trade card
+(FxActiveTrade): views "Live chart" (default, 500 candles, 1m / 5m / 15m / 1h / 4h, scroll + zoom) / "Bot" (SVG);
+`TvChart.tsx` (the TradingView iframe) deleted (`tvSymbol` stays in lib/markets.ts, unused). (2) **Replay**
+(`src/forex/fx-replay.ts` pure + GET `/api/<desk>/replay?pair&tf=15m|1h|4h&from&to&pick=a,b`): one market's chart built like
+the lab (`replaySeries`: the lab's own hourly bars from `lab.book.h1` incl. Dukascopy / Databento stitching, 4h from them, 15m
+from the fast lab, same bigger charts), each picked row (`replayPicks`: the bot's live rows first, then Edge / Maybe / no by
+unseen record; random never) simulated with its filter / exit / way in / costs and its skipped sessions / markets
+(`replayTrades`, HMM fitted on the bars before the 70/30 line), trades ENTERED in the window, newest 3,000 candles
+(`windowBars`); default picks = the live rows, else the top 3 non-'no'; ≤ 8 picks; one build at a time per desk, cached 5 min.
+Dashboard Forex / Crypto → Deeper → **Replay** (`components/FxReplay.tsx`, route `/<desk>/replay`): market, candle size, length,
+start date, strategy chips (● = trades now); player play / pause / step / next trade / speed 2–30 candles a second / scrubber;
+the future stays hidden, open trades' entry / stop / target on the price axis, entries + results (R) as markers, tally (closed,
+won, total R, R after the 70/30 line = the unseen part). Display / study only — touches no trade. Verified by rendering
+(Playwright, scratchpad shots/replay28.mjs + harness/run.mjs, phone + desktop, light + dark). tests/forex-fx-replay (4).
 ## v27.98 very-sure trades go big: their tested stop may lose 10% of the account (Oct 28, owner: "if the bot is sure even
 after all the checks … use like 10-20%" → chose "lose up to 10%")
 "Very sure" = the row is Edge (strict unseen test incl. luck twins + deflated Sharpe) AND, under `marketMustPass`, the strategy

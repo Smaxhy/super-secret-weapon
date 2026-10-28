@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { FxBot } from '../components/FxBot';
 import { FxLab } from '../components/FxLab';
+import { FxReplay } from '../components/FxReplay';
 import { MarketClockBar } from '../components/FxNews';
 import { useApi } from '../hooks/useApi';
 import { useWidth } from '../hooks/useWidth';
@@ -54,7 +55,7 @@ const signed = (x: number, dp = 1) => `${x >= 0 ? '+' : ''}${x.toFixed(dp)}`;
 const tone = (x: number) => (x > 0 ? 'text-up' : x < 0 ? 'text-down' : 'text-ink-2');
 const day = (t: number | null) => (t ? new Date(t).toISOString().slice(0, 10) : '—');
 const VERDICT: Record<RowT['verdict'], { label: string; tone: 'up' | 'warn' | 'neutral' }> = { edge: { label: 'Edge', tone: 'up' }, maybe: { label: 'Maybe', tone: 'warn' }, no: { label: 'No edge', tone: 'neutral' } };
-type Section = 'room' | 'live' | 'bot' | 'strategies' | 'paper' | 'setup' | 'lab' | 'news';
+type Section = 'room' | 'live' | 'bot' | 'strategies' | 'paper' | 'setup' | 'lab' | 'news' | 'replay';
 const TITLES: Record<Section, { title: string; sub: string }> = {
   room: { title: 'Home', sub: 'Is the bot working, what is it waiting for, how is the money doing, and what is in the news.' },
   news: { title: 'News desk', sub: 'What is coming, what just happened, and what the bot pauses for.' },
@@ -64,6 +65,7 @@ const TITLES: Record<Section, { title: string; sub: string }> = {
   paper: { title: 'Paper results', sub: 'Every strategy traded live on paper since the lab started: the real test.' },
   setup: { title: 'Setup', sub: 'Price feed, markets and the road to real money.' },
   lab: { title: 'Lab', sub: 'Every test the bot runs on itself: what is live, what is still proving itself, and the numbers.' },
+  replay: { title: 'Replay', sub: 'Play any stretch of history candle by candle and watch the strategies trade it, exactly as the lab tests them.' },
 };
 
 /** v22.1: the coin desk's wording where the forex one would mislead */
@@ -78,7 +80,7 @@ const CRYPTO_TITLES: Partial<Record<Section, { title: string; sub: string }>> = 
 
 export function Forex() {
   const params = useParams();
-  const section = ((['live', 'strategies', 'paper', 'setup', 'lab', 'bot', 'news'] as const).find((x) => x === params.section) ?? 'room') as Section;
+  const section = ((['live', 'strategies', 'paper', 'setup', 'lab', 'bot', 'news', 'replay'] as const).find((x) => x === params.section) ?? 'room') as Section;
   const titles = inCrypto() ? { ...TITLES, ...CRYPTO_TITLES } : TITLES;
   const navigate = useNavigate();
   const { data, error, reload } = useApi<Data>(apiBase(), 60_000);
@@ -118,6 +120,7 @@ export function Forex() {
       {error && <ErrorBox message={error} />}
       {(section === 'live' || section === 'bot' || section === 'room' || section === 'news') && <div className="mb-4"><MarketClockBar /></div>}
       {section === 'news' && <FxNewsPage />}
+      {section === 'replay' && <FxReplay />}
       {section === 'room' && <ControlRoom />}
       {section === 'bot' && <FxBot />}
       {section === 'setup' && <Stack><FxFeeds /><DatabentoCard /><PythCard /><OandaCard />{r && <Setup r={r} fast={fast} />}</Stack>}

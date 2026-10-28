@@ -27,7 +27,8 @@ import { buildPlan } from '../forex/plan';
 import { whyNoTrades } from '../forex/why';
 import { shadowSummary, type ShadowSummary, type ShadowTrade } from '../forex/shadow';
 import { lossSummary, type LossReview } from '../forex/loss-review';
-import { FX_CONFIG, focusMarkets } from '../forex/lab';
+import { FX_CONFIG, focusMarkets, type Row } from '../forex/lab';
+import { buildReplay, REPLAY } from '../forex/fx-replay';
 import { botStatus, dayTrades, parsePnlQuery, pnlReport } from '../forex/pnl';
 import { STRATEGIES } from '../forex/strategies';
 import { KSTUDY, loadCard, runKojiroStudy, saveHistory } from '../forex/kojiro-study';
@@ -173,6 +174,54 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         .then(() => U.fast?.evaluate())
         .catch(() => undefined);
       return { ok: true };
+    });
+    // v28 replay (owner: "look into FX Replay … better and faster"): one market × chart × stretch of history with the
+    // picked strategies' trades exactly as the lab tests them; the page plays it forward (FxReplay.tsx). Built on demand,
+    // reused 5 min, one build at a time per desk.
+    const replayCache = new Map<string, { at: number; body: unknown }>();
+    let replayRows: { at: number; rows: Row[]; oosFrom: number | null } | null = null;
+    let replayBusy: Promise<unknown> | null = null;
+    secured.get(`${U.base}/replay`, async (req, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      const q = req.query as { pair?: string; tf?: string; from?: string; to?: string; pick?: string };
+      const lab = U.lab;
+      if (!lab?.book) {
+        reply.code(503);
+        return { error: 'the lab has not finished its first run since the restart' };
+      }
+      const inst = lab.insts.find((i) => i.id === q.pair) ?? lab.insts[0];
+      if (!inst) return { error: 'no markets' };
+      const tf = (['15m', '1h', '4h'] as const).find((x) => x === q.tf) ?? '1h';
+      const now = Date.now();
+      const span = { '15m': 4, '1h': 14, '4h': 60 }[tf] * 86_400_000;
+      const to = Math.min(now, Number(q.to) || now);
+      const from = Math.max(0, Math.min(to - 3_600_000, Number(q.from) || to - span));
+      const pick = q.pick ? q.pick.split(',').filter(Boolean).slice(0, REPLAY.maxPicks) : null;
+      if (tf === '15m') {
+        replayRows = null;
+      } else if (!replayRows || now - replayRows.at > 60_000) {
+        const last = await lab.last();
+        replayRows = { at: now, rows: last?.rows ?? [], oosFrom: last?.oosFrom ?? null };
+      }
+      const rows = tf === '15m' ? (U.fast?.report?.rows ?? []) : replayRows!.rows;
+      const oosFrom = tf === '15m' ? (U.fast?.report?.spans?.['15m']?.oosFrom ?? null) : replayRows!.oosFrom;
+      const key = `${inst.id}|${tf}|${Math.floor(from / 60_000)}|${Math.floor(to / 300_000)}|${pick?.join(',') ?? ''}|${lab.book.at}`;
+      const hit = replayCache.get(key);
+      if (hit && now - hit.at < REPLAY.cacheMs) return hit.body;
+      while (replayBusy) await replayBusy.catch(() => undefined);
+      const job = (async () => {
+        await new Promise((r) => setImmediate(r));
+        return buildReplay({ inst, tf, h1: lab.book!.h1.get(inst.id) ?? [], fast15: tf === '15m' ? U.fast?.series('15m', inst.id) : undefined, book: lab.book!, rows, live: new Set(lab.chosen), pick, from, to, oosFrom });
+      })();
+      replayBusy = job;
+      try {
+        const body = { ...(await job), markets: lab.insts.map((i) => i.id) };
+        if (replayCache.size > 40) replayCache.clear();
+        replayCache.set(key, { at: now, body });
+        return body;
+      } finally {
+        replayBusy = null;
+      }
     });
     // v27.41 (owner: "the app keeps lagging"): every open screen polls this every 5 s and building it is heavy (plan,
     // shadow book, loss review…) → one build per desk serves every caller for BOT_CACHE_MS, never two at once

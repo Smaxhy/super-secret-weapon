@@ -5,6 +5,8 @@
  * v17.9: the price ticks live (the bot's 'fx' push): price now, P&L in $ and pips, room to the stop / target, and the
  * newest candle (a new one opens when its time comes) between the 15-second candle refreshes.
  * v17.14: under the chart, the trade's live read (goal, progress, moves, what it notices) and the AI's read of it.
+ * v28: the TradingView embed is gone — "Live chart" (FastChart: the bot's own candles + live ticks, zoom / scroll, the
+ * trade's lines on the price axis) is the default, "Bot" (the SVG chart) the other view.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useApi } from '../hooks/useApi';
@@ -14,7 +16,7 @@ import { duration } from '../lib/format';
 import { LiveBadge, LivePrice } from './LivePrice';
 import { fitBars, MarketChart } from './MarketChart';
 import { TradeReadPanel, type ReadsData } from './FxTradeRead';
-import { TvChart } from './TvChart';
+import { FastChart, type FastLine } from './FastChart';
 import { Badge, Button, Card, Tabs, useStored } from './ui';
 import { botAcct } from '../lib/ws';
 import { digitsOf, pipOf } from '../lib/markets';
@@ -51,14 +53,15 @@ export interface ActivePos {
 }
 export interface ActivePlan { id: string; name: string; tf: string; lines: Array<{ k: string; text: string; done?: boolean }> }
 
-type Gran = 'M1' | 'M5' | 'M15' | 'H1';
-const GRANS: Array<[Gran, string, string]> = [
-  ['M1', '1m', '1'],
-  ['M5', '5m', '5'],
-  ['M15', '15m', '15'],
-  ['H1', '1h', '60'],
+type Gran = 'M1' | 'M5' | 'M15' | 'H1' | 'H4';
+const GRANS: Array<[Gran, string]> = [
+  ['M1', '1m'],
+  ['M5', '5m'],
+  ['M15', '15m'],
+  ['H1', '1h'],
+  ['H4', '4h'],
 ];
-const GRAN_MS: Record<Gran, number> = { M1: 60_000, M5: 300_000, M15: 900_000, H1: 3_600_000 };
+const GRAN_MS: Record<Gran, number> = { M1: 60_000, M5: 300_000, M15: 900_000, H1: 3_600_000, H4: 14_400_000 };
 /** the trade's own chart → a chart a step finer, so the move since the entry has enough candles */
 const DEFAULT_GRAN: Record<string, Gran> = { '1m': 'M1', '15m': 'M5', '1h': 'M15', '4h': 'H1' };
 
@@ -126,15 +129,16 @@ function TradeView({ p, plan, onClose, read }: { p: ActivePos; plan: ActivePlan 
   const dg = fxDigits(p.pair);
   const tf = p.tf ?? plan?.tf ?? null;
   const [gran, setGran] = useState<Gran>(DEFAULT_GRAN[tf ?? ''] ?? 'M5');
-  const [view, setView] = useStored<'bot' | 'tv'>('fx.activeView', 'bot', ['bot', 'tv']);
+  const [view, setView] = useStored<'live' | 'bot'>('fx.activeView2', 'live', ['live', 'bot']);
   const [box, width] = useWidth<HTMLDivElement>();
   const visible = useOnScreen(box);
   const phone = width > 0 && width < 560;
   // enough candles to show the whole trade (plus a few before it), rounded so the address changes rarely
   const since = Math.ceil((Date.now() - p.openedAt) / GRAN_MS[gran]);
   // v17.13: a phone shows fewer, wider candles (about 6 px each); the whole trade still fits
-  const count = Math.min(240, Math.max(phone ? 48 : 120, Math.ceil((since + 12) / 12) * 12));
-  const path = view === 'bot' && visible && width > 0 ? `/api/forex/candles?pair=${encodeURIComponent(p.pair)}&tf=${gran}&count=${count}` : null;
+  // v28: the live chart scrolls back, so it asks for the most the server gives (500)
+  const count = view === 'live' ? 500 : Math.min(240, Math.max(phone ? 48 : 120, Math.ceil((since + 12) / 12) * 12));
+  const path = visible && width > 0 ? `/api/forex/candles?pair=${encodeURIComponent(p.pair)}&tf=${gran}&count=${count}` : null;
   const candles = useApi<{ source?: string; bars?: unknown }>(path, 15_000);
   const bars = useMemo(() => toBars(candles.data?.bars), [candles.data]);
   const lagMin = candleLagMin(bars, GRAN_MS[gran]);
@@ -153,6 +157,12 @@ function TradeView({ p, plan, onClose, read }: { p: ActivePos; plan: ActivePlan 
   const toStop = p.stop !== null ? ((px - p.stop) * p.side) / pip : null;
   const toTarget = p.target !== null ? ((p.target - px) * p.side) / pip : null;
   const name = plan?.name ?? p.strategy ?? 'bot';
+  const lines: FastLine[] = [
+    { price: p.entry, color: '#6366f1', title: 'entry', style: 'solid' },
+    ...(p.stop !== null ? [{ price: p.stop, color: '#ef4444', title: 'stop', style: 'dashed' as const, width: 2 as const }] : []),
+    ...(p.target !== null ? [{ price: p.target, color: '#22c55e', title: 'target', style: 'dashed' as const, width: 2 as const }] : []),
+    ...(p.lock && !p.locked ? [{ price: p.lock.at, color: '#f59e0b', title: 'lock arms', style: 'dotted' as const }] : []),
+  ];
   const cv = p.conviction && p.conviction.mult > 1 ? p.conviction : null;
   return (
     <div className="p-4 sm:p-5">
@@ -189,22 +199,24 @@ function TradeView({ p, plan, onClose, read }: { p: ActivePos; plan: ActivePlan 
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
         <Segmented label="Candle size" value={gran} onChange={(g) => setGran(g as Gran)} options={GRANS.map(([g, l]) => [g, l])} />
-        <Segmented label="Chart" value={view} onChange={(v) => setView(v as 'bot' | 'tv')} options={[['bot', 'Bot'], ['tv', 'TradingView']]} />
+        <Segmented label="Chart" value={view} onChange={(v) => setView(v as 'live' | 'bot')} options={[['live', 'Live chart'], ['bot', 'Bot']]} />
       </div>
       <div ref={box} className="mt-2">
-        {view === 'tv' ? (
-          <TvChart pair={p.pair} interval={GRANS.find((g) => g[0] === gran)![2]} height={phone ? 440 : 500} compact={phone} />
-        ) : bars.length >= 2 && width > 0 ? (
+        {view === 'live' && bars.length >= 2 && width > 0 ? (
+          <div className={`rounded-xl border border-line bg-surface p-1 transition-opacity ${candles.error ? 'opacity-60' : ''}`}>
+            <FastChart bars={shownBars} digits={dg} height={phone ? 380 : 440} lines={lines} markers={[{ t: p.openedAt, kind: p.side === 1 ? 'buy' : 'sell', text: 'in' }]} visible={phone ? 60 : 120} fitKey={`${p.pair}:${gran}`} label={`${p.pair} ${gran} candles with the trade's entry, stop and target`} />
+          </div>
+        ) : view === 'bot' && bars.length >= 2 && width > 0 ? (
           <div className={`rounded-xl border border-line bg-surface p-1.5 transition-opacity ${candles.error ? 'opacity-60' : ''}`}>
             <MarketChart bars={fitBars(shownBars, width - 14, 5)} trades={[{ side: p.side, entryT: p.openedAt, entry: p.entry, stop: p.stop, target: p.target, strategy: name, lockAt: p.lock && !p.locked ? p.lock.at : null }]} digits={dg} width={width - 14} height={phone ? 320 : 380} live={px} entryMarker tradeLabels timeAxis interactive />
           </div>
         ) : (
           <div className="grid h-56 place-items-center rounded-xl border border-dashed border-line-strong px-4 text-center text-sm text-muted">
-            {candles.error ? `The chart can't load right now (${candles.error}). Try TradingView.` : candles.data ? 'No candles for this market yet.' : 'Loading the chart…'}
+            {candles.error ? `The chart can't load right now (${candles.error}).` : candles.data ? 'No candles for this market yet.' : 'Loading the chart…'}
           </div>
         )}
       </div>
-      {view === 'bot' && (
+      {(
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
           <Key color="#6366f1">entry</Key>
           {p.stop !== null && <Key color="#ef4444" dashed>stop</Key>}
