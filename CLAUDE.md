@@ -758,6 +758,16 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.3 Kojiro's elite-channel calls are always taken (Oct 29, owner: "always go for elite calls, calls in the elite signal
+channel get prioritization and follow them correctly" — channel 1563800424769916968, already in the copier's channel_ids; the
+copier sends `channel` with every post)
+discord.ts `DISCORD_COPY.eliteChannels` (env `DISCORD_ELITE_CHANNELS`, default that id) + `eliteLive` (`DISCORD_ELITE_LIVE=off` =
+lab only) + `isEliteChannel`: a SIGNAL open posted there is copied at once even while `DISCORD_COPY.live` is off, past
+`kojiroGate`, up to `fullMaxAgeMs` 45 min late (copier catch-up), `copyOpen({ priority: true })` → its own room past the shared
+copy budget ("already N% riding" never refuses it); the $20 cap (`capRiskUsd`), fee checks, safety stop and copy lock unchanged;
+his exit / "SL to BE" posts close / move it as before. Log rows carry `channel` + `elite` ("his ELITE-channel call: copied …");
+`catchUpFullCalls` also catches up elite rows (from now on — older rows have no channel). Other channels' calls stay lab only.
+tests/forex-elite-calls (3).
 ## v28.2 the bot enters at the candle close, not 10 minutes later (Oct 29, owner: "crypto is performing bad again")
 VPS read 11:31–11:33 UTC (0fea488): coin bot week −$25.68 on 17 trades (12 wins), today −$33.73; since Oct 28 18:00 six
 closes −$82 (LINK pivot_bounce 1h −$51.98 opened 19:11 under the old $50 cap / no market bar; today DOGE pivot_bounce 1h

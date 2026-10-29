@@ -51,6 +51,13 @@ export const DISCORD_COPY = {
   fullLive: process.env.DISCORD_FULLPORT_LIVE !== 'off',
   /** a full-conviction call is still opened when it reaches us this late (a copier catch-up can be minutes behind) */
   fullMaxAgeMs: 45 * 60_000,
+  /** v28.3 (owner: "always go for elite calls, calls in the elite signal channel get prioritization and follow them
+   * correctly"): every call posted in these channels is opened at once — even while his other calls are lab only, past
+   * his-record gate, up to `fullMaxAgeMs` late (a copier catch-up), with its own room past the shared copy budget; his
+   * exits / SL-to-BE posts close / move it like any copy; the $20 loss cap still sizes it. `DISCORD_ELITE_LIVE=off` = lab
+   * only; `DISCORD_ELITE_CHANNELS` = a comma list to replace the default. */
+  eliteChannels: (process.env.DISCORD_ELITE_CHANNELS ?? '1563800424769916968').split(',').map((x) => x.trim()).filter(Boolean),
+  eliteLive: process.env.DISCORD_ELITE_LIVE !== 'off',
   seenTtlSec: 7 * 86_400,
   logKey: 'fx:discord:log',
   logMax: 200,
@@ -287,6 +294,8 @@ export function fullCall(up: string): { side: 1 | -1; event: string | null } | n
 /** The strategy name a source's trades carry ("kojiro" → discord_kojiro). Pure. */
 export const copyStrategy = (source: string | undefined) => `discord_${(source ?? 'kojiro').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 24) || 'kojiro'}`;
 export const copyRef = (strategy: string, pair: string, msgId: string) => `${strategy}:signal:${pair}:${msgId}`;
+/** v28.3: a call from one of his elite channels? Pure. */
+export const isEliteChannel = (channel: string | undefined | null) => !!channel && DISCORD_COPY.eliteChannels.includes(String(channel));
 export const acctForPair = (pair: string): 'bot' | 'cbot' => (isCrypto(pair) ? 'cbot' : 'bot');
 
 /** Safety stop for a copy: the message's SL when it's on the losing side, else `stopPct` of the price. Pure. */
@@ -329,11 +338,14 @@ export interface CopyLogRow {
   hisPx?: number | null;
   ok: boolean;
   what: string;
+  /** v28.3: the channel it was posted in, and whether that is one of his elite channels */
+  channel?: string;
+  elite?: boolean;
 }
 
 /** What the practice account offers the copier (Practice implements it). */
 export interface CopyBook {
-  copyOpen(r: { pair: string; side: 1 | -1; stopNamed: number | null; hisPx: number | null; strategy: string; ref: string; riskPct: number; leverage: number; profitLock: boolean; stop?: number; target?: number | null; copyLock?: 'copy' | 'tight' }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; error?: string; entry?: number; stop?: number; riskUsd?: number; marginUsd?: number }>;
+  copyOpen(r: { pair: string; side: 1 | -1; stopNamed: number | null; hisPx: number | null; strategy: string; ref: string; riskPct: number; leverage: number; profitLock: boolean; stop?: number; target?: number | null; copyLock?: 'copy' | 'tight'; priority?: boolean }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; error?: string; entry?: number; stop?: number; riskUsd?: number; marginUsd?: number }>;
   copyClose(m: { strategy: string; pair: string | null; side: 1 | -1 | 0 }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; closed: string[]; pending: number }>;
   copyBreakeven(m: { strategy: string; pair: string | null }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; moved: string[] }>;
 }
@@ -342,7 +354,8 @@ export interface CopyBook {
 export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, now = Date.now()): Promise<CopyLogRow> {
   const source = (s.source ?? 'kojiro').slice(0, 24);
   const strategy = copyStrategy(source);
-  const base = { t: now, id: s.id, source, text: s.text.slice(0, 300) };
+  const elite = isEliteChannel(s.channel);
+  const base = { t: now, id: s.id, source, text: s.text.slice(0, 300), ...(s.channel ? { channel: String(s.channel).slice(0, 25) } : {}), ...(elite ? { elite: true } : {}) };
   const done = async (row: CopyLogRow) => {
     await redis.multi().lpush(DISCORD_COPY.logKey, JSON.stringify(row)).ltrim(DISCORD_COPY.logKey, 0, DISCORD_COPY.logMax - 1).exec().catch(() => undefined);
     return row;
@@ -373,7 +386,8 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
   if (sig.kind === 'open') {
     const full = sig.conviction === 'full';
     if (full && sig.pair) await savePosted(redis, sig.pair, { bias: sig.side, dol: null, biasT: s.at, source }).catch(() => undefined);
-    if (now - s.at > (full ? DISCORD_COPY.fullMaxAgeMs : DISCORD_COPY.maxAgeMs)) return done({ ...base, kind: 'old', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `posted ${Math.round((now - s.at) / 60_000)} min ago — too old to copy` });
+    const eliteGo = elite && DISCORD_COPY.eliteLive;
+    if (now - s.at > (full || eliteGo ? DISCORD_COPY.fullMaxAgeMs : DISCORD_COPY.maxAgeMs)) return done({ ...base, kind: 'old', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `posted ${Math.round((now - s.at) / 60_000)} min ago — too old to copy` });
     if (!sig.pair || !instrument(sig.pair)) return done({ ...base, kind: 'open', pair: null, side: sig.side, hisPx: sig.price, ok: false, what: `unknown market "${sig.symbol ?? '?'}"` });
     // v27.66: his own record decides — a kind of his calls that kept losing is skipped; the trailing stop is the one
     // that made the most on his past calls (kojiro-study.ts)
@@ -386,11 +400,11 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
       atLevel: px !== null && !!lv && levelSets(lv).some((st) => st.all.some((L) => Math.abs(L - px) <= (px * KSTUDY.levelPct) / 100)),
       stopNamed: sig.stop,
     });
-    const fullGo = full && DISCORD_COPY.fullLive;
+    const fullGo = (full && DISCORD_COPY.fullLive) || eliteGo;
     if (!gate.take && !fullGo) return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `not copied — his record: ${gate.why}` });
     if (!DISCORD_COPY.live && !fullGo) return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `lab only — not traded (Kojiro calls are in the lab; his record keeps being graded): his ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair}${sig.price ? ` @ ${sig.price}` : ''}` });
-    const r = await book.copyOpen({ pair: sig.pair, side: sig.side, stopNamed: sig.stop, hisPx: sig.price, strategy, ref: copyRef(strategy, sig.pair, s.id), riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: gate.plan !== 'none', ...(gate.plan === 'tight' ? { copyLock: 'tight' as const } : {}) }, acctForPair(sig.pair));
-    const tag = full ? `his FULL-conviction call${sig.event ? ` (${sig.event})` : ''}${!gate.take ? ` — taken past his record (${gate.why})` : ''}: ` : '';
+    const r = await book.copyOpen({ pair: sig.pair, side: sig.side, stopNamed: sig.stop, hisPx: sig.price, strategy, ref: copyRef(strategy, sig.pair, s.id), riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: gate.plan !== 'none', ...(gate.plan === 'tight' ? { copyLock: 'tight' as const } : {}), ...(eliteGo ? { priority: true } : {}) }, acctForPair(sig.pair));
+    const tag = eliteGo ? `his ELITE-channel call${!gate.take ? ` — taken past his record (${gate.why})` : ''}: ` : full ? `his FULL-conviction call${sig.event ? ` (${sig.event})` : ''}${!gate.take ? ` — taken past his record (${gate.why})` : ''}: ` : '';
     const what = r.ok ? `${tag}copied ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair} at ${r.entry} (his ${sig.price ?? 'market'}), safety stop ${r.stop}, risking $${r.riskUsd}` : `${tag}not copied: ${r.error}`;
     return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: r.ok, what });
   }
@@ -417,23 +431,25 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
  * `withinMs`) are taken now, at the market — once each (`fx:discord:fullcatch:<id>` NX). Run after a deploy.
  */
 export async function catchUpFullCalls(redis: Redis, book: CopyBook, now = Date.now(), withinMs = 4 * 3_600_000, final = true): Promise<string[]> {
-  if (!DISCORD_COPY.on || !DISCORD_COPY.fullLive) return [];
+  if (!DISCORD_COPY.on || (!DISCORD_COPY.fullLive && !DISCORD_COPY.eliteLive)) return [];
   const out: string[] = [];
   for (const row of (await copyLog(redis, DISCORD_COPY.logMax)).reverse()) {
     if (row.ok && row.kind === 'open') continue; // already copied
     if (now - row.t > withinMs || row.kind === 'other' || row.kind === 'duplicate') continue;
     const sig = parseSignal(row.text);
-    if (sig.kind !== 'open' || sig.conviction !== 'full' || !sig.pair || !instrument(sig.pair)) continue;
+    // v28.3: an elite-channel call missed (lab only before, or no price then) is caught up like a full call
+    const eliteRow = !!row.elite && DISCORD_COPY.eliteLive;
+    if (sig.kind !== 'open' || !(eliteRow || (sig.conviction === 'full' && DISCORD_COPY.fullLive)) || !sig.pair || !instrument(sig.pair)) continue;
     if ((await redis.set(`fx:discord:fullcatch:${row.id}`, '1', 'EX', 7 * 86_400, 'NX')) !== 'OK') continue;
     const strategy = copyStrategy(row.source);
     await savePosted(redis, sig.pair, { bias: sig.side, dol: null, biasT: row.t, source: row.source }).catch(() => undefined);
-    const r = await book.copyOpen({ pair: sig.pair, side: sig.side, stopNamed: sig.stop, hisPx: null, strategy, ref: copyRef(strategy, sig.pair, row.id), riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: DISCORD_COPY.profitLock }, acctForPair(sig.pair));
+    const r = await book.copyOpen({ pair: sig.pair, side: sig.side, stopNamed: sig.stop, hisPx: null, strategy, ref: copyRef(strategy, sig.pair, row.id), riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: DISCORD_COPY.profitLock, ...(eliteRow ? { priority: true } : {}) }, acctForPair(sig.pair));
     if (!r.ok && !final) {
       await redis.del(`fx:discord:fullcatch:${row.id}`).catch(() => 0); // e.g. no live price yet → the next try takes it
       continue;
     }
-    const what = `his FULL-conviction call${sig.event ? ` (${sig.event})` : ''} posted ${Math.round((now - row.t) / 60_000)} min ago, missed then — ${r.ok ? `taken now: ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair} at ${r.entry}, safety stop ${r.stop}, risking $${r.riskUsd}` : `still not taken: ${r.error}`}`;
-    await redis.multi().lpush(DISCORD_COPY.logKey, JSON.stringify({ t: now, id: `${row.id}:catchup`, source: row.source, text: row.text, kind: 'open', pair: sig.pair, side: sig.side, hisPx: null, ok: r.ok, what } satisfies CopyLogRow)).ltrim(DISCORD_COPY.logKey, 0, DISCORD_COPY.logMax - 1).exec().catch(() => undefined);
+    const what = `his ${eliteRow ? 'ELITE-channel' : 'FULL-conviction'} call${sig.event ? ` (${sig.event})` : ''} posted ${Math.round((now - row.t) / 60_000)} min ago, missed then — ${r.ok ? `taken now: ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair} at ${r.entry}, safety stop ${r.stop}, risking $${r.riskUsd}` : `still not taken: ${r.error}`}`;
+    await redis.multi().lpush(DISCORD_COPY.logKey, JSON.stringify({ t: now, id: `${row.id}:catchup`, source: row.source, text: row.text, kind: 'open', pair: sig.pair, side: sig.side, hisPx: null, ok: r.ok, what, ...(row.channel ? { channel: row.channel } : {}), ...(row.elite ? { elite: true } : {}) } satisfies CopyLogRow)).ltrim(DISCORD_COPY.logKey, 0, DISCORD_COPY.logMax - 1).exec().catch(() => undefined);
     out.push(`Kojiro: ${what}`);
   }
   return out;

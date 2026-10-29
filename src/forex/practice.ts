@@ -2567,7 +2567,8 @@ export class Practice {
       const usdPerUnitMove = usdPerPx(inst.id, { ...mids, [inst.id]: mids[inst.id] ?? entry });
       const lev = Math.max(1, Math.min(Math.round(r.leverage), MAX_LEVERAGE, maxLeverageFor(inst.id)));
       // v27.57: his calls are all-in like a proven cell — `riskPct` (20) is shared by every open copy, the $ loss cap doesn't apply
-      const riding = a.open.filter((p) => p.tf === 'signal').reduce((s, p) => s + (p.riskPct ?? 0), 0);
+      // v28.3: an elite-channel call has its own room — the copies already riding never crowd it out (the $ cap still sizes it)
+      const riding = r.priority ? 0 : a.open.filter((p) => p.tf === 'signal').reduce((s, p) => s + (p.riskPct ?? 0), 0);
       const left = Math.round((r.riskPct - riding) * 100) / 100;
       if (left < 0.5) return { ok: false, error: `already ${Math.round(riding * 10) / 10}% of the account riding on his calls (max ${r.riskPct}%)` };
       // v27.95 (owner: "cut it all on 20"): his calls too — the stop + the round-trip fee lose at most the account's $ cap
