@@ -1550,6 +1550,101 @@ export async function refreshAll(redis: Redis, cfg = REFRESH, insts: readonly In
   return out.filter((x): x is FeedStatus => !!x);
 }
 
+/**
+ * v28.2 the quick look at the candle close (VPS read Oct 29: the coin bot opened every 1h / 4h trade 9–12 minutes after the
+ * close — the time the full hourly run takes — while the lab's own copy of the trade entered AT the close; in 8 of 17
+ * losing bot trades the lab's copy ended flat or positive, because the price had already moved its way and back in those
+ * minutes). ~35 s after every hour the parent reads the newest candles and opens the trades the strategies the bot
+ * already trades (last hour's chosen list, same filter / exit / way in / skipped slices, forward check, market record,
+ * second-setup rule) just signalled on the candle that closed. It only ever OPENS (`syncBot` openOnly): the full run
+ * minutes later sees the same trade (same ref) and manages it. Stricter than the full run where it can't see
+ * everything: rows whose filter needs the hourly market read (strength, mood, positioning, VIX, regime model, coin
+ * futures data), strategies that read other markets, any desk whose signal judge or clash rule is active, and the
+ * conviction / doubling-up sizes are left to the full run.
+ */
+export const QUICK = {
+  on: true,
+  /** seconds after the hour (Coinbase / Yahoo publish the closed candle within ~20 s) */
+  atSec: 35,
+  /** newest hourly candles read (warm-up for every indicator the chosen rows use) */
+  bars: 2_600,
+  /** filters whose inputs come from the chart itself */
+  filters: new Set<FilterKind>(['none', 'mtf', 'regime', 'volf', 'hurst', 'absorb']),
+  /** strategies that read other markets from the hourly market read (refreshed by the full run only) */
+  skip: new Set(['ccy_momentum', 'oil_cad', 'yield_jpy', 'stocks_jpy', 'dollar_gold', 'month_end_flow', 'carry_trend', 'cot_squeeze', 'stretch_squeeze', 'funding_squeeze', 'oi_flush']),
+};
+
+/** The trades the quick look hands the bot for one market and chart: signals on the newest CLOSED candle only. Pure. */
+export function quickLookTrades(o: {
+  inst: Instrument;
+  tf: Timeframe;
+  /** newest hourly candles (the last one closed) */
+  h1: Bar[];
+  book: MarketBook;
+  rows: ReadonlyArray<Row>;
+  chosen: ReadonlySet<string>;
+  rec: { dropped: readonly string[]; proven: ReadonlySet<string>; down: Readonly<Record<string, number>> };
+  paper: ReadonlyMap<string, RStats>;
+  now: number;
+}): LabOpenTrade[] {
+  const barMs = (TF_MIN[o.tf] ?? 60) * 60_000;
+  const h4 = withEnd(to4h(o.h1), 4 * HOUR);
+  const bars = o.tf === '1h' ? o.h1 : h4.map(({ t, o: op, h, l, c, v }) => ({ t, o: op, h, l, c, ...(v !== undefined ? { v } : {}) }));
+  if (bars.length < 400) return [];
+  const last = bars.length - 1;
+  const closeT = bars[last]!.t + barMs;
+  // only a candle that just closed (not the forming one, not an old one)
+  if (closeT > o.now || o.now - closeT > 15 * 60_000) return [];
+  const rows = o.rows.filter((r) => r.tf === o.tf && r.id !== 'random' && o.chosen.has(`${r.id}:${r.tf}`) && !o.rec.dropped.includes(`${r.id}:${r.tf}`) && !QUICK.skip.has(r.id) && QUICK.filters.has(r.filter) && forwardOk(o.paper.get(`${r.id}:${r.tf}`)).ok);
+  if (!rows.length) return [];
+  const se = makeSeries(o.inst, o.tf, bars, o.book, o.tf === '1h' ? bigChart(h4) : null, bigChart(toDaily(o.h1)));
+  const cov = filterCoverage(se.env, bars.length);
+  const vixBrake = vixFactor(vixNowOf(o.book.mood));
+  const opens: Array<{ t: Trade; row: Row }> = [];
+  const mates: Trade[] = [];
+  for (const row of rows) {
+    const s = strategyById(row.id);
+    if (!s || !runsOn(s, o.tf, o.inst.id)) continue;
+    const sigs = signalsFor(se.ctx, s);
+    const mapped = (row.exit ?? 'designed') === 'designed' ? sigs : sigs.map((sg, i) => applyExit(sg, row.exit, se.ctx, i));
+    for (const t of simulate(o.inst, o.tf, se.ctx, s.id, mapped, allowFor(row.filter, se.env, styleOf(s)), { ...DEFAULT_SIM, entry: 'market' })) {
+      if (t.reason !== 'open' || inSkipped(row.skip, t)) continue;
+      mates.push(t);
+      if (signalIndex(se.ctx.bars, t.entryT, se.ctx.barMin) === last) opens.push({ t, row });
+    }
+  }
+  return opens.map(({ t, row }) => {
+    const key = `${t.strategy}:${t.tf}`;
+    const cell = row.markets?.find((c) => c.pair === t.pair);
+    const order = ((): LabOpenTrade['order'] => {
+      if (!row.entry || row.entry === 'market' || row.entry === 'confirm') return null;
+      const b = se.ctx.bars[last]!;
+      const atr = se.ctx.atr14[last]!;
+      const back = row.entry === 'pullback' ? ENTRY.pullbackAtr * (Number.isFinite(atr) && atr > 0 ? atr : 0) : 0;
+      const limit = b.c - t.side * back;
+      if (t.side === 1 ? limit <= t.stop : limit >= t.stop) return null;
+      return { kind: row.entry, limit, until: b.t + barMs * (1 + (row.entry === 'limit' ? ENTRY.limitBars : ENTRY.pullbackBars)) };
+    })();
+    const sizeF = stratFactorFromVerdict(row.verdict) * volFactor(t.volRatio) * (o.rec.proven.has(key) ? 1.15 : 1) * (o.rec.down[key] ?? 1) * vixBrake;
+    const b = boostFor(tierOf(0, false), null);
+    return toLabTrade(t, {
+      order,
+      soloWait: soloWait(t, mates, TF_MIN[o.tf] ?? 60),
+      agree: { n: agreeCount(se.env, last, t.side), of: maxConfirmations(o.tf, false), need: FX_CONFIG.strict.minAgree },
+      marketRec: marketRecOf(row.pairs.find((x) => x.pair === t.pair), cell, false, t.pair),
+      chosen: planChosen(t.strategy, t.pair, true, row.pairs.find((x) => x.pair === t.pair), false, cell, t.tf, pooledOf(row)),
+      rowChosen: true,
+      edge: row.verdict === 'edge',
+      sizeF,
+      prio: focusPrio(t.pair, row.all.avgR),
+      dataWait: missingInput(row.filter, se.env, last, cov),
+      judge: null,
+      conviction: { tier: b.tier, conf: 0, of: maxConfirmations(o.tf, false), mult: b.mult, lev: b.lev },
+      sniper: null,
+    });
+  });
+}
+
 export class ForexLab {
   private timer: NodeJS.Timeout | null = null;
   private dkTimer: NodeJS.Timeout | null = null;
@@ -1652,9 +1747,22 @@ export class ForexLab {
       }, Math.max(5_000, at - now));
     };
     next();
+    // v28.2: the quick look ~35 s after every hour (opens the fresh signals at the close; the full run follows at +90 s)
+    const nextQuick = () => {
+      if (this.stopped) return;
+      const now = Date.now();
+      const at = Math.ceil((now - QUICK.atSec * 1000) / 3_600_000) * 3_600_000 + QUICK.atSec * 1000;
+      this.quickTimer = setTimeout(() => {
+        void this.quickLook().catch(() => undefined);
+        nextQuick();
+      }, Math.max(5_000, at - now));
+    };
+    nextQuick();
   }
+  private quickTimer: NodeJS.Timeout | null = null;
   stop(): void {
     this.stopped = true;
+    if (this.quickTimer) clearTimeout(this.quickTimer);
     if (this.timer) clearTimeout(this.timer);
     if (this.firstTimer) clearTimeout(this.firstTimer);
     if (this.dkTimer) clearTimeout(this.dkTimer as NodeJS.Timeout);
@@ -2785,6 +2893,56 @@ export class ForexLab {
     await this.redis.set(this.k('fx:bot:chosen'), JSON.stringify(out.chosen)).catch(() => undefined);
     await this.redis.set(this.k('fx:bot:dropped'), JSON.stringify(out.dropped)).catch(() => undefined);
   }
+
+  /** v28.2: the quick look at the candle close (see `QUICK`) — opens only, the full run manages. */
+  async quickLook(now = Date.now()): Promise<number> {
+    if (!QUICK.on || !this.practice || !this.book || this.quickBusy) return 0;
+    this.quickBusy = true;
+    try {
+      const report = await this.last();
+      if (!report || now - report.at > 3 * HOUR || !this.chosen.length) return 0;
+      // a judge or clash rule the quick look can't apply → those trades wait for the full run
+      if (report.judge?.active) return 0;
+      const opposed = JSON.parse((await this.redis.get(this.k('fx:opposed')).catch(() => null)) ?? 'null') as OpposedReport | null;
+      if (OPPOSED.always || opposed?.active) return 0;
+      await refreshAll(this.redis, { concurrency: 2, gapMs: 200, budgetMs: 40_000 }, this.insts, false).catch(() => []);
+      const rec = await this.botRecord();
+      const chosen = new Set(this.chosen);
+      const paper = new Map((report.paper?.rows ?? []).map((p) => [`${p.id}:${p.tf}`, p.stats]));
+      const hlMap = await loadHlFutures(this.redis);
+      const tfs: Timeframe[] = new Date(now).getUTCHours() % 4 === 0 ? ['1h', '4h'] : ['1h'];
+      const trades: LabOpenTrade[] = [];
+      const seen = new Set<string>();
+      const ages: Record<string, DataAge> = {};
+      for (const inst of this.insts) {
+        let h1 = await loadBars(this.redis, inst.id);
+        const coin = isFutures(inst.id) ? hlMap[inst.id] : undefined;
+        if (coin) {
+          const live = await hlCandles(coin, '1h', now - 4 * 86_400_000, now).catch(() => [] as Bar[]);
+          h1 = extendWithLive(h1, live, HOUR, now, (t) => !clockFor(inst.id, t).open).bars;
+        }
+        h1 = h1.slice(-QUICK.bars);
+        ages[inst.id] = dataAgeOf(inst.id, '1h', h1, now, HOUR);
+        if (h1.length && h1[h1.length - 1]!.t + 4 * HOUR >= now) seen.add(inst.id);
+        for (const tf of tfs) trades.push(...quickLookTrades({ inst, tf, h1, book: this.book, rows: report.rows, chosen, rec, paper, now }));
+        await yieldNow();
+      }
+      if (!trades.length) return 0;
+      const sync = newSyncReport();
+      const ev = await this.practice
+        .syncBot(trades, (pair, s) => staleReason(ages[pair], now) ?? this.calendar?.blockFor(pair, now, tradesNews(s)) ?? (tradesNews(s) ? null : this.headlines?.blockFor(pair)) ?? null, this.atr1h, { scope: FX_CONFIG.timeframes, report: sync, heat: this.heatNow, pairsSeen: seen, acct: this.acct, openOnly: true })
+        .catch((err: Error) => [`quick look failed: ${err.message}`]);
+      this.logBot(ev.map((e) => `at the close: ${e}`));
+      this.noteRun({ t: Date.now(), tf: '1h', signals: trades.length, chosen: trades.filter((t) => t.chosen).length, opened: sync.opened, skipped: sync.skipped.length, waits: sync.waits.length, holding: sync.heldOpen + sync.opened, note: `quick look at the close: ${sync.opened} opened of ${trades.length} fresh signal${trades.length === 1 ? '' : 's'} from the strategies it trades` });
+      return sync.opened;
+    } catch (err) {
+      log.warn({ err: (err as Error).message }, 'quick look failed');
+      return 0;
+    } finally {
+      this.quickBusy = false;
+    }
+  }
+  private quickBusy = false;
 
   /** v24 shadow book: the signals the bot account refused (Redis `fx:shadow` / `cm:shadow`), graded by the lab's own
    * finished paper trades. Both labs call it after every sync. */

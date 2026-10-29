@@ -2037,7 +2037,7 @@ export class Practice {
    * the charts this call manages (the hourly lab passes 1h + 4h, the fast lab 15m or 1m), so one never closes the
    * other's trades; `report` collects what it saw for the bot's plan.
    */
-  async syncBot(labOpen: LabOpenTrade[], blockFor: (pair: string, strategy?: string) => string | null = () => null, atr1h: Record<string, number> = {}, opts: { scope?: readonly string[]; report?: SyncReport; pairsSeen?: ReadonlySet<string>; heat?: HeatLive | null; acct?: 'bot' | 'cbot'; labDone?: ReadonlySet<string> } = {}): Promise<string[]> {
+  async syncBot(labOpen: LabOpenTrade[], blockFor: (pair: string, strategy?: string) => string | null = () => null, atr1h: Record<string, number> = {}, opts: { scope?: readonly string[]; report?: SyncReport; pairsSeen?: ReadonlySet<string>; heat?: HeatLive | null; acct?: 'bot' | 'cbot'; labDone?: ReadonlySet<string>; openOnly?: boolean } = {}): Promise<string[]> {
     const inScope = (ref: string | undefined) => !opts.scope || opts.scope.includes(tfOfRef(ref));
     const rep = opts.report;
     return this.serial(async () => {
@@ -2060,7 +2060,9 @@ export class Practice {
         return qq && !qq.stale ? (side === 1 ? qq.bid : qq.ask) : null;
       };
       // v18.4: a resting order whose lab trade ended (or whose limit moved) is cancelled; a filled one is a position now
-      if (a.orders?.length) {
+      // v28.2 `openOnly` (the quick look at the candle close): only NEW trades are opened — nothing held is managed,
+      // cancelled or closed (the full hourly run does that minutes later with the complete lab view)
+      if (a.orders?.length && !opts.openOnly) {
         const keep: RestingOrder[] = [];
         for (const o of a.orders) {
           if (!inScope(o.ref)) {
@@ -2081,7 +2083,7 @@ export class Practice {
         a.orders = keep;
       }
       let moved = 0;
-      for (const p of [...a.open]) {
+      for (const p of opts.openOnly ? [] : [...a.open]) {
         if (!p.ref || !inScope(p.ref)) continue;
         const lab = byRef.get(p.ref);
         if (!lab) {
@@ -2163,7 +2165,7 @@ export class Practice {
       /** v22: a coin market is always open — its candidates never wait on the forex clock */
       const canOpenFor = (pair: string) => canOpen || isCrypto(pair);
       // v14: trades paused for the weekend come back once Monday's market has settled, if the lab still holds them
-      if (a.resume?.length) {
+      if (a.resume?.length && !opts.openOnly) {
         const keep: ResumeItem[] = [];
         for (const r of a.resume) {
           if (!inScope(r.ref)) {

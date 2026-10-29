@@ -758,6 +758,26 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.2 the bot enters at the candle close, not 10 minutes later (Oct 29, owner: "crypto is performing bad again")
+VPS read 11:31–11:33 UTC (0fea488): coin bot week −$25.68 on 17 trades (12 wins), today −$33.73; since Oct 28 18:00 six
+closes −$82 (LINK pivot_bounce 1h −$51.98 opened 19:11 under the old $50 cap / no market bar; today DOGE pivot_bounce 1h
+−$18.29 and AVAX breakout_retest 1h −$17.90, both strict-proven cells, normal losses — the live brake then paused
+pivot_bounce:1h). The bot's own R ledger: 54 trades −9.4R, while the same rows test at +0.07…+0.13R a trade. Cause found:
+every 1h / 4h trade opened 9–12 min after the close (the full hourly run's time) while the lab's copy entered AT the close;
+of 17 losing bot trades with a lab twin, 8 ended flat / positive in the lab (lab trail / break-even exits: lab +0.22R /
++0.08R vs live −0.38R / −0.12R) — the price had already moved its way (armed the lab's profit lock) and back before the
+bot got in. Fix: `QUICK` + `quickLookTrades` (lab.ts, pure) + `ForexLab.quickLook` (both desks, timer ~35 s after every
+hour, parent process): newest candles refreshed (`refreshAll` 40 s budget, Hyperliquid tail for futures), the newest
+`QUICK.bars` 2,600 hourly candles, and for last hour's chosen rows (`this.chosen`, minus dropped, forward check on the
+report's paper rows) the same filter / exit / skipped slices simulated → trades whose signal is the candle that JUST
+closed (≤ 15 min ago), handed to `syncBot(…, { openOnly: true })` (new practice option: opens / places orders only —
+never cancels, trails, closes or resumes anything) with the same order (limit / pullback), market record, plan, second-
+setup (mates = the chosen rows' open trades — stricter than the full run), dataWait, VIX brake, news / stale / heat gates.
+The full run minutes later sees the same ref and manages it. Left to the full run (quick look stricter): rows whose filter
+needs the hourly market read (`QUICK.filters` = none / mtf / regime / volf / hurst / absorb only), cross-market
+strategies (`QUICK.skip`), a desk whose signal judge is active or whose clash rule is on, conviction / doubling-up sizes
+(normal size). Bot log lines "at the close: …", timeline note "quick look at the close". The engine's lock (on the 1h
+candle's high, rest of the candle only its close / low) is unchanged. tests/forex-quick-look (3).
 ## v28.1 the forex bot's trades copied to the owner's MT5 DEMO account (OANDA) through MetaApi (Oct 29, owner: "live trading
 as well … my bot id 62586512, it's using MT5" → chose "Demo, with OANDA" + "MetaApi cloud")
 The owner pasted their MT5 password in chat — it was NOT used or stored anywhere; they were told to change it. MT5 is Windows-only
