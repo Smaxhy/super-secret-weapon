@@ -11,6 +11,7 @@
  * (`book`) are shared with the 15-minute / 1-minute lab (`fast.ts`). Redis `fx:report`, `fx:paper:since`,
  * `fx:portfolio`. Nothing here places a real order.
  */
+import type { LockKind } from './profit-lock';
 import { PREP, prepNotes, studyRow, weekForecast, type PrepReport, type PrepRow, type PrepTarget } from './prep';
 import type Redis from 'ioredis';
 import { howToWin, reviewLosses, tfOf, type LossReview } from './loss-review';
@@ -89,6 +90,8 @@ export const FX_CONFIG = {
    * (fills 84–96% of the signals; confirm entries fill 23–50% and earned least); `chooseEntry` still picks per row on the
    * FIRST 70% only, so a row switches only where it tested better. Forex stays market until its own numbers are read. */
   liveEntries: { fx: false, crypto: true } as Record<'fx' | 'crypto', boolean>,
+  /** v28.6: each row picks its profit lock (tight / loose / off) on its FIRST 70% (profit-lock.ts LockKind) */
+  lockChoice: { on: true },
   /** v20.1 strict mode (owner: "I want to win, make it trade only what will work with proper research"):
    * mode (v20.4, below) — which rows the bot may trade; in 'edge' / 'quality' the always-on four and the rolling
    *   picker's list no longer let a row in on their own;
@@ -303,6 +306,9 @@ export interface Row {
   luck?: { pctl: number; twinsP90: number; twinPassPct: number };
   /** v17.11: the same filter + exit WITHOUT the owner's profit lock (what the lock changed) */
   noLock?: { inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number };
+  /** v28.6: the profit lock it trades with when not the tight one, and every lock it was tested with */
+  lock?: 'loose' | 'off';
+  lockVariants?: Array<{ lock: LockKind; inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number }>;
   /** v18: the deflated Sharpe of its unseen trades (honest.ts) — P(the edge is real) given every row graded on them */
   stats?: RowStat;
   /** v18 entry-timing lab: the same filter + exit with a limit / pullback / confirmation entry; v18.4: `entry` = the way in
@@ -534,7 +540,7 @@ export const FX_FILTERS_CHOSEN = 'fx:filters:chosen';
 /** v17.8: `fx:filters:chosen` / `fx:fast:chosen` = the picks + the 70/30 line they were made under (one number, or per chart) */
 export interface ChosenStore {
   oosFrom: number | Record<string, number>;
-  picks: Record<string, { f?: FilterKind; e?: ExitKind; n?: EntryKind }>;
+  picks: Record<string, { f?: FilterKind; e?: ExitKind; n?: EntryKind; l?: LockKind }>;
 }
 /** v17.8: how far the 70/30 line may move back before last run's picks stop counting */
 export const PICK_LINE_SLACK_MS = 86_400_000;
@@ -544,7 +550,7 @@ export const PICK_LINE_SLACK_MS = 86_400_000;
  * pick made while those days were in-sample must not steer the variant graded on them now that they are unseen. A
  * forward move is harmless. The old unstamped format (and garbage) → nothing kept: one re-pick on deploy. Pure.
  */
-export function prevPicks(raw: string | null | undefined, tf: string, oosFrom: number): Record<string, { f?: FilterKind; e?: ExitKind; n?: EntryKind }> {
+export function prevPicks(raw: string | null | undefined, tf: string, oosFrom: number): Record<string, { f?: FilterKind; e?: ExitKind; n?: EntryKind; l?: LockKind }> {
   let s: Partial<ChosenStore> | null;
   try {
     s = JSON.parse(raw ?? 'null') as Partial<ChosenStore> | null;
@@ -554,10 +560,10 @@ export function prevPicks(raw: string | null | undefined, tf: string, oosFrom: n
   if (!s || typeof s !== 'object' || !s.picks || typeof s.picks !== 'object') return {};
   const line = typeof s.oosFrom === 'number' ? s.oosFrom : s.oosFrom && typeof s.oosFrom === 'object' ? (s.oosFrom as Record<string, unknown>)[tf] : undefined;
   if (typeof line !== 'number' || !Number.isFinite(line) || !Number.isFinite(oosFrom) || line - oosFrom > PICK_LINE_SLACK_MS) return {};
-  const out: Record<string, { f?: FilterKind; e?: ExitKind; n?: EntryKind }> = {};
+  const out: Record<string, { f?: FilterKind; e?: ExitKind; n?: EntryKind; l?: LockKind }> = {};
   for (const [k, v] of Object.entries(s.picks)) {
     if (!k.endsWith(`:${tf}`) || !v || typeof v !== 'object') continue;
-    out[k] = { ...(typeof v.f === 'string' ? { f: v.f } : {}), ...(typeof v.e === 'string' ? { e: v.e } : {}), ...(typeof v.n === 'string' ? { n: v.n } : {}) };
+    out[k] = { ...(typeof v.f === 'string' ? { f: v.f } : {}), ...(typeof v.e === 'string' ? { e: v.e } : {}), ...(typeof v.n === 'string' ? { n: v.n } : {}), ...(typeof v.l === 'string' ? { l: v.l } : {}) };
   }
   return out;
 }
@@ -1068,6 +1074,7 @@ export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: 
     trailAtr: t.trailAtr ?? null,
     maxBars: t.maxBars ?? null,
     exitWhen: t.exitWhen ?? null,
+    ...(t.lockKind ? { lockKind: t.lockKind } : {}),
   };
 }
 
@@ -1277,7 +1284,7 @@ export async function loadRetired(redis: { get(k: string): Promise<string | null
  * take-profit preferred where it tests as well — then each row's verdict against random entries on the same chart,
  * its paper results since `since` and its open trades. `onStrategy` sees each strategy's final variant.
  */
-export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: { oosFrom: number; since: number; weeks: number; prev: Record<string, { f?: FilterKind; e?: ExitKind; n?: EntryKind }>; skip?: ReadonlySet<string> }, onStrategy?: (x: StrategyResult) => void | Promise<void>): Promise<TfEval> {
+export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: { oosFrom: number; since: number; weeks: number; prev: Record<string, { f?: FilterKind; e?: ExitKind; n?: EntryKind; l?: LockKind }>; skip?: ReadonlySet<string> }, onStrategy?: (x: StrategyResult) => void | Promise<void>): Promise<TfEval> {
   const rows: Row[] = [];
   const paperRows: PaperRow[] = [];
   const open: Trade[] = [];
@@ -1367,21 +1374,41 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
         prev?.e,
       );
     }
-    const ch = eStats.find((x) => x.exit === exit)!;
-    const v = byExit.get(exit)!;
-    const done = v.trades.filter((t) => t.reason !== 'open');
+    let ch: ReturnType<typeof statsOf> = eStats.find((x) => x.exit === exit)!;
+    let v = byExit.get(exit)!;
+    let done = v.trades.filter((t) => t.reason !== 'open');
     const vRow = (x: Split) => ({ inN: x.inSample.n, inAvgR: x.inSample.avgR, outN: x.outSample.n, outAvgR: x.outSample.avgR, outPf: x.outSample.pf, allN: x.all.n });
     // v17.11: the chosen filter + exit once more without the owner's profit lock (shows what the lock changes)
+    // v28.6: and with the loose lock; the row keeps the lock its FIRST 70% scored best on (chooseVariant: the tight lock
+    // unless another beats it by the usual margin, last run's pick kept through near-ties)
     let noLock: Row['noLock'];
+    let lockK: LockKind = 'tight';
+    let lockVariants: Row['lockVariants'];
     if (s.id !== 'random' && DEFAULT_SIM.profitLock) {
-      const off: Trade[] = [];
-      for (const se of seriesTf) {
-        const sigs = sigsBy.get(se)!;
-        const mapped = exit === 'designed' ? sigs : sigs.map((sg, i) => applyExit(sg, exit, se.ctx, i));
-        off.push(...simulate(se.inst, tf, se.ctx, s.id, mapped, allowFor(filter, se.env, style), { ...DEFAULT_SIM, profitLock: false }));
-        if (se.ctx.bars.length > 8_000) await yieldNow();
+      const byLock = new Map<LockKind, Bucket>([['tight', v]]);
+      for (const k of FX_CONFIG.lockChoice.on ? (['loose', 'off'] as const) : (['off'] as const)) {
+        const b: Bucket = { trades: [], perPair: [] };
+        for (const se of seriesTf) {
+          const sigs = sigsBy.get(se)!;
+          const mapped = exit === 'designed' ? sigs : sigs.map((sg, i) => applyExit(sg, exit, se.ctx, i));
+          const ts = simulate(se.inst, tf, se.ctx, s.id, mapped, allowFor(filter, se.env, style), { ...DEFAULT_SIM, lockKind: k });
+          b.trades.push(...ts);
+          b.perPair.push({ pair: se.inst.id, ...rStats(ts) });
+          if (se.ctx.bars.length > 8_000) await yieldNow();
+        }
+        byLock.set(k, b);
       }
-      noLock = vRow(statsOf(off, o.oosFrom));
+      const lStats = [...byLock.keys()].map((k) => ({ key: k, ...statsOf(byLock.get(k)!.trades, o.oosFrom) }));
+      noLock = vRow(lStats.find((x) => x.key === 'off')!);
+      if (FX_CONFIG.lockChoice.on) {
+        lockVariants = lStats.map((x) => ({ lock: x.key, ...vRow(x) }));
+        lockK = chooseVariant(lStats.map((x) => ({ key: x.key, inSample: x.inSample })), 'tight' as LockKind, 40, prev?.l);
+        if (lockK !== 'tight') {
+          v = byLock.get(lockK)!;
+          ch = lStats.find((x) => x.key === lockK)!;
+          done = v.trades.filter((t) => t.reason !== 'open');
+        }
+      }
     }
     // v18 pass 3: the chosen filter + exit with a different way in (entries.ts) — graded only, never picked: the
     // bot enters at the next open until the practice account can hold a limit order
@@ -1395,7 +1422,7 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
         for (const se of seriesTf) {
           const sigs = sigsBy.get(se)!;
           const mapped = exit === 'designed' ? sigs : sigs.map((sg, i) => applyExit(sg, exit, se.ctx, i));
-          const ts = simulate(se.inst, tf, se.ctx, s.id, mapped, allowFor(filter, se.env, style), { ...DEFAULT_SIM, entry: k });
+          const ts = simulate(se.inst, tf, se.ctx, s.id, mapped, allowFor(filter, se.env, style), { ...DEFAULT_SIM, entry: k, lockKind: lockK });
           b.trades.push(...ts);
           b.perPair.push({ pair: se.inst.id, ...rStats(ts) });
           if (se.ctx.bars.length > 8_000) await yieldNow();
@@ -1470,6 +1497,8 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
       why: '',
       ...(skip ? { skip } : {}),
       ...(noLock ? { noLock } : {}),
+      ...(lockK !== 'tight' ? { lock: lockK } : {}),
+      ...(lockVariants ? { lockVariants } : {}),
       ...(entryVariants ? { entryVariants } : {}),
       ...(fin ? { fin } : {}),
     });
@@ -1607,7 +1636,7 @@ export function quickLookTrades(o: {
     if (!s || !runsOn(s, o.tf, o.inst.id)) continue;
     const sigs = signalsFor(se.ctx, s);
     const mapped = (row.exit ?? 'designed') === 'designed' ? sigs : sigs.map((sg, i) => applyExit(sg, row.exit, se.ctx, i));
-    for (const t of simulate(o.inst, o.tf, se.ctx, s.id, mapped, allowFor(row.filter, se.env, styleOf(s)), { ...DEFAULT_SIM, entry: 'market' })) {
+    for (const t of simulate(o.inst, o.tf, se.ctx, s.id, mapped, allowFor(row.filter, se.env, styleOf(s)), { ...DEFAULT_SIM, entry: 'market', lockKind: row.lock ?? 'tight' })) {
       if (t.reason !== 'open' || inSkipped(row.skip, t)) continue;
       mates.push(t);
       if (signalIndex(se.ctx.bars, t.entryT, se.ctx.barMin) === last) opens.push({ t, row });
@@ -2422,7 +2451,7 @@ export class ForexLab {
     const entries = summarizeEntries(rows);
     const financing = summarizeFinancing(rows);
     const lockSummary = summarizeLock(rows, DEFAULT_SIM.profitLock);
-    const chosenStore: ChosenStore = { oosFrom, picks: Object.fromEntries(rows.map((r) => [`${r.id}:${r.tf}`, { f: r.filter, e: r.exit, n: r.entry ?? 'market' }])) };
+    const chosenStore: ChosenStore = { oosFrom, picks: Object.fromEntries(rows.map((r) => [`${r.id}:${r.tf}`, { f: r.filter, e: r.exit, n: r.entry ?? 'market', l: r.lock ?? 'tight' }])) };
     await this.redis.set(this.k(FX_FILTERS_CHOSEN), JSON.stringify(chosenStore)).catch(() => undefined);
 
     // ── signal judge: learns on the first 70%, graded once on the unseen 30% ──

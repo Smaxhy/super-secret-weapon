@@ -33,6 +33,8 @@ export interface ReplayPick {
   filter: FilterKind;
   exit: ExitKind;
   entry: EntryKind;
+  /** v28.6: its profit lock when not the tight one */
+  lock?: 'loose' | 'off';
   verdict: Row['verdict'];
   /** the bot trades it now */
   live: boolean;
@@ -75,7 +77,7 @@ export interface ReplayResult {
 export function replayPicks(rows: ReadonlyArray<Row>, tf: Timeframe, live: ReadonlySet<string>): ReplayPick[] {
   return rows
     .filter((r) => r.tf === tf && r.id !== 'random')
-    .map((r) => ({ id: r.id, name: r.name, tf: r.tf, filter: r.filter, exit: r.exit, entry: r.entry ?? 'market', verdict: r.verdict, live: live.has(`${r.id}:${r.tf}`), ...(r.skip ? { skip: r.skip } : {}), outN: r.outSample.n, outAvgR: r.outSample.avgR }))
+    .map((r) => ({ id: r.id, name: r.name, tf: r.tf, filter: r.filter, exit: r.exit, entry: r.entry ?? 'market', ...(r.lock ? { lock: r.lock } : {}), verdict: r.verdict, live: live.has(`${r.id}:${r.tf}`), ...(r.skip ? { skip: r.skip } : {}), outN: r.outSample.n, outAvgR: r.outSample.avgR }))
     .sort((a, b) => Number(b.live) - Number(a.live) || (a.verdict === b.verdict ? 0 : a.verdict === 'edge' ? -1 : b.verdict === 'edge' ? 1 : a.verdict === 'maybe' ? -1 : 1) || b.outAvgR - a.outAvgR);
 }
 
@@ -100,7 +102,7 @@ export function replayTrades(se: Series, picks: ReadonlyArray<ReplayPick>, from:
     if (!s || !runsOn(s, se.tf, se.inst.id)) continue;
     const sigs = signalsFor(se.ctx, s);
     const mapped = p.exit === 'designed' ? sigs : sigs.map((sg, i) => applyExit(sg, p.exit, se.ctx, i));
-    const ts = simulate(se.inst, se.tf, se.ctx, s.id, mapped, allowFor(p.filter, se.env, styleOf(s)), { ...DEFAULT_SIM, entry: p.entry });
+    const ts = simulate(se.inst, se.tf, se.ctx, s.id, mapped, allowFor(p.filter, se.env, styleOf(s)), { ...DEFAULT_SIM, entry: p.entry, lockKind: p.lock ?? 'tight' });
     for (const t of ts) {
       if (t.entryT < from || t.entryT > to || inSkipped(p.skip, t)) continue;
       out.push({ strategy: t.strategy, side: t.side, entryT: t.entryT, entry: t.entry, exitT: t.exitT, exit: t.exit, stop0: t.stop0, target: t.target0 ?? t.target, r: Math.round(t.r * 1000) / 1000, reason: t.reason });

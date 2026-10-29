@@ -8,7 +8,7 @@ import { VENUE_FEES, feeR } from './venue-fees';
 import { spreadMultAt } from './spreads';
 import { ENTRY, type EntryKind } from './entries';
 import { FINANCING, finPerBar } from './financing';
-import { lockedStop, lockPlan, PROFIT_LOCK, type LockPlan } from './profit-lock';
+import { lockCfgOf, lockedStop, lockPlan, PROFIT_LOCK, type LockKind, type LockPlan } from './profit-lock';
 import type { Ctx } from './ta';
 import type { Strategy } from './strategies';
 import type { Instrument, Signal, Timeframe, Trade } from './types';
@@ -84,10 +84,12 @@ export interface SimOpts {
   /** v27.8: a trade that reaches its target is not closed there — the stop locks a tight `RUN_PAST_TP.atr` ATR behind
    * the target and trails the best close by that much (signals with their own trailing take-profit keep theirs) */
   runPastTarget?: boolean;
+  /** v28.6: which profit lock (profit-lock.ts LockKind; 'off' = none). Ignored when `profitLock` is false. */
+  lockKind?: LockKind;
 }
 /** v27.8 (owner: "if you're in a trade you're allowed to go higher than your TP, just set a tight trailing SL") */
 export const RUN_PAST_TP = { on: true, atr: 0.6 };
-export const DEFAULT_SIM: Required<SimOpts> = { weekendPause: true, sessionSpreads: true, liveEdge: true, profitLock: PROFIT_LOCK.on, entry: 'market', financing: FINANCING.on, venueFees: VENUE_FEES.on, runPastTarget: RUN_PAST_TP.on };
+export const DEFAULT_SIM: Required<SimOpts> = { weekendPause: true, sessionSpreads: true, liveEdge: true, profitLock: PROFIT_LOCK.on, entry: 'market', financing: FINANCING.on, venueFees: VENUE_FEES.on, runPastTarget: RUN_PAST_TP.on, lockKind: 'tight' };
 
 /** v27.8: give a signal with a target and no trailing take-profit the tight run-past-target trail. Pure. */
 export const withRunPastTarget = (sig: Signal | null): Signal | null => (sig && sig.target !== null && !sig.tpTrail ? { ...sig, tpTrail: RUN_PAST_TP.atr, tpFrac: sig.tpFrac ?? 0 } : sig);
@@ -95,6 +97,9 @@ export const withRunPastTarget = (sig: Signal | null): Signal | null => (sig && 
 export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: string, sigs0: ReadonlyArray<Signal | null>, allow?: Allow, opts: SimOpts = DEFAULT_SIM): Trade[] {
   const o = { ...DEFAULT_SIM, ...opts };
   const sigs = o.runPastTarget ? sigs0.map(withRunPastTarget) : sigs0;
+  // v28.6: the row's profit lock ('off' = none); trades carry it when it isn't the default tight one
+  const lockK: LockKind = !o.profitLock ? 'off' : (o.lockKind ?? 'tight');
+  const lockCfg = lockCfgOf(lockK);
   const bars = c.bars;
   const n = bars.length;
   const base = inst.spreadPips * inst.pip;
@@ -188,7 +193,7 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
       tpHit: false,
       target0: sig.target,
       trailPx: sig.trailR && sig.trailR > 0 ? sig.trailR * risk : null,
-      lock: o.profitLock ? lockPlan(sig.side, entry, sig.stop, sig.target, spr(entryIdx)) : null,
+      lock: o.profitLock && lockCfg ? lockPlan(sig.side, entry, sig.stop, sig.target, spr(entryIdx), lockCfg) : null,
       locked: false,
       lockBest: entry,
       fin: 0,
@@ -217,6 +222,7 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
       stop0: p.stop0,
       target: p.target,
       ...(p.fin !== 0 ? { fin: p.fin } : {}),
+      ...(lockK !== 'tight' ? { lockKind: lockK } : {}),
       ...(p.volRatio !== undefined ? { volRatio: p.volRatio } : {}),
       ...(p.beAt !== null ? { beAt: p.beAt } : {}),
       ...(p.scaleAt !== null ? { scaleAt: p.scaleAt, scaleFrac: p.scaleFrac, scaled: p.scaled } : {}),

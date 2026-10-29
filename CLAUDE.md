@@ -758,6 +758,21 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.6 each strategy picks its own profit lock: tight / loose / off (Oct 29, owner's coin P&L screenshots: "high win rate but
+the losses outweigh the wins by a lot")
+Coin bot Oct 28–29: winners +$0.56…+$9.29 (all closed by the locked stop), losers −$17.90 / −$18.29 / −$51.98. With the v27.28
+tight lock (arms +0.3R on a 2R target, trails 0.3R) a winner banks ≈ +0.15R while a loser costs −1R → it needs ≈ 87% winners
+to break even. profit-lock.ts `LockKind` 'tight' | 'loose' | 'off', `LOOSE_LOCK` (= the Kojiro copy lock: arms ¼ of the way to
+the target, trails ¼ behind, ⅕ → 15% past 60%), `lockCfgOf`. Engine `SimOpts.lockKind` (default 'tight'); trades carry
+`lockKind` when not tight. lab.ts `evaluateTf`: after the exit pick, the row is simulated with the loose lock and with none
+(the old `noLock` pass); `chooseVariant` keeps 'tight' unless another lock beats it on the FIRST 70% by the usual margin (last
+run's pick `l` kept through near-ties, `fx:filters:chosen` picks {f, e, n, l}); a non-tight pick becomes the row's record /
+verdict / paper / open trades and the entry pass runs with it (`FX_CONFIG.lockChoice.on`). `Row.lock`, `Row.lockVariants`;
+Strategies badge "loose lock" / "no lock". Live: `LabOpenTrade.lockKind` → `planOf` → `openIn` / `fillOrder` →
+`PracticePosition.lockKind` ('loose' → LOOSE_LOCK in `tick`; 'off' → lock null); quick look, fast lab, replay simulate with the
+row's lock; the spike exit (v27.67, live-only, never graded) no longer sells a trade whose row picked loose / off. EXPECT one
+re-pick event on both desks. The engine's lock on 1h candles is still a little kinder than the live minute checks.
+tests/forex-lock-choice (3).
 ## v28.5 his calls copied right + the sweep-and-reclaim at his levels in the lab (Oct 29, owner: "make sure you are copying
 it correct … levels and monitoring in LAB, signals insta trade"; screenshot: his NQ long 29,455.50 +527 ticks off his
 "Monitoring 29,466.25" after a sweep to ~29,405; "so many good trades on his level and we are missing out")

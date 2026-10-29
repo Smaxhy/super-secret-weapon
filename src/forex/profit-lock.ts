@@ -40,6 +40,18 @@ export const COPY_LOCK = {
   tightGapFrac: 0.15,
 };
 
+/**
+ * v28.6 (owner: "high win rate but the losses outweigh the wins"): the coin bot's winners closed at ≈ +0.15R on the tight
+ * lock while a loser costs −1R. Every row is now tested with three locks and keeps the one its FIRST 70% scored best on
+ * (lab.ts): 'tight' (PROFIT_LOCK), 'loose' (arms at a quarter of the way to the target, trails a quarter behind, a
+ * quarter → 15% once 60% of the way there — the Kojiro copy lock) or 'off' (stop / target / the strategy's own exits only).
+ */
+export type LockKind = 'tight' | 'loose' | 'off';
+export const LOCK_KINDS: readonly LockKind[] = ['tight', 'loose', 'off'];
+export const LOOSE_LOCK = { on: true, atFrac: 0.25, gapFrac: 0.25, keepFrac: 0.03, tightAtFrac: 0.6, tightGapFrac: 0.15 };
+/** the lock settings of a kind ('off' → null). Pure. */
+export const lockCfgOf = (k: LockKind | undefined): (typeof PROFIT_LOCK & { tightAtFrac?: number; tightGapFrac?: number }) | null => (k === 'off' ? null : k === 'loose' ? LOOSE_LOCK : PROFIT_LOCK);
+
 export interface LockPlan {
   /** the price that arms the lock */
   at: number;

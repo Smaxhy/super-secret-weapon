@@ -20,7 +20,7 @@ import { fetchYahooBars, loadFastBars, mergeBars, saveFastBars, trimBars, volume
 import { loadOanda, oandaCandles, oandaCovers, oandaReady } from './oanda';
 import { extendWithLive, needsBasis } from './basis';
 import { hlCandles, loadHlFutures } from './hyperliquid';
-import { signalsFor, simulate, WARMUP } from './engine';
+import { DEFAULT_SIM, signalsFor, simulate, WARMUP } from './engine';
 import { STRATEGIES, postedLevelSignal, runsOn, strategyById, styleOf, tradesNews } from './strategies';
 import { DISCORD_COPY, POSTED_LEVELS, levelSets, loadLevels, type PostedLevels } from './discord';
 import { takeLevelTrades } from './level-watch';
@@ -483,7 +483,7 @@ export class FastLab {
     await this.redis.set(this.k(FX_FAST_REPORT), JSON.stringify(this.report)).catch(() => undefined);
     const chosenStore: ChosenStore = {
       oosFrom: Object.fromEntries(FX_FAST.tfs.flatMap((tf) => (spans[tf].oosFrom !== null ? [[tf, spans[tf].oosFrom]] : []))),
-      picks: Object.fromEntries(rows.map((r) => [`${r.id}:${r.tf}`, { f: r.filter, e: r.exit }])),
+      picks: Object.fromEntries(rows.map((r) => [`${r.id}:${r.tf}`, { f: r.filter, e: r.exit, l: r.lock ?? 'tight' }])),
     };
     await this.redis.set(this.k(FX_FAST_CHOSEN), JSON.stringify(chosenStore)).catch(() => undefined);
     log.info({ rows: rows.length, pass, ms: this.report.durationMs }, 'forex fast test done');
@@ -570,7 +570,7 @@ export class FastLab {
           // v27.2: the market plan decides per market (NAS100 → Judas swing only)
           const isChosen = ((FX_CONFIG.botFastCharts && !isFutures(inst.id)) || (this.lab.universe === 'crypto' && FX_CONFIG.botFastChartsCrypto) || FX_CONFIG.botFastStrategies.includes(row.id)) && planChosen(row.id, inst.id, keep.has(`${row.id}:${tf}`), row.pairs?.find((x) => x.pair === inst.id), rec.dropped.includes(`${row.id}:${tf}`), row.markets?.find((c) => c.pair === inst.id), tf, pooledOf(row));
           const sigs = signalsFor(se.ctx, s).map((sg, i) => applyExit(sg, row.exit ?? 'designed', se.ctx, i));
-          for (const t of simulate(inst, tf, se.ctx, s.id, sigs, allowFor(row.filter ?? 'none', se.env, styleOf(s)))) {
+          for (const t of simulate(inst, tf, se.ctx, s.id, sigs, allowFor(row.filter ?? 'none', se.env, styleOf(s)), { ...DEFAULT_SIM, lockKind: row.lock ?? 'tight' })) {
             if (t.reason !== 'open') {
               if (t.exitT >= now - 7 * 86_400_000) labDone.add(tradeKey(t));
               continue;
