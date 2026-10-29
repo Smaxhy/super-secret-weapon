@@ -23,18 +23,20 @@ class FakeRedis {
   }
 }
 
-describe('Kojiro calls are lab only by default', () => {
-  it('both switches default off', () => {
-    expect(DISCORD_COPY.live).toBe(false);
+describe('Kojiro calls: copied by default (v28.4), levels lab only', () => {
+  it('his calls are copied by default; level trades stay lab only', () => {
+    expect(DISCORD_COPY.live).toBe(true);
     expect(POSTED_LEVELS.trade).toBe(false);
   });
-  it('his SIGNAL post is logged and graded, never opened', async () => {
+  it('with DISCORD_COPY_LIVE=off his SIGNAL post is logged and graded, never opened', async () => {
+    DISCORD_COPY.live = false;
     const opened: unknown[] = [];
     const book = { copyOpen: async (r: unknown) => (opened.push(r), { ok: true }), copyClose: async () => ({ ok: true, closed: [], pending: 0 }), copyBreakeven: async () => ({ ok: true, moved: [] }) } as unknown as CopyBook;
     const row = await handleSignal(new FakeRedis() as unknown as Redis, book, { id: '1400000000000000001', text: 'SIGNAL · NQ — SHORT @ 29,879', at: T - 10_000 }, T);
     expect(opened).toHaveLength(0);
     expect(row).toMatchObject({ kind: 'open', ok: false });
     expect(row.what).toMatch(/lab only — not traded/);
+    DISCORD_COPY.live = true;
   });
 });
 

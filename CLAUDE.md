@@ -758,6 +758,19 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.4 all his calls copied again + his edited posts, "Monitoring" levels, one-off leans end with the session (Oct 29,
+owner: "the bot seen these signals? … he is up 100 pips already"; "I want it to follow all his signals calls and trades")
+VPS read 13:51 UTC: his 13:25 Levels post was saved as first sent (29,609.50 …) — he EDITED it (29,729.50, 29,785.25–29,788
+added) and the copier never forwarded edits; his "Monitoring 29,635.25 / 29,466.25 / 29,563.50" posts were "not a trade
+message"; the stored lean was still bearish from the Oct 28 "Fullport FOMC shorts" (a full call set it for 24 h).
+(1) `DISCORD_COPY.live` default ON (env `DISCORD_COPY_LIVE=off` = lab only): every SIGNAL post from every channel is copied
+(his-record gate, fee checks, $20 cap, safety stop, copy lock as before); level trades stay lab only (`DISCORD_LEVEL_TRADES=on`
+to trade them; level lab +0.04R a trade on 36). (2) bot.py `on_message_edit` (only when the text changed) + the 2-min catch-up
+forward edits (`SENT_EDITS`, body `edited` ms); server: seen key `<id>:e<edited>`, an edit only updates levels / plan /
+monitoring — a trade is only ever copied from the post as first sent (log "edited post — …"). (3) `parseMonitor` ("Monitoring
+X", 1–4 prices) → `savePosted(…, { add: true })` adds them to the day's plain level list. (4) `sessionEnd(t)` = next 17:00 New
+York; a full-conviction call's lean carries `biasUntil` (loadLevels drops it after); a plan post has none (24 h). One-time
+`v28.4-fullcall-bias-session` ends the Oct 28 FOMC lean. Copier must be rebuilt (auto-update does it). tests/forex-discord-edits (5).
 ## v28.3 Kojiro's elite-channel calls are always taken (Oct 29, owner: "always go for elite calls, calls in the elite signal
 channel get prioritization and follow them correctly" — channel 1563800424769916968, already in the copier's channel_ids; the
 copier sends `channel` with every post)

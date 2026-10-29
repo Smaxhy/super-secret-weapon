@@ -501,7 +501,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       return { ok: true, t: beat.t };
     });
     // v27.46: Kojiro's Discord signals, posted by the owner's self-bot (scripts/discord-scanner) → copy trades
-    secured.post<{ Body: { id?: string; text?: string; at?: number | string; source?: string; channel?: string; other?: boolean; author?: string } }>('/api/forex/discord-signal', async (req, reply) => {
+    secured.post<{ Body: { id?: string; text?: string; at?: number | string; source?: string; channel?: string; other?: boolean; author?: string; edited?: number } }>('/api/forex/discord-signal', async (req, reply) => {
       const b = req.body ?? {};
       const id = String(b.id ?? '');
       const text = String(b.text ?? '');
@@ -514,7 +514,7 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
         return { ok: false, error: 'not running' };
       }
       const at = typeof b.at === 'number' ? b.at : Date.parse(String(b.at ?? '')) || Date.now();
-      const row = await handleSignal(redis, deps.practice, { id, text, at, ...(b.source ? { source: String(b.source) } : {}), ...(b.channel ? { channel: String(b.channel) } : {}), ...(b.other ? { other: true, author: String(b.author ?? '') } : {}) });
+      const row = await handleSignal(redis, deps.practice, { id, text, at, ...(b.source ? { source: String(b.source) } : {}), ...(b.channel ? { channel: String(b.channel) } : {}), ...(b.other ? { other: true, author: String(b.author ?? '') } : {}), ...(typeof b.edited === 'number' && b.edited > 0 ? { edited: b.edited } : {}) });
       if (row.kind === 'open' || row.kind === 'close' || row.kind === 'breakeven' || row.kind === 'old' || row.kind === 'levels') {
         const lab = row.pair && isCrypto(row.pair) ? deps.crypto : deps.forex;
         lab?.logBot([`Discord (${row.source}): ${row.what}`]);

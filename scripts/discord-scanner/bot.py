@@ -149,6 +149,11 @@ def is_signal_message(msg: discord.Message) -> bool:
 
 # v27.65: ids already handed to the trading bot (the catch-up sweep skips them; the bot also refuses repeats)
 SENT_IDS: set[int] = set()
+# v28.4: edits already handed over (message id → edited time in ms); he often corrects his "Levels" post after posting it
+SENT_EDITS: dict[int, int] = {}
+
+def edited_ms(msg: discord.Message) -> int:
+    return int(msg.edited_at.timestamp() * 1000) if getattr(msg, "edited_at", None) else 0
 
 class BotApi:
     """Logs in to the trading bot once (JWT, 7 days) and re-logs in on a 401."""
@@ -178,7 +183,7 @@ class BotApi:
             self.token = (await r.json()).get("token")
             return bool(self.token)
 
-    async def send_signal(self, msg: discord.Message, text: str, other: bool = False) -> dict | None:
+    async def send_signal(self, msg: discord.Message, text: str, other: bool = False, edited: int = 0) -> dict | None:
         body = {
             "id": str(msg.id),
             "text": text,
@@ -187,6 +192,8 @@ class BotApi:
             "channel": str(msg.channel.id),
             # v27.65: posted in his channel by someone else → the bot only logs it (never trades on it)
             **({"other": True, "author": str(msg.author)[:40]} if other else {}),
+            # v28.4: an edit → the bot updates his levels / plan from it, never opens a trade on it
+            **({"edited": edited} if edited else {}),
         }
         return await self.post("/api/forex/discord-signal", body)
 
@@ -209,17 +216,23 @@ class BotApi:
 
 bot_api = BotApi()
 
-async def forward_signal(msg: discord.Message, other: bool = False):
-    if msg.id in SENT_IDS:
+async def forward_signal(msg: discord.Message, other: bool = False, edit: bool = False):
+    ed = edited_ms(msg) if edit else 0
+    if edit and (not ed or SENT_EDITS.get(msg.id) == ed):
+        return
+    if not edit and msg.id in SENT_IDS:
         return
     text = message_text(msg)
     if not text:
         return
-    res = await bot_api.send_signal(msg, text, other)
+    res = await bot_api.send_signal(msg, text, other, ed)
     if res is None:
         logger.warning(f"COPY FAILED | {text[:120]!r}")
         return
-    SENT_IDS.add(msg.id)
+    if edit:
+        SENT_EDITS[msg.id] = ed
+    else:
+        SENT_IDS.add(msg.id)
     kind = res.get("kind")
     if kind in ("none", "duplicate"):
         return
@@ -312,12 +325,14 @@ async def catch_up():
                 # the newest 30 (with `after` Discord would hand the OLDEST 30 since then)
                 msgs = [m async for m in ch.history(limit=30) if m.created_at >= since]
                 for m in sorted(msgs, key=lambda x: x.created_at):
-                    if m.id in SENT_IDS:
+                    mine = is_signal_message(m)
+                    if not mine and m.author.id == bot.user.id:
                         continue
-                    if is_signal_message(m):
-                        await forward_signal(m)
-                    elif m.author.id != bot.user.id:
-                        await forward_signal(m, other=True)
+                    if m.id not in SENT_IDS:
+                        await forward_signal(m, other=not mine)
+                    # v28.4: a post edited after it was sent (or while the copier was down) → its new text too
+                    if m.id in SENT_IDS and edited_ms(m) and SENT_EDITS.get(m.id) != edited_ms(m):
+                        await forward_signal(m, other=not mine, edit=True)
             await bot_api.post("/api/forex/discord-heartbeat", {"channels": seen, "sent": len(SENT_IDS)})
         except Exception as e:  # never let the sweep die
             logger.warning(f"copy: catch-up failed ({e})")
@@ -354,6 +369,16 @@ async def on_ready():
 {Fore.GREEN}{'='*50}{Style.RESET_ALL}
   Scanning... (type {CFG.get('prefix', '!scan')} help in Discord for commands)
 """)
+
+@bot.event
+async def on_message_edit(before: discord.Message, after: discord.Message):
+    # v28.4: Discord also fires this when it only adds a link preview — forward only when the text really changed
+    if message_text(before) == message_text(after):
+        return
+    if is_signal_message(after):
+        asyncio.create_task(forward_signal(after, edit=True))
+    elif is_copy_channel(after) and after.author.id != bot.user.id:
+        asyncio.create_task(forward_signal(after, other=True, edit=True))
 
 @bot.event
 async def on_message(message: discord.Message):

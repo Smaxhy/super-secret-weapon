@@ -16,6 +16,7 @@
  */
 import { KSTUDY, kojiroGate, loadCard, saveHistory } from './kojiro-study';
 import { sessionOf } from './montecarlo';
+import { nyOffsetMs } from './ny-time';
 import type Redis from 'ioredis';
 import { INSTRUMENTS, instrument, isCrypto } from './types';
 
@@ -42,9 +43,10 @@ export const DISCORD_COPY = {
    * looser copy lock (profit-lock.ts `COPY_LOCK`: arms +0.5R, trails 0.5R, 0.3R past +1.2R — owner: "trailing SL on his
    * calls is fine, just not too tight early on"). `DISCORD_COPY_LOCK=off` = his exit / his SL / the safety stop only. */
   profitLock: process.env.DISCORD_COPY_LOCK !== 'off',
-  /** v27.77: his SIGNAL posts are NOT opened on the account (lab only: logged + graded by kojiro-study.ts); his exits still
-   * close any copy left open. `DISCORD_COPY_LIVE=on` copies them again. */
-  live: process.env.DISCORD_COPY_LIVE === 'on',
+  /** v27.77: his SIGNAL posts were lab only; v28.4 (owner: "I want it to follow all his signal calls and trades") copied
+   * again by default, every channel. `DISCORD_COPY_LIVE=off` = lab only (logged + graded, never opened); his exits always
+   * close any copy left open. */
+  live: process.env.DISCORD_COPY_LIVE !== 'off',
   /** v27.94 (owner: "Fullport FOMC longs is also a call … make sure it happens at all costs"): his FULL-conviction calls
    * ("fullport / full port / full send / all in … longs / shorts", or an event call like "FOMC longs") are taken even
    * while his other calls are lab-only, past his-record gate; `DISCORD_FULLPORT_LIVE=off` = lab only like the rest. */
@@ -116,6 +118,9 @@ export interface PostedLevels {
   dol?: number | null;
   /** when the plan was posted (ms) */
   biasT?: number;
+  /** v28.4: a lean taken from a one-off full-conviction call ("Fullport FOMC shorts") only lasts until the trading session's
+   * end (17:00 New York); a real plan post has none (a day) */
+  biasUntil?: number;
   /** v27.64: a "Short Levels" post → only shorts at these prices (whatever the bias); `shortT` = when posted */
   shortLevels?: number[];
   shortT?: number;
@@ -178,6 +183,29 @@ export function parseLevels(raw: string): { pair: string; levels: number[]; side
   return side ? { pair, levels, side } : { pair, levels };
 }
 
+/** v28.4: a "Monitoring 29,466.25" / "Monitoring 29,563.50 (weaker level)" post → the price(s) he is watching, or null.
+ * Pure. */
+export function parseMonitor(raw: string): { pair: string; levels: number[] } | null {
+  const text = raw.replace(/[*_`~>|]/g, ' ');
+  if (!/\bMONITOR(?:ING)?\b/i.test(text)) return null;
+  const nums = [...text.matchAll(/(?<![\d.])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d{3,})(?![\d,])/g)].map((m) => Number(m[1]!.replace(/,/g, ''))).filter((x) => Number.isFinite(x) && x > 0);
+  if (!nums.length || nums.length > 4) return null;
+  const sorted = [...nums].sort((a, b) => a - b);
+  const med = sorted[sorted.length >> 1]!;
+  const levels = [...new Set(nums.filter((x) => Math.abs(x - med) <= (med * POSTED_LEVELS.maxSpreadPct) / 100))].sort((a, b) => b - a);
+  const sym = /\b(MNQ|NQ|NAS100|US100|USTEC|NASDAQ|ES|MES|US500|SPX|YM|US30|RTY|GC|GOLD|XAUUSD|SI|BTC|ETH|SOL)[A-Z]?\d{0,4}!?\b/.exec(text.toUpperCase());
+  return { pair: (sym && symbolToPair(sym[1]!)) || POSTED_LEVELS.defaultPair, levels };
+}
+
+/** v28.4: the end of the trading session t falls in = the next 17:00 New York (the CME daily close). Pure. */
+export function sessionEnd(t: number): number {
+  const off = nyOffsetMs(t);
+  const local = t + off;
+  let end = Math.floor(local / 86_400_000) * 86_400_000 + 17 * 3_600_000 - off;
+  if (end <= t) end += 86_400_000;
+  return end;
+}
+
 /** Every market's newest posted list still in force. */
 export async function loadLevels(redis: Redis, now = Date.now()): Promise<Record<string, PostedLevels>> {
   const raw = await redis.get(POSTED_LEVELS.key).catch(() => null);
@@ -193,7 +221,7 @@ export async function loadLevels(redis: Redis, now = Date.now()): Promise<Record
     // the levels, the short / long lists and the plan each count for a day from their own post
     const fresh = (t: number | undefined) => t !== undefined && now - t <= POSTED_LEVELS.validMs;
     const levelsOk = fresh(x.t);
-    const planOk = fresh(x.biasT);
+    const planOk = fresh(x.biasT) && (x.biasUntil === undefined || now < x.biasUntil);
     const shortOk = !!x.shortLevels?.length && fresh(x.shortT);
     const longOk = !!x.longLevels?.length && fresh(x.longT);
     if (!levelsOk && !planOk && !shortOk && !longOk) continue;
@@ -201,7 +229,7 @@ export async function loadLevels(redis: Redis, now = Date.now()): Promise<Record
     out[pair] = {
       ...rest,
       levels: levelsOk ? x.levels : [],
-      ...(planOk ? {} : { bias: undefined, dol: undefined, biasT: undefined }),
+      ...(planOk ? {} : { bias: undefined, dol: undefined, biasT: undefined, biasUntil: undefined }),
       ...(shortOk ? { shortLevels, shortT } : {}),
       ...(longOk ? { longLevels, longT } : {}),
     };
@@ -211,7 +239,7 @@ export async function loadLevels(redis: Redis, now = Date.now()): Promise<Record
 
 /** Merge a post into the market's record; an older post arriving late never replaces a newer one (`force` = it does:
  * a correction by hand). A levels post with a `side` fills the short / long list and leaves his plain levels alone. */
-export async function savePosted(redis: Redis, pair: string, patch: { levels: number[]; t: number; msgId: string; source: string; side?: 1 | -1 } | { bias: 1 | -1 | 0 | null; dol: number | null; biasT: number; source: string }, force = false): Promise<void> {
+export async function savePosted(redis: Redis, pair: string, patch: { levels: number[]; t: number; msgId: string; source: string; side?: 1 | -1; add?: boolean } | { bias: 1 | -1 | 0 | null; dol: number | null; biasT: number; source: string; until?: number }, force = false): Promise<void> {
   const raw = await redis.get(POSTED_LEVELS.key).catch(() => null);
   let all: Record<string, PostedLevels> = {};
   try {
@@ -224,13 +252,19 @@ export async function savePosted(redis: Redis, pair: string, patch: { levels: nu
     const k = patch.side === -1 ? 'short' : 'long';
     if (!force && (cur[`${k}T`] ?? 0) > patch.t) return;
     all[pair] = { ...cur, [`${k}Levels`]: patch.levels, [`${k}T`]: patch.t };
+  } else if ('levels' in patch && patch.add) {
+    // v28.4: a "Monitoring 29,466.25" post adds its price to today's list (a list older than a day starts fresh)
+    const fresh = cur.levels.length > 0 && patch.t - cur.t <= POSTED_LEVELS.validMs;
+    const levels = [...new Set([...(fresh ? cur.levels : []), ...patch.levels])].sort((a, b) => b - a);
+    all[pair] = { ...cur, levels, ...(fresh ? {} : { t: patch.t, msgId: patch.msgId, source: patch.source }) };
   } else if ('levels' in patch) {
     if (!force && cur.t > patch.t) return;
-    const { side: _side, ...p } = patch;
+    const { side: _side, add: _add, ...p } = patch;
     all[pair] = { ...cur, ...p };
   } else {
     if (!force && (cur.biasT ?? 0) > patch.biasT) return;
-    all[pair] = { ...cur, ...(patch.bias !== null ? { bias: patch.bias } : {}), ...(patch.dol !== null ? { dol: patch.dol } : {}), biasT: patch.biasT };
+    const { biasUntil: _old, ...keep } = cur;
+    all[pair] = { ...keep, ...(patch.bias !== null ? { bias: patch.bias } : {}), ...(patch.dol !== null ? { dol: patch.dol } : {}), biasT: patch.biasT, ...(patch.until ? { biasUntil: patch.until } : {}) };
   }
   await redis.set(POSTED_LEVELS.key, JSON.stringify(all));
 }
@@ -325,6 +359,8 @@ export interface SignalIn {
   /** v27.65: posted in his channel by someone else → logged only, never traded on */
   other?: boolean;
   author?: string;
+  /** v28.4: this is an EDIT of an earlier post (when Discord says it was edited, ms) → levels / plans saved, never traded */
+  edited?: number;
 }
 
 export interface CopyLogRow {
@@ -361,16 +397,25 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
     return row;
   };
   if (!DISCORD_COPY.on) return done({ ...base, kind: 'off', ok: false, what: 'copying is switched off (DISCORD_COPY=off)' });
-  const first = await redis.set(`fx:discord:seen:${s.id}`, '1', 'EX', DISCORD_COPY.seenTtlSec, 'NX');
+  const first = await redis.set(`fx:discord:seen:${s.id}${s.edited ? `:e${s.edited}` : ''}`, '1', 'EX', DISCORD_COPY.seenTtlSec, 'NX');
   if (first !== 'OK') return { ...base, kind: 'duplicate', ok: true, what: 'already handled' };
   if (s.other) return done({ ...base, kind: 'other', ok: true, what: `posted by ${(s.author ?? 'someone else').slice(0, 40)}, not him — logged, not copied` });
   await saveHistory(redis, [{ id: s.id, at: s.at, text: s.text }]).catch(() => 0); // v27.66: his record grows with every post
-  const sig = parseSignal(s.text);
+  const parsed = parseSignal(s.text);
+  // v28.4: an edited post only updates his levels / plan — a trade is only ever taken from the post as first sent
+  const sig: ParsedSignal = s.edited ? { kind: 'none' } : parsed;
   if (sig.kind === 'none') {
     const fmt = (x: number) => x.toLocaleString('en-US', { maximumFractionDigits: 5 });
     const plan = parseBias(s.text);
     const lv = parseLevels(s.text);
-    if (!lv && !plan) return done({ ...base, kind: 'none', ok: true, what: 'not a trade message' });
+    const mon = lv ? null : parseMonitor(s.text);
+    const ed = s.edited ? 'edited post: ' : '';
+    if (mon?.levels.length) {
+      await savePosted(redis, mon.pair, { levels: mon.levels, t: s.at, msgId: s.id, source, add: true });
+      const now2 = (await loadLevels(redis, now))[mon.pair]?.levels ?? mon.levels;
+      return done({ ...base, kind: 'levels', pair: mon.pair, ok: true, what: `${ed}${mon.pair} he is watching ${mon.levels.map(fmt).join(' · ')} — added to today's levels (${now2.map(fmt).join(' · ')})${POSTED_LEVELS.trade ? '' : ' — lab only'}` });
+    }
+    if (!lv && !plan) return done({ ...base, kind: 'none', ok: true, what: s.edited && parsed.kind !== 'none' ? 'edited post — trades are only copied from the post as first sent' : 'not a trade message' });
     const said: string[] = [];
     if (plan) {
       await savePosted(redis, plan.pair, { bias: plan.bias, dol: plan.dol, biasT: s.at, source });
@@ -381,11 +426,11 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
       const which = lv.side === -1 ? 'SHORT levels (shorts only)' : lv.side === 1 ? 'LONG levels (longs only)' : 'levels';
       said.push(`${lv.pair} ${which} saved for today: ${lv.levels.map(fmt).join(' · ')}${POSTED_LEVELS.trade ? ' — the bot trades a bounce, a break-and-retest or a move toward them (live 1-minute candles)' : ' — lab only: the bot records what it would trade at them'}`);
     }
-    return done({ ...base, kind: 'levels', pair: (lv ?? plan)!.pair, ok: true, what: said.join('; ') });
+    return done({ ...base, kind: 'levels', pair: (lv ?? plan)!.pair, ok: true, what: ed + said.join('; ') });
   }
   if (sig.kind === 'open') {
     const full = sig.conviction === 'full';
-    if (full && sig.pair) await savePosted(redis, sig.pair, { bias: sig.side, dol: null, biasT: s.at, source }).catch(() => undefined);
+    if (full && sig.pair) await savePosted(redis, sig.pair, { bias: sig.side, dol: null, biasT: s.at, source, until: sessionEnd(s.at) }).catch(() => undefined);
     const eliteGo = elite && DISCORD_COPY.eliteLive;
     if (now - s.at > (full || eliteGo ? DISCORD_COPY.fullMaxAgeMs : DISCORD_COPY.maxAgeMs)) return done({ ...base, kind: 'old', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `posted ${Math.round((now - s.at) / 60_000)} min ago — too old to copy` });
     if (!sig.pair || !instrument(sig.pair)) return done({ ...base, kind: 'open', pair: null, side: sig.side, hisPx: sig.price, ok: false, what: `unknown market "${sig.symbol ?? '?'}"` });
@@ -442,7 +487,7 @@ export async function catchUpFullCalls(redis: Redis, book: CopyBook, now = Date.
     if (sig.kind !== 'open' || !(eliteRow || (sig.conviction === 'full' && DISCORD_COPY.fullLive)) || !sig.pair || !instrument(sig.pair)) continue;
     if ((await redis.set(`fx:discord:fullcatch:${row.id}`, '1', 'EX', 7 * 86_400, 'NX')) !== 'OK') continue;
     const strategy = copyStrategy(row.source);
-    await savePosted(redis, sig.pair, { bias: sig.side, dol: null, biasT: row.t, source: row.source }).catch(() => undefined);
+    await savePosted(redis, sig.pair, { bias: sig.side, dol: null, biasT: row.t, source: row.source, until: sessionEnd(row.t) }).catch(() => undefined);
     const r = await book.copyOpen({ pair: sig.pair, side: sig.side, stopNamed: sig.stop, hisPx: null, strategy, ref: copyRef(strategy, sig.pair, row.id), riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: DISCORD_COPY.profitLock, ...(eliteRow ? { priority: true } : {}) }, acctForPair(sig.pair));
     if (!r.ok && !final) {
       await redis.del(`fx:discord:fullcatch:${row.id}`).catch(() => 0); // e.g. no live price yet → the next try takes it

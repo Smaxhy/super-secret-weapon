@@ -18,7 +18,7 @@ import { mondayOf, weeklyLog, weekText } from './forex/pnl';
 import { chosenAt, WeekendReview, type WeekendDeskDef } from './forex/weekend';
 import { staleReason } from './forex/freshness';
 import { runKojiroStudy } from './forex/kojiro-study';
-import { COPIER_HB, DISCORD_COPY, catchUpFullCalls, copierDown, handleSignal, loadHeartbeat, loadLevels, savePosted } from './forex/discord';
+import { COPIER_HB, DISCORD_COPY, POSTED_LEVELS, catchUpFullCalls, copierDown, handleSignal, loadHeartbeat, loadLevels, savePosted, sessionEnd } from './forex/discord';
 import { getConfig, startConfigRefresh, stopConfigRefresh } from './config/runtime-config';
 import { DEFAULT_CONFIG } from './config/default';
 import { markStrategySince, oneTimeUpgrade, runConfigMigrations } from './config/migrations';
@@ -721,6 +721,19 @@ async function main(): Promise<void> {
     };
     setTimeout(() => void replay(), 20_000).unref?.();
   }
+  // v28.4: the bearish lean the bot still held from his Oct 28 FOMC full-conviction posts ends at that session's close
+  // (17:00 New York Oct 28) — a one-off call no longer sets his lean for 24 h
+  await oneTimeUpgrade('v28.4-fullcall-bias-session', async () => {
+    const raw = await redis.get(POSTED_LEVELS.key);
+    if (!raw) return;
+    const all = JSON.parse(raw) as Record<string, { biasT?: number; biasUntil?: number }>;
+    const from = Date.parse('2026-10-28T17:00:00Z');
+    const to = Date.parse('2026-10-28T20:00:00Z');
+    let n = 0;
+    for (const x of Object.values(all)) if (x?.biasT && x.biasT >= from && x.biasT <= to && x.biasUntil === undefined) (x.biasUntil = sessionEnd(x.biasT), n++);
+    if (n) await redis.set(POSTED_LEVELS.key, JSON.stringify(all));
+    forex.logBot([`Kojiro: his lean from the Oct 28 FOMC calls ended at that session's close (${n} market${n === 1 ? '' : 's'}) — a one-off call now sets his lean only for the rest of its session`]);
+  });
   // v27.86 (owner: "the bot was a mistake, revert the trade"): the coin bot's BTC round_break 4h long (12:31 at 80,801, stopped
   // 13:48 at 80,302.81, −$132.95 = 11.1% of the account: all-in size past the $50 cap) struck as if it never happened
   await oneTimeUpgrade('v27.86-strike-btc-round-break', async () => {
