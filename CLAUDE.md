@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.7 the coin bot trades its risk mode's size again — no $20 cap; the open LINK short re-sized to 8% (Oct 29, owner:
+"isn't this too little, only 1%?" → "it's still on turbo, shouldn't it be … not even 8%? raise it and change the current active
+trade as if it was 8% too")
+The coin bot's trades risked ~1.6% because the v27.95 $20 cap sized every trade under turbo's 8%. `BOT.maxLossUsdByAcct.cbot`
+20 → **0** (no $ cap: `a.maxLossUsd` deleted by syncBot → no size-to-cap, no excursion caps, no tick trim) → turbo = 8% of the
+account on the TESTED stop (very-sure trades keep `bigLossPct` 10%); the forex bot keeps $20. `copyOpen` on an account without
+a $ cap risks at most the risk mode's base % (not his 20% budget). practice.ts `resizeBotTrades(a, pct, mids, pick)` (pure) +
+`Practice.resizeBotTrades(acct, pct)`: open bot trades (lab ref, not Discord copies) get more units as if opened at `pct`% on
+their ORIGINAL stop distance (`riskUsd0` ÷ units), own cap dropped, margin ≤ free × `allInMarginShare`, never smaller; a paper
+adjustment (the open P&L counts the bigger size from the entry). One-time `v28.7-cbot-8pct` → cbot open trades at 8%, bot-log
+lines "8% per trade (owner): …". A stopped coin trade now costs ≈ 8% of the account (~$88). tests in forex-loss-cap (+1);
+forex-link-cap50 / forex-proven-only (cap mechanism tested with the cap set inside the test).
 ## v28.6 each strategy picks its own profit lock: tight / loose / off (Oct 29, owner's coin P&L screenshots: "high win rate but
 the losses outweigh the wins by a lot")
 Coin bot Oct 28–29: winners +$0.56…+$9.29 (all closed by the locked stop), losers −$17.90 / −$18.29 / −$51.98. With the v27.28

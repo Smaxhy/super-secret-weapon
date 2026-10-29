@@ -748,6 +748,13 @@ async function main(): Promise<void> {
     if (n) await redis.set(POSTED_LEVELS.key, JSON.stringify(all));
     forex.logBot([`Kojiro: his lean from the Oct 28 FOMC calls ended at that session's close (${n} market${n === 1 ? '' : 's'}) — a one-off call now sets his lean only for the rest of its session`]);
   });
+  // v28.7 (owner: "it's still on turbo … not even 8%? raise it, and change the current active trade as if it was 8%"): the
+  // coin bot's $20 cap is gone (BOT.maxLossUsdByAcct.cbot 0 → turbo's 8% sizes every trade); its open trades re-sized to 8%
+  await oneTimeUpgrade('v28.7-cbot-8pct', async () => {
+    const lines = await practice.resizeBotTrades('cbot', 8);
+    cryptoLab.logBot(lines.map((l) => `8% per trade (owner): ${l}`));
+    log.info({ lines }, 'coin bot trades re-sized to 8%');
+  });
   // v27.86 (owner: "the bot was a mistake, revert the trade"): the coin bot's BTC round_break 4h long (12:31 at 80,801, stopped
   // 13:48 at 80,302.81, −$132.95 = 11.1% of the account: all-in size past the $50 cap) struck as if it never happened
   await oneTimeUpgrade('v27.86-strike-btc-round-break', async () => {

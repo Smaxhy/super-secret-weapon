@@ -101,7 +101,9 @@ describe('v27.27 only proven strategies trade, big size', () => {
   it('a proven coin trade is sized so its tested stop + fee lose ≤ the $20 cap (v27.86 / v27.95), and the cap never pulls the stop in', async () => {
     const big0 = BOT.bigLossPct.cbot;
     BOT.bigLossPct.cbot = 0; // the v27.95 behaviour; v27.98's very-sure size is tested below
-    onTestFinished(() => { BOT.bigLossPct.cbot = big0; });
+    const cap0 = BOT.maxLossUsdByAcct.cbot;
+    BOT.maxLossUsdByAcct.cbot = 20; // v28.7 took the coin bot's cap off; the cap mechanism is still tested here
+    onTestFinished(() => { BOT.bigLossPct.cbot = big0; BOT.maxLossUsdByAcct.cbot = cap0; });
     vi.useFakeTimers({ now: NOW });
     const r = new NxRedis();
     r.m.set('fx:practice:cbot', JSON.stringify(newAccount(1000)));

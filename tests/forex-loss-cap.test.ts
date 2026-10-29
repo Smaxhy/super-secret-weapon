@@ -11,8 +11,8 @@ const q = (mid: number, bars: Array<[number, number, number, number, number]> = 
 const long = (): PracticePosition => ({ id: 'p1', pair: 'BTCUSD', side: 1, units: 0.02, entry: 100_000, marginUsd: 100, leverage: 20, stop: 96_000, target: 106_000, openedAt: T, checkedT: 0, lock: null });
 
 describe('per-trade USD loss cap', () => {
-  it('the coin bot and (v27.22) the forex bot are capped at $20', () => {
-    expect(BOT.maxLossUsdByAcct.cbot).toBe(20); // v27.95 (was $50 from v27.78)
+  it('the forex bot is capped at $20; the coin bot has no $ cap since v28.7 (turbo = 8%)', () => {
+    expect(BOT.maxLossUsdByAcct.cbot).toBe(0); // v28.7 (owner: "raise it"; was $20 from v27.95)
     expect(BOT.maxLossUsdByAcct.bot).toBe(20);
   });
   it('v27.96: trims a trade whose tested stop loses more than $20 (the stop stays where it was tested)', () => {
@@ -100,5 +100,23 @@ describe('v27.45 a trade can carry its own loss cap', () => {
     tick(a, { BTCUSD: q(99_900, [[m1, 100_000, 99_800, 99_900, 100_000]]) }, m1 + 30_000);
     expect(a.open[0]!.stop).toBe(96_000); // v27.96: trimmed, not pulled in
     expect(-(a.open[0]!.bankedUsd ?? 0) + a.open[0]!.units * 4_000).toBeCloseTo(27, 1); // 90% of $30
+  });
+});
+
+import { resizeBotTrades } from '../src/forex/practice';
+describe('v28.7 an open coin trade re-sized to 8%', () => {
+  it('more units on the same entry / stop, risk = 8% of the balance, its own cap dropped; never smaller', () => {
+    const a = newAccount(1000);
+    a.balanceUsd = 1100;
+    a.open.push({ id: 'p', pair: 'LINKUSD', side: -1, units: 36.7, entry: 10.74, marginUsd: 19.7, leverage: 20, stop: 11.205, target: 10.2, openedAt: 1, checkedT: 1, strategy: 'round_break', ref: 'round_break:1h:LINKUSD:1', tf: '1h', riskPct: 1.56, riskUsd0: 17.07, maxLossUsd: 20 } as never);
+    const lines = resizeBotTrades(a, 8, { LINKUSD: 10.715 });
+    const p = a.open[0]!;
+    expect(p.riskUsd0).toBeCloseTo(88, 0);
+    expect(p.riskPct).toBeCloseTo(8, 1);
+    expect(p.units).toBeCloseTo(36.7 * (88 / 17.07), 0);
+    expect(p.stop).toBe(11.205);
+    expect(p.maxLossUsd).toBeUndefined();
+    expect(lines[0]).toMatch(/re-sized as if opened at 8%/);
+    expect(resizeBotTrades(a, 4, { LINKUSD: 10.715 })[0]).toMatch(/no bigger size fits/);
   });
 });

@@ -78,7 +78,9 @@ export const BOT = {
    * an hourly / 4-hour trade on one may use this much delay on top of the limit when the feed declares none */
   futuresDelayMs: 15 * 60_000,
   /** v27.20: the most a single trade may lose, per account (the coin bot: $20; v27.22 the forex bot too) */
-  maxLossUsdByAcct: { cbot: 20, bot: 20 } as Partial<Record<string, number>>, // v27.95 (owner: "cut it all on 20"): $50 → $20
+  // v28.7 (owner: "its still on turbo, shouldn't it be … 8%, raise it"): the coin bot has NO $ cap — its risk mode sizes every
+  // trade (turbo = 8% of the account on the tested stop); the forex bot keeps $20. 0 / missing = no cap.
+  maxLossUsdByAcct: { cbot: 0, bot: 20 } as Partial<Record<string, number>>, // v27.95 (owner: "cut it all on 20"): $50 → $20
   /** v27.78 (owner raised the coin bot's cap to $50: "LINK usually does better"): on these accounts the excursion study's
    * per-strategy cap (kept $10–40) may not pull a trade in tighter than the account's cap — the owner's number is the floor */
   capFloorAccts: { cbot: true, bot: true } as Partial<Record<string, boolean>>,
@@ -742,6 +744,45 @@ export function resizeCopies(a: PracticeAccount, pct: number, mids: Record<strin
     out.push(`${p.pair} ${p.strategy} ${p.side === 1 ? 'long' : 'short'} re-sized as if opened at ${p.riskPct}%: ${before.toPrecision(4)} → ${p.units.toPrecision(4)} units, $${p.riskUsd0} at the stop ${p.stop?.toPrecision(7)}, margin $${p.marginUsd}`);
   }
   if (!copies.length) out.push('no open Kojiro copy to re-size');
+  return out;
+}
+
+/**
+ * v28.7 (owner: "change the current active trade as if it was 8% instead of 1"): the account's open bot trades (a lab ref,
+ * not a Discord copy) get more units as if they had opened risking `pct`% of the balance on their ORIGINAL stop distance
+ * (`riskUsd0` ÷ units; same entry, same stop, target and lock plan); their own $ cap is dropped; margin ≤ the free margin ×
+ * `BOT.allInMarginShare`. Nothing booked changes — the open P&L counts the bigger size from the entry (a paper adjustment).
+ * Never makes a trade smaller. Pure (mutates `a`).
+ */
+export function resizeBotTrades(a: PracticeAccount, pct: number, mids: Record<string, number>, pick: (p: PracticePosition) => boolean = () => true): string[] {
+  const out: string[] = [];
+  const trades = a.open.filter((p) => p.ref && p.tf !== 'signal' && !p.closePending && pick(p));
+  for (const p of trades) {
+    const per = usdPerPx(p.pair, { ...mids, [p.pair]: mids[p.pair] ?? p.entry });
+    const nowStopDist = p.stop === null ? 0 : p.side * (p.entry - p.stop);
+    const d0 = p.riskUsd0 && p.units > 0 && per > 0 ? p.riskUsd0 / (p.units * per) : nowStopDist;
+    if (!(per > 0) || !(d0 > 0)) {
+      out.push(`${p.pair} ${p.strategy}: no stop distance to size from — left as is`);
+      continue;
+    }
+    const wantUsd = (a.balanceUsd * pct) / 100;
+    const haveUsd = p.units * per * d0;
+    const otherMargin = a.open.filter((x) => x !== p).reduce((n, x) => n + x.marginUsd, 0);
+    const freeUsd = Math.max(0, a.balanceUsd - otherMargin);
+    const f = Math.min(wantUsd / haveUsd, (freeUsd * BOT.allInMarginShare) / Math.max(p.marginUsd, 1e-9));
+    delete p.maxLossUsd;
+    if (!(f > 1.0001)) {
+      out.push(`${p.pair} ${p.strategy}: already ${p.riskPct ?? '?'}% — no bigger size fits`);
+      continue;
+    }
+    const before = p.units;
+    p.units = p.units * f;
+    p.marginUsd = Math.round(p.marginUsd * f * 100) / 100;
+    p.riskUsd0 = Math.round(haveUsd * f * 100) / 100;
+    p.riskPct = a.balanceUsd > 0 ? Math.round((p.riskUsd0 / a.balanceUsd) * 10_000) / 100 : pct;
+    out.push(`${p.pair} ${p.strategy} ${p.side === 1 ? 'long' : 'short'} re-sized as if opened at ${p.riskPct}%: ${before.toPrecision(4)} → ${p.units.toPrecision(4)} units, $${p.riskUsd0} at its stop ${p.stop?.toPrecision(7)}, margin $${p.marginUsd}`);
+  }
+  if (!trades.length) out.push('no open bot trade to re-size');
   return out;
 }
 
@@ -2586,7 +2627,8 @@ export class Practice {
       if (left < 0.5) return { ok: false, error: `already ${Math.round(riding * 10) / 10}% of the account riding on his calls (max ${r.riskPct}%)` };
       // v27.95 (owner: "cut it all on 20"): his calls too — the stop + the round-trip fee lose at most the account's $ cap
       const capUsd = BOT.maxLossUsdByAcct[acct];
-      const riskUsd = Math.min((v.equityUsd * left) / 100, capUsd ? capRiskUsd(capUsd, stopDist / entry, (2 * feePctPerSide(inst)) / 100) : Infinity);
+      // v28.7: on an account without a $ cap a copy risks at most the risk mode's base % (not his 20% budget)
+      const riskUsd = Math.min((v.equityUsd * left) / 100, capUsd ? capRiskUsd(capUsd, stopDist / entry, (2 * feePctPerSide(inst)) / 100) : (v.equityUsd * limitsFor(a.riskMode).riskPct) / 100);
       // v27.72: the venue fee must leave the trade a chance (≤ 25% of its stop) and stay small next to the account (≤ 1%)
       const feePx = feePxOf(inst, entry);
       if (feePx > DISCORD_COPY.maxFeeShare * stopDist) return { ok: false, error: `the round-trip fee (${+feePx.toPrecision(3)} a unit) is ${Math.round((feePx / stopDist) * 100)}% of its ${+stopDist.toPrecision(3)} stop — can't win after fees` };
@@ -3000,6 +3042,20 @@ export class Practice {
   }
 
   /** v27.58: re-size the open Discord copies to `pct`% (see `resizeCopies`). */
+  /** v28.7: `resizeBotTrades` on the stored account (current prices for the USD conversion). */
+  async resizeBotTrades(acct: AcctId, pct: number): Promise<string[]> {
+    const pre = await this.load(acct);
+    const q = await this.quotes(this.neededIds(pre), 20_000).catch(() => ({}) as Record<string, Quote>);
+    return this.serial(async () => {
+      const a = await this.load(acct);
+      const mids: Record<string, number> = {};
+      for (const x of Object.values(q)) mids[x.id] = x.mid;
+      const lines = resizeBotTrades(a, pct, mids);
+      await this.save(a, acct);
+      return lines;
+    });
+  }
+
   async resizeCopies(acct: AcctId, pct: number): Promise<string[]> {
     return this.serial(async () => {
       const a = await this.load(acct);

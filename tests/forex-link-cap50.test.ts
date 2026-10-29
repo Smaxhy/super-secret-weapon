@@ -13,8 +13,8 @@ const row = (): ClosedPractice => ({
 const bar = (t: number, o: number, h: number, l: number, c: number): Bar => ({ t, o, h, l, c });
 
 describe('v27.78 replay a capped bot trade with a $50 cap', () => {
-  it('the coin bot cap (v27.95: $20 again) and smart caps may not go under it', () => {
-    expect(BOT.maxLossUsdByAcct.cbot).toBe(20);
+  it('the coin bot has no $ cap since v28.7 (its risk mode sizes it); smart caps may not go under a cap', () => {
+    expect(BOT.maxLossUsdByAcct.cbot).toBe(0);
     expect(BOT.capFloorAccts.cbot).toBe(true);
   });
   it('a dip that hit the $20 stop but not the $50 one: struck, then still running from the last minute', () => {
