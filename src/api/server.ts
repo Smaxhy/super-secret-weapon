@@ -21,6 +21,7 @@ import { CRYPTO_CLOCK, marketClock } from '../forex/calendar';
 import { loadOanda, maskToken, oandaReady, saveOanda, testOanda } from '../forex/oanda';
 import { feedHealth, feeds as fxFeeds } from '../forex/feeds';
 import { pythConf, pythKey, pythLive, savePythConf, testPythKey } from '../forex/pyth';
+import { loadMt5Settings, MT5_DEFAULTS, saveMt5Settings, testMt5 } from '../forex/mt5-mirror';
 import { DATABENTO, databentoConf, loadDbMeta, saveDatabentoKey, testDatabentoKey } from '../forex/databento';
 import { RISK_MODES, isRiskMode, ledgerSummary, limitsFor, pnlUsd, riskSummary } from '../forex/practice';
 import { buildPlan } from '../forex/plan';
@@ -632,6 +633,62 @@ export async function startApi(deps: ApiDeps): Promise<FastifyInstance | null> {
       await saveDatabentoKey(key);
       void deps.databento?.tick(true);
       return { ok: true, datasets: t.datasets };
+    });
+    // v28.1: the MT5 demo mirror (MetaApi). The MT5 password never comes here — only MetaApi's token + account id.
+    secured.get('/api/forex/mt5', async () => deps.mt5?.status() ?? { connected: false, on: false });
+    secured.put<{ Body: { token?: string; accountId?: string; on?: boolean; clear?: boolean; closeAll?: boolean; maxLots?: number; scale?: 'match' | number } }>('/api/forex/mt5', async (req, reply) => {
+      const b = req.body ?? {};
+      const bad = (error: string) => {
+        reply.code(400);
+        return { ok: false, error };
+      };
+      if (!deps.mt5) return bad('the bot is still starting');
+      const s = await loadMt5Settings();
+      if (b.clear) {
+        await saveMt5Settings({ ...MT5_DEFAULTS });
+        await deps.mt5.reload();
+        return { ok: true };
+      }
+      if (b.closeAll) {
+        const n = await deps.mt5.closeAll();
+        await deps.mt5.reload();
+        return { ok: true, closed: n };
+      }
+      if (b.token !== undefined || b.accountId !== undefined) {
+        const token = String(b.token ?? '').trim();
+        const accountId = String(b.accountId ?? '').trim();
+        if (!/^[A-Za-z0-9._-]{20,4000}$/.test(token)) return bad('paste the API token from metaapi.cloud → API access (a long string)');
+        if (!/^[A-Za-z0-9-]{8,80}$/.test(accountId)) return bad('paste the MetaApi account id (from metaapi.cloud → Accounts, not your MT5 login)');
+        const t = await testMt5(token, accountId);
+        if (!t.ok) return bad(`MetaApi said no: ${t.error}`);
+        const ready = !!t.info;
+        await saveMt5Settings({ token, accountId, on: ready, since: ready ? Date.now() : null, scale: s.scale, maxLots: s.maxLots, symbols: s.symbols });
+        await deps.mt5.reload();
+        return { ok: true, on: ready, note: t.note ?? null, account: { login: t.account.login ?? null, server: t.account.server ?? null }, info: t.info ? { broker: t.info.broker ?? null, balance: t.info.balance, currency: t.info.currency ?? null } : null };
+      }
+      if (!s.token || !s.accountId) return bad('no MetaApi token saved yet');
+      const next = { token: s.token, accountId: s.accountId, on: s.on, since: s.since, scale: s.scale, maxLots: s.maxLots, symbols: s.symbols };
+      if (typeof b.on === 'boolean') {
+        if (b.on && !s.on) next.since = Date.now();
+        next.on = b.on;
+      }
+      if (b.maxLots !== undefined) {
+        const m = Number(b.maxLots);
+        if (!(m >= 0.01 && m <= 100)) return bad('max lots must be between 0.01 and 100');
+        next.maxLots = m;
+      }
+      if (b.scale !== undefined) {
+        if (b.scale === 'match') next.scale = 'match';
+        else {
+          const k = Number(b.scale);
+          if (!(k > 0 && k <= 1000)) return bad('size must be "match" or a number up to 1000');
+          next.scale = k;
+        }
+      }
+      // .env credentials: only the switches are stored, never the token
+      await saveMt5Settings(s.source === 'env' ? { ...next, token: null, accountId: null } : next);
+      await deps.mt5.reload();
+      return { ok: true };
     });
     secured.get('/api/forex/oanda', async () => {
       const s = await loadOanda();

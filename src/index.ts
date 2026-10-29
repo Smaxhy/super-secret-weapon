@@ -76,6 +76,7 @@ import { yahooLive } from './forex/yahoo-live';
 import { coinbaseLive, fetchCoinbaseFast } from './forex/coinbase';
 import { LiquidationLive } from './forex/derivs';
 import { DatabentoSync, loadDatabentoKey } from './forex/databento';
+import { Mt5Mirror } from './forex/mt5-mirror';
 import { HL_FUTURES_KEY, hyperliquidLive } from './forex/hyperliquid';
 import { INSTRUMENTS, isFutures } from './forex/types';
 import { LevelWatch, replayMissedLevels } from './forex/level-watch';
@@ -450,6 +451,9 @@ async function main(): Promise<void> {
   await loadDatabentoKey();
   const databento = new DatabentoSync(redis);
   databento.start();
+  // v28.1: the forex bot's trades copied to the owner's MT5 demo account through MetaApi (off until a token is saved)
+  const mt5 = new Mt5Mirror(redis, practice, (lines) => forex.logBot(lines));
+  void mt5.start();
   const stopLivePush = startLivePush();
   // v27.75 (owner: "the profits are delayed, not only the chart"): Nasdaq / S&P / gold tick on the dashboard too — the
   // Hyperliquid builder market's move, shifted onto the futures price by the measured gap (the account's own price)
@@ -1269,7 +1273,7 @@ async function main(): Promise<void> {
 
   // 5. Dashboard API + WebSocket
   const startedAt = Date.now();
-  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament, meme: memeReader, forex, fastFx, crypto: cryptoLab, fastCrypto, practice, fxCalendar, fxNews, tradeWatch, weekendReview, databento }).catch((err: Error) => {
+  const api = await startApi({ liveState, executor, listenerStats: statsOf, startedAt, sellManager, dex, leaders, walletPnl, dips, crowd, lab, taLab, trending, swing: { universe: swingUniverse, trader: swingTrader }, autopsy, aiCoach, timing, shadow, brain, tape: tapeRecorder, walletBook, deployers: deployerBook, selfLoop, tournament, meme: memeReader, forex, fastFx, crypto: cryptoLab, fastCrypto, practice, fxCalendar, fxNews, tradeWatch, weekendReview, databento, mt5 }).catch((err: Error) => {
     log.error({ err: err.message }, 'dashboard API failed to start — bot keeps running without it');
     return null;
   });
@@ -1432,6 +1436,7 @@ async function main(): Promise<void> {
       coinbaseLive.stop();
       await liquidations.stop().catch(() => undefined);
       databento.stop();
+      mt5.stop();
       hyperliquidLive.stop();
       stopLivePush();
       stopFutPush();

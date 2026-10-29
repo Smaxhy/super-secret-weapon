@@ -758,6 +758,29 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.1 the forex bot's trades copied to the owner's MT5 DEMO account (OANDA) through MetaApi (Oct 29, owner: "live trading
+as well … my bot id 62586512, it's using MT5" → chose "Demo, with OANDA" + "MetaApi cloud")
+The owner pasted their MT5 password in chat — it was NOT used or stored anywhere; they were told to change it. MT5 is Windows-only
+and the VPS is Linux, so `src/forex/mt5-mirror.ts` talks to the account through MetaApi's REST API (endpoints read from
+metaapi.cloud-sdk 29.3.4, not installed: provisioning `mt-provisioning-api-v1.agiliumtrade.agiliumtrade.ai/users/current/accounts/<id>`
+→ region, `/users/current/servers/mt-client-api` → domain, client `https://mt-client-api-v1.<region>.<domain>/users/current/accounts/<id>`
+`/account-information`, `/positions`, `/symbols`, `/symbols/<s>/specification`, `/symbols/<s>/current-price`, POST `/trade`
+{actionType ORDER_TYPE_BUY / SELL, POSITION_MODIFY, POSITION_PARTIAL, POSITION_CLOSE_ID}; header `auth-token`; success codes
+`OK_CODES`). The owner adds the MT5 account on metaapi.cloud (password there), then pastes MetaApi's API token + account id on
+Forex → Setup → **"MT5 demo account (OANDA)"** (`components/Mt5Card.tsx`; GET / PUT `/api/forex/mt5` {token, accountId} | {on} |
+{maxLots} | {scale} | {closeAll} | {clear}; BotConfig `_mt5`, masked on read; or `METAAPI_TOKEN` + `METAAPI_ACCOUNT_ID` in the VPS
+.env). `Mt5Mirror` (index.ts, every 5 s): `planMirror` (pure) compares the forex bot account's open trades with Redis `fx:mt5:map` +
+MT5's positions → open (only bot trades opened at / after `since` = when copying was switched on; size = units × `scaleOf`
+('match' = MT5 equity ÷ bot balance) ÷ the symbol's contract size, rounded down to its step, ≤ `maxLots` 5 by default, under
+the minimum → not copied), stop / target at the SAME distance from MT5's own fill (`mirrorLevels`; OANDA's CFD prices differ
+from the bot's feed / futures prices), stop / target moves followed (≤ every 10 s, ½-pip tolerance), parts taken off
+(POSITION_PARTIAL), closes; MT5 closing a trade by its own stop / target → row 'gone' (never re-opened); a failed open retried
+after 5 min, 3 tries. `matchSymbol`: override → exact → suffixed (separator first, ".pro" over "m") → index names (`INDEX_NAMES`
+NAS100 / US500 / US30 / US2000 …). **Demo only**: account-information `type` must be ACCOUNT_TRADE_MODE_DEMO, else copying
+switches itself off. Coin bot not mirrored. Log lines "MT5 demo: …" in the bot log + `fx:mt5:log`. "Stop and close all" =
+kill switch. UNVERIFIED against the real MetaApi (sandbox can't reach it) — the card shows what MetaApi answered.
+Live charts: unchanged (v28 FastChart on the bot's own prices); an OANDA v20 token (not the MT5 password) still goes in the
+"Live price feed" card. tests/forex-mt5-mirror (5).
 ## v28 a fast live chart instead of TradingView + Replay (FX Replay's idea, built in) (Oct 28, owner: "look into FX Replay as
 well, I want the bot better and faster instead of TradingView" → chose both)
 FX Replay (fxreplay.com) is a manual chart-replay website with NO public API — nothing to plug the bot into; its idea was built

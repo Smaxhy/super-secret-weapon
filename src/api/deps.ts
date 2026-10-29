@@ -1,6 +1,7 @@
 /** What the API routes need from the running bot. */
 import type { WeekendReview } from '../forex/weekend';
 import type { DatabentoSync } from '../forex/databento';
+import type { Mt5Mirror } from '../forex/mt5-mirror';
 import type { SellManager } from '../executor/sell-manager';
 import type { Executor } from '../executor/types';
 import type { LiveState } from '../scanner/live-state';
@@ -84,6 +85,8 @@ export interface ApiDeps {
   weekendReview?: WeekendReview | null;
   /** v27.91: Databento CME history downloader (needs a key) */
   databento?: DatabentoSync | null;
+  /** v28.1: copies the forex bot's trades to an MT5 demo account via MetaApi */
+  mt5?: Mt5Mirror | null;
 }
 
 /** Classify a token for the live feed colour code. */
