@@ -118,6 +118,8 @@ export interface PostedLevels {
   dol?: number | null;
   /** when the plan was posted (ms) */
   biasT?: number;
+  /** v28.5: prices his "Monitoring X" posts added to this list (kept when he edits the Levels post they were added to) */
+  added?: number[];
   /** v28.4: a lean taken from a one-off full-conviction call ("Fullport FOMC shorts") only lasts until the trading session's
    * end (17:00 New York); a real plan post has none (a day) */
   biasUntil?: number;
@@ -256,11 +258,14 @@ export async function savePosted(redis: Redis, pair: string, patch: { levels: nu
     // v28.4: a "Monitoring 29,466.25" post adds its price to today's list (a list older than a day starts fresh)
     const fresh = cur.levels.length > 0 && patch.t - cur.t <= POSTED_LEVELS.validMs;
     const levels = [...new Set([...(fresh ? cur.levels : []), ...patch.levels])].sort((a, b) => b - a);
-    all[pair] = { ...cur, levels, ...(fresh ? {} : { t: patch.t, msgId: patch.msgId, source: patch.source }) };
+    const added = [...new Set([...(fresh ? (cur.added ?? []) : []), ...patch.levels])];
+    all[pair] = { ...cur, levels, added, ...(fresh ? {} : { t: patch.t, msgId: patch.msgId, source: patch.source }) };
   } else if ('levels' in patch) {
     if (!force && cur.t > patch.t) return;
     const { side: _side, add: _add, ...p } = patch;
-    all[pair] = { ...cur, ...p };
+    // v28.5: an edit of the same Levels post keeps the "Monitoring" prices added to it; a new list starts fresh
+    const keep = patch.msgId === cur.msgId ? (cur.added ?? []) : [];
+    all[pair] = { ...cur, ...p, levels: [...new Set([...p.levels, ...keep])].sort((a, b) => b - a), added: keep };
   } else {
     if (!force && (cur.biasT ?? 0) > patch.biasT) return;
     const { biasUntil: _old, ...keep } = cur;
@@ -276,6 +281,8 @@ export type ParsedSignal =
   | { kind: 'open'; pair: string | null; symbol: string | null; side: 1 | -1; price: number | null; stop: number | null; target: number | null; conviction?: 'full'; event?: string | null }
   | { kind: 'close'; pair: string | null; symbol: string | null; closes: 1 | -1 | 0; price: number | null }
   | { kind: 'breakeven'; pair: string | null; symbol: string | null }
+  /** v28.5: "TP 782" / "TP1 806 if you want to be sure" — the target of his open call (short forms expanded by `expandPrice`) */
+  | { kind: 'target'; pair: string | null; symbol: string | null; price: number }
   | { kind: 'none' };
 
 const PRICE = String.raw`([0-9][0-9,]*(?:\.[0-9]+)?)`;
@@ -291,7 +298,7 @@ export function parseSignal(raw: string): ParsedSignal {
   const symbol = symM ? symM[1]! : null;
   const pair = symbol ? symbolToPair(symbol) : null;
   const stop = toNum(new RegExp(String.raw`\b(?:SL|STOP(?:\s*LOSS)?)\s*(?:@|AT|=)?\s*${PRICE}`).exec(up)?.[1]);
-  const target = toNum(new RegExp(String.raw`\b(?:TP1?|TARGET|TAKE\s*PROFIT)\s*(?:@|AT|=)?\s*${PRICE}`).exec(up)?.[1]);
+  const target = toNum(new RegExp(String.raw`\b(?:TP\d?|TARGET|TAKE\s*PROFIT)\s*(?:@|AT|=)?\s*${PRICE}`).exec(up)?.[1]);
   const entry = new RegExp(String.raw`\b(LONG|SHORT|BUY|SELL|COVER|CLOSE|EXIT)\b\s*(?:@|AT)\s*${PRICE}`).exec(up);
   const isSignal = /\bSIGNAL\b/.test(up);
   if (entry) {
@@ -305,6 +312,7 @@ export function parseSignal(raw: string): ParsedSignal {
   const full = fullCall(up);
   if (full) return { kind: 'open', pair: pair ?? POSTED_LEVELS.defaultPair, symbol: symbol ?? 'NQ', side: full.side, price: null, stop, target, conviction: 'full', event: full.event };
   if (/\b(?:SL|STOP)\b.*\b(?:BE|BREAK\s*EVEN|ENTRY)\b/.test(up) || /\bMOVE\b.*\b(?:BE|BREAK\s*EVEN)\b/.test(up)) return { kind: 'breakeven', pair, symbol };
+  if (target !== null && /^\W*(?:TP\d?|TARGET|TAKE\s*PROFIT)\b/.test(up)) return { kind: 'target', pair, symbol, price: target };
   if (/\b(?:CLOSED?|EXIT(?:ED)?|OUT|FLAT)\b/.test(up) && /\b(?:ALL|POSITION|TRADE|SIGNAL)\b/.test(up)) return { kind: 'close', pair, symbol, closes: 0, price: null };
   return { kind: 'none' };
 }
@@ -331,6 +339,15 @@ export const copyRef = (strategy: string, pair: string, msgId: string) => `${str
 /** v28.3: a call from one of his elite channels? Pure. */
 export const isEliteChannel = (channel: string | undefined | null) => !!channel && DISCORD_COPY.eliteChannels.includes(String(channel));
 export const acctForPair = (pair: string): 'bot' | 'cbot' => (isCrypto(pair) ? 'cbot' : 'bot');
+
+/** v28.5: his short-form prices ("TP 782" on NQ at 29,887 = 29,782): the number with those last digits nearest the
+ * reference price; a full price is returned as it is. Pure. */
+export function expandPrice(x: number, ref: number): number {
+  if (!(x > 0) || !(ref > 0) || x >= ref * 0.5) return x;
+  const m = 10 ** String(Math.floor(x)).length;
+  const base = Math.floor(ref / m) * m;
+  return [base - m + x, base + x, base + m + x].reduce((a, b) => (Math.abs(b - ref) < Math.abs(a - ref) ? b : a));
+}
 
 /** Safety stop for a copy: the message's SL when it's on the losing side, else `stopPct` of the price. Pure. */
 export function copyStop(side: 1 | -1, entry: number, named: number | null, stopPct = DISCORD_COPY.stopPct): number {
@@ -384,6 +401,8 @@ export interface CopyBook {
   copyOpen(r: { pair: string; side: 1 | -1; stopNamed: number | null; hisPx: number | null; strategy: string; ref: string; riskPct: number; leverage: number; profitLock: boolean; stop?: number; target?: number | null; copyLock?: 'copy' | 'tight'; priority?: boolean }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; error?: string; entry?: number; stop?: number; riskUsd?: number; marginUsd?: number }>;
   copyClose(m: { strategy: string; pair: string | null; side: 1 | -1 | 0 }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; closed: string[]; pending: number }>;
   copyBreakeven(m: { strategy: string; pair: string | null }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; moved: string[] }>;
+  /** v28.5: his "TP x" post → the target of his open copies on that market (x may be short-form) */
+  copyTarget(m: { strategy: string; pair: string | null; price: number }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; moved: string[] }>;
 }
 
 /** Turn one posted message into a trade action; every message is logged (Redis `fx:discord:log`). */
@@ -448,9 +467,14 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
     const fullGo = (full && DISCORD_COPY.fullLive) || eliteGo;
     if (!gate.take && !fullGo) return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `not copied — his record: ${gate.why}` });
     if (!DISCORD_COPY.live && !fullGo) return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `lab only — not traded (Kojiro calls are in the lab; his record keeps being graded): his ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair}${sig.price ? ` @ ${sig.price}` : ''}` });
-    const r = await book.copyOpen({ pair: sig.pair, side: sig.side, stopNamed: sig.stop, hisPx: sig.price, strategy, ref: copyRef(strategy, sig.pair, s.id), riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: gate.plan !== 'none', ...(gate.plan === 'tight' ? { copyLock: 'tight' as const } : {}), ...(eliteGo ? { priority: true } : {}) }, acctForPair(sig.pair));
+    // v28.5: a call the other way on the same market replaces his earlier one (Oct 28: "FOMC longs" then "FOMC shorts" left
+    // a long AND a short open, paying fees on both) — the old copy is closed first, like he does
+    const flip = await Promise.resolve(book.copyClose({ strategy, pair: sig.pair, side: (-sig.side) as 1 | -1 }, acctForPair(sig.pair))).catch(() => null);
+    const flipped = flip?.closed?.length ? `closed his earlier ${flip.closed.join(', ')} (he turned the other way); ` : '';
+    const tgt = sig.target !== null ? (sig.price !== null ? expandPrice(sig.target, sig.price) : sig.target) : null;
+    const r = await book.copyOpen({ pair: sig.pair, side: sig.side, stopNamed: sig.stop, hisPx: sig.price, strategy, ...(tgt !== null ? { target: tgt } : {}), ref: copyRef(strategy, sig.pair, s.id), riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: gate.plan !== 'none', ...(gate.plan === 'tight' ? { copyLock: 'tight' as const } : {}), ...(eliteGo ? { priority: true } : {}) }, acctForPair(sig.pair));
     const tag = eliteGo ? `his ELITE-channel call${!gate.take ? ` — taken past his record (${gate.why})` : ''}: ` : full ? `his FULL-conviction call${sig.event ? ` (${sig.event})` : ''}${!gate.take ? ` — taken past his record (${gate.why})` : ''}: ` : '';
-    const what = r.ok ? `${tag}copied ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair} at ${r.entry} (his ${sig.price ?? 'market'}), safety stop ${r.stop}, risking $${r.riskUsd}` : `${tag}not copied: ${r.error}`;
+    const what = flipped + (r.ok ? `${tag}copied ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair} at ${r.entry} (his ${sig.price ?? 'market'}), safety stop ${r.stop}${tgt !== null ? `, his target ${tgt}` : ''}, risking $${r.riskUsd}` : `${tag}not copied: ${r.error}`);
     return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: r.ok, what });
   }
   if (sig.kind === 'close') {
@@ -464,6 +488,12 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
     }
     const what = closed.length ? `closed ${closed.join(', ')}${pending ? ` (${pending} at the first price)` : ''}` : 'no open copy to close';
     return done({ ...base, kind: 'close', pair: sig.pair, hisPx: sig.price, ok: closed.length > 0, what });
+  }
+  if (sig.kind === 'target') {
+    const accts: Array<'bot' | 'cbot'> = sig.pair ? [acctForPair(sig.pair)] : ['bot', 'cbot'];
+    const moved: string[] = [];
+    for (const acct of accts) moved.push(...(await book.copyTarget({ strategy, pair: sig.pair, price: sig.price }, acct)).moved);
+    return done({ ...base, kind: 'target', pair: sig.pair, ok: moved.length > 0, what: moved.length ? `his target set on ${moved.join(', ')}` : 'his target — no open copy it fits' });
   }
   const accts: Array<'bot' | 'cbot'> = sig.pair ? [acctForPair(sig.pair)] : ['bot', 'cbot'];
   const moved: string[] = [];

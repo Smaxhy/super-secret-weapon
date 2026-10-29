@@ -486,6 +486,20 @@ async function main(): Promise<void> {
   // v27.52 (owner: "copy his trades immediately, or 1–2 minutes later"): Kojiro's levels watched on live 1-minute candles
   const levelWatch = new LevelWatch(redis, practice, (_pair, lines) => forex.logBot(lines));
   levelWatch.start();
+  // v28.5 (owner: "so many good trades on his level and we are missing out"): his Oct 29 Levels post as he edited it + his
+  // three "Monitoring" prices saved, then the minutes since 13:25 UTC put through the level lab (gap measured first)
+  await oneTimeUpgrade('v28.5-kojiro-levels-oct29', async () => {
+    const at = Date.parse('2026-10-29T13:25:40Z');
+    await savePosted(redis, 'NDXUSD', { levels: [29_835.25, 29_830.5, 29_788, 29_785.25, 29_750, 29_745, 29_729.5, 29_670], t: at, msgId: '1565355947914690561', source: 'kojiro' }, true);
+    for (const [px, t] of [[29_635.25, '13:27:11'], [29_466.25, '13:39:10'], [29_563.5, '13:43:52']] as const) await savePosted(redis, 'NDXUSD', { levels: [px], t: Date.parse(`2026-10-29T${t}Z`), msgId: 'monitor', source: 'kojiro', add: true });
+    let tries = 0;
+    const replay = async () => {
+      const lines = await levelWatch.replayLab('NDXUSD', at).catch((err: Error) => [`failed: ${err.message}`]);
+      if (lines === null && ++tries < 15) return void setTimeout(() => void replay(), 60_000).unref?.();
+      forex.logBot([`Kojiro levels Oct 29 (his edit + Monitoring 29,635.25 / 29,466.25 / 29,563.50) put through the LAB: ${lines === null ? 'no live-feed gap measured — not replayed' : lines.length ? lines.join(' · ') : 'no setup'}`]);
+    };
+    setTimeout(() => void replay(), 90_000).unref?.();
+  });
   // v27.32 (owner: "recap the past week and think how to improve all weekend, be ready Monday"): the weekend review per desk
   const deskOf = (lab: ForexLab, fast: FastLab): WeekendDeskDef => ({
     universe: lab.universe,

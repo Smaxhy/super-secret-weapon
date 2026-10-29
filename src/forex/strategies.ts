@@ -685,7 +685,40 @@ export function postedLevelSignal(c: Ctx, i: number, levels: readonly number[], 
     const tgt = dol !== null && side * dol - px >= risk ? side * dol : targets.map((L) => side * L).filter((T) => T - px >= risk).sort((x, y) => x - y)[0];
     return { side, stop: side * (px - risk), target: tgt === undefined ? null : side * tgt, maxBars: Math.max(4, Math.round(1440 / c.barMin)), note: 'absorbed at his level' };
   }
-  return retestSignal(c, i, levels, postedT, onlySide, dol, minRisk, targets) ?? towardSignal(c, i, levels, postedT, onlySide, minRisk, targets);
+  return retestSignal(c, i, levels, postedT, onlySide, dol, minRisk, targets) ?? reclaimSignal(c, i, levels, postedT, onlySide, dol, minRisk, targets) ?? towardSignal(c, i, levels, postedT, onlySide, minRisk, targets);
+}
+
+/** v28.5 sweep and reclaim at his level (Oct 29, owner's chart: NQ came down into his "Monitoring 29,466.25", swept it to
+ * ~29,405, closed back above and he went long at 29,455.50 for +130 points — too deep for the absorption rule's ½ ATR). */
+export const SWEEP = { look: 60, minAtr: 0.1, maxPct: 0.4, stopAtr: 0.15 };
+
+/** The price came down to one of his levels from above (a close above it after his post), traded through it by 0.1 ATR …
+ * 0.4% of the price, and THIS candle is the first close back above it since the low → long; stop 0.15 ATR under the sweep
+ * low, target his DOL / next level ≥ 1R. Mirrored for shorts. Pure, causal. */
+export function reclaimSignal(c: Ctx, i: number, levels: readonly number[], postedT: number, onlySide: 1 | -1 | 0 = 0, dol: number | null = null, minRisk = 0, targets: readonly number[] = levels): Signal | null {
+  const a = c.atr14[i]!;
+  if (!ok(a) || a <= 0 || !levels.length || c.bars[i]!.t < postedT) return null;
+  const from = Math.max(1, i - SWEEP.look);
+  for (const side of [1, -1] as const) {
+    if (onlySide && side !== onlySide) continue;
+    const p = sided(c, side);
+    for (const L of levels.map((x) => side * x)) {
+      if (!(p.c(i) > L)) continue;
+      // back from the candle: every close since the sweep low stayed under the level (this is the first close back over)
+      let lo = p.l(i);
+      let j = i - 1;
+      for (; j >= from && p.c(j) <= L; j--) lo = Math.min(lo, p.l(j));
+      // the candle before that run closed above the level, after his post: the price came down INTO it
+      if (j < from || c.bars[j]!.t < postedT || !(p.c(j) > L)) continue;
+      const depth = L - lo;
+      if (depth < SWEEP.minAtr * a || depth > (Math.abs(L) * SWEEP.maxPct) / 100) continue;
+      const px = p.c(i);
+      const risk = Math.max(px - (lo - SWEEP.stopAtr * a), 0.3 * a, minRisk);
+      const tgt = dol !== null && side * dol - px >= risk ? side * dol : targets.map((T) => side * T).filter((T) => T - px >= risk).sort((x, y) => x - y)[0];
+      return { side, stop: side * (px - risk), target: tgt === undefined ? null : side * tgt, maxBars: Math.max(4, Math.round(1440 / c.barMin)), note: 'swept his level and closed back over it' };
+    }
+  }
+  return null;
 }
 
 /** v27.69 break and retest at his levels (Oct 27: "Break and retest"; his levels were broken, came back and held — the

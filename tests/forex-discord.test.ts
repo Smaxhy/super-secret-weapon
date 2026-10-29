@@ -110,9 +110,10 @@ describe('handleSignal on the bot account', () => {
     const { r, p, acct } = setup();
     const pct = DISCORD_COPY.riskPct;
     DISCORD_COPY.riskPct = 2; // v27.95: one $20-capped copy ≈ 1.8% of $1,000 → a 2% budget fits one
+    // (v28.5: a call the OTHER way now closes the first one, so the second call here is the same way)
     try {
       expect((await handleSignal(r as unknown as Redis, p, { id: '1300000000000000011', text: 'SIGNAL · NQ — LONG @ 29,026.25', at: NOW })).ok).toBe(true);
-      const second = await handleSignal(r as unknown as Redis, p, { id: '1300000000000000012', text: 'SIGNAL · NQ — SHORT @ 29,026.25', at: NOW });
+      const second = await handleSignal(r as unknown as Redis, p, { id: '1300000000000000012', text: 'SIGNAL · NQ — LONG @ 29,030.00', at: NOW });
       expect(second.ok).toBe(false);
       expect(second.what).toMatch(/riding on his calls/);
       expect(acct().open).toHaveLength(1);

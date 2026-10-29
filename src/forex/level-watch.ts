@@ -199,6 +199,38 @@ export class LevelWatch {
     this.timer = null;
   }
 
+  /** v28.5: put a past stretch of his levels through the lab (the minutes since `fromT`), as if the watcher had seen them
+   * then — every signal once per candle, graded on the minutes after it. Returns null while the live-feed gap is unknown. */
+  async replayLab(pair: string, fromT: number, now = Date.now()): Promise<string[] | null> {
+    const lv = (await loadLevels(this.redis, now))[pair];
+    const sets = lv ? levelSets(lv) : [];
+    const coin = isFutures(pair) ? (await loadHlFutures(this.redis))[pair] : undefined;
+    if (!lv || !sets.length || !coin) return [`${pair}: no levels / live market to replay`];
+    const gap = this.practice.hlGap(pair, now);
+    if (gap === null) return null;
+    const live = await this.candles(coin, '1m', Math.min(fromT - 120 * 60_000, now - LEVEL_WATCH.minutes * 60_000), now).catch(() => [] as Bar[]);
+    const bars = shiftedMinutes(live, gap, now);
+    if (bars.length < 80) return null;
+    const ctx = buildCtx(bars, 1, pair);
+    const lab = await loadLevelLab(this.redis);
+    const lines: string[] = [];
+    for (let k = Math.max(60, bars.findIndex((b) => b.t >= fromT)); k < bars.length; k++) {
+      const minRisk = (bars[k]!.c * LEVEL_WATCH.minStopPct) / 100;
+      let sig: ReturnType<typeof postedLevelSignal> = null;
+      for (const st of sets) if ((sig = postedLevelSignal(ctx, k, st.levels, Math.min(st.t, fromT), st.side, st.dol, minRisk, st.all))) break;
+      if (!sig || sig.stop === null) continue;
+      const ref = `${levelStrategy(lv.source)}:lab:${pair}:${bars[k]!.t}`;
+      if (lab.some((x) => x.ref === ref) || feeTooBig(pair, bars[k]!.c, sig.stop)) continue;
+      lab.unshift({ ref, pair, side: sig.side, entry: bars[k]!.c, stop: sig.stop, target: sig.target, t: bars[k]!.t + 60_000, why: `${sig.note ?? 'level'} (replayed)` });
+      lines.push(`${new Date(bars[k]!.t + 60_000).toISOString().slice(11, 16)} UTC would ${sig.side === 1 ? 'buy' : 'sell'} at ${bars[k]!.c} — ${sig.note ?? 'level'}`);
+    }
+    lab.sort((a, b) => b.t - a.t);
+    lab.splice(LEVEL_LAB.max);
+    gradeLevelLab(lab, pair, bars, now);
+    await this.redis.set(LEVEL_LAB.key, JSON.stringify(lab));
+    return lines;
+  }
+
   async tick(now = Date.now()): Promise<void> {
     if (this.busy || !DISCORD_COPY.on) return;
     this.busy = true;

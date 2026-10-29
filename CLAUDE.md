@@ -758,6 +758,21 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.5 his calls copied right + the sweep-and-reclaim at his levels in the lab (Oct 29, owner: "make sure you are copying
+it correct … levels and monitoring in LAB, signals insta trade"; screenshot: his NQ long 29,455.50 +527 ticks off his
+"Monitoring 29,466.25" after a sweep to ~29,405; "so many good trades on his level and we are missing out")
+VPS log check: Oct 28 "Fullport FOMC longs" + "shorts" were BOTH held open; "TP 782" / "TP1 806" ignored. (1) A call the other
+way on the same market closes his earlier copy first (`copyClose` side −sig.side, log "closed his earlier …"). (2)
+`parseSignal` kind **'target'** (a post starting "TP / TP1 / TARGET x") → `CopyBook.copyTarget` → the open copies' target
+(`expandPrice`: "782" on 29,887 = 29,782; nearest with those last digits); a SIGNAL post's own TP is passed to `copyOpen` too;
+his own calls keep the COPY_LOCK with a target (practice tick: only `…_levels` trades switch to PROFIT_LOCK). (3)
+strategies.ts **`reclaimSignal`** (`SWEEP` {look 60, minAtr 0.1, maxPct 0.4, stopAtr 0.15}): the price came down into his
+level from above, traded 0.1 ATR … 0.4% through it, and this candle is the first close back over it → long (mirrored), stop
+0.15 ATR past the sweep low, target DOL / next level ≥ 1R; in `postedLevelSignal` after retest, before toward. (4)
+`PostedLevels.added` = Monitoring prices; an edit of the same Levels post (same msgId) keeps them. (5) `LevelWatch.replayLab
+(pair, fromT)` — a past stretch through the lab (rows' why "(replayed)"); one-time `v28.5-kojiro-levels-oct29`: his edited
+Oct 29 list + the 3 Monitoring prices saved, minutes since 13:25 UTC replayed in the lab (90 s after start, retried while the
+gap is unmeasured). Level / Monitoring trades stay LAB ONLY; SIGNAL posts trade at once. tests/forex-discord-edits (10).
 ## v28.4 all his calls copied again + his edited posts, "Monitoring" levels, one-off leans end with the session (Oct 29,
 owner: "the bot seen these signals? … he is up 100 pips already"; "I want it to follow all his signals calls and trades")
 VPS read 13:51 UTC: his 13:25 Levels post was saved as first sent (29,609.50 …) — he EDITED it (29,729.50, 29,785.25–29,788

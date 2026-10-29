@@ -28,7 +28,7 @@ import { COPY_LOCK, lockedStop, lockPlanNet, PROFIT_LOCK, type LockPlan } from '
 import { FINANCING, rollsBetween, swapGain } from './financing';
 import type { LiveTick } from './pyth';
 import { tradesNews } from './strategies';
-import { DISCORD_COPY, copySize, copyStop, type CopyBook } from './discord';
+import { DISCORD_COPY, copySize, copyStop, expandPrice, type CopyBook } from './discord';
 
 const log = moduleLogger('forex-practice');
 /** 'me' = the owner's own practice account, 'bot' = the forex auto-bot, 'cbot' (v22.1) = the coin auto-bot */
@@ -1069,7 +1069,8 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
     // v17.11 the owner's profit lock, worked out once per position from its entry, target (else its stop) and costs
     if (p.lock === undefined) {
       // v27.61: Kojiro's calls (no target) get the looser copy lock — wide early, tight once well in profit
-      const copy = p.tf === 'signal' && p.target === null;
+      // v28.5: his own calls keep the copy lock when he names a target too (the level trades — strategy …_levels — don't)
+      const copy = p.tf === 'signal' && (p.target === null || !p.strategy?.endsWith('_levels'));
       const cfg = copy && p.copyLock !== 'tight' ? COPY_LOCK : PROFIT_LOCK;
       p.lock = a.profitLock !== false && cfg.on ? lockPlanNet(p.side, p.entry, p.stop, p.target, half, feePxOf(inst, p.entry), cfg) : null;
       if (mv) mv.moved = true;
@@ -2559,7 +2560,8 @@ export class Practice {
       // v27.51: a trade at his posted levels brings its own stop (past the absorbing candle) and target (his next level)
       const stop = r.stop ?? copyStop(r.side, entry, r.stopNamed);
       if (r.side === 1 ? stop >= entry : stop <= entry) return { ok: false, error: `the price ${entry} is already past the stop ${stop}` };
-      const target = r.target != null && (r.side === 1 ? r.target > entry : r.target < entry) ? r.target : null;
+      const tg = r.target != null ? expandPrice(r.target, entry) : null;
+      const target = tg !== null && (r.side === 1 ? tg > entry : tg < entry) ? tg : null;
       const stopDist = Math.abs(entry - stop);
       if (r.hisPx && Math.abs(entry - r.hisPx) > DISCORD_COPY.maxMismatchStops * stopDist) return { ok: false, error: `our price ${entry} is far from his ${r.hisPx} — wrong market?` };
       const v = view(a, mids, { [inst.id]: (quote.ask - quote.bid) / 2 });
@@ -2635,6 +2637,24 @@ export class Practice {
         p.stop = p.entry;
         p.stopMovedT = null;
         moved.push(`${p.side === 1 ? 'long' : 'short'} ${p.pair}`);
+      }
+      if (moved.length) await this.save(a, acct);
+      return { ok: true, moved };
+    });
+  }
+
+  /** v28.5: his "TP x" post → the target of his open copies on that market, when it is on the profit side of the entry and
+   * not already passed (then the next check closes it). The trailing stop is left as it is. */
+  async copyTarget(m: Parameters<CopyBook['copyTarget']>[0], acct: 'bot' | 'cbot'): ReturnType<CopyBook['copyTarget']> {
+    return this.serial(async () => {
+      const a = await this.load(acct);
+      const moved: string[] = [];
+      for (const p of a.open) {
+        if (p.strategy !== m.strategy || p.tf !== 'signal' || (m.pair && p.pair !== m.pair) || p.closePending) continue;
+        const t = expandPrice(m.price, p.entry);
+        if (!(p.side === 1 ? t > p.entry : t < p.entry)) continue;
+        p.target = t;
+        moved.push(`${p.side === 1 ? 'long' : 'short'} ${p.pair} → ${t}`);
       }
       if (moved.length) await this.save(a, acct);
       return { ok: true, moved };
