@@ -965,11 +965,13 @@ export function undoOpen(a: PracticeAccount): { open: number; parts: number; usd
  * trades, never a Kojiro copy: those follow his exit). */
 export const SPIKE_EXIT = {
   on: true,
-  /** the move its way within `windowMs` (from the worst price of that window to now), in R */
-  jumpR: 0.3,
+  /** the move its way within `windowMs` (from the worst price of that window to now), in R — v28.9 (owner: "it sells
+   * within 3 minutes"): 0.3 → 1. At 0.3R a normal wiggle fired it (Oct 30: LINK shorts sold at +$6 on a 0.2% move);
+   * now only a jump worth a whole stop distance in 5 minutes counts as a spike */
+  jumpR: 1,
   windowMs: 5 * 60_000,
   /** and the trade is at least this far in profit now (R), and at least `minUsd` after the close fee */
-  minR: 0.3,
+  minR: 1,
   minUsd: 5,
 };
 

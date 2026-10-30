@@ -758,6 +758,14 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.9 "sold into a spike" only on a real spike: +1R in 5 minutes (Oct 30, owner: "it's barely holding trades, it sells
+immediately"; "perfect time to short — the market is crashing — yet the bot sells off within 3 minutes")
+Coin bot Oct 30: 4 closes all small wins — LINK shorts 10.526 → 10.505 (+$5.92) and 10.582 → 10.560 (+$6.63) "sold into a
+spike", ETH 2190.2 → 2187.0 and LINK 10.740 → 10.702 on the tight lock's stop. With v28.7's 8% size the spike exit's $5 floor
+was met by a 0.2% move, and `jumpR` / `minR` 0.3 fired on normal wiggles. `SPIKE_EXIT.jumpR` 0.3 → **1**, `minR` 0.3 → **1**:
+only a move worth a whole stop distance within 5 minutes, with the trade already +1R, is sold into. Still live-only, not
+graded. The tight profit lock (lab-picked per row, v28.6) is unchanged — check the bot R vs the lab R of the same refs on the
+VPS before touching it (the live lock reads 1-minute candles, the engine 1-hour ones). tests/forex-spike-exit updated.
 ## v28.8 his SIGNAL calls get their own size: 5% of the account, 10% once his record proves it (Oct 30, owner: "he also has a
 1k balance, are we able to perform like this" → "what do you think is best")
 Under the $20 cap a copy of his NQ call on the 0.5% safety stop (~148 points) was ~0.14 units ≈ $0.14 a point: his +130-point
