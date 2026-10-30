@@ -758,6 +758,19 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.14 more history: CME currency futures for the dollar pairs + gold / silver unstuck (Oct 30, owner: "you're allowed
+to download lots more data")
+VPS read 12:44 UTC: Databento held NDX / SPX / DJI back to Oct 2023, RUT to May 2024 (not full), gold / silver 0 bars (no
+error); Dukascopy blocked (AWS WAF) → every currency pair on Yahoo's ~2 years only. Cause of the 0 bars: one pass per run in
+a fixed order with a 3-min budget — the earlier markets' back-fill used it up before gold / silver started. databento.ts:
+(1) two passes — catch every market up to Databento's newest hour, then back-fill the market with the least history first.
+(2) `DATABENTO.symbols` + the 7 dollar pairs as CME currency futures (6E EUR, 6B GBP, 6A AUD, 6N NZD, 6J JPY, 6C CAD,
+6S CHF; `invert` USDJPY / USDCAD / USDCHF); bars keep the contract (`DbBar.iid`, 7th stored column) → `backAdjust`
+(ratio-adjusts everything before a roll, jump ≤ `maxRollJump` 3%), `invertBars`, `stitchSpot` (scaled onto Yahoo's first
+spot open when within `maxSpotGap` 3%, volume dropped). lab.ts `filledBars`: FX pairs use Dukascopy when it has bars, else
+`stitchSpot` → the 7 dollar pairs get ~3 years like the indices / coins (crosses stay on Yahoo's 2). Expect ONE re-grade on
+those pairs and a ~20% longer forex lab run; a few cents of Databento credit. Futures trade 23 h a day (the CME halt hour is
+missing in the older part). tests/forex-databento (+2).
 ## v28.13 deep review: the lab's profit lock invented ~0.1R a trade; luck test fixed; coin bot = sure setups only, proven size
 (Oct 30, owner: "very deep analysis … trade way less, closest to 100% win rate, high account size maybe 20%+" → chose "proven
 size, cap 10%" + "only the sure setups"). VPS deep read 09:54 UTC (970ce58): coin 4h tight-lock rows showed 80–89% wins at

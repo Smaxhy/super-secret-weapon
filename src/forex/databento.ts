@@ -27,7 +27,14 @@ export const DATABENTO = {
   base: 'https://hist.databento.com/v0',
   dataset: 'GLBX.MDP3',
   /** our market → Databento continuous symbol (front month by volume, like the contract people trade) */
-  symbols: { NDXUSD: 'NQ.v.0', SPXUSD: 'ES.v.0', DJIUSD: 'YM.v.0', RUTUSD: 'RTY.v.0', XAUUSD: 'GC.v.0', XAGUSD: 'SI.v.0' } as Record<string, string>,
+  symbols: {
+    NDXUSD: 'NQ.v.0', SPXUSD: 'ES.v.0', DJIUSD: 'YM.v.0', RUTUSD: 'RTY.v.0', XAUUSD: 'GC.v.0', XAGUSD: 'SI.v.0',
+    // v28.14: CME currency futures → older history for the 7 dollar pairs (Yahoo's hourly FX stops at ~2 years;
+    // Dukascopy is blocked). Quoted in USD per foreign unit; JPY / CAD / CHF are inverted to the spot quote.
+    EURUSD: '6E.v.0', GBPUSD: '6B.v.0', AUDUSD: '6A.v.0', NZDUSD: '6N.v.0', USDJPY: '6J.v.0', USDCAD: '6C.v.0', USDCHF: '6S.v.0',
+  } as Record<string, string>,
+  /** futures quoted the other way round to our spot pair (1 / price) */
+  invert: new Set(['USDJPY', 'USDCAD', 'USDCHF']),
   historyDays: 1100,
   pieceDays: 180,
   everyHours: 6,
@@ -40,7 +47,14 @@ export const DATABENTO = {
   pieceMaxUsd: 3,
   /** the seam where Databento's older bars meet Yahoo's first one: same contract → within this share of the price */
   maxSeamGap: 0.006,
+  /** v28.14: currency futures sit a little off spot (forward points, ≤ ~1.5%) → their older bars are scaled onto spot
+   *  at the seam when the two are within this share; a contract roll inside the history is back-adjusted when its
+   *  jump is within `maxRollJump` */
+  maxSpotGap: 0.03,
+  maxRollJump: 0.03,
 };
+/** a Databento bar with the contract it came from (continuous symbols roll between contracts) */
+export type DbBar = Bar & { iid?: number };
 
 export const DB_META = 'fx:db:meta';
 export const DB_ROW = '_databento';
@@ -180,50 +194,51 @@ export function parseDbPx(s: string): number {
 }
 
 /** Databento OHLCV CSV (header row first) → bars, one per open time (the last row wins at a roll). Pure. */
-export function parseOhlcvCsv(csv: string): Bar[] {
+export function parseOhlcvCsv(csv: string): DbBar[] {
   const lines = csv.split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return [];
   const head = lines[0]!.split(',').map((h) => h.trim());
   const col = (n: string) => head.indexOf(n);
-  const [it, io, ih, il, ic, iv] = ['ts_event', 'open', 'high', 'low', 'close', 'volume'].map(col);
+  const [it, io, ih, il, ic, iv, ii] = ['ts_event', 'open', 'high', 'low', 'close', 'volume', 'instrument_id'].map(col);
   if ([it, io, ih, il, ic].some((i) => i === undefined || i < 0)) throw new Error(`unexpected Databento CSV columns: ${head.join(',')}`);
-  const m = new Map<number, Bar>();
+  const m = new Map<number, DbBar>();
   for (const line of lines.slice(1)) {
     const f = line.split(',');
     const t = parseDbTime(f[it!] ?? '');
     const [o, h, l, c] = [io, ih, il, ic].map((i) => parseDbPx(f[i!] ?? ''));
     if (!Number.isFinite(t) || ![o, h, l, c].every((p) => Number.isFinite(p) && p! > 0)) continue;
     const v = iv !== undefined && iv >= 0 ? Number(f[iv]) : NaN;
-    m.set(t, { t, o: o!, h: Math.max(h!, o!, c!), l: Math.min(l!, o!, c!), c: c!, ...(Number.isFinite(v) && v > 0 ? { v } : {}) });
+    const iid = ii !== undefined && ii >= 0 ? Number(f[ii]) : NaN;
+    m.set(t, { t, o: o!, h: Math.max(h!, o!, c!), l: Math.min(l!, o!, c!), c: c!, ...(Number.isFinite(v) && v > 0 ? { v } : {}), ...(Number.isFinite(iid) && iid > 0 ? { iid } : {}) });
   }
   return [...m.values()].sort((a, b) => a.t - b.t);
 }
 
 /** Hourly candles of one continuous symbol over [start, end). Costs credit — price it first. */
-export async function fetchOhlcv1h(key: string, symbol: string, start: number, end: number, fetcher: DbFetch): Promise<Bar[]> {
+export async function fetchOhlcv1h(key: string, symbol: string, start: number, end: number, fetcher: DbFetch): Promise<DbBar[]> {
   const body = await call(key, 'timeseries.get_range', { ...rangeParams(symbol, 'ohlcv-1h', start, end), encoding: 'csv', compression: 'none', pretty_px: 'true', pretty_ts: 'true', map_symbols: 'true' }, 'POST', fetcher);
   return parseOhlcvCsv(body);
 }
 
 // ── store ──
-export async function loadDb(redis: Pick<Redis, 'get'>, id: string, strict = false): Promise<Bar[]> {
+export async function loadDb(redis: Pick<Redis, 'get'>, id: string, strict = false): Promise<DbBar[]> {
   const raw = strict ? await redis.get(dbKey(id)) : await redis.get(dbKey(id)).catch(() => null);
   if (!raw) return [];
   try {
-    return (JSON.parse(raw) as number[][]).map(([t, o, h, l, c, v]) => ({ t: t!, o: o!, h: h!, l: l!, c: c!, ...(v ? { v } : {}) }));
+    return (JSON.parse(raw) as number[][]).map(([t, o, h, l, c, v, iid]) => ({ t: t!, o: o!, h: h!, l: l!, c: c!, ...(v ? { v } : {}), ...(iid ? { iid } : {}) }));
   } catch {
     return [];
   }
 }
-export function mergeBars(have: readonly Bar[], fresh: readonly Bar[]): Bar[] {
+export function mergeBars(have: readonly DbBar[], fresh: readonly DbBar[]): DbBar[] {
   const m = new Map(have.map((b) => [b.t, b]));
   for (const b of fresh) m.set(b.t, b);
   return [...m.values()].sort((x, y) => x.t - y.t);
 }
-async function saveDb(redis: Pick<Redis, 'get' | 'set'>, id: string, fresh: readonly Bar[], now: number): Promise<Bar[]> {
+async function saveDb(redis: Pick<Redis, 'get' | 'set'>, id: string, fresh: readonly DbBar[], now: number): Promise<DbBar[]> {
   const stored = await loadDb(redis, id, true);
   const bars = mergeBars(stored, fresh).filter((b) => b.t >= now - (DATABENTO.historyDays + 5) * DAY);
-  if (bars.length) await redis.set(dbKey(id), JSON.stringify(bars.map((b) => [b.t, b.o, b.h, b.l, b.c, b.v ?? 0])));
+  if (bars.length) await redis.set(dbKey(id), JSON.stringify(bars.map((b) => (b.iid ? [b.t, b.o, b.h, b.l, b.c, b.v ?? 0, b.iid] : [b.t, b.o, b.h, b.l, b.c, b.v ?? 0]))));
   return bars;
 }
 export async function loadDbMeta(redis: Pick<Redis, 'get'>): Promise<DbMeta | null> {
@@ -251,7 +266,7 @@ export async function refreshDatabento(redis: Pick<Redis, 'get' | 'set'>, key: s
     meta.availEnd = end;
     const from = now - DATABENTO.historyDays * DAY;
     /** price, check the cap, download; false = stop the whole run */
-    const piece = async (id: string, symbol: string, a: number, b: number): Promise<Bar[] | null> => {
+    const piece = async (id: string, symbol: string, a: number, b: number): Promise<DbBar[] | null> => {
       const usd = await costOf(key, symbol, 'ohlcv-1h', a, b, fetcher);
       if (usd > DATABENTO.pieceMaxUsd) throw new Error(`${symbol} ${iso(a).slice(0, 10)}…${iso(b).slice(0, 10)} would cost $${usd.toFixed(2)} — skipped`);
       if (meta.spentUsd + usd > DATABENTO.maxUsd) {
@@ -264,21 +279,38 @@ export async function refreshDatabento(redis: Pick<Redis, 'get' | 'set'>, key: s
       log.info({ id, symbol, from: iso(a), to: iso(b), bars: got.length, usd }, 'databento: hourly candles downloaded');
       return got;
     };
+    // v28.14: two passes so one slow market can't starve the rest (gold / silver had 0 bars: the run's time budget was
+    // always gone by the time it reached them). Pass 1 catches every market up to Databento's newest hour (an empty
+    // store starts with its newest piece); pass 2 back-fills, the market with the least history first.
+    const stores = new Map<string, DbBar[]>();
+    let stop = false;
     for (const id of ids) {
       const symbol = DATABENTO.symbols[id];
-      if (!symbol) continue;
+      if (!symbol || stop) continue;
       const m: DbMarketMeta = { first: null, last: null, n: 0, full: false, ...(meta.ids[id] ?? {}), error: null };
       meta.ids[id] = m;
       try {
         let stored = await loadDb(redis, id, true);
-        // newest first: catch up to Databento's newest hour (an empty store starts with the newest piece)
         const fwdFrom = stored.length ? stored[stored.length - 1]!.t + HOUR : Math.max(from, end - DATABENTO.pieceDays * DAY);
         if (end - fwdFrom >= HOUR && timeLeft()) {
           const got = await piece(id, symbol, fwdFrom, end);
-          if (got === null) break;
-          stored = await saveDb(redis, id, got, now);
+          if (got === null) stop = true;
+          else stored = await saveDb(redis, id, got, now);
         }
-        // then back-fill toward `historyDays`, one piece at a time
+        stores.set(id, stored);
+        Object.assign(m, { first: stored[0]?.t ?? null, last: stored[stored.length - 1]?.t ?? null, n: stored.length });
+      } catch (err) {
+        m.error = (err as Error).message;
+        log.warn({ id, err: m.error }, 'databento: market refresh failed');
+      }
+    }
+    const order = [...stores.keys()].sort((a, b) => (stores.get(a)![0]?.t ?? end) > (stores.get(b)![0]?.t ?? end) ? -1 : 1);
+    for (const id of order) {
+      if (stop || !timeLeft()) break;
+      const symbol = DATABENTO.symbols[id]!;
+      const m = meta.ids[id]!;
+      try {
+        let stored = stores.get(id)!;
         while (!m.full && timeLeft()) {
           const first = stored.length ? stored[0]!.t : end;
           if (first <= from + 2 * DAY) {
@@ -287,7 +319,10 @@ export async function refreshDatabento(redis: Pick<Redis, 'get' | 'set'>, key: s
           }
           const a = Math.max(from, first - DATABENTO.pieceDays * DAY);
           const got = await piece(id, symbol, a, first);
-          if (got === null) break;
+          if (got === null) {
+            stop = true;
+            break;
+          }
           if (!got.some((b) => b.t < first)) {
             m.full = true; // nothing older at Databento
             break;
@@ -295,7 +330,6 @@ export async function refreshDatabento(redis: Pick<Redis, 'get' | 'set'>, key: s
           stored = await saveDb(redis, id, got, now);
         }
         Object.assign(m, { first: stored[0]?.t ?? null, last: stored[stored.length - 1]?.t ?? null, n: stored.length });
-        if (meta.error) break;
       } catch (err) {
         m.error = (err as Error).message;
         log.warn({ id, err: m.error }, 'databento: market refresh failed');
@@ -344,6 +378,49 @@ export function stitchFutures(yahoo: readonly Bar[], db: readonly Bar[], now: nu
   if (first - seam.t > 4 * DAY) return [...yahoo];
   if (Math.abs(seam.c - yahoo[0]!.o) / yahoo[0]!.o > DATABENTO.maxSeamGap) return [...yahoo];
   return [...older, ...yahoo];
+}
+
+/**
+ * v28.14: a continuous futures series rolls from one contract to the next; the jump at each roll (forward points, not
+ * a market move) is taken out by scaling everything before it, when the jump is within `maxRollJump`. Pure.
+ */
+export function backAdjust(bars: readonly DbBar[]): Bar[] {
+  const out: Bar[] = bars.map(({ t, o, h, l, c, v }) => ({ t, o, h, l, c, ...(v ? { v } : {}) }));
+  let f = 1;
+  for (let i = bars.length - 1; i >= 0; i--) {
+    if (f !== 1) {
+      const b = out[i]!;
+      Object.assign(b, { o: b.o * f, h: b.h * f, l: b.l * f, c: b.c * f });
+    }
+    const prev = bars[i - 1];
+    const cur = bars[i]!;
+    if (prev && prev.iid && cur.iid && prev.iid !== cur.iid) {
+      const jump = (cur.o * f) / prev.c;
+      if (Math.abs(jump - 1) <= DATABENTO.maxRollJump) f = jump;
+    }
+  }
+  return out;
+}
+
+/** 1 / price for a futures contract quoted the other way round to the spot pair (high ↔ low). Pure. */
+export const invertBars = (bars: readonly Bar[]): Bar[] => bars.map((b) => ({ t: b.t, o: 1 / b.o, h: 1 / b.l, l: 1 / b.h, c: 1 / b.c, ...(b.v ? { v: b.v } : {}) }));
+
+/**
+ * v28.14: Databento's older currency-futures hours in front of Yahoo's spot candles: rolls back-adjusted, inverted for
+ * USD/JPY, USD/CAD, USD/CHF, then scaled onto spot at the seam (the last futures hour ≤ 4 days before Yahoo's first,
+ * within `maxSpotGap`). Volume is dropped (spot FX has none, the lab's volume rules must stay silent). Pure.
+ */
+export function stitchSpot(id: string, yahoo: readonly Bar[], db: readonly DbBar[], now: number, days = DATABENTO.historyDays): Bar[] {
+  if (!yahoo.length || !db.length) return [...yahoo];
+  const first = yahoo[0]!.t;
+  let fut = backAdjust(db.filter((b) => b.t < first && b.t >= now - days * DAY));
+  if (!fut.length) return [...yahoo];
+  if (DATABENTO.invert.has(id)) fut = invertBars(fut);
+  const seam = fut[fut.length - 1]!;
+  if (first - seam.t > 4 * DAY) return [...yahoo];
+  const k = yahoo[0]!.o / seam.c;
+  if (!Number.isFinite(k) || Math.abs(k - 1) > DATABENTO.maxSpotGap) return [...yahoo];
+  return [...fut.map((b) => ({ t: b.t, o: b.o * k, h: b.h * k, l: b.l * k, c: b.c * k })), ...yahoo];
 }
 
 /** The main process's 6-hourly refresh (+ a daily order-flow price check). Needs a key; does nothing without one. */

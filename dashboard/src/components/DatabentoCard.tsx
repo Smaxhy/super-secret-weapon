@@ -9,7 +9,7 @@ interface MarketMeta { first: number | null; last: number | null; n: number; ful
 interface Meta { at: number; spentUsd: number; availEnd: number | null; ids: Record<string, MarketMeta>; error: string | null; estimates?: Array<{ what: string; usd: number | null; error?: string }> }
 interface Data { connected: boolean; source: 'dashboard' | 'env' | null; key: string | null; maxUsd: number; meta: Meta | null }
 
-const NAMES: Record<string, string> = { NDXUSD: 'Nasdaq 100', SPXUSD: 'S&P 500', DJIUSD: 'Dow 30', RUTUSD: 'Russell 2000', XAUUSD: 'Gold', XAGUSD: 'Silver' };
+const NAMES: Record<string, string> = { NDXUSD: 'Nasdaq 100', SPXUSD: 'S&P 500', DJIUSD: 'Dow 30', RUTUSD: 'Russell 2000', XAUUSD: 'Gold', XAGUSD: 'Silver', EURUSD: 'EUR/USD (6E)', GBPUSD: 'GBP/USD (6B)', AUDUSD: 'AUD/USD (6A)', NZDUSD: 'NZD/USD (6N)', USDJPY: 'USD/JPY (6J)', USDCAD: 'USD/CAD (6C)', USDCHF: 'USD/CHF (6S)' };
 const day = (t: number | null) => (t ? new Date(t).toISOString().slice(0, 10) : '–');
 
 export function DatabentoCard() {

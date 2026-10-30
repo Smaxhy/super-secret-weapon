@@ -29,7 +29,7 @@ import { moduleLogger } from '../lib/logger';
 import { refreshInstrument, refreshSeries, loadBars, loadFastBars, type FeedStatus } from './data';
 import { refreshCoinSeries } from './coinbase';
 import { gradeShadows, recordShadows, type ShadowTrade } from './shadow';
-import { loadDb, stitchFutures } from './databento';
+import { DATABENTO, loadDb, stitchFutures, stitchSpot } from './databento';
 import { DK_META, refreshDkTail, installSpreadProfiles, loadDk, refreshDukascopy, stitchHistory, type DkMeta } from './dukascopy';
 import { hasSpreadProfile } from './spreads';
 import { carryAt, carrySeries, cotSeries, loadMacro, macroNow, refreshMacro, type MacroData } from './macro';
@@ -2251,7 +2251,10 @@ export class ForexLab {
       fillInfo[id] = { source: f.source, filled: f.filled.length };
       // v27.91: futures get Databento's older CME hours in front of Yahoo's (when a key has downloaded them)
       if (isFutures(id)) return stitchFutures(f.bars, await loadDb(this.redis, id), nowT);
-      return stitchHistory(id, f.bars, dk, nowT);
+      const viaDk = stitchHistory(id, f.bars, dk, nowT);
+      // v28.14: Dukascopy is blocked → the dollar pairs get CME currency-futures history instead (scaled onto spot)
+      if (viaDk.length > f.bars.length || !DATABENTO.symbols[id]) return viaDk;
+      return stitchSpot(id, f.bars, await loadDb(this.redis, id), nowT);
     };
     for (const inst of this.insts) h1ById.set(inst.id, await filledBars(inst.id));
     // v27.52: Yahoo's CME candles are ~10 min late → the hour that just closed is added from Hyperliquid's market for it
