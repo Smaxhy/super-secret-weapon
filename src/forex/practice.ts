@@ -290,6 +290,10 @@ export interface PracticePosition {
   lock?: LockPlan | null;
   locked?: boolean;
   lockBest?: number | null;
+  /** v28.10: the profit lock of a bot trade trails on its own chart's candles, like the lab's engine (`lockBarMs`):
+   * the candle in progress — its start, first price, best exit-side price, the worst exit-side price after that best,
+   * the minute of the best and the newest close */
+  lockBar?: { t: number; o: number; best: number; after: number; bestT: number; c: number } | null;
   /** v27.66: a Kojiro copy held with the tight trailing stop (his record, or news right now — `tightWhy`) */
   copyLock?: 'copy' | 'tight';
   /** v28.6: trades with the loose profit lock / no lock (its strategy's lab row picked it) */
@@ -975,6 +979,17 @@ export const SPIKE_EXIT = {
   minUsd: 5,
 };
 
+/** v28.10 (owner: "it sells immediately"; VPS Oct 30: 11 of 14 coin stops were locked-profit stops at +0.03…+0.17R
+ * after minutes, while the lab's copies of the same trades made +0.31…+4.64R): the lab grades the profit lock on the
+ * strategy's own candles — the trail moves once per candle and, within the candle that set the best, only what came
+ * after it counts — while the bot trailed every 1-minute wiggle. A bot trade (lab ref, 15m / 1h / 4h chart) now trails
+ * the same way: candle length in ms, else 0 (Kojiro copies, hand trades: every minute as before). */
+export const LOCK_BARS = { on: true };
+export function lockBarMs(p: Pick<PracticePosition, 'ref' | 'tf'>): number {
+  if (!LOCK_BARS.on || !p.ref) return 0;
+  return p.tf === '15m' ? 15 * 60_000 : p.tf === '1h' ? 3_600_000 : p.tf === '4h' ? 14_400_000 : 0;
+}
+
 /** The reason to sell into a spike now, or null. Pure. */
 export function spikeExitFor(p: PracticePosition, q: Pick<Quote, 'mid' | 'bars'>, mids: Record<string, number>, half: number, now: number): string | null {
   if (!SPIKE_EXIT.on || !p.ref || p.tf === 'signal' || !(p.riskUsd0 && p.riskUsd0 > 0) || !(p.units > 0)) return null;
@@ -1223,15 +1238,39 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
         }
       }
     }
+    const barMs = p.lock ? lockBarMs(p) : 0;
     for (const [t, h, l, cl, o] of q.bars) {
       if (t <= p.checkedT || t < p.openedAt - 60_000) continue;
       // exit side of the book: a long sells at the bid (mid − half), a short buys at the ask (mid + half). In the minute
       // the stop was last moved in, only its close counts against the new stop (its low / high may have come before)
       const exitClose0 = cl - p.side * half;
-      const worst = t === p.stopMovedT ? exitClose0 : p.side === 1 ? l - half : h + half;
       const best = p.side === 1 ? h - half : l + half;
       // v17: a minute that OPENS past the level fills at that open (a gap), not at the level
       const openX = o !== undefined && Number.isFinite(o) ? o - p.side * half : null;
+      // v28.10: the chart candle before this minute has finished → the locked trail moves now, like the lab's engine
+      if (barMs && p.lock && p.lockBar && p.lockBar.t !== Math.floor(t / barMs) * barMs) {
+        const lb = p.lockBar;
+        p.lockBar = null;
+        if (mv) mv.moved = true;
+        if (p.locked) {
+          p.lockBest = p.lockBest == null ? lb.best : p.side === 1 ? Math.max(p.lockBest, lb.best) : Math.min(p.lockBest, lb.best);
+          const ns = lockedStop(p.side, p.lock, p.lockBest, p.stop);
+          // within that candle only what came after its best counts: its close on a candle that closed its way, else the
+          // worst price after the best minute
+          const judge = p.side * (lb.c - lb.o) >= 0 ? lb.c : lb.after;
+          if (p.side === 1 ? judge <= ns : judge >= ns) {
+            const px = openX ?? exitClose0;
+            closePos(a, p, px, mids, 'stop', now);
+            events.push(`${p.pair} locked-profit stop hit at the ${p.tf} candle close`);
+            break;
+          }
+          if (ns !== p.stop) {
+            p.stop = ns;
+            p.stopMovedT = null; // a new candle: the whole minute counts against it
+          }
+        }
+      }
+      const worst = t === p.stopMovedT ? exitClose0 : p.side === 1 ? l - half : h + half;
       if (p.stop !== null && (p.side === 1 ? worst <= p.stop : worst >= p.stop)) {
         // v27.90: in the minute the stop was moved its open came BEFORE the move — no gap fill there, only the new stop
         const gapped = t !== p.stopMovedT && openX !== null && (p.side === 1 ? openX < p.stop : openX > p.stop);
@@ -1285,7 +1324,32 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
       }
       // v17.11 the owner's profit lock: ⅓ of the way to the target → the stop goes past the entry, then it trails ⅓ of
       // the target distance behind the best price, every check (live prices, about every second)
-      if (p.lock) {
+      if (p.lock && barMs) {
+        // v28.10: on the trade's own chart — arm on the minute it gets there, move the trail only at the candle's end
+        const bt = Math.floor(t / barMs) * barMs;
+        const worstX = p.side === 1 ? l - half : h + half;
+        const ob = openX ?? exitClose0;
+        const lb = p.lockBar && p.lockBar.t === bt ? p.lockBar : { t: bt, o: ob, best: ob, after: ob, bestT: t, c: exitClose0 };
+        if (p.side * (best - lb.best) > 0) {
+          lb.best = best;
+          lb.bestT = t;
+          lb.after = exitClose0;
+        } else if (t !== lb.bestT) lb.after = p.side === 1 ? Math.min(lb.after, worstX) : Math.max(lb.after, worstX);
+        else lb.after = p.side === 1 ? Math.min(lb.after, exitClose0) : Math.max(lb.after, exitClose0);
+        lb.c = exitClose0;
+        p.lockBar = lb;
+        if (mv) mv.moved = true;
+        const arming = !p.locked && (p.side === 1 ? best >= p.lock.at : best <= p.lock.at);
+        if (arming) {
+          p.locked = true;
+          p.be = true;
+          events.push(`${p.pair} profit lock armed: the stop trails behind the best price at each ${p.tf} candle close`);
+          if (!((p.alerts ?? 0) & 1)) {
+            p.alerts = (p.alerts ?? 0) | 1;
+            notice(a, { kind: 'lock', pair: p.pair, side: p.side, pnlUsd: Math.round(pnlUsd(p, exitClose0, mids) * 100) / 100, stopPnlUsd: Math.round(pnlUsd(p, lockedStop(p.side, p.lock, best, p.stop), mids) * 100) / 100, strategy: p.strategy ?? null });
+          }
+        }
+      } else if (p.lock) {
         const arming = !p.locked && (p.side === 1 ? best >= p.lock.at : best <= p.lock.at);
         if (arming) {
           p.locked = true;

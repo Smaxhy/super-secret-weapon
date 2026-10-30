@@ -758,6 +758,20 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.10 the bot's profit lock trails on its chart's candles, like the lab (Oct 30, owner: "it sells immediately")
+VPS read 02:04 UTC: coin bot 17 closes in 72 h, −$20.47; 14 stops of which 11 were locked-profit stops at +0.03…+0.17R
+after 1–59 min (2 spike sales, 3 full −1R losses). The 5 closes with a lab twin: bot +0.21R a trade vs the lab's SAME trades
++1.88R (LINK donchian20 +0.17 vs +4.64, XRP psar_adx +0.11 vs +1.92, XRP round_break +0.15 vs +0.63, LINK round_break +0.06 vs
++0.31). Cause: the engine trails the lock once per chart candle (best = the candle's high / low; in the candle that set it,
+only what came after counts), the bot trailed every 1-minute wiggle — on the 'strict' coin stops (≈ 0.45%) the tight lock's
+0.3R gap is ≈ 0.13% of the price = noise. practice.ts `LOCK_BARS` {on} + `lockBarMs(p)` (bot trades with a lab ref on 15m /
+1h / 4h; Kojiro copies and hand trades keep the minute trail) + `PracticePosition.lockBar` {t, o, best, after, bestT, c}:
+`tick` arms the lock on the minute it gets there (alert as before) but leaves the stop where it is; when the candle ends
+(first minute of the next one) lockBest takes the candle's best, the stop moves to `lockedStop`, and the trade closes (at
+that minute's open) if the finished candle's close (it closed the trade's way) or its worst price after the best minute
+(it closed against) is past the new stop. Coin rows' lab picks on the same read (first 70% / unseen avg R): tight beats
+loose and off on all 11 chosen rows (e.g. donchian55:1h .13 / .21 vs loose .11 / .18 vs off −.05 / −.15) — the lock kind
+was right, the live timing wasn't. tests/forex-lock-bars (3).
 ## v28.9 "sold into a spike" only on a real spike: +1R in 5 minutes (Oct 30, owner: "it's barely holding trades, it sells
 immediately"; "perfect time to short — the market is crashing — yet the bot sells off within 3 minutes")
 Coin bot Oct 30: 4 closes all small wins — LINK shorts 10.526 → 10.505 (+$5.92) and 10.582 → 10.560 (+$6.63) "sold into a
