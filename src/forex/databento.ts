@@ -38,8 +38,10 @@ export const DATABENTO = {
   historyDays: 1100,
   pieceDays: 180,
   everyHours: 6,
+  /** v28.15: while any market's history is still filling, a run every hour (each run gets through ~1 piece a minute) */
+  catchUpHours: 1,
   /** a run stops starting new downloads after this long */
-  budgetMs: 180_000,
+  budgetMs: 480_000,
   timeoutMs: 120_000,
   /** total USD this bot may spend on history (the account's free credit is $125) */
   maxUsd: Number(process.env.DATABENTO_MAX_USD ?? 20) || 20,
@@ -423,6 +425,12 @@ export function stitchSpot(id: string, yahoo: readonly Bar[], db: readonly DbBar
   return [...fut.map((b) => ({ t: b.t, o: b.o * k, h: b.h * k, l: b.l * k, c: b.c * k })), ...yahoo];
 }
 
+/** v28.15: hourly while a market's history is still filling (or a market was never fetched), else every 6 h. Pure. */
+export function everyMs(meta: DbMeta | null): number {
+  const behind = !meta || Object.keys(DATABENTO.symbols).some((id) => !meta.ids[id]?.full);
+  return (behind ? DATABENTO.catchUpHours : DATABENTO.everyHours) * HOUR;
+}
+
 /** The main process's 6-hourly refresh (+ a daily order-flow price check). Needs a key; does nothing without one. */
 export class DatabentoSync {
   private timer: NodeJS.Timeout | null = null;
@@ -447,7 +455,7 @@ export class DatabentoSync {
       const key = databentoConf().key;
       if (!key) return null;
       const prev = await loadDbMeta(this.redis);
-      if (!force && prev && Date.now() - prev.at < DATABENTO.everyHours * HOUR - 60_000) return prev;
+      if (!force && prev && Date.now() - prev.at < everyMs(prev) - 60_000) return prev;
       const meta = await refreshDatabento(this.redis, key, Date.now(), this.fetcher);
       if (meta.availEnd && (!meta.estimatedAt || Date.now() - meta.estimatedAt > DAY)) {
         meta.estimates = await orderFlowEstimates(key, meta.availEnd, this.fetcher);
@@ -462,7 +470,8 @@ export class DatabentoSync {
       this.running = false;
       if (!this.stopped) {
         if (this.timer) clearTimeout(this.timer);
-        this.timer = setTimeout(() => void this.tick(), DATABENTO.everyHours * HOUR);
+        const meta = await loadDbMeta(this.redis).catch(() => null);
+        if (!this.stopped) this.timer = setTimeout(() => void this.tick(), everyMs(meta));
       }
     }
   }

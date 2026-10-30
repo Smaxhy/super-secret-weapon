@@ -758,6 +758,11 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.15 the history download no longer waits 6 h between pieces (Oct 30, VPS read 19:35 UTC: the 18:58 run filled the
+newest 180 days of gold / silver / EURUSD, then its 3-min budget ran out; the other 6 pairs had 0 bars — at one run per 6 h
+the back-fill would take ~4 days). databento.ts `everyMs(meta)`: a run every `catchUpHours` 1 while any market is not
+`full` (or was never fetched), else `everyHours` 6; `budgetMs` 3 → 8 min a run. Spend still priced per request and capped
+at `DATABENTO_MAX_USD`. tests/forex-databento (+1).
 ## v28.14 more history: CME currency futures for the dollar pairs + gold / silver unstuck (Oct 30, owner: "you're allowed
 to download lots more data")
 VPS read 12:44 UTC: Databento held NDX / SPX / DJI back to Oct 2023, RUT to May 2024 (not full), gold / silver 0 bars (no

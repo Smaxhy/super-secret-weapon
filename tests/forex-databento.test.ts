@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DATABENTO, DB_META, backAdjust, dbKey, invertBars, loadDb, stitchSpot, parseDbPx, parseDbTime, parseOhlcvCsv, refreshDatabento, stitchFutures, testDatabentoKey, type DbFetch } from '../src/forex/databento';
+import { DATABENTO, DB_META, backAdjust, dbKey, everyMs, invertBars, loadDb, stitchSpot, parseDbPx, parseDbTime, parseOhlcvCsv, refreshDatabento, stitchFutures, testDatabentoKey, type DbFetch } from '../src/forex/databento';
 import type { Bar } from '../src/forex/types';
 
 const H = 3_600_000;
@@ -148,5 +148,13 @@ describe('v27.91 Databento CME history', () => {
     // EUR/USD is not inverted
     const e = stitchSpot('EURUSD', [{ t: 4 * H, o: 0.00705, h: 0.00706, l: 0.00704, c: 0.00705 }], fut, 5 * H, 10);
     expect(e[0]!.c).toBeCloseTo(0.00705, 9);
+  });
+
+  it('v28.15: hourly runs while any market is still filling, 6-hourly once all are full', () => {
+    const ids = Object.fromEntries(Object.keys(DATABENTO.symbols).map((id) => [id, { first: 1, last: 2, n: 2, full: true, error: null }]));
+    const full = { at: 0, spentUsd: 0, availEnd: null, ids, error: null };
+    expect(everyMs(full)).toBe(DATABENTO.everyHours * H);
+    expect(everyMs({ ...full, ids: { ...ids, XAUUSD: { ...ids.XAUUSD!, full: false } } })).toBe(DATABENTO.catchUpHours * H);
+    expect(everyMs(null)).toBe(DATABENTO.catchUpHours * H);
   });
 });
