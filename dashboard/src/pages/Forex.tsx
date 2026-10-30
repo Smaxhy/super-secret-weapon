@@ -385,7 +385,7 @@ function Strategies({ r }: { r: Report }) {
                     {x.entry && x.entry !== 'market' && <Badge tone="accent" title="its tested way in is a resting order (picked on the first 70% only): the bot places a limit instead of entering at the next open">{ENTRY_SHORT[x.entry]}</Badge>}
                     {x.lock && <Badge tone="accent" title="its profit lock (picked on the first 70% only): loose = arms at a quarter of the way to the target and trails a quarter behind; step = tight until +1R, then a wider trail; off = its stop, target and own exits only">{x.lock === 'loose' ? 'loose lock' : x.lock === 'step' ? 'step lock' : 'no lock'}</Badge>}
                     <McBadge p={x.mc?.pProfit} />
-                    {x.stats && <Badge tone={x.stats.dsr >= 0.95 ? 'up' : x.stats.dsr >= 0.5 ? 'neutral' : 'warn'} title={`deflated Sharpe: the chance its unseen edge is real given every row graded on the same data (Sharpe ${x.stats.sr} a trade vs ${x.stats.srStar} for the best no-edge row)`}>real {Math.round(x.stats.dsr * 100)}%</Badge>}
+                    {x.stats && <Badge tone={x.stats.dsr >= 0.95 ? 'up' : x.stats.dsr >= 0.5 ? 'neutral' : 'warn'} title={`deflated Sharpe: the chance its unseen edge is real given every row graded on the same data (weekly Sharpe ${x.stats.sr} vs ${x.stats.srStar} for the best no-edge row)`}>real {Math.round(x.stats.dsr * 100)}%</Badge>}
                   </div>
                   <div className="mt-0.5 truncate text-xs text-muted">
                     {x.all.n} trades · {x.all.winPct}% won · unseen {signed(x.outSample.avgR, 2)}R/trade · {x.tradesPerWeek}/week

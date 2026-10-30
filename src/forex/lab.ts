@@ -90,6 +90,10 @@ export const FX_CONFIG = {
    * (fills 84–96% of the signals; confirm entries fill 23–50% and earned least); `chooseEntry` still picks per row on the
    * FIRST 70% only, so a row switches only where it tested better. Forex stays market until its own numbers are read. */
   liveEntries: { fx: false, crypto: true } as Record<'fx' | 'crypto', boolean>,
+  /** v28.13: very-sure trades are sized from their own record on the market (`provenSizePct`): `kellyShare` of the Kelly size
+   * with the win rate's lower bound at `z` (1.2816 = 90% one-sided), never above `maxPct` % of the account, and only
+   * trades whose size comes out ≥ `minPct` count as very sure */
+  provenSize: { on: true, kellyShare: 0.25, z: 1.2816, maxPct: 10, minPct: 0.5 },
   /** v28.6: each row picks its profit lock (tight / loose / off) on its FIRST 70% (profit-lock.ts LockKind).
    * v28.12 (owner: "still going for short profits" → "tight until +1R, then loose"): `step` per desk — the step lock
    * (STEP_LOCK) is tested on every row there and used when its FIRST 70% scores at least as well as the row's pick
@@ -800,7 +804,30 @@ export function marketRecOf(rec: { n: number; pf: number | null; totalR: number 
       : 'no tested record of its own on this market';
     return { n, pf, totalR: rec?.totalR ?? 0, ok: false, why };
   }
-  return { n, pf, totalR: rec?.totalR ?? 0, ok: ownerTrial || !(losing || cellLosing), strict: cellPass(cell) };
+  const strict = cellPass(cell);
+  const sizePct = strict && cell ? provenSizePct(cell) : undefined;
+  return { n, pf, totalR: rec?.totalR ?? 0, ok: ownerTrial || !(losing || cellLosing), strict, ...(sizePct !== undefined ? { sizePct } : {}) };
+}
+/**
+ * v28.13 (owner: "trade them with a high account size, maybe 20%+" → chose "proven size, cap 10%"): the risk a very-sure
+ * trade may take, from ITS OWN unseen record on this market — a quarter of the Kelly size, worked out with a cautious
+ * win rate (the 90% lower bound, Wilson) and the average win / loss implied by its average R and profit factor; capped
+ * at `FX_CONFIG.provenSize.maxPct`. 0 = its record doesn't support a bet. Pure.
+ */
+export function provenSizePct(cell: Pick<MarketCell, 'n' | 'winPct' | 'avgR' | 'pf'>, cfg = FX_CONFIG.provenSize): number {
+  const w = cell.winPct / 100;
+  const pf = cell.pf ?? Infinity;
+  if (!(cell.n > 0) || !(cell.avgR > 0) || !(w > 0)) return 0;
+  // average loss L and win W in R: avgR = wW − (1−w)L and wW = PF (1−w) L; no losses yet → assume a full −1R loss
+  const L = w < 1 && Number.isFinite(pf) && pf > 1 ? cell.avgR / ((pf - 1) * (1 - w)) : 1;
+  const W = w < 1 && Number.isFinite(pf) && pf > 1 ? (pf * (1 - w) * L) / w : cell.avgR / w + ((1 - w) * L) / w;
+  if (!(L > 0) || !(W > 0)) return 0;
+  const z = cfg.z;
+  const n = cell.n;
+  const lo = (w + (z * z) / (2 * n) - z * Math.sqrt((w * (1 - w)) / n + (z * z) / (4 * n * n))) / (1 + (z * z) / n);
+  const kelly = (lo * W - (1 - lo) * L) / (W * L);
+  if (!(kelly > 0)) return 0;
+  return Math.round(Math.min(cfg.maxPct, kelly * cfg.kellyShare * 100) * 100) / 100;
 }
 /** v27.30 pure: the sessions (montecarlo.ts `sessionOf`) and markets where a row's FIRST 70% (finished before `oosFrom`)
  * lost money on 8+ trades — empty when nothing qualifies or skipping them would drop more than 40% of those trades. */
@@ -1070,7 +1097,11 @@ export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: 
   // THIS market (marketRec ok = cellPass); the forward check is already part of `chosen`
   // v28.11: a coin may trade on a positive record (`coinPositive`), but the big size still needs the strict bar
   const mkt = !FX_CONFIG.strict.marketMustPass[isCrypto(t.pair) ? 'crypto' : 'fx'] || (o.marketRec?.ok === true && o.marketRec.strict !== false);
-  const allIn = po.on && o.chosen && o.edge !== false && mkt && (o.rowChosen !== false || po.cellAllIn[isCrypto(t.pair) ? 'crypto' : 'fx']) ? po.riskPct : 0;
+  const big = po.on && o.chosen && o.edge !== false && mkt && (o.rowChosen !== false || po.cellAllIn[isCrypto(t.pair) ? 'crypto' : 'fx']);
+  // v28.13: sized from its own record on this market (quarter Kelly, cautious win rate); a weak record → not very sure
+  const ps = FX_CONFIG.provenSize;
+  const proven = ps.on && o.marketRec?.sizePct !== undefined ? o.marketRec.sizePct : po.riskPct;
+  const allIn = big && proven >= ps.minPct ? Math.min(po.riskPct, proven) : 0;
   return {
     ...(allIn ? { allIn } : {}),
     ...(o.order ? { order: o.order } : {}),

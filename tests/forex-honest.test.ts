@@ -10,14 +10,14 @@ const TO = FROM + 3 * 365 * DAY;
 const OOS = FROM + 0.7 * (TO - FROM);
 
 /** n trades spread over the history with results ~ N(mean, 1) */
-function row(key: string, n: number, mean: number, seed: number): StatInput {
+function row(key: string, n: number, mean: number, seed: number, sd = 1): StatInput {
   const r = rng(seed);
   const done: Trade[] = [];
   for (let k = 0; k < n; k++) {
     const u = Math.max(1e-12, r());
     const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * r());
     const t = FROM + Math.floor(((k + 0.5) / n) * (TO - FROM));
-    done.push({ strategy: key.split(':')[0]!, tf: '1h', pair: 'EURUSD', side: 1, entryT: t, exitT: t + 6 * 3_600_000, entry: 1, exit: 1, r: mean + z, stopPct: 0.3, reason: 'target', bars: 6, stop: 0.99, stop0: 0.99, target: 1.02 });
+    done.push({ strategy: key.split(':')[0]!, tf: '1h', pair: 'EURUSD', side: 1, entryT: t, exitT: t + 6 * 3_600_000, entry: 1, exit: 1, r: mean + sd * z, stopPct: 0.3, reason: 'target', bars: 6, stop: 0.99, stop0: 0.99, target: 1.02 });
   }
   return { key, isRandom: key.startsWith('random'), done };
 }
@@ -75,5 +75,17 @@ describe('v18 honest statistics over the lab rows', () => {
   it('too little history → no PBO, the per-row numbers still come', () => {
     const short = honestStats([edge, noise[0]!], { from: TO - 30 * DAY, to: TO, oosFrom: TO - 10 * DAY });
     expect(short.report.pbo).toBeNull();
+  });
+
+  it('v28.13: a busy row with a small steady edge is not graded "luck" because thin rows have noisy Sharpes', () => {
+    // 60 thin no-edge rows (110 trades, ~33 unseen each) + one row with 4,500 trades at +0.11R (sd 0.45): per trade its Sharpe is
+    // only ~0.24, below what the thin rows reach by chance, but over the same unseen weeks it is far above them
+    const thin = Array.from({ length: 60 }, (_, k) => row(`t${k}:1h`, 110, 0, 2000 + k));
+    const busy = row('busy:4h', 4500, 0.11, 77, 0.45);
+    const g = honestStats([busy, ...thin, random], { from: FROM, to: TO, oosFrom: OOS });
+    const b = g.rows.get('busy:4h')!;
+    expect(b.dsr).toBeGreaterThan(0.95);
+    const thinOk = thin.filter((x) => (g.rows.get(x.key)?.dsr ?? 0) >= HONEST.minDsr).length;
+    expect(thinOk).toBeLessThan(6);
   });
 });

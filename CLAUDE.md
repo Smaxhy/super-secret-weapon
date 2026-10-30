@@ -758,6 +758,32 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.13 deep review: the lab's profit lock invented ~0.1R a trade; luck test fixed; coin bot = sure setups only, proven size
+(Oct 30, owner: "very deep analysis … trade way less, closest to 100% win rate, high account size maybe 20%+" → chose "proven
+size, cap 10%" + "only the sure setups"). VPS deep read 09:54 UTC (970ce58): coin 4h tight-lock rows showed 80–89% wins at
++0.1…+0.2R (avg win ≈ +0.33R, avg loss ≈ −1R) while their RANDOM-timing luck twins with the same exits also made ≈ +0.11R
+(round_break / inside_bar / trendline_break / williams_r 4h downgraded to 'no' by the luck meter); coin bot's own closes since
+Oct 20: 89 trades, its stops −9.95R, the owner's manual closes +7.2R; shadow book 179 refusals +81R (lab R).
+(1) **Engine lock bias** (engine.ts): after the lock moved the stop on a candle's best, the rest of THAT candle was assumed
+to be only its close (green, long) / its low (red) — on a driftless random walk random entries with the tight lock tested at
++0.11R a trade (72% won) while the bot's real rule on the same minutes made −0.03R (55%). Now the moved stop counts from the
+NEXT candle (its whole range, a gap at the open fills there) = exactly the bot's candle-close rule (v28.10). Parity test
+tests/forex-lock-parity (lab +0.12 → ≈ 0 = bot). practice.ts: the v28.10 look-back close ("worst price after the best minute")
+removed — the moved stop just applies from the next candle's minutes. EXPECT a big re-grade on both desks: every tight / loose /
+step-lock row loses its phantom ~0.1R; many coin "high win rate" rows will fall to 'no'. The run-past-target conversion still
+assumes green → close (smaller effect, once per trade) — not changed.
+(2) **Deflated Sharpe on weeks** (honest.ts): it was the Sharpe PER TRADE with the luck bar from the spread of every row's
+per-trade Sharpe — thin rows' noisy Sharpes set the bar, so rows with 1,000–5,000 unseen trades (t ≈ 9) read "0% real".
+Now every row is measured on the same unseen weeks (weekly R sums) and the bar is the best of N no-edge rows' weekly Sharpe
+(null variance 1 ∕ (T−1)). RowStat sr / srStar are weekly; dashboard texts updated. tests/forex-honest (+1).
+(3) **Proven size** (lab.ts `provenSizePct`, `FX_CONFIG.provenSize` {kellyShare .25, z 1.2816, maxPct 10, minPct .5}):
+`marketRecOf` → `marketRec.sizePct` when the cell passes `cellPass`: quarter Kelly with the win rate's 90% lower bound (Wilson)
+and the avg win / loss implied by avgR + PF, ≤ 10%; `toLabTrade` allIn = that % (under provenOnly.riskPct 10; below 0.5% →
+not very sure); syncBot sizes a very-sure trade to lose ≤ min(bigLossPct, its %) at the tested stop. Simulation shown to the
+owner (100 trades, 85% / +0.33R / −1R): risk 10% → 2% chance of halving (23% if live is a bit worse); 20% → 49% / 86%.
+(4) **`BOT.sureOnly` {cbot: true}** (practice.ts): the coin bot opens ONLY very-sure trades (Edge row + cellPass on that coin +
+forward check → `allIn`); the rest is skipped "not a sure setup" (shadow book keeps scoring). Forex bot unchanged. Expect few
+or no coin trades until rows re-grade on the corrected engine. tests/forex-proven-size (3).
 ## v28.12 step lock on coins: tight until +1R, then a wider trail (Oct 30, owner: "still going for short profits" → chose
 "tight until +1R, then loose", lab-tested first)
 VPS read 09:32 UTC (9596e0f): coin bot 5 closes since 02:00, −$20.09 — the two pivot_ladder:4h longs closed on their locked

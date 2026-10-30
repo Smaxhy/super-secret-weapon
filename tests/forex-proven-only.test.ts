@@ -174,7 +174,9 @@ describe('v27.44 the coin bot counts a market move once', () => {
     expect(BOT.maxSameSide.cbot).toBe(2); // v27.97 1, v28.11 2 again
     const sameSide = BOT.maxSameSide.cbot;
     BOT.maxSameSide.cbot = 2;
-    onTestFinished(() => { BOT.maxSameSide.cbot = sameSide; });
+    const sure0 = BOT.sureOnly.cbot;
+    BOT.sureOnly.cbot = false; // v28.13: the coin bot opens only sure setups — this rule is tested on ordinary trades
+    onTestFinished(() => { BOT.maxSameSide.cbot = sameSide; BOT.sureOnly.cbot = sure0; });
     const r = new NxRedis();
     r.m.set('fx:practice:cbot', JSON.stringify(newAccount(1000)));
     const p = new Practice(r as unknown as Redis);

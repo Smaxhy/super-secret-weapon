@@ -359,8 +359,10 @@ export function simulate(inst: Instrument, tf: Timeframe, c: Ctx, strategyId: st
               p.stop = ns;
               if (p.side * (ns - p.lock.to) > 0) p.trailed = true;
             }
-            const after = p.side === 1 ? (b.c >= b.o ? b.c : b.l) : b.c <= b.o ? b.c : b.h;
-            if (p.side === 1 ? after <= p.stop : after >= p.stop) finish(i, exitFill(i, p.side, p.stop, true), stopReason(p));
+            // v28.13: the moved stop counts from the NEXT candle on (checked against its whole range, a gap at its open
+            // fills there) — exactly what the bot does (practice.ts LOCK_BARS: the stop moves when the candle closes).
+            // Before, the rest of THIS candle was assumed to be only its close (green) / its low (red): on a driftless
+            // random walk that turned the tight lock's −0.03R a trade into +0.11R (tests/forex-lock-parity).
           }
         }
         if (pos) {

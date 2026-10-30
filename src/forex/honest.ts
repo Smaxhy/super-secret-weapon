@@ -24,14 +24,14 @@ export const HONEST = {
 };
 
 export interface RowStat {
-  /** Sharpe per unseen trade (mean R ÷ sd R) */
+  /** v28.13: Sharpe of its unseen WEEKS (weekly R sum: mean ÷ sd) */
   sr: number;
   /** the Sharpe the best of the N trials would show by luck */
   srStar: number;
   /** P(true Sharpe > 0) without the correction, and the deflated one */
   psr0: number;
   dsr: number;
-  /** unseen trades needed before the Sharpe beats srStar at 95% (null = never at this Sharpe) */
+  /** unseen WEEKS needed before the Sharpe beats srStar at 95% (null = never at this Sharpe) */
   minTrl: number | null;
   n: number;
 }
@@ -71,31 +71,41 @@ const r3 = (x: number) => Math.round(x * 1000) / 1000;
 /** The whole thing. `from` / `to` / `oosFrom` are the lab's history span and 70/30 line (ms). */
 export function honestStats(inputs: readonly StatInput[], o: { from: number; to: number; oosFrom: number; extraSr?: readonly number[] }): HonestOut {
   const rows = new Map<string, RowStat>();
-  // ── per-row deflated Sharpe on the unseen trades ──
-  const unseen = new Map<string, number[]>();
+  // ── per-row deflated Sharpe on the unseen WEEKS ──
+  // v28.13: every row is measured on the same unseen weeks (its trades summed by the week they closed), so all trials
+  // share one sample length T and the luck benchmark is the best of N no-edge rows' weekly Sharpe: under no edge each
+  // row's weekly Sharpe estimate is ≈ N(0, 1 ∕ (T − 1)). Before, it was the Sharpe PER TRADE with the luck benchmark
+  // from the spread of every row's per-trade Sharpe — rows with 30 trades (very noisy Sharpes) set the bar and a row
+  // with 1,357 unseen trades at +0.11R (t ≈ 9) read as "0% real". Same trades counted, same weeks for every row;
+  // trades in the same week (coins move together) count once as that week's total.
+  const uFrom = o.oosFrom;
+  const uWeeks = Math.max(1, Math.ceil((o.to - uFrom) / HONEST.weekMs));
+  const unseen = new Map<string, { rs: number[]; weeks: number[] }>();
   for (const x of inputs) {
     if (x.isRandom) continue;
-    const rs = x.done.filter((t) => t.entryT >= o.oosFrom).map((t) => t.r);
-    unseen.set(x.key, rs);
+    const done = x.done.filter((t) => t.entryT >= o.oosFrom);
+    const w = bucketSums(done.map((t) => ({ t: Math.min(Math.max(t.exitT, uFrom), o.to - 1), v: t.r })), uFrom, o.to, HONEST.weekMs);
+    unseen.set(x.key, { rs: done.map((t) => t.r), weeks: Array.from(w) });
   }
+  const weekSr = (ws: readonly number[]) => {
+    const m = moments(ws);
+    return m.sd > 0 ? m.mean / m.sd : 0;
+  };
   const trialSr: number[] = [];
-  for (const rs of unseen.values()) {
-    if (rs.length < HONEST.minOut) continue;
-    const m = moments(rs);
-    trialSr.push(m.sd > 0 ? m.mean / m.sd : 0);
-  }
-  // v27.37: retired strategies skipped this run were still tried — their Sharpe ratios keep counting as trials
-  trialSr.push(...(o.extraSr ?? []));
-  const trials = trialSr.length;
+  for (const u of unseen.values()) if (u.rs.length >= HONEST.minOut) trialSr.push(weekSr(u.weeks));
+  // v27.37: retired strategies skipped this run were still tried — they keep counting as trials
+  const trials = trialSr.length + (o.extraSr ?? []).length;
+  // the spread of the trials' weekly Sharpes (reported) and the null spread the benchmark uses
   const varSr = varianceOf(trialSr);
+  const nullVar = uWeeks > 1 ? 1 / (uWeeks - 1) : 0;
   let expectedMaxSr = 0;
-  for (const [key, rs] of unseen) {
-    if (rs.length < HONEST.minOut) continue;
-    const d = deflatedSharpe(rs, { n: trials, varSr });
+  for (const [key, u] of unseen) {
+    if (u.rs.length < HONEST.minOut) continue;
+    const d = deflatedSharpe(u.weeks, { n: trials, varSr: nullVar });
     expectedMaxSr = d.srStar;
-    const m = moments(rs);
+    const m = moments(u.weeks);
     const mt = minTrackRecord(d.sr, m.skew, m.kurt, d.srStar);
-    rows.set(key, { sr: r3(d.sr), srStar: r3(d.srStar), psr0: r3(d.psr0), dsr: r3(d.dsr), minTrl: Number.isFinite(mt) ? Math.round(mt) : null, n: rs.length });
+    rows.set(key, { sr: r3(d.sr), srStar: r3(d.srStar), psr0: r3(d.psr0), dsr: r3(d.dsr), minTrl: Number.isFinite(mt) ? Math.round(mt) : null, n: u.rs.length });
   }
   // ── overall: weekly R per row → PBO (CSCV) and the Reality Check / SPA vs the random yardstick ──
   const weeks = Math.max(1, Math.ceil((o.to - o.from) / HONEST.weekMs));
@@ -126,7 +136,7 @@ export function honestStats(inputs: readonly StatInput[], o: { from: number; to:
   const sp = excess.length >= 1 ? realityCheck(excess, { draws: HONEST.spaDraws, seed: 11 }) : null;
   const spa = sp ? { ...sp, bestKey: matrixKeys[sp.best] ?? '' } : null;
   const parts: string[] = [];
-  parts.push(`${trials} rows had ${HONEST.minOut}+ unseen trades; the best of that many no-edge rows would show a Sharpe of about ${r3(expectedMaxSr)} per trade, so an Edge row must beat that (deflated Sharpe ≥ ${Math.round(HONEST.minDsr * 100)}%).`);
+  parts.push(`${trials} rows had ${HONEST.minOut}+ unseen trades; over the ${uWeeks} unseen weeks the best of that many no-edge rows would show a weekly Sharpe of about ${r3(expectedMaxSr)}, so an Edge row must beat that (deflated Sharpe ≥ ${Math.round(HONEST.minDsr * 100)}%).`);
   if (p) parts.push(`PBO ${Math.round(p.pbo * 100)}%: in ${Math.round(p.pbo * 100)}% of ${p.combos} half-and-half splits the in-sample winner ranked below the median out of sample (≤ 30% is healthy; ~50% means the picks are noise).`);
   if (spa) parts.push(`Best row vs ${benchmark === 'random' ? 'random entries' : 'zero'}: Reality Check p ${spa.pRc}, SPA p ${spa.pSpa} (under 0.05 = the best row's lead survives counting every row tried).`);
   return {
@@ -138,5 +148,5 @@ export function honestStats(inputs: readonly StatInput[], o: { from: number; to:
 /** Apply the deflated Sharpe to a row's verdict: Edge stays Edge only with dsr ≥ HONEST.minDsr. Pure. */
 export function dsrDowngrade(verdict: 'edge' | 'maybe' | 'no', st: RowStat | undefined, trials: number): { verdict: 'edge' | 'maybe' | 'no'; why: string | null } {
   if (verdict !== 'edge' || !st || st.dsr >= HONEST.minDsr) return { verdict, why: null };
-  return { verdict: 'maybe', why: `positive on unseen data, but one of ${trials} rows graded on it: deflated Sharpe ${Math.round(st.dsr * 100)}% (its ${st.sr}R-Sharpe a trade is what the best no-edge row would show by luck: ${st.srStar})` };
+  return { verdict: 'maybe', why: `positive on unseen data, but one of ${trials} rows graded on it: deflated Sharpe ${Math.round(st.dsr * 100)}% (its weekly Sharpe ${st.sr} is what the best no-edge row would show by luck: ${st.srStar})` };
 }

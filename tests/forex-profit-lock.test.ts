@@ -83,11 +83,11 @@ describe('profit lock in the engine', () => {
     expect(run(bars, false).r).toBeLessThan(-0.9);
   });
 
-  it('a red candle that touches the lock level and falls back closes at the locked stop in the same hour', () => {
+  it('v28.13: a red candle that touches the lock level and falls back: the locked stop counts from the next hour (like the bot)', () => {
     const bars = market([{ o: 1.1008, h: 1.1011, l: 1.1002, c: 1.1003 }, { c: 1.1003 }]);
     const on = run(bars);
     expect(on.reason).toBe('breakeven');
-    expect(on.exitT).toBe(bars[260]!.t);
+    expect(on.exitT).toBe(bars[261]!.t);
     expect(on.r).toBeGreaterThan(0);
   });
 

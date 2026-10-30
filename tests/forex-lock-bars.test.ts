@@ -33,13 +33,18 @@ describe('profit lock on the chart candle', () => {
     expect(a.open[0]!.stop).toBeCloseTo(1996.05, 2);
   });
 
-  it('a candle that closes against the trade after its best → closed at the next candle', () => {
+  it('v28.13: a candle that came back after its best is not closed after the fact — the moved stop counts from the next candle', () => {
     const a = newAccount(1000);
     a.open = [short()];
     const back: B = [H + 2 * M, 2003, 1992, 2001, 1991]; // went back above the entry inside the hour
     tick(a, { ETHUSD: q([m1, back, next]) }, H + 61 * M);
+    expect(a.open).toHaveLength(1);
+    expect(a.open[0]!.stop).toBeCloseTo(1996.05, 2);
+    // the next candle reaches the moved stop → closed there
+    const up: B = [H + 62 * M, 1997, 1994, 1996.5, 1994];
+    tick(a, { ETHUSD: q([m1, back, next, up]) }, H + 63 * M);
     expect(a.open).toHaveLength(0);
-    expect(a.closed[0]).toMatchObject({ reason: 'stop', exit: 1995.05 });
+    expect(a.closed[0]).toMatchObject({ reason: 'stop', exit: 1996.05 });
   });
 
   it('a hand trade (no lab ref) still trails every minute', () => {

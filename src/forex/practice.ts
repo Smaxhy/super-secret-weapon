@@ -103,6 +103,9 @@ export const BOT = {
    * is sized so its tested stop + round-trip fee loses at most this % of the account, instead of the $ cap. One such
    * trade open (or waiting as an order) at a time; every other trade keeps the $ cap. 0 = off (all-in trades keep the $ cap). */
   bigLossPct: { cbot: 10, bot: 10 } as Partial<Record<string, number>>,
+  /** v28.13 (owner chose "only the sure setups"): per account, open ONLY very-sure trades (`LabOpenTrade.allIn`); the rest
+   * is held back (the shadow book keeps scoring it). */
+  sureOnly: { cbot: true } as Partial<Record<string, boolean>>,
   /** v27.23: one open trade (or resting order) per market and direction across all strategies — no doubled bets */
   onePerMarketSide: true,
   /** v27.44 (owner: "make it trade smarter … what it just did is an account drainer"; Oct 25 06:00 UTC it shorted BTC, XRP,
@@ -1260,15 +1263,9 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
         if (p.locked) {
           p.lockBest = p.lockBest == null ? lb.best : p.side === 1 ? Math.max(p.lockBest, lb.best) : Math.min(p.lockBest, lb.best);
           const ns = lockedStop(p.side, p.lock, p.lockBest, p.stop);
-          // within that candle only what came after its best counts: its close on a candle that closed its way, else the
-          // worst price after the best minute
-          const judge = p.side * (lb.c - lb.o) >= 0 ? lb.c : lb.after;
-          if (p.side === 1 ? judge <= ns : judge >= ns) {
-            const px = openX ?? exitClose0;
-            closePos(a, p, px, mids, 'stop', now);
-            events.push(`${p.pair} locked-profit stop hit at the ${p.tf} candle close`);
-            break;
-          }
+          // v28.13: the moved stop simply counts from here on (this new candle's minutes; a minute that opens past it fills
+          // at its open) — exactly the lab engine's rule, so the live trade is the graded one. The v28.10 look back into
+          // the finished candle ("its worst price after the best minute") closed trades the engine kept.
           if (ns !== p.stop) {
             p.stop = ns;
             p.stopMovedT = null; // a new candle: the whole minute counts against it
@@ -1538,7 +1535,7 @@ export interface LabOpenTrade {
    * `of`; the bot waits while `n < need` (strict mode) */
   agree?: { n: number; of: number; need: number } | null;
   /** v20.4: the strategy's own tested record on this market (`ok` = enough trades, winning); the bot waits while not ok */
-  marketRec?: { n: number; pf: number | null; totalR: number; ok: boolean; /** v27.97 */ why?: string; /** v28.11: it cleared the strict per-market bar (cellPass) — needed for a very-sure (big) trade */ strict?: boolean } | null;
+  marketRec?: { n: number; pf: number | null; totalR: number; ok: boolean; /** v27.97 */ why?: string; /** v28.11: it cleared the strict per-market bar (cellPass) — needed for a very-sure (big) trade */ strict?: boolean; /** v28.13: the risk % its own record here supports (quarter Kelly, cautious win rate) */ sizePct?: number } | null;
 }
 
 /** v18.4: a resting limit order on the bot account (entries.ts, picked on the first 70%); filled by `tick` against the
@@ -2460,6 +2457,13 @@ export class Practice {
           skip(t, w, true);
           continue;
         }
+        // v28.13 (owner: "trade way less, only the closest to 100%, with a high account size" → chose "only the sure
+        // setups"): this account opens only very-sure trades — an Edge strategy that also proved itself on THIS market
+        // and passed the forward check (the lab marks them `allIn`, sized from their own record)
+        if (BOT.sureOnly[acct] && !t.allIn && !t.desk) {
+          skip(t, 'not a sure setup — this bot only trades Edge strategies proven on this market (forward check passed)');
+          continue;
+        }
         if (t.judge && !t.judge.ok && t.judge.missing && !t.desk) {
           // v17: the judge can't score it right now (a reading it learned from is missing) — wait, don't trade blind
           note(`${t.ref}:judge`, `waiting on ${t.pair} (${t.strategy}): the signal judge is missing ${t.judge.missing}`);
@@ -2530,7 +2534,8 @@ export class Practice {
         const allInPct = t.allIn || BOT.allIn[acct]?.[`${t.strategy}:${tf}`]; // v27.27: set by the lab on proven trades
         const allInLeft = allInPct ? allInPct - a.open.filter((p) => p.allIn && p.tf !== 'signal').reduce((s, p) => s + (p.riskPct ?? 0), 0) : 0;
         // v27.98: very-sure trades sized to lose ≤ bigLossPct of the account — one at a time (open or waiting as an order)
-        const bigPct = allInPct ? BOT.bigLossPct[acct] ?? 0 : 0;
+        // v28.13: the lab's proven size for this trade (quarter Kelly of its record on this market) when smaller
+        const bigPct = allInPct ? Math.min(BOT.bigLossPct[acct] ?? 0, allInPct) : 0;
         if (bigPct > 0 && (a.open.some((p) => p.allIn && p.tf !== 'signal') || (a.orders ?? []).some((o) => o.allIn))) {
           skip(t, 'a very-sure (big) trade is already open — one at a time', true);
           continue;

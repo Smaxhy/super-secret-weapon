@@ -441,7 +441,7 @@ describe('15-minute and 1-minute lab (v15)', () => {
     try {
       await fast.decide('15m', WED);
       const call2 = sync.mock.calls[1] as unknown as [LabOpenTrade[]];
-      expect(call2[0].every((t) => t.tf === '15m' && (t.chosen || Object.values(FX_CONFIG.marketPlan).flat().includes(t.strategy) || !FX_CONFIG.focus.markets.includes(t.pair)))).toBe(true); // v27.2: market-plan rows are followed everywhere, chosen only on their market; v27.3: non-focus markets open nothing
+      expect(call2[0].every((t) => t.tf === '15m' && (t.chosen || t.marketRec?.ok === false || Object.values(FX_CONFIG.marketPlan).flat().includes(t.strategy) || !FX_CONFIG.focus.markets.includes(t.pair)))).toBe(true); // v27.97: a strategy without a strong record on THAT market isn't chosen there; v27.2: market-plan rows are followed everywhere, chosen only on their market; v27.3: non-focus markets open nothing
     } finally {
       FX_CONFIG.botFastCharts = false;
     }
