@@ -131,11 +131,12 @@ export const FX_CONFIG = {
      * on BTC +0.03R). */
     marketMustPass: { fx: true, crypto: true } as Record<'fx' | 'crypto', boolean>,
     /** v28.11 (owner: "turn these lab results into live results"): on coins a strategy whose pooled row already passed
-     * every gate may also trade a coin where its own unseen record there is positive (30+ trades, above 0R, PF 1.1) —
+     * every gate may also trade a coin where its own unseen record there is clearly positive (30+ trades, ≥ +0.05R, PF 1.15 — a break-even coin like BTC
+     * pivot_bounce +0.02R / PF 1.11 stays out) —
      * the full `cellPass` bar (+0.1R, PF 1.3, Monte Carlo 95%) is still what a very-sure (big) trade needs. VPS Oct 30:
      * the strict bar held back donchian20 / donchian55 / round_break on coins at +0.07…+0.17R, PF 1.18–1.36, and the
      * shadow book scored those refusals +12.1R. A coin where it loses (e.g. SOL round_break −0.04R) stays blocked. */
-    coinPositive: { on: true, minN: 30, minAvgR: 0, minPf: 1.1 },
+    coinPositive: { on: true, minN: 30, minAvgR: 0.05, minPf: 1.15 },
   },
   /** v18.7 (owner: "we can't fast trade these charts, they take time"): the bot account trades the 1h + 4h charts only.
    * The 15m / 1m charts stay lab-tested (Strategies / Lab) but place no bot trades while this is off.

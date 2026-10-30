@@ -765,7 +765,7 @@ VPS read 02:14 UTC: the coin bot opened 9 of 171 tradeable signals in 24 h; shad
 world-event pause the only one that saved money, −10.5R). (1) `BOT.liveBrake` since → 2026-10-30 02:20 UTC (both bots) and
 `LEARN.since` (learner.ts, the same time): the bot's own trades before v28.10 ran a different exit than the lab graded, so
 they no longer pause / halve / drop a strategy. (2) `BOT.maxSameSide.cbot` 1 → 2. (3) `FX_CONFIG.strict.coinPositive` {on,
-minN 30, minAvgR 0, minPf 1.1} + `coinPositive(cell)` (lab.ts): on coins `marketRecOf` also passes a coin where the strategy's
+minN 30, minAvgR 0.05, minPf 1.15 (break-even coins like BTC pivot_bounce +0.02R / PF 1.11 and ADA stay out)} + `coinPositive(cell)` (lab.ts): on coins `marketRecOf` also passes a coin where the strategy's
 own unseen record is positive (the strict `cellPass` bar blocked donchian20 / donchian55 / round_break on coins at
 +0.07…+0.17R, PF 1.18–1.36); `marketRec.strict` = cellPass → a very-sure (big, `allIn`) trade still needs the strict bar.
 Not changed: 15m charts stay lab-only (owner, v27.43; keltner:15m is not graded Edge / Maybe), the late-entry drift check,
