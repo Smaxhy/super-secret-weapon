@@ -270,6 +270,17 @@ export function kojiroGate(card: KCard | null, c: Pick<KCall, 'side' | 'session'
   return { take: true, why: null, plan };
 }
 
+/** v28.8: how much of the account one of his SIGNAL calls risks — `callRiskPct` (5%) until his graded record under the
+ * hold the bot uses proves it, then `callRiskPctProven` (10%). Pure. */
+export function callRiskFor(card: KCard | null): { pct: number; why: string } {
+  const base = DISCORD_COPY.callRiskPct;
+  const st = card ? card.plans[card.best] : null;
+  if (!st || st.n < DISCORD_COPY.provenMinN) return { pct: base, why: `${base}% of the account — his calls' size; ${DISCORD_COPY.callRiskPctProven}% once ${DISCORD_COPY.provenMinN}+ of his calls are graded and win (${st?.n ?? 0} so far)` };
+  const ok = st.avgR >= DISCORD_COPY.provenMinAvgR && (st.pf ?? 0) >= DISCORD_COPY.provenMinPf;
+  const rec = `his record ${st.n} calls, ${st.avgR >= 0 ? '+' : ''}${st.avgR}R a call, profit factor ${st.pf ?? '—'}`;
+  return ok ? { pct: DISCORD_COPY.callRiskPctProven, why: `${DISCORD_COPY.callRiskPctProven}% of the account — ${rec}` } : { pct: base, why: `${base}% of the account — ${rec} (not yet good enough for ${DISCORD_COPY.callRiskPctProven}%)` };
+}
+
 // ── storage ──
 
 export async function saveHistory(redis: Redis, items: readonly HistPost[]): Promise<number> {

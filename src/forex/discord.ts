@@ -14,7 +14,7 @@
  * pass takes a trade when the price comes to one of them and the other side gets absorbed there (fast.ts →
  * `postedLevelSignal`). Paper only, like every trade here.
  */
-import { KSTUDY, kojiroGate, loadCard, saveHistory } from './kojiro-study';
+import { KSTUDY, callRiskFor, kojiroGate, loadCard, saveHistory } from './kojiro-study';
 import { sessionOf } from './montecarlo';
 import { nyOffsetMs } from './ny-time';
 import type Redis from 'ioredis';
@@ -60,6 +60,15 @@ export const DISCORD_COPY = {
    * only; `DISCORD_ELITE_CHANNELS` = a comma list to replace the default. */
   eliteChannels: (process.env.DISCORD_ELITE_CHANNELS ?? '1563800424769916968').split(',').map((x) => x.trim()).filter(Boolean),
   eliteLive: process.env.DISCORD_ELITE_LIVE !== 'off',
+  /** v28.8 (owner: "he also has a 1k balance, can we perform like this"): his SIGNAL calls (not the level trades) skip the
+   * account's $ loss cap and risk this % of the account on their safety stop (5% ≈ $50 on $1k ≈ 0.34 NQ units on a
+   * 148-point stop); `callRiskPctProven` once his graded record (kojiro-study.ts, best hold) shows `provenMinN`+ calls at
+   * ≥ `provenMinAvgR` a call with profit factor ≥ `provenMinPf`. Still inside `riskPct` (all copies together). */
+  callRiskPct: num(process.env.DISCORD_CALL_RISK_PCT, 5),
+  callRiskPctProven: num(process.env.DISCORD_CALL_RISK_PCT_PROVEN, 10),
+  provenMinN: 15,
+  provenMinAvgR: 0.1,
+  provenMinPf: 1.3,
   seenTtlSec: 7 * 86_400,
   logKey: 'fx:discord:log',
   logMax: 200,
@@ -398,7 +407,7 @@ export interface CopyLogRow {
 
 /** What the practice account offers the copier (Practice implements it). */
 export interface CopyBook {
-  copyOpen(r: { pair: string; side: 1 | -1; stopNamed: number | null; hisPx: number | null; strategy: string; ref: string; riskPct: number; leverage: number; profitLock: boolean; stop?: number; target?: number | null; copyLock?: 'copy' | 'tight'; priority?: boolean }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; error?: string; entry?: number; stop?: number; riskUsd?: number; marginUsd?: number }>;
+  copyOpen(r: { pair: string; side: 1 | -1; stopNamed: number | null; hisPx: number | null; strategy: string; ref: string; riskPct: number; leverage: number; profitLock: boolean; stop?: number; target?: number | null; copyLock?: 'copy' | 'tight'; priority?: boolean; callPct?: number }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; error?: string; entry?: number; stop?: number; riskUsd?: number; marginUsd?: number }>;
   copyClose(m: { strategy: string; pair: string | null; side: 1 | -1 | 0 }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; closed: string[]; pending: number }>;
   copyBreakeven(m: { strategy: string; pair: string | null }, acct: 'bot' | 'cbot'): Promise<{ ok: boolean; moved: string[] }>;
   /** v28.5: his "TP x" post → the target of his open copies on that market (x may be short-form) */
@@ -457,7 +466,9 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
     // that made the most on his past calls (kojiro-study.ts)
     const lv = (await loadLevels(redis, now))[sig.pair];
     const px = sig.price;
-    const gate = kojiroGate(await loadCard(redis), {
+    const card = await loadCard(redis);
+    const size = callRiskFor(card);
+    const gate = kojiroGate(card, {
       side: sig.side,
       session: sessionOf(s.at),
       bias: lv?.bias ? (lv.bias === sig.side ? 1 : -1) : 0,
@@ -472,9 +483,9 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
     const flip = await Promise.resolve(book.copyClose({ strategy, pair: sig.pair, side: (-sig.side) as 1 | -1 }, acctForPair(sig.pair))).catch(() => null);
     const flipped = flip?.closed?.length ? `closed his earlier ${flip.closed.join(', ')} (he turned the other way); ` : '';
     const tgt = sig.target !== null ? (sig.price !== null ? expandPrice(sig.target, sig.price) : sig.target) : null;
-    const r = await book.copyOpen({ pair: sig.pair, side: sig.side, stopNamed: sig.stop, hisPx: sig.price, strategy, ...(tgt !== null ? { target: tgt } : {}), ref: copyRef(strategy, sig.pair, s.id), riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: gate.plan !== 'none', ...(gate.plan === 'tight' ? { copyLock: 'tight' as const } : {}), ...(eliteGo ? { priority: true } : {}) }, acctForPair(sig.pair));
+    const r = await book.copyOpen({ pair: sig.pair, side: sig.side, stopNamed: sig.stop, hisPx: sig.price, strategy, ...(tgt !== null ? { target: tgt } : {}), ref: copyRef(strategy, sig.pair, s.id), riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: gate.plan !== 'none', ...(gate.plan === 'tight' ? { copyLock: 'tight' as const } : {}), ...(eliteGo ? { priority: true } : {}), callPct: size.pct }, acctForPair(sig.pair));
     const tag = eliteGo ? `his ELITE-channel call${!gate.take ? ` — taken past his record (${gate.why})` : ''}: ` : full ? `his FULL-conviction call${sig.event ? ` (${sig.event})` : ''}${!gate.take ? ` — taken past his record (${gate.why})` : ''}: ` : '';
-    const what = flipped + (r.ok ? `${tag}copied ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair} at ${r.entry} (his ${sig.price ?? 'market'}), safety stop ${r.stop}${tgt !== null ? `, his target ${tgt}` : ''}, risking $${r.riskUsd}` : `${tag}not copied: ${r.error}`);
+    const what = flipped + (r.ok ? `${tag}copied ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair} at ${r.entry} (his ${sig.price ?? 'market'}), safety stop ${r.stop}${tgt !== null ? `, his target ${tgt}` : ''}, risking $${r.riskUsd} (${size.why})` : `${tag}not copied: ${r.error}`);
     return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: r.ok, what });
   }
   if (sig.kind === 'close') {
@@ -518,7 +529,7 @@ export async function catchUpFullCalls(redis: Redis, book: CopyBook, now = Date.
     if ((await redis.set(`fx:discord:fullcatch:${row.id}`, '1', 'EX', 7 * 86_400, 'NX')) !== 'OK') continue;
     const strategy = copyStrategy(row.source);
     await savePosted(redis, sig.pair, { bias: sig.side, dol: null, biasT: row.t, source: row.source, until: sessionEnd(row.t) }).catch(() => undefined);
-    const r = await book.copyOpen({ pair: sig.pair, side: sig.side, stopNamed: sig.stop, hisPx: null, strategy, ref: copyRef(strategy, sig.pair, row.id), riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: DISCORD_COPY.profitLock, ...(eliteRow ? { priority: true } : {}) }, acctForPair(sig.pair));
+    const r = await book.copyOpen({ pair: sig.pair, side: sig.side, stopNamed: sig.stop, hisPx: null, strategy, ref: copyRef(strategy, sig.pair, row.id), riskPct: DISCORD_COPY.riskPct, leverage: DISCORD_COPY.leverage, profitLock: DISCORD_COPY.profitLock, ...(eliteRow ? { priority: true } : {}), callPct: callRiskFor(await loadCard(redis)).pct }, acctForPair(sig.pair));
     if (!r.ok && !final) {
       await redis.del(`fx:discord:fullcatch:${row.id}`).catch(() => 0); // e.g. no live price yet → the next try takes it
       continue;

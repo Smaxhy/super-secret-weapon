@@ -758,6 +758,16 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.8 his SIGNAL calls get their own size: 5% of the account, 10% once his record proves it (Oct 30, owner: "he also has a
+1k balance, are we able to perform like this" → "what do you think is best")
+Under the $20 cap a copy of his NQ call on the 0.5% safety stop (~148 points) was ~0.14 units ≈ $0.14 a point: his +130-point
+long made ~$18 for us vs ~$260 on his 1 MNQ. discord.ts `DISCORD_COPY.callRiskPct` 5 (env `DISCORD_CALL_RISK_PCT`) /
+`callRiskPctProven` 10 (`DISCORD_CALL_RISK_PCT_PROVEN`) + kojiro-study.ts `callRiskFor(card)` (pure): 10% only when his graded
+record under the hold the bot uses (card.plans[card.best]) has 15+ calls at ≥ +0.1R a call with PF ≥ 1.3, else 5%.
+handleSignal / catchUpFullCalls pass `callPct` → practice `copyOpen` risks that % of the account past the account's $ cap
+and risk mode (still inside `riskPct` 20 for all copies together, fee checks, safety stop, copy lock). 5% ≈ $50 on $1k ≈
+0.34 units ≈ $44 on a 130-point move; a stopped call ≈ −$50. Level trades (lab only) and the bot's own strategies keep the
+$20 cap. Log line says which size and why. tests in forex-discord (+1).
 ## v28.7 the coin bot trades its risk mode's size again — no $20 cap; the open LINK short re-sized to 8% (Oct 29, owner:
 "isn't this too little, only 1%?" → "it's still on turbo, shouldn't it be … not even 8%? raise it and change the current active
 trade as if it was 8% too")

@@ -2628,7 +2628,8 @@ export class Practice {
       // v27.95 (owner: "cut it all on 20"): his calls too — the stop + the round-trip fee lose at most the account's $ cap
       const capUsd = BOT.maxLossUsdByAcct[acct];
       // v28.7: on an account without a $ cap a copy risks at most the risk mode's base % (not his 20% budget)
-      const riskUsd = Math.min((v.equityUsd * left) / 100, capUsd ? capRiskUsd(capUsd, stopDist / entry, (2 * feePctPerSide(inst)) / 100) : (v.equityUsd * limitsFor(a.riskMode).riskPct) / 100);
+      // v28.8: his SIGNAL calls (`callPct`) have their own size — that % of the account, past the $ cap and the risk mode
+      const riskUsd = Math.min((v.equityUsd * left) / 100, r.callPct ? (v.equityUsd * r.callPct) / 100 : capUsd ? capRiskUsd(capUsd, stopDist / entry, (2 * feePctPerSide(inst)) / 100) : (v.equityUsd * limitsFor(a.riskMode).riskPct) / 100);
       // v27.72: the venue fee must leave the trade a chance (≤ 25% of its stop) and stay small next to the account (≤ 1%)
       const feePx = feePxOf(inst, entry);
       if (feePx > DISCORD_COPY.maxFeeShare * stopDist) return { ok: false, error: `the round-trip fee (${+feePx.toPrecision(3)} a unit) is ${Math.round((feePx / stopDist) * 100)}% of its ${+stopDist.toPrecision(3)} stop — can't win after fees` };
