@@ -49,3 +49,15 @@ describe('profit lock on the chart candle', () => {
     expect(a.open).toHaveLength(0);
   });
 });
+
+describe('v28.12 step lock on the bot account', () => {
+  it('a trade whose row picked the step lock widens its trail past +1R', () => {
+    const a = newAccount(1000);
+    a.open = [short({ lockKind: 'step' })];
+    tick(a, { ETHUSD: q([m1]) }, H + 2 * M);
+    const lock = a.open[0]!.lock!;
+    expect(lock.gap).toBeCloseTo(6, 1); // tight: 15% of the 40 to the target
+    expect(lock.tight!.gap).toBeCloseTo(10, 1); // past +1R (20 below the entry): a quarter of it
+    expect(lock.tight!.from).toBeLessThan(1981);
+  });
+});

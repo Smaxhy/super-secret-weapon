@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.12 step lock on coins: tight until +1R, then a wider trail (Oct 30, owner: "still going for short profits" → chose
+"tight until +1R, then loose", lab-tested first)
+VPS read 09:32 UTC (9596e0f): coin bot 5 closes since 02:00, −$20.09 — the two pivot_ladder:4h longs closed on their locked
+stop at the 08:00 candle close (+0.03R / 0R; the lab's same trades +0.09 / +0.10R trail → the bot now matches the lab, the
+tight lock itself banks small); the two round_break:1h shorts (opened 02:11 / 02:37, late full-run entries) were closed
+'signal' at 03:08 when the lab's copies trailed out at +0.06 / +0.11R — at the bot's later entry that price was −0.35 /
+−0.54R. profit-lock.ts `STEP_LOCK` {atFrac .15, gapFrac .15, keepFrac .05, wideAtR 1, wideGapFrac .25} + `LockCfg`:
+`lockPlan` puts the wider gap in `plan.tight` from entry + 1 starting-stop distance (lockedStop never loosens the stop);
+`LockKind` 'step'. lab.ts `FX_CONFIG.lockChoice.step` {fx false, crypto true}: coin rows are simulated with it too and
+`preferStep` uses it when its FIRST 70% score (avgR × √n, ≥ 40 trades and ≥ ¼ of tight's) is ≥ the row's lock pick (kept
+while within 5% / 0.1). Live: `lockKind` 'step' → practice uses STEP_LOCK; no spike sale on such trades. Badge "step
+lock". Expect one coin re-pick event. tests/forex-step-lock (2), forex-lock-bars (+1).
 ## v28.11 the gates that kept lab winners out of the coin bot (Oct 30, owner's paper screen: donchian20:1h +23.8R / 136,
 keltner:15m +22.9R, pivot_bounce:1h +20.5R … "do whatever you need to turn these lab results into live results")
 VPS read 02:14 UTC: the coin bot opened 9 of 171 tradeable signals in 24 h; shadow book 179 refusals, 77% would have won,

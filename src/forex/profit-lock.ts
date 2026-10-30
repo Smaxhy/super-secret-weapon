@@ -46,11 +46,19 @@ export const COPY_LOCK = {
  * (lab.ts): 'tight' (PROFIT_LOCK), 'loose' (arms at a quarter of the way to the target, trails a quarter behind, a
  * quarter → 15% once 60% of the way there — the Kojiro copy lock) or 'off' (stop / target / the strategy's own exits only).
  */
-export type LockKind = 'tight' | 'loose' | 'off';
-export const LOCK_KINDS: readonly LockKind[] = ['tight', 'loose', 'off'];
+export type LockKind = 'tight' | 'loose' | 'off' | 'step';
+export const LOCK_KINDS: readonly LockKind[] = ['tight', 'loose', 'off', 'step'];
 export const LOOSE_LOCK = { on: true, atFrac: 0.25, gapFrac: 0.25, keepFrac: 0.03, tightAtFrac: 0.6, tightGapFrac: 0.15 };
+/**
+ * v28.12 (owner: "still going for short profits" → chose "tight until +1R, then loose"): arms and trails like the tight
+ * lock, but once the best price is `wideAtR` (1) starting-stop distances its way the trail widens to `wideGapFrac`
+ * (a quarter of the target distance, the loose lock's gap — ≈ 0.5R on a 2R target), so a trade that is clearly running
+ * gets room. The stop never moves back: a wider gap only means it follows more slowly.
+ */
+export const STEP_LOCK = { on: true, atFrac: 0.15, gapFrac: 0.15, keepFrac: 0.05, wideAtR: 1, wideGapFrac: 0.25 };
+export type LockCfg = typeof PROFIT_LOCK & { tightAtFrac?: number; tightGapFrac?: number; wideAtR?: number; wideGapFrac?: number };
 /** the lock settings of a kind ('off' → null). Pure. */
-export const lockCfgOf = (k: LockKind | undefined): (typeof PROFIT_LOCK & { tightAtFrac?: number; tightGapFrac?: number }) | null => (k === 'off' ? null : k === 'loose' ? LOOSE_LOCK : PROFIT_LOCK);
+export const lockCfgOf = (k: LockKind | undefined): LockCfg | null => (k === 'off' ? null : k === 'loose' ? LOOSE_LOCK : k === 'step' ? STEP_LOCK : PROFIT_LOCK);
 
 export interface LockPlan {
   /** the price that arms the lock */
@@ -59,7 +67,7 @@ export interface LockPlan {
   to: number;
   /** how far the stop trails behind the best price once armed (price) */
   gap: number;
-  /** v27.61: once the best price passes `from`, the trail tightens to `gap` (price) */
+  /** v27.61: once the best price passes `from`, the trail tightens to `gap` (price); v28.12 step lock: widens to it */
   tight?: { from: number; gap: number };
 }
 
@@ -67,7 +75,7 @@ export interface LockPlan {
  * The lock for one trade, or null (no target and no usable stop, or costs so large the locked stop would not sit
  * between the entry and the arming price). `costPx` = what a close costs on top of the price (spread / slippage).
  */
-export function lockPlan(side: 1 | -1, entry: number, stop0: number | null, target0: number | null, costPx: number, cfg: typeof PROFIT_LOCK & { tightAtFrac?: number; tightGapFrac?: number } = PROFIT_LOCK): LockPlan | null {
+export function lockPlan(side: 1 | -1, entry: number, stop0: number | null, target0: number | null, costPx: number, cfg: LockCfg = PROFIT_LOCK): LockPlan | null {
   if (!Number.isFinite(entry) || entry <= 0) return null;
   let d = NaN;
   if (target0 !== null && Number.isFinite(target0) && side * (target0 - entry) > 0) d = Math.abs(target0 - entry);
@@ -78,6 +86,9 @@ export function lockPlan(side: 1 | -1, entry: number, stop0: number | null, targ
   if (side * (at - to) <= 0) return null;
   const plan: LockPlan = { at, to, gap: cfg.gapFrac * d };
   if (cfg.tightAtFrac !== undefined && cfg.tightGapFrac !== undefined) plan.tight = { from: entry + side * cfg.tightAtFrac * d, gap: cfg.tightGapFrac * d };
+  else if (cfg.wideAtR !== undefined && cfg.wideGapFrac !== undefined && stop0 !== null && Number.isFinite(stop0) && side * (entry - stop0) > 0) {
+    plan.tight = { from: entry + side * cfg.wideAtR * Math.abs(entry - stop0), gap: cfg.wideGapFrac * d };
+  }
   return plan;
 }
 
@@ -86,7 +97,7 @@ export function lockPlan(side: 1 | -1, entry: number, stop0: number | null, targ
  * locked stop sits past entry + spread + the round-trip fee; when that is beyond the normal arming price, the lock
  * arms one trail-gap further out instead of not at all. The lab engine keeps `lockPlan` (fees are taken from R there).
  */
-export function lockPlanNet(side: 1 | -1, entry: number, stop0: number | null, target0: number | null, halfPx: number, feePx: number, cfg: typeof PROFIT_LOCK & { tightAtFrac?: number; tightGapFrac?: number } = PROFIT_LOCK): LockPlan | null {
+export function lockPlanNet(side: 1 | -1, entry: number, stop0: number | null, target0: number | null, halfPx: number, feePx: number, cfg: LockCfg = PROFIT_LOCK): LockPlan | null {
   const cost = Math.max(0, halfPx) + Math.max(0, feePx);
   const plan = lockPlan(side, entry, stop0, target0, cost, cfg);
   if (plan || !(feePx > 0)) return plan;

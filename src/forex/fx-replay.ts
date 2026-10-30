@@ -34,7 +34,7 @@ export interface ReplayPick {
   exit: ExitKind;
   entry: EntryKind;
   /** v28.6: its profit lock when not the tight one */
-  lock?: 'loose' | 'off';
+  lock?: 'loose' | 'off' | 'step';
   verdict: Row['verdict'];
   /** the bot trades it now */
   live: boolean;

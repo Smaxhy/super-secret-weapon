@@ -90,8 +90,11 @@ export const FX_CONFIG = {
    * (fills 84–96% of the signals; confirm entries fill 23–50% and earned least); `chooseEntry` still picks per row on the
    * FIRST 70% only, so a row switches only where it tested better. Forex stays market until its own numbers are read. */
   liveEntries: { fx: false, crypto: true } as Record<'fx' | 'crypto', boolean>,
-  /** v28.6: each row picks its profit lock (tight / loose / off) on its FIRST 70% (profit-lock.ts LockKind) */
-  lockChoice: { on: true },
+  /** v28.6: each row picks its profit lock (tight / loose / off) on its FIRST 70% (profit-lock.ts LockKind).
+   * v28.12 (owner: "still going for short profits" → "tight until +1R, then loose"): `step` per desk — the step lock
+   * (STEP_LOCK) is tested on every row there and used when its FIRST 70% scores at least as well as the row's pick
+   * (`preferStep`; last run's step pick kept while within 5% / 0.1). Coins only for now. */
+  lockChoice: { on: true, step: { fx: false, crypto: true } as Record<'fx' | 'crypto', boolean> },
   /** v20.1 strict mode (owner: "I want to win, make it trade only what will work with proper research"):
    * mode (v20.4, below) — which rows the bot may trade; in 'edge' / 'quality' the always-on four and the rolling
    *   picker's list no longer let a row in on their own;
@@ -314,7 +317,7 @@ export interface Row {
   /** v17.11: the same filter + exit WITHOUT the owner's profit lock (what the lock changed) */
   noLock?: { inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number };
   /** v28.6: the profit lock it trades with when not the tight one, and every lock it was tested with */
-  lock?: 'loose' | 'off';
+  lock?: 'loose' | 'off' | 'step';
   lockVariants?: Array<{ lock: LockKind; inN: number; inAvgR: number; outN: number; outAvgR: number; outPf: number | null; allN: number }>;
   /** v18: the deflated Sharpe of its unseen trades (honest.ts) — P(the edge is real) given every row graded on them */
   stats?: RowStat;
@@ -557,6 +560,20 @@ export const PICK_LINE_SLACK_MS = 86_400_000;
  * pick made while those days were in-sample must not steer the variant graded on them now that they are unseen. A
  * forward move is harmless. The old unstamped format (and garbage) → nothing kept: one re-pick on deploy. Pure.
  */
+/**
+ * v28.12: the step lock replaces the row's lock pick when its FIRST 70% scores at least as well (score = avg R × √n,
+ * enough trades: ≥ 40 and ≥ a quarter of the tight lock's); a row already on it keeps it while within 5% (or 0.1) of
+ * the pick, so a near-tie can't flip the bot's lock every hour. Pure.
+ */
+export function preferStep(v: ReadonlyArray<{ key: LockKind; inSample: RStats }>, pick: LockKind, step: RStats, wasStep: boolean): LockKind {
+  const base = v.find((x) => x.key === 'tight');
+  const cur = v.find((x) => x.key === pick);
+  if (!base || !cur || !(step.n >= Math.max(40, base.inSample.n * 0.25))) return pick;
+  const sc = (r: RStats) => r.avgR * Math.sqrt(Math.max(0, r.n));
+  const need = sc(cur.inSample) - (wasStep ? Math.max(0.1, Math.abs(sc(cur.inSample)) * 0.05) : 0);
+  return sc(step) >= need ? 'step' : pick;
+}
+
 export function prevPicks(raw: string | null | undefined, tf: string, oosFrom: number): Record<string, { f?: FilterKind; e?: ExitKind; n?: EntryKind; l?: LockKind }> {
   let s: Partial<ChosenStore> | null;
   try {
@@ -1399,7 +1416,9 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
     let lockVariants: Row['lockVariants'];
     if (s.id !== 'random' && DEFAULT_SIM.profitLock) {
       const byLock = new Map<LockKind, Bucket>([['tight', v]]);
-      for (const k of FX_CONFIG.lockChoice.on ? (['loose', 'off'] as const) : (['off'] as const)) {
+      const stepOn = FX_CONFIG.lockChoice.on && FX_CONFIG.lockChoice.step[seriesTf[0]?.inst.kind === 'crypto' ? 'crypto' : 'fx'];
+      const others: LockKind[] = FX_CONFIG.lockChoice.on ? (stepOn ? ['loose', 'off', 'step'] : ['loose', 'off']) : ['off'];
+      for (const k of others) {
         const b: Bucket = { trades: [], perPair: [] };
         for (const se of seriesTf) {
           const sigs = sigsBy.get(se)!;
@@ -1415,7 +1434,10 @@ export async function evaluateTf(seriesTf: readonly Series[], tf: Timeframe, o: 
       noLock = vRow(lStats.find((x) => x.key === 'off')!);
       if (FX_CONFIG.lockChoice.on) {
         lockVariants = lStats.map((x) => ({ lock: x.key, ...vRow(x) }));
-        lockK = chooseVariant(lStats.map((x) => ({ key: x.key, inSample: x.inSample })), 'tight' as LockKind, 40, prev?.l);
+        const cands = lStats.filter((x) => x.key !== 'step').map((x) => ({ key: x.key, inSample: x.inSample }));
+        lockK = chooseVariant(cands, 'tight' as LockKind, 40, prev?.l === 'step' ? undefined : prev?.l);
+        const st = lStats.find((x) => x.key === 'step');
+        if (st) lockK = preferStep(cands, lockK, st.inSample, prev?.l === 'step');
         if (lockK !== 'tight') {
           v = byLock.get(lockK)!;
           ch = lStats.find((x) => x.key === lockK)!;

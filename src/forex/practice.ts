@@ -24,7 +24,7 @@ import type { Tier } from './conviction';
 import { SNIPER } from './sniper';
 import { parsePnlRow, pnlRowOf, type PnlRow } from './pnl';
 import { liveFeed } from './live-feed';
-import { COPY_LOCK, lockedStop, lockPlanNet, LOOSE_LOCK, PROFIT_LOCK, type LockPlan } from './profit-lock';
+import { COPY_LOCK, lockedStop, lockPlanNet, LOOSE_LOCK, PROFIT_LOCK, STEP_LOCK, type LockPlan } from './profit-lock';
 import { FINANCING, rollsBetween, swapGain } from './financing';
 import type { LiveTick } from './pyth';
 import { tradesNews } from './strategies';
@@ -301,7 +301,7 @@ export interface PracticePosition {
   /** v27.66: a Kojiro copy held with the tight trailing stop (his record, or news right now — `tightWhy`) */
   copyLock?: 'copy' | 'tight';
   /** v28.6: trades with the loose profit lock / no lock (its strategy's lab row picked it) */
-  lockKind?: 'loose' | 'off';
+  lockKind?: 'loose' | 'off' | 'step';
   tightWhy?: string;
   stopMovedT?: number | null;
   /** v17.12: phone alerts already sent (1 = profit locked, 2 = two thirds of the way to the target) */
@@ -998,6 +998,7 @@ export function lockBarMs(p: Pick<PracticePosition, 'ref' | 'tf'>): number {
 export function spikeExitFor(p: PracticePosition, q: Pick<Quote, 'mid' | 'bars'>, mids: Record<string, number>, half: number, now: number): string | null {
   if (!SPIKE_EXIT.on || !p.ref || p.tf === 'signal' || !(p.riskUsd0 && p.riskUsd0 > 0) || !(p.units > 0)) return null;
   // v28.6: a strategy whose lab row picked the loose lock / no lock was graded letting its winners run — no early sale
+  // (v28.12: the step lock too — its point is giving a trade past +1R room)
   if (p.lockKind) return null;
   const per = usdPerPx(p.pair, { ...mids, [p.pair]: mids[p.pair] ?? p.entry });
   const d0 = per > 0 ? p.riskUsd0 / (p.units * per) : 0;
@@ -1100,7 +1101,7 @@ export function fillOrder(a: PracticeAccount, o: RestingOrder, fill: number, mid
     ...(o.maxBars != null ? { maxBars: o.maxBars } : {}),
     ...(o.exitWhen ? { exitWhen: o.exitWhen } : {}),
     ...(riskUsd0 > 0 ? { riskUsd0 } : {}),
-    ...(o.lockKind === 'off' ? { lock: null, lockKind: 'off' as const } : o.lockKind === 'loose' ? { lockKind: 'loose' as const } : {}),
+    ...(o.lockKind === 'off' ? { lock: null, lockKind: 'off' as const } : o.lockKind === 'loose' || o.lockKind === 'step' ? { lockKind: o.lockKind } : {}),
   });
   return null;
 }
@@ -1138,8 +1139,8 @@ export function tick(a: PracticeAccount, quotes: Record<string, Quote>, now: num
       // v27.61: Kojiro's calls (no target) get the looser copy lock — wide early, tight once well in profit
       // v28.5: his own calls keep the copy lock when he names a target too (the level trades — strategy …_levels — don't)
       const copy = p.tf === 'signal' && (p.target === null || !p.strategy?.endsWith('_levels'));
-      // v28.6: a strategy whose lab row picked the loose lock trades with it
-      const cfg = p.lockKind === 'loose' ? LOOSE_LOCK : copy && p.copyLock !== 'tight' ? COPY_LOCK : PROFIT_LOCK;
+      // v28.6: a strategy whose lab row picked the loose lock trades with it (v28.12: or the step lock)
+      const cfg = p.lockKind === 'loose' ? LOOSE_LOCK : p.lockKind === 'step' ? STEP_LOCK : copy && p.copyLock !== 'tight' ? COPY_LOCK : PROFIT_LOCK;
       p.lock = a.profitLock !== false && cfg.on ? lockPlanNet(p.side, p.entry, p.stop, p.target, half, feePxOf(inst, p.entry), cfg) : null;
       if (mv) mv.moved = true;
     }
@@ -1492,7 +1493,7 @@ export interface LabOpenTrade {
   /** v27.27: risk this % of the account on the tested stop (a proven strategy while only proven ones trade) */
   allIn?: number;
   /** v28.6: the profit lock its lab row picked when not the tight one */
-  lockKind?: 'loose' | 'off';
+  lockKind?: 'loose' | 'off' | 'step';
   ref: string;
   strategy: string;
   tf?: string;
@@ -1603,7 +1604,7 @@ export interface ExitPlan {
   maxBars?: number | null;
   exitWhen?: string | null;
   /** v28.6: the profit lock its strategy's lab row picked when not the tight one ('off' = none) */
-  lockKind?: 'loose' | 'off' | null;
+  lockKind?: 'loose' | 'off' | 'step' | null;
 }
 
 export interface OpenReq extends ExitPlan { /** v20: a market desk's learning trade */ desk?: boolean; /** v27.26 */ allIn?: boolean; pair: string; side: 1 | -1; marginUsd: number; leverage: number; stop?: number | null; target?: number | null; strategy?: string; ref?: string; riskPct?: number; conviction?: Conviction | null; sniper?: { votes: number; of: number } | null; bankedUsd?: number; /** v17: refuse a price older than this (default 30 min) */ maxQuoteAgeMs?: number; /** v17: an hourly / 4-hour trade may use a source's declared delay (Yahoo's metals) on top of the limit */ feedDelayOk?: boolean; /** v17: 1 R of a re-opened trade (else measured on this fill) */ riskUsd0?: number; /** v27.45: this trade's own $ loss cap */ maxLossUsd?: number; /** v27.46: no profit lock on this trade (a Discord copy follows its caller's exit) */ noLock?: boolean; /** v27.66 */ copyLock?: 'copy' | 'tight' }
@@ -2139,7 +2140,7 @@ export class Practice {
         ...(req.maxBars != null ? { maxBars: req.maxBars } : {}),
         ...(req.exitWhen ? { exitWhen: req.exitWhen } : {}),
         ...(req.ref && riskUsd0 > 0 ? { riskUsd0 } : {}),
-        ...(req.lockKind === 'off' ? { lock: null, lockKind: 'off' as const } : req.noLock ? { lock: null } : req.lockKind === 'loose' ? { lockKind: 'loose' as const } : {}),
+        ...(req.lockKind === 'off' ? { lock: null, lockKind: 'off' as const } : req.noLock ? { lock: null } : req.lockKind === 'loose' || req.lockKind === 'step' ? { lockKind: req.lockKind } : {}),
         ...(req.copyLock === 'tight' ? { copyLock: 'tight' as const } : {}),
       });
       // v27.30 (owner: "a notification when it enters a trade"): bot trades only (they carry a lab ref)

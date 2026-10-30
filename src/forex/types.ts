@@ -193,5 +193,5 @@ export interface Trade {
   maxBars?: number;
   exitWhen?: string;
   /** v28.6: the profit lock this trade ran with when it isn't the default tight one (profit-lock.ts) */
-  lockKind?: 'loose' | 'off';
+  lockKind?: 'loose' | 'off' | 'step';
 }
