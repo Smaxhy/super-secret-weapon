@@ -758,6 +758,18 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.11 the gates that kept lab winners out of the coin bot (Oct 30, owner's paper screen: donchian20:1h +23.8R / 136,
+keltner:15m +22.9R, pivot_bounce:1h +20.5R … "do whatever you need to turn these lab results into live results")
+VPS read 02:14 UTC: the coin bot opened 9 of 171 tradeable signals in 24 h; shadow book 179 refusals, 77% would have won,
++81.6R (daily cap +29.7R — old, cap off since v27.49; same-side cap +15.6R; late entries +14.3R; per-coin record +12.1R;
+world-event pause the only one that saved money, −10.5R). (1) `BOT.liveBrake` since → 2026-10-30 02:20 UTC (both bots) and
+`LEARN.since` (learner.ts, the same time): the bot's own trades before v28.10 ran a different exit than the lab graded, so
+they no longer pause / halve / drop a strategy. (2) `BOT.maxSameSide.cbot` 1 → 2. (3) `FX_CONFIG.strict.coinPositive` {on,
+minN 30, minAvgR 0, minPf 1.1} + `coinPositive(cell)` (lab.ts): on coins `marketRecOf` also passes a coin where the strategy's
+own unseen record is positive (the strict `cellPass` bar blocked donchian20 / donchian55 / round_break on coins at
++0.07…+0.17R, PF 1.18–1.36); `marketRec.strict` = cellPass → a very-sure (big, `allIn`) trade still needs the strict bar.
+Not changed: 15m charts stay lab-only (owner, v27.43; keltner:15m is not graded Edge / Maybe), the late-entry drift check,
+the world-event pause. tests: forex-learner (+1), forex-market-rec (+1), forex-strict, forex-proven-only.
 ## v28.10 the bot's profit lock trails on its chart's candles, like the lab (Oct 30, owner: "it sells immediately")
 VPS read 02:04 UTC: coin bot 17 closes in 72 h, −$20.47; 14 stops of which 11 were locked-profit stops at +0.03…+0.17R
 after 1–59 min (2 spike sales, 3 full −1R losses). The 5 closes with a lab twin: bot +0.21R a trade vs the lab's SAME trades

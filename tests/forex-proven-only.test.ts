@@ -171,7 +171,7 @@ describe('v27.28 tight trail once in profit (owner: "trail its SL VERY tightly")
 describe('v27.44 the coin bot counts a market move once', () => {
   it('at most 2 open trades the same way across the coins (best-tested first); the other way still opens', async () => {
     vi.useFakeTimers({ now: NOW });
-    expect(BOT.maxSameSide.cbot).toBe(1); // v27.97 (was 2) — the rule is tested at 2 below
+    expect(BOT.maxSameSide.cbot).toBe(2); // v27.97 1, v28.11 2 again
     const sameSide = BOT.maxSameSide.cbot;
     BOT.maxSameSide.cbot = 2;
     onTestFinished(() => { BOT.maxSameSide.cbot = sameSide; });

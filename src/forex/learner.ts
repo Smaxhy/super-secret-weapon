@@ -21,6 +21,9 @@ export const LEARN = {
   backAbove: 0.5,
   downSize: 0.5,
   days: 120,
+  /** v28.11: only trades closed after the v28.10 deploy count — before it the bot's profit lock trailed every 1-minute
+   * wiggle, not the lab's candles, so those results can't judge a strategy */
+  since: Date.parse('2026-10-30T02:20:00Z'),
 };
 
 export type LearnState = 'on' | 'down' | 'off';
@@ -48,7 +51,7 @@ export function normCdf(z: number): number {
 export function learnFromLedger(rows: readonly BotLedgerRow[], now: number, prev: Readonly<Record<string, Pick<LearnKey, 'state'>>> = {}): Record<string, LearnKey> {
   const by = new Map<string, number[]>();
   for (const x of rows) {
-    if (x.r === null || !Number.isFinite(x.r) || x.why === LEDGER_WHY.manual || now - x.closedAt > LEARN.days * 86_400_000) continue;
+    if (x.r === null || !Number.isFinite(x.r) || x.why === LEDGER_WHY.manual || now - x.closedAt > LEARN.days * 86_400_000 || x.closedAt < LEARN.since) continue;
     (by.get(x.key) ?? by.set(x.key, []).get(x.key)!).push(Math.max(-LEARN.capR, Math.min(LEARN.capR, x.r)));
   }
   const out: Record<string, LearnKey> = {};

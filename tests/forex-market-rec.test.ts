@@ -67,3 +67,14 @@ describe('v27.21 correction rows', () => {
     expect(days.map((d) => [d.day, d.pnlUsd, d.trades, d.wins])).toEqual([['2026-10-21', -69.37, 1, 1], ['2026-10-22', 79.37, 0, 0]]);
   });
 });
+
+describe('v28.11 coins: a positive record on the coin is enough (the strict bar stays for big trades)', () => {
+  it('passes a coin at +0.1R PF 1.2 on 40 unseen trades, blocks a losing coin and a thin one; forex unchanged', async () => {
+    const { marketRecOf } = await import('../src/forex/lab');
+    const cell = (o: Record<string, unknown>) => ({ pair: 'BTCUSD', n: 40, avgR: 0.1, pf: 1.2, inN: 30, inAvgR: 0.05, mcP: 0.8, ...o }) as never;
+    expect(marketRecOf({ n: 80, pf: 1.2, totalR: 5 }, cell({}), false, 'BTCUSD').ok).toBe(true);
+    expect(marketRecOf({ n: 80, pf: 0.95, totalR: -2 }, cell({ avgR: -0.04, pf: 0.95 }), false, 'SOLUSD').ok).toBe(false);
+    expect(marketRecOf({ n: 20, pf: 1.5, totalR: 3 }, cell({ n: 20 }), false, 'BTCUSD').ok).toBe(false);
+    expect(marketRecOf({ n: 80, pf: 1.2, totalR: 5 }, cell({ pair: 'EURUSD' }), false, 'EURUSD').ok).toBe(false);
+  });
+});

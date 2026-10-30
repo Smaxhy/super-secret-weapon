@@ -108,7 +108,9 @@ export const BOT = {
   /** v27.44 (owner: "make it trade smarter … what it just did is an account drainer"; Oct 25 06:00 UTC it shorted BTC, XRP,
    * SOL, LINK at once — coins move together, so that was one bet placed six times): at most this many open trades (+ resting
    * orders) in the same direction across the whole account; the best-tested signals go first. 0 = no cap. */
-  maxSameSide: { cbot: 1 } as Partial<Record<string, number>>, // v27.97 (owner: "extreme caution"): 2 → 1
+  // v27.97 (owner: "extreme caution"): 2 → 1; v28.11 (owner: "turn the lab results into live results") 1 → 2: the shadow
+  // book scored the "already a sell trade open across the coins" refusals +15.6R (Oct 30)
+  maxSameSide: { cbot: 2 } as Partial<Record<string, number>>,
   /** v27.24 (owner: "every bot can lose but 4 losses in a row is different"): 3 bot losses in a row → half size until a
    * win; 4 → no new trades for `pauseHours` after the last one (a safety rule, not graded — like the VIX brake).
    * v27.25 OFF (owner: "there doesn't have to be a cooling-off system, just a max loss system") — the per-trade loss
@@ -129,7 +131,9 @@ export const BOT = {
   sizeToCapAllIn: { cbot: true, bot: true } as Partial<Record<string, boolean>>,
   /** v27.79: a strategy × chart whose own live trades (closed since `since`, the last `days`) lost money after `minN` of
    * them is paused on that account until those trades are older than `days` — lab evidence alone isn't "sure" */
-  liveBrake: { cbot: { since: Date.parse('2026-10-28T12:00:00Z'), minN: 3, days: 14 }, bot: { since: Date.parse('2026-10-28T13:00:00Z'), minN: 3, days: 14 } } as Partial<Record<string, { since: number; minN: number; days: number }>>,
+  // v28.11: counted from the v28.10 deploy — the live trades before it ran a different exit than the lab tested (the
+  // profit lock trailed every 1-minute wiggle), so they can't judge a strategy
+  liveBrake: { cbot: { since: Date.parse('2026-10-30T02:20:00Z'), minN: 3, days: 14 }, bot: { since: Date.parse('2026-10-30T02:20:00Z'), minN: 3, days: 14 } } as Partial<Record<string, { since: number; minN: number; days: number }>>,
 };
 
 /** v27.79: the live brake for one strategy × chart from its R-ledger rows: paused when `minN`+ trades closed since
@@ -1533,7 +1537,7 @@ export interface LabOpenTrade {
    * `of`; the bot waits while `n < need` (strict mode) */
   agree?: { n: number; of: number; need: number } | null;
   /** v20.4: the strategy's own tested record on this market (`ok` = enough trades, winning); the bot waits while not ok */
-  marketRec?: { n: number; pf: number | null; totalR: number; ok: boolean; /** v27.97 */ why?: string } | null;
+  marketRec?: { n: number; pf: number | null; totalR: number; ok: boolean; /** v27.97 */ why?: string; /** v28.11: it cleared the strict per-market bar (cellPass) — needed for a very-sure (big) trade */ strict?: boolean } | null;
 }
 
 /** v18.4: a resting limit order on the bot account (entries.ts, picked on the first 70%); filled by `tick` against the

@@ -5,6 +5,9 @@ import { simulatePortfolio, type PTrade } from '../src/forex/portfolio';
 import { newAccount, Practice, recordTrade, type PracticeAccount, type PracticePosition, type Quote } from '../src/forex/practice';
 import { ForexLab } from '../src/forex/lab';
 import type { Bar } from '../src/forex/types';
+import { LEARN } from '../src/forex/learner';
+
+LEARN.since = 0; // v28.11: these tests use fixed old dates
 
 const H = 3_600_000;
 const M = 60_000;

@@ -130,6 +130,12 @@ export const FX_CONFIG = {
      * Before, a row approved on all markets together traded every market (Oct 28: trendline_break on BTC −0.04R, ifvg_cisd
      * on BTC +0.03R). */
     marketMustPass: { fx: true, crypto: true } as Record<'fx' | 'crypto', boolean>,
+    /** v28.11 (owner: "turn these lab results into live results"): on coins a strategy whose pooled row already passed
+     * every gate may also trade a coin where its own unseen record there is positive (30+ trades, above 0R, PF 1.1) —
+     * the full `cellPass` bar (+0.1R, PF 1.3, Monte Carlo 95%) is still what a very-sure (big) trade needs. VPS Oct 30:
+     * the strict bar held back donchian20 / donchian55 / round_break on coins at +0.07…+0.17R, PF 1.18–1.36, and the
+     * shadow book scored those refusals +12.1R. A coin where it loses (e.g. SOL round_break −0.04R) stays blocked. */
+    coinPositive: { on: true, minN: 30, minAvgR: 0, minPf: 1.1 },
   },
   /** v18.7 (owner: "we can't fast trade these charts, they take time"): the bot account trades the 1h + 4h charts only.
    * The 15m / 1m charts stay lab-tested (Strategies / Lab) but place no bot trades while this is off.
@@ -756,6 +762,11 @@ export function planChosen(strategy: string, pair: string, rowChosen: boolean, r
  * here (cellPass / trial bars) — its unseen trades here (4+) lose on average. v27.21 (owner: "stupid crypto trades"):
  * three coin mss_sweep 15m shorts lost −$79 on coins where that rule had PF 0.06–0.62; the 15m chart never had this check.
  */
+/** v28.11: a coin where the strategy's own unseen record is positive (`FX_CONFIG.strict.coinPositive`). Pure. */
+export function coinPositive(cell: MarketCell | null | undefined): boolean {
+  const c = FX_CONFIG.strict.coinPositive;
+  return !!cell && c.on && cell.n >= c.minN && cell.avgR > c.minAvgR && (cell.pf ?? 0) >= c.minPf;
+}
 export function marketRecOf(rec: { n: number; pf: number | null; totalR: number } | undefined, cell: MarketCell | null | undefined, ownerTrial = false, pair?: string): NonNullable<LabOpenTrade['marketRec']> {
   const m = FX_CONFIG.strict.market;
   const n = rec?.n ?? 0;
@@ -765,13 +776,13 @@ export function marketRecOf(rec: { n: number; pf: number | null; totalR: number 
   const cellLosing = !proven && !!cell && cell.n >= m.cellMinN && cell.avgR < 0;
   const mkt = pair ?? cell?.pair;
   // v27.97: the strict per-market bar is required (no owner trial / trial / work bar stands in for it)
-  if (mkt && FX_CONFIG.strict.marketMustPass[isCrypto(mkt) ? 'crypto' : 'fx'] && !cellPass(cell)) {
+  if (mkt && FX_CONFIG.strict.marketMustPass[isCrypto(mkt) ? 'crypto' : 'fx'] && !cellPass(cell) && !(isCrypto(mkt) && coinPositive(cell))) {
     const why = cell
       ? `its own record on this market isn't strong enough (${cell.n} unseen trades here, ${cell.avgR >= 0 ? '+' : ''}${cell.avgR.toFixed(2)}R a trade, PF ${cell.pf ?? '—'}, ${cell.inN} before the test line at ${cell.inAvgR >= 0 ? '+' : ''}${cell.inAvgR.toFixed(2)}R, Monte Carlo ${Math.round((cell.mcP ?? 0) * 100)}%; needs 30+ at +0.1R, PF 1.3, positive before the line, 95%)`
       : 'no tested record of its own on this market';
     return { n, pf, totalR: rec?.totalR ?? 0, ok: false, why };
   }
-  return { n, pf, totalR: rec?.totalR ?? 0, ok: ownerTrial || !(losing || cellLosing) };
+  return { n, pf, totalR: rec?.totalR ?? 0, ok: ownerTrial || !(losing || cellLosing), strict: cellPass(cell) };
 }
 /** v27.30 pure: the sessions (montecarlo.ts `sessionOf`) and markets where a row's FIRST 70% (finished before `oosFrom`)
  * lost money on 8+ trades — empty when nothing qualifies or skipping them would drop more than 40% of those trades. */
@@ -1039,7 +1050,8 @@ export function toLabTrade(t: Trade, o: { chosen: boolean; sizeF: number; prio: 
   // v27.85: a Maybe row (forex) is chosen but never all-in — `edge` false; missing = the old behaviour (rows were Edge only)
   // v27.98: big size only when very sure — the row is Edge AND, under the per-market rule, the strategy proved itself on
   // THIS market (marketRec ok = cellPass); the forward check is already part of `chosen`
-  const mkt = !FX_CONFIG.strict.marketMustPass[isCrypto(t.pair) ? 'crypto' : 'fx'] || o.marketRec?.ok === true;
+  // v28.11: a coin may trade on a positive record (`coinPositive`), but the big size still needs the strict bar
+  const mkt = !FX_CONFIG.strict.marketMustPass[isCrypto(t.pair) ? 'crypto' : 'fx'] || (o.marketRec?.ok === true && o.marketRec.strict !== false);
   const allIn = po.on && o.chosen && o.edge !== false && mkt && (o.rowChosen !== false || po.cellAllIn[isCrypto(t.pair) ? 'crypto' : 'fx']) ? po.riskPct : 0;
   return {
     ...(allIn ? { allIn } : {}),

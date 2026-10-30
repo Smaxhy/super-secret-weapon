@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { LEARN, learnFromLedger, normCdf } from '../src/forex/learner';
 import type { BotLedgerRow } from '../src/forex/practice';
 
+const SINCE = LEARN.since;
+LEARN.since = 0; // v28.11: these tests use old timestamps; the cutoff has its own test below
+
 const NOW = Date.UTC(2026, 9, 19);
 const row = (key: string, r: number | null, k: number, why = 1): BotLedgerRow => ({ key, ref: `${key.split(':')[0]}:${key.split(':')[1]}:EURUSD:${k}`, keyT: k, closedAt: NOW - k * 3_600_000, usd: (r ?? 0) * 10, r, why });
 
@@ -55,4 +58,12 @@ describe('v17 restricted learner', () => {
     expect(fresh.state).toBe('down');
     expect(learnFromLedger(rows, NOW, { 'w:1h': { state: 'off' } })['w:1h']!.state).toBe('off');
   });
+
+  it('v28.11: trades closed before the v28.10 deploy (the old 1-minute lock) are not counted', () => {
+    LEARN.since = SINCE;
+    const old = Array.from({ length: 12 }, (_, i): BotLedgerRow => ({ key: 'k:1h', closedAt: SINCE - (i + 1) * 3_600_000, usd: -20, r: -1, ref: `r${i}`, keyT: 0, why: 0 }) as BotLedgerRow);
+    expect(learnFromLedger(old, SINCE + 86_400_000)['k:1h']).toBeUndefined();
+    LEARN.since = 0;
+  });
 });
+
