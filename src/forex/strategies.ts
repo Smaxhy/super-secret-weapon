@@ -9,6 +9,7 @@ import { isCrypto, isFutures, isIndex, type Signal } from './types';
 import { nyOffsetMs } from './ny-time';
 import { absorptionAt, flowOf } from './flow';
 import { strictStopDist } from './exits';
+import { aroon, awesome, connorsRsi, dualThrust, elderRay, fisher, heikinAshi, kama, mfi, trix, vortex } from './ta-extra';
 
 /**
  * v13: a "shock" candle = what a big news release looks like on an hourly chart: range ≥ 2.2× the normal hourly range
@@ -2034,6 +2035,182 @@ export const STRATEGIES: Strategy[] = [
     desc: 'The same level-plus-absorption entry as the Asia-open rule, at any hour — the yardstick that shows whether the Asia timing itself adds anything. Every chart, every market.',
     signal(c, i) {
       return levelAbsorbSignal(c, i, false);
+    },
+  },
+  // ── v28.16: ideas from go-trader's list (richkuo/go-trader) that the lab didn't have yet — graded like every row ──
+  {
+    id: 'heikin_ema',
+    name: 'Heikin-Ashi turn with the 50 EMA',
+    family: 'trend',
+    desc: 'Two Heikin-Ashi candles in a row turn green with no lower wick after a red one, close above the 50 EMA (mirror for shorts); 1.5 ATR stop, trail 2.5 ATR.',
+    signal(c, i) {
+      if (i < 3 || !ok(c.ema50[i]!)) return null;
+      const h = heikinAshi(c);
+      const up = (j: number) => h.c[j]! > h.o[j]! && h.l[j]! >= Math.min(h.o[j]!, h.c[j]!) - 1e-12;
+      const dn = (j: number) => h.c[j]! < h.o[j]! && h.h[j]! <= Math.max(h.o[j]!, h.c[j]!) + 1e-12;
+      if (up(i) && up(i - 1) && h.c[i - 2]! < h.o[i - 2]! && c.close[i]! > c.ema50[i]!) return atrSig(c, i, 1, 1.5, null, { trailAtr: 2.5 });
+      if (dn(i) && dn(i - 1) && h.c[i - 2]! > h.o[i - 2]! && c.close[i]! < c.ema50[i]!) return atrSig(c, i, -1, 1.5, null, { trailAtr: 2.5 });
+      return null;
+    },
+  },
+  {
+    id: 'vortex_cross',
+    name: 'Vortex cross',
+    family: 'trend',
+    desc: 'Vortex VI+ crosses above VI− (14) with ADX over 20 (mirror for shorts); 2 ATR stop, trail 2.5 ATR.',
+    signal(c, i) {
+      const v = vortex(c);
+      if (!ok(v.plus[i]!, v.minus[i]!, v.plus[i - 1]!, v.minus[i - 1]!, c.adx.adx[i]!) || c.adx.adx[i]! < 20) return null;
+      if (crossUp(v.plus, v.minus, i)) return atrSig(c, i, 1, 2, null, { trailAtr: 2.5 });
+      if (crossDn(v.plus, v.minus, i)) return atrSig(c, i, -1, 2, null, { trailAtr: 2.5 });
+      return null;
+    },
+  },
+  {
+    id: 'aroon_trend',
+    name: 'Aroon trend start',
+    family: 'trend',
+    desc: 'Aroon up (25) crosses above Aroon down and is at 70+ (a fresh high in the last 7 bars); mirror for shorts; 2 ATR stop, trail 2.5 ATR.',
+    signal(c, i) {
+      const a = aroon(c);
+      if (!ok(a.up[i]!, a.dn[i]!, a.up[i - 1]!, a.dn[i - 1]!)) return null;
+      if (crossUp(a.up, a.dn, i) && a.up[i]! >= 70) return atrSig(c, i, 1, 2, null, { trailAtr: 2.5 });
+      if (crossDn(a.up, a.dn, i) && a.dn[i]! >= 70) return atrSig(c, i, -1, 2, null, { trailAtr: 2.5 });
+      return null;
+    },
+  },
+  {
+    id: 'kama_trend',
+    name: 'Adaptive moving average cross',
+    family: 'trend',
+    desc: 'The close crosses above Kaufman’s adaptive average (10, 2, 30) while it rises (mirror for shorts); 2 ATR stop, trail 2.5 ATR.',
+    signal(c, i) {
+      const k = kama(c);
+      if (i < 2 || !ok(k[i]!, k[i - 1]!, k[i - 2]!)) return null;
+      if (crossUp(c.close, k, i) && k[i]! > k[i - 2]!) return atrSig(c, i, 1, 2, null, { trailAtr: 2.5 });
+      if (crossDn(c.close, k, i) && k[i]! < k[i - 2]!) return atrSig(c, i, -1, 2, null, { trailAtr: 2.5 });
+      return null;
+    },
+  },
+  {
+    id: 'trix_zero',
+    name: 'TRIX zero cross',
+    family: 'trend',
+    desc: 'Triple-smoothed momentum TRIX(15) crosses above zero, close above the 50 EMA (mirror for shorts); 2 ATR stop, trail 2.5 ATR.',
+    signal(c, i) {
+      const x = trix(c);
+      if (!ok(x[i]!, x[i - 1]!, c.ema50[i]!)) return null;
+      if (x[i - 1]! <= 0 && x[i]! > 0 && c.close[i]! > c.ema50[i]!) return atrSig(c, i, 1, 2, null, { trailAtr: 2.5 });
+      if (x[i - 1]! >= 0 && x[i]! < 0 && c.close[i]! < c.ema50[i]!) return atrSig(c, i, -1, 2, null, { trailAtr: 2.5 });
+      return null;
+    },
+  },
+  {
+    id: 'awesome_zero',
+    name: 'Awesome oscillator zero cross',
+    family: 'trend',
+    desc: 'The awesome oscillator (5 − 34 midpoint averages) crosses zero with the 200 EMA on its side; 2 ATR stop, trail 2.5 ATR.',
+    signal(c, i) {
+      const x = awesome(c);
+      if (!ok(x[i]!, x[i - 1]!, c.ema200[i]!)) return null;
+      if (x[i - 1]! <= 0 && x[i]! > 0 && c.close[i]! > c.ema200[i]!) return atrSig(c, i, 1, 2, null, { trailAtr: 2.5 });
+      if (x[i - 1]! >= 0 && x[i]! < 0 && c.close[i]! < c.ema200[i]!) return atrSig(c, i, -1, 2, null, { trailAtr: 2.5 });
+      return null;
+    },
+  },
+  {
+    id: 'elder_ray',
+    name: 'Elder ray pullback',
+    family: 'reversion',
+    style: 'pullback',
+    desc: 'The 13 EMA rises, bear power (low − EMA) is below zero but rising — the dip is ending (mirror for shorts); 1.5 ATR stop, 2R.',
+    signal(c, i) {
+      const e = elderRay(c);
+      if (i < 2 || !ok(e.ema13[i]!, e.ema13[i - 1]!, e.bear[i]!, e.bear[i - 1]!, e.bull[i]!, e.bull[i - 1]!)) return null;
+      if (e.ema13[i]! > e.ema13[i - 1]! && e.bear[i]! < 0 && e.bear[i - 1]! < e.bear[i]! && e.bear[i - 2]! > e.bear[i - 1]!) return atrSig(c, i, 1, 1.5, 2);
+      if (e.ema13[i]! < e.ema13[i - 1]! && e.bull[i]! > 0 && e.bull[i - 1]! > e.bull[i]! && e.bull[i - 2]! < e.bull[i - 1]!) return atrSig(c, i, -1, 1.5, 2);
+      return null;
+    },
+  },
+  {
+    id: 'fisher_turn',
+    name: 'Fisher transform turn',
+    family: 'reversion',
+    desc: 'The Fisher transform (10) turns up from under −1.5 (crosses its signal), above the 200 EMA (mirror for shorts); 1.5 ATR stop, 1.5R.',
+    signal(c, i) {
+      const { f, sig } = fisher(c);
+      if (!ok(f[i]!, sig[i]!, f[i - 1]!, sig[i - 1]!, c.ema200[i]!)) return null;
+      if (f[i - 1]! < -1.5 && crossUp(f, sig, i) && c.close[i]! > c.ema200[i]!) return atrSig(c, i, 1, 1.5, 1.5);
+      if (f[i - 1]! > 1.5 && crossDn(f, sig, i) && c.close[i]! < c.ema200[i]!) return atrSig(c, i, -1, 1.5, 1.5);
+      return null;
+    },
+  },
+  {
+    id: 'connors_rsi',
+    name: 'Connors RSI dip',
+    family: 'reversion',
+    style: 'pullback',
+    desc: 'Above the 200 EMA, Connors RSI (RSI 3 + streak RSI 2 + 100-bar rank) under 10 (over 90 for shorts); out above the 5 SMA, 3 ATR stop.',
+    signal(c, i) {
+      const x = connorsRsi(c);
+      if (!ok(x[i]!, c.ema200[i]!)) return null;
+      if (c.close[i]! > c.ema200[i]! && x[i]! < 10) return atrSig(c, i, 1, 3, null, { exitWhen: 'aboveSma5', maxBars: 20 });
+      if (c.close[i]! < c.ema200[i]! && x[i]! > 90) return atrSig(c, i, -1, 3, null, { exitWhen: 'aboveSma5', maxBars: 20 });
+      return null;
+    },
+  },
+  {
+    id: 'mfi_turn',
+    name: 'Money flow index turn',
+    family: 'volume',
+    desc: 'Above the 200 EMA, the money flow index (14) climbs back over 20 (under 80 for shorts); needs volume; 1.5 ATR stop, 1.5R.',
+    signal(c, i) {
+      const x = mfi(c);
+      if (!ok(x[i]!, x[i - 1]!, c.ema200[i]!)) return null;
+      if (c.close[i]! > c.ema200[i]! && x[i - 1]! < 20 && x[i]! >= 20) return atrSig(c, i, 1, 1.5, 1.5);
+      if (c.close[i]! < c.ema200[i]! && x[i - 1]! > 80 && x[i]! <= 80) return atrSig(c, i, -1, 1.5, 1.5);
+      return null;
+    },
+  },
+  {
+    id: 'camarilla',
+    name: 'Camarilla L3 / H3 reversal',
+    family: 'reversion',
+    desc: 'The price dips under yesterday’s Camarilla L3 and closes back above it (mirror at H3); stop past L4 / H4, target yesterday’s close.',
+    signal(c, i) {
+      const d = c.prevDay[i];
+      if (!d || !(d.h > d.l)) return null;
+      const r = d.h - d.l;
+      const l3 = d.c - (1.1 * r) / 4;
+      const l4 = d.c - (1.1 * r) / 2;
+      const h3 = d.c + (1.1 * r) / 4;
+      const h4 = d.c + (1.1 * r) / 2;
+      const b = c.bars[i]!;
+      if (b.l < l3 && b.c > l3 && b.l > l4) {
+        const s = levelSig(c, i, 1, l4, null, { maxBars: Math.max(4, Math.round(1440 / c.barMin)) });
+        return s && d.c > b.c ? { ...s, target: d.c } : null;
+      }
+      if (b.h > h3 && b.c < h3 && b.h < h4) {
+        const s = levelSig(c, i, -1, h4, null, { maxBars: Math.max(4, Math.round(1440 / c.barMin)) });
+        return s && d.c < b.c ? { ...s, target: d.c } : null;
+      }
+      return null;
+    },
+  },
+  {
+    id: 'dual_thrust',
+    name: 'Dual Thrust day breakout',
+    family: 'breakout',
+    desc: 'Today’s open ± half the last 4 days’ range: the first close through it follows the move; 1.5 ATR stop, trail 2.5 ATR, out within a day.',
+    signal(c, i) {
+      const lv = dualThrust(c);
+      const x = lv[i];
+      const p = lv[i - 1];
+      if (!x || !p || Math.abs(x.up - p.up) > 1e-12) return null; // the levels just reset (a new day) — wait a bar
+      const maxBars = Math.max(4, Math.round(1440 / c.barMin));
+      if (c.close[i - 1]! <= x.up && c.close[i]! > x.up) return atrSig(c, i, 1, 1.5, null, { trailAtr: 2.5, maxBars });
+      if (c.close[i - 1]! >= x.dn && c.close[i]! < x.dn) return atrSig(c, i, -1, 1.5, null, { trailAtr: 2.5, maxBars });
+      return null;
     },
   },
   // ── control ──

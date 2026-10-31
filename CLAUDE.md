@@ -758,6 +758,21 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.16 funding carry test + 12 strategies from go-trader's list (Oct 31, owner: "build it" after a full read of
+github.com/richkuo/go-trader — Go + Python bot, MIT; its own registry marks ~70 strategies no_edge; NOT installed or run, ideas
+only, written fresh). (1) `src/forex/carry.ts` (pure): hold N coins + short N on the perpetual (price moves cancel), collect
+funding while the 7-day average funding (annualised) ≥ the entry threshold, out under the exit threshold; costs spot 0.1% +
+perp 0.045% + 0.02% half spread per leg per side, 2× perp leverage (liquidation past entry × (1 + 1/lev − 2% mmr) → 1% fee,
+re-entry later); return on capital (spot + margin). Rule picked on the FIRST 70% of the funding history (one rule for every
+coin, `CARRY.entryApy` 5…50 × `exitShare` 0 / 0.5, ≥ 60 days in), graded once on the last 30%; verdict edge = ≥ 26 unseen
+weeks, ≥ 3%/yr unseen, first part positive, half the coins positive. NOT modelled: perp − spot basis, Hyperliquid's own
+funding (we read Binance / Bybit), moving money between accounts. Coin lab `computeRun` → Redis `cm:carry`, report `carry`;
+Lab page card "Funding carry" (`components/FxCarry.tsx`) + a self-test row. TEST ONLY — nothing trades it. (2) 12 strategies
+(`src/forex/ta-extra.ts` indicators, memo per Ctx, causal; families trend / reversion / breakout / volume): `heikin_ema`,
+`vortex_cross`, `aroon_trend`, `kama_trend`, `trix_zero`, `awesome_zero`, `elder_ray`, `fisher_turn`, `connors_rsi`,
+`mfi_turn` (volume only), `camarilla`, `dual_thrust` — every chart / market, graded like every row (provenOnly unchanged:
+only Edge rows trade); the no-peeking test covers them. Expect ~15% longer lab runs until retirement skips the ones with no
+promise. tests/forex-carry (5).
 ## v28.15 the history download no longer waits 6 h between pieces (Oct 30, VPS read 19:35 UTC: the 18:58 run filled the
 newest 180 days of gold / silver / EURUSD, then its 3-min budget ran out; the other 6 pairs had 0 bars — at one run per 6 h
 the back-fill would take ~4 days). databento.ts `everyMs(meta)`: a run every `catchUpHours` 1 while any market is not

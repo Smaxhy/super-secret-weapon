@@ -6,10 +6,11 @@
 import { useApi } from '../hooks/useApi';
 import { Card, Badge } from './ui';
 import { ConvictionCard, DeskCard, EntriesCard, ExitsCard, FiltersCard, FinancingCard, HonestCard, JudgeCard, LockCard, NewsStudyCard, PortfolioCard, RiskCard, RollingCard, SniperCard, type ConvictionReport, type DeskReport, type EntrySummary, type ExitSummary, type FilterSummary, type FinancingSummary, type HonestReport, type JudgeReport, type Ledger, type LockSummary, type NewsStudy, type PortfolioReport, type RiskSummary, type RollReport, type SniperReport } from './FxInsights';
+import { CarryCard, type CarryReport } from './FxCarry';
 import { apiBase } from '../lib/ws';
 
 export interface LabRow { id: string; name: string; family?: string; desc?: string; tf?: string; verdict: 'edge' | 'maybe' | 'no'; outSample?: { n: number; avgR: number } }
-export interface LabReport { honest?: HonestReport; judge?: JudgeReport | null; filters?: FilterSummary[]; lock?: LockSummary; exits?: ExitSummary[]; entries?: EntrySummary[]; financing?: FinancingSummary; news?: NewsStudy | null; rows: LabRow[]; retired?: Array<{ id: string; name: string; why: string }> }
+export interface LabReport { carry?: CarryReport | null; honest?: HonestReport; judge?: JudgeReport | null; filters?: FilterSummary[]; lock?: LockSummary; exits?: ExitSummary[]; entries?: EntrySummary[]; financing?: FinancingSummary; news?: NewsStudy | null; rows: LabRow[]; retired?: Array<{ id: string; name: string; why: string }> }
 const FAMILY: Record<string, { label: string; what: string }> = {
   trend: { label: 'Trend following', what: 'Go with a move that is already under way: moving-average crosses and pullbacks, Supertrend, MACD, ADX, trendline and structure breaks, time-series momentum, currency momentum.' },
   breakout: { label: 'Breakouts', what: 'Enter when price leaves a range: Donchian highs / lows, Bollinger squeeze, Keltner, inside bars, breakout-and-retest, volatility-forecast breaks, round-number breaks.' },
@@ -103,6 +104,7 @@ export function FxLab({ r }: { r: LabReport }) {
     { name: 'Bigger size when sure', what: 'When several checks agree the trade is 1.5–2× the size at more leverage — only if sure trades proved better on unseen data.', state: convOn ? 'on' : 'test', status: convOn ? 'live' : 'not proven yet: normal size' },
     { name: 'Sniper', what: 'All checks plus the judge vote; a full-vote signal gets 8% risk at 200×. Only if those trades proved far better on unseen data.', state: sniperOn ? 'on' : 'test', status: sniperOn ? 'live' : 'not proven yet' },
     { name: 'The desk', what: 'A second way to trade: continuous forecasts (trend, breakout, carry) sized to equal risk per market, the way quant funds run FX. Goes live when its unseen record passes.', state: deskOk ? 'on' : 'test', status: b?.desk ? `unseen ${b.desk.unseen.totalPct >= 0 ? '+' : ''}${b.desk.unseen.totalPct}% · Sharpe ${b.desk.unseen.sr} · drop ${b.desk.unseen.maxDdPct}% · ${b.desk.unseen.weeks} weeks (needs 26+, SR ≥ 0.5, drop ≤ 25%)` : 'no run yet' },
+    ...(r.carry ? [{ name: 'Funding carry (coins)', what: 'Hold a coin and short the same amount on the perpetual future: price moves cancel, the short collects funding. Picked on the first 70% of the funding history, graded on the last 30%. Test only.', state: 'test' as State, status: r.carry.unseen ? `unseen ${r.carry.unseen.apy >= 0 ? '+' : ''}${r.carry.unseen.apy}% a year · ${r.carry.verdict}` : r.carry.why }] : []),
     { name: 'Correlated-risk cap', what: 'Stops it from holding five trades that are really the same bet (EUR/USD + GBP/USD + …). Live only when its test shows it cuts the biggest drop.', state: b?.portfolio?.heated ? 'test' : 'test', status: b?.portfolio?.heatWhy ?? '' },
   ];
   return (
@@ -125,6 +127,7 @@ export function FxLab({ r }: { r: LabReport }) {
       {(r.retired?.length ?? 0) > 0 && <p className="px-1 text-xs text-muted">{r.retired!.length} strategies retired for showing no promise on any chart or market ({r.retired!.map((x) => x.name).join(', ')}). They are re-tested every weekend and come back by themselves if they improve.</p>}
       <HonestCard h={r.honest} names={Object.fromEntries(r.rows.map((x) => [x.id, x.name]))} />
       <DeskCard d={b?.desk} />
+      <CarryCard c={r.carry} />
       <EntriesCard e={r.entries} />
       <FinancingCard f={r.financing} />
       <JudgeCard j={b?.judge ?? r.judge} />

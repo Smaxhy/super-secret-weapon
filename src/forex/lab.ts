@@ -54,6 +54,7 @@ import { buildStretch, crowdPxSeries, type StretchBook } from './stretch';
 import { filterHmm, hmmRegime, hmmReturns, type HmmModel } from './hmm';
 import { dsrDowngrade, honestStats, type HonestReport, type RowStat, type StatInput } from './honest';
 import { deskFromBars, FX_DESK, type DeskOut } from './desk';
+import { carryTest, type CarryReport } from './carry';
 import { alignTrend, decisionTimes, toDaily, trendSeries, withEnd, type SpanBar } from './mtf';
 import { buildMood, moodNow, moodSeries, riskOfLong, vixFactor, vixNowOf, type MoodBook, type MoodNow } from './mood';
 import { FILTERS, FILTER_LABEL, allowFor, blockReason, chooseFilter, chooseVariant, filterCoverage, missingInput, preferVariant, type FilterEnv, type FilterKind } from './filters';
@@ -537,6 +538,8 @@ export interface FxReport {
   retired?: Array<{ id: string; name: string; why: string }>;
   /** v18: the quant desk — the Carver-style vol-targeted forecast system, graded on the unseen 30% */
   desk?: DeskOut | null;
+  /** v28.16: funding carry (spot long + perp short), graded on the unseen 30% of the funding history — coins only, test only */
+  carry?: CarryReport | null;
   /** v18: does a limit / pullback / confirmation entry beat entering at the next open? (graded only) */
   entries?: EntrySummary[];
   /** v18: overnight financing (carry minus the broker markup) inside every tested trade */
@@ -2778,6 +2781,21 @@ export class ForexLab {
     }
     await yieldNow();
 
+    // ── v28.16 funding carry (go-trader's one positive idea): spot long + perp short, rule picked on the first 70% ──
+    let carry: CarryReport | null = null;
+    if (this.universe === 'crypto' && book.derivs) {
+      try {
+        carry = carryTest(
+          this.insts.map((i) => ({ id: i.id, fund: book.derivs?.[i.id]?.fund ?? [], bars: h1ById.get(i.id) ?? [] })),
+          Date.now(),
+        );
+        await this.redis.set(this.k('fx:carry'), JSON.stringify(carry)).catch(() => undefined);
+      } catch (err) {
+        log.warn({ err: (err as Error).message }, 'carry test failed');
+      }
+      await yieldNow();
+    }
+
     // ── after big moves ──
     let news: NewsStudy | null = null;
     try {
@@ -2821,6 +2839,7 @@ export class ForexLab {
       sniper,
       ...(honest ? { honest } : {}),
       desk,
+      carry,
       dataAge: Object.values(this.dataAge),
       extFeeds: await (async () => {
         let dk: DkMeta | null = null;
