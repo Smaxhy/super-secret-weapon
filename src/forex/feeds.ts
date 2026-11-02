@@ -7,8 +7,8 @@
  */
 import type Redis from 'ioredis';
 
-export type Provider = 'yahoo' | 'yahoo-stream' | 'dukascopy' | 'pyth' | 'oanda' | 'cftc' | 'bis' | 'forexfactory' | 'rss' | 'coinbase' | 'coinbase-stream' | 'hyperliquid-stream' | 'binance' | 'databento' | 'internal';
-export type FeedId = 'yahoo-1h' | 'yahoo-fast' | 'yahoo-quotes' | 'dk-history' | 'dk-quotes' | 'yahoo-live' | 'pyth-live' | 'coinbase-candles' | 'coinbase-live' | 'hyperliquid-live' | 'oanda' | 'cftc' | 'bis' | 'calendar' | 'headlines' | 'cb-press' | 'world-news' | 'lab' | 'fast-lab' | 'derivs' | 'liquidations' | 'databento';
+export type Provider = 'yahoo' | 'yahoo-stream' | 'dukascopy' | 'pyth' | 'oanda' | 'cftc' | 'bis' | 'forexfactory' | 'rss' | 'coinbase' | 'coinbase-stream' | 'hyperliquid-stream' | 'binance' | 'databento' | 'yahoo-etf' | 'internal';
+export type FeedId = 'yahoo-1h' | 'yahoo-fast' | 'yahoo-quotes' | 'dk-history' | 'dk-quotes' | 'yahoo-live' | 'pyth-live' | 'coinbase-candles' | 'coinbase-live' | 'hyperliquid-live' | 'oanda' | 'cftc' | 'bis' | 'calendar' | 'headlines' | 'cb-press' | 'world-news' | 'lab' | 'fast-lab' | 'derivs' | 'liquidations' | 'databento' | 'etf-proxy';
 
 export interface FeedState {
   okAt: number | null;
@@ -43,6 +43,7 @@ export const FEED_INFO: Record<FeedId, FeedInfo> = {
   'coinbase-candles': { label: 'Coin candles (Coinbase Exchange, hourly + 15-minute)', provider: 'coinbase', staleMin: 90, downMin: 180, marketHours: false, affects: 'the coin lab and the coin bot (BTC, ETH, SOL…)', fallback: 'Yahoo spot candles (15-minute delayed, no bid / ask)' },
   'coinbase-live': { label: 'Live coin prices (Coinbase Exchange feed, real bid / ask)', provider: 'coinbase-stream', staleMin: 5, downMin: 30, marketHours: false, affects: 'coin bot fills, stops, targets, live P&L', fallback: 'the Yahoo stream, then Yahoo quotes' },
   'hyperliquid-live': { label: 'Live prices from Hyperliquid (coins backup + indices / metals)', provider: 'hyperliquid-stream', staleMin: 5, downMin: 30, marketHours: false, affects: 'coin prices when the Coinbase feed is quiet; live Nasdaq / S&P / Dow / Russell / gold / silver prices (moved onto the futures price) instead of Yahoo\'s 10-min-late ones', fallback: 'Coinbase, then the Yahoo stream' },
+  'etf-proxy': { label: 'Live Russell 2000 / Dow prices (IWM / DIA, Yahoo real-time stock prices)', provider: 'yahoo-etf', staleMin: 10, downMin: 60, marketHours: true, affects: 'live Russell 2000 price (IWM × the futures ratio) 04:00–20:00 New York; no new Russell trades without it', fallback: 'none: the Russell gets no new bot trades on Yahoo\'s 10-min-late futures price' },
   'pyth-live': { label: 'Live ticking prices (Pyth, needs an API key since Aug 2026)', provider: 'pyth', staleMin: 5, downMin: 30, marketHours: true, affects: 'a second live price stream next to Yahoo\'s', fallback: 'the Yahoo stream' },
   oanda: { label: 'Live prices (OANDA, optional)', provider: 'oanda', staleMin: 5, downMin: 30, marketHours: true, affects: 'prices + candles when a token is saved', fallback: 'Yahoo' },
   cftc: { label: 'Hedge-fund positioning (CFTC, weekly)', provider: 'cftc', staleMin: 9 * 24 * 60, downMin: 17 * 24 * 60, marketHours: false, affects: 'crowd filter, cot_squeeze, a sniper vote', fallback: 'the last report for up to 17 days, then nothing (those rules go quiet)' },

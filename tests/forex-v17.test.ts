@@ -317,14 +317,17 @@ describe('v17.0 review fixes', () => {
     r.m.set('fx:practice:bot', JSON.stringify(newAccount(1000)));
     const p = new Practice(asRedis(r));
     (p as unknown as { quotes: () => Promise<Record<string, Quote>> }).quotes = async () => ({
+      SPXUSD: quote('SPXUSD', 6000, { priceT: WED - 11 * M }),
       RUTUSD: quote('RUTUSD', 2400, { priceT: WED - 11 * M }),
       EURUSD: quote('EURUSD', 1.1, { priceT: WED - 11 * M }),
     });
-    const lab = { ref: `x:4h:RUTUSD:${WED}`, strategy: 'x', tf: '4h', pair: 'RUTUSD', side: -1 as const, entryT: WED - 30_000, stop: 2420, target: 2360, chosen: true, sizeF: 1, prio: 0.2, judge: null };
+    const lab = { ref: `x:4h:SPXUSD:${WED}`, strategy: 'x', tf: '4h', pair: 'SPXUSD', side: -1 as const, entryT: WED - 30_000, stop: 6050, target: 5900, chosen: true, sizeF: 1, prio: 0.2, judge: null };
     await p.syncBot([lab], () => null, {}, { scope: ['1h', '4h'] });
-    expect((JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount).open.map((x) => x.pair)).toEqual(['RUTUSD']);
-    const ev = await p.syncBot([lab, { ...lab, ref: `x:4h:EURUSD:${WED}`, pair: 'EURUSD', stop: 1.102, target: 1.096 }], () => null, {}, { scope: ['1h', '4h'] });
+    expect((JSON.parse(r.m.get('fx:practice:bot')!) as PracticeAccount).open.map((x) => x.pair)).toEqual(['SPXUSD']);
+    const ev = await p.syncBot([lab, { ...lab, ref: `x:4h:EURUSD:${WED}`, pair: 'EURUSD', stop: 1.102, target: 1.096 }, { ...lab, ref: `y:4h:RUTUSD:${WED}`, strategy: 'y', pair: 'RUTUSD', stop: 2420, target: 2360 }], () => null, {}, { scope: ['1h', '4h'] });
     expect(ev.join(' ')).toMatch(/EURUSD: the newest price is 11 min old/);
+    // v28.17: the Russell 2000 never opens on Yahoo's late futures price (only on its live IWM-based one)
+    expect(ev.join(' ')).toMatch(/no live price for RUTUSD/);
   });
 
   it('a stored paper start that is unreadable is repaired (a read error still throws)', async () => {

@@ -39,6 +39,7 @@ import { RISK_MODES, newSyncReport, type HeatLive, type LabOpenTrade, type Pract
 import { clockFor, marketClock, type ForexCalendar } from './calendar';
 import { hlCandles, loadHlFutures } from './hyperliquid';
 import { extendWithLive } from './basis';
+import { ETF_PROXY, etfAsFutures, etfMinutes } from './etf-proxy';
 import type { ForexHeadlines } from './headlines';
 import { DEFAULT_SIM, equityCurve, rStats, signalsFor, simulate, type RiskResult, type RStats } from './engine';
 import { NOT_FOR_CRYPTO, ONLY_CRYPTO, STRATEGIES, tradesNews, runsOn, strategyById, styleOf, type Family, type Strategy, type Style } from './strategies';
@@ -2265,9 +2266,11 @@ export class ForexLab {
     const hlMap = await loadHlFutures(this.redis);
     for (const inst of this.insts) {
       const coin = isFutures(inst.id) ? hlMap[inst.id] : undefined;
-      if (!coin) continue;
+      const etf = !coin ? ETF_PROXY[inst.id] : undefined;
+      if (!coin && !etf) continue;
       try {
-        const live = await hlCandles(coin, '1h', nowT - 4 * 86_400_000, nowT);
+        // v28.17: no Hyperliquid market (Russell 2000) → its ETF's real-time minutes moved onto the futures price
+        const live = coin ? await hlCandles(coin, '1h', nowT - 4 * 86_400_000, nowT) : etfAsFutures(await etfMinutes(etf!, nowT, '5d'), h1ById.get(inst.id) ?? [], HOUR);
         const x = extendWithLive(h1ById.get(inst.id) ?? [], live, HOUR, nowT, (t) => !clockFor(inst.id, t).open);
         if (x.added) {
           h1ById.set(inst.id, x.bars);
@@ -3034,8 +3037,9 @@ export class ForexLab {
       for (const inst of this.insts) {
         let h1 = await loadBars(this.redis, inst.id);
         const coin = isFutures(inst.id) ? hlMap[inst.id] : undefined;
-        if (coin) {
-          const live = await hlCandles(coin, '1h', now - 4 * 86_400_000, now).catch(() => [] as Bar[]);
+        const etf = !coin ? ETF_PROXY[inst.id] : undefined;
+        if (coin || etf) {
+          const live = coin ? await hlCandles(coin, '1h', now - 4 * 86_400_000, now).catch(() => [] as Bar[]) : etfAsFutures(await etfMinutes(etf!, now, '5d').catch(() => null), h1, HOUR);
           h1 = extendWithLive(h1, live, HOUR, now, (t) => !clockFor(inst.id, t).open).bars;
         }
         h1 = h1.slice(-QUICK.bars);

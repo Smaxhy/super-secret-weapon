@@ -20,6 +20,7 @@ import { fetchYahooBars, loadFastBars, mergeBars, saveFastBars, trimBars, volume
 import { loadOanda, oandaCandles, oandaCovers, oandaReady } from './oanda';
 import { extendWithLive, needsBasis } from './basis';
 import { hlCandles, loadHlFutures } from './hyperliquid';
+import { ETF_PROXY, etfAsFutures, etfMinutes } from './etf-proxy';
 import { DEFAULT_SIM, signalsFor, simulate, WARMUP } from './engine';
 import { STRATEGIES, postedLevelSignal, runsOn, strategyById, styleOf, tradesNews } from './strategies';
 import { DISCORD_COPY, POSTED_LEVELS, levelSets, loadLevels, type PostedLevels } from './discord';
@@ -530,8 +531,10 @@ export class FastLab {
         // v27.52: Yahoo's index / metal candles are ~10 min late — the newest ones come from Hyperliquid (moved onto the
         // futures price; only for this pass, the store keeps Yahoo's)
         const coin = isFutures(inst.id) ? hlMap[inst.id] : undefined;
-        if (coin && all.length) {
-          const live = await hlCandles(coin, '15m', now - 12 * 3_600_000, now).catch(() => [] as Bar[]);
+        const etf = tf === '15m' && !coin ? ETF_PROXY[inst.id] : undefined;
+        if ((coin || etf) && all.length) {
+          // v28.17: the Russell 2000 has no Hyperliquid market → its ETF's real-time minutes, moved onto the futures price
+          const live = coin ? await hlCandles(coin, '15m', now - 12 * 3_600_000, now).catch(() => [] as Bar[]) : etfAsFutures(await etfMinutes(etf!, now, '5d').catch(() => null), all, TF_MIN[tf] * MIN);
           all = extendWithLive(all, live, TF_MIN[tf] * MIN, now, (t) => !clockFor(inst.id, t).open).bars;
         }
         ages[inst.id] = dataAgeOf(inst.id, tf, all, now, TF_MIN[tf] * MIN);

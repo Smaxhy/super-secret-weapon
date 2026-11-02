@@ -758,6 +758,24 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.17 the Russell 2000 gets a live price from IWM; never trades on the late one (Nov 2, owner: "fix the 10 min delay no
+matter what")
+VPS read: the forex desk's only passing cell = pin_bar:1h on RUTUSD (31 unseen, +0.33R, PF 2.69; pooled row 'no'), and RUTUSD was
+still on Yahoo's ~10-min-late RTY=F price (Hyperliquid's SMALL2000 vanished; no Russell builder market). `src/forex/etf-proxy.ts`:
+`ETF_PROXY` {RUTUSD: IWM, DJIUSD: DIA (Dow stays off)}; Yahoo serves US stock prices in real time incl. pre / after hours →
+`etfMinutes` (1m, includePrePost, cached 5 s, provider breaker 'yahoo-etf', feed 'etf-proxy'), `parseEtf` (newest minute,
+declared delay), `measureRatio` (median futures ÷ ETF on shared minutes, ≥ 10, middle half within 0.3% — a wrong pairing / a roll
+/ ex-dividend mix is refused), `aggregate` (1m → 15m / 1h on the futures grid, ≥ 60% of minutes), `etfAsFutures`. Practice
+`quote()`: futures market with a proxy → `etfQuote` = ETF px × ratio (ratio from Yahoo's late RTY=F 1m vs IWM 2d minutes,
+re-measured every 10 min, trusted 1 h; only while Yahoo says IWM is NOT delayed and its newest minute ≤ 2 min old), source
+**'etf'**, 1-minute bars scaled for stop / target checks. `BOT.liveOnly` (= ETF_PROXY markets) + `LIVE_SOURCES`: openIn refuses a
+new trade on such a market unless the quote is live ("no live price for RUTUSD … not opening on a late price") — 20:00–04:00 New
+York (no IWM prints) the Russell gets NO new trades; open ones keep Yahoo's price for their exits. Lab candles: computeRun,
+quickLook (1h) and the fast 15m pass add the finished ETF candles (× ratio) via `extendWithLive`, so the hour that just closed is
+there at once. Dashboard ticking P&L: `Practice.etfTick` read from the account's own price cache (index.ts push every 2 s, no
+extra Yahoo calls); Setup "Live price feed" shows "live via IWM × ratio". UNVERIFIED from the sandbox (can't reach Yahoo): bot log
+"live price in use (ETF × futures ratio)" / Data feeds → "Live Russell 2000 / Dow prices" say whether it works.
+tests/forex-etf-proxy (6); forex-v17 v27.18 test now uses the S&P (the Russell refuses a late price).
 ## v28.16 funding carry test + 12 strategies from go-trader's list (Oct 31, owner: "build it" after a full read of
 github.com/richkuo/go-trader — Go + Python bot, MIT; its own registry marks ~70 strategies no_edge; NOT installed or run, ideas
 only, written fresh). (1) `src/forex/carry.ts` (pure): hold N coins + short N on the perpetual (price moves cancel), collect

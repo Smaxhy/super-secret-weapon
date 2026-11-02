@@ -15,6 +15,7 @@ import { HEAT, maxRiskUnder, topCorrelated, type CorrBook } from './risk';
 import { oandaCandles, oandaCovers, oandaPrices, oandaReady, loadOanda, type Granularity, type OandaSettings } from './oanda';
 import { BASIS, liveTail, measureBasis, needsBasis, shiftBars, type BasisRow } from './basis';
 import { hlCandles, hyperliquidLive } from './hyperliquid';
+import { ETF_PROXY, PROXY, etfLive, etfMinutes, measureRatio, type EtfMinutes } from './etf-proxy';
 import { INSTRUMENTS, TF_MIN, instrument, isCrypto, isFutures, maxLeverageFor, type Bar, type Instrument, type Timeframe } from './types';
 import { clockFor, marketClock } from './calendar';
 import { priceShock } from './headlines';
@@ -77,6 +78,8 @@ export const BOT = {
   /** v27.18: Yahoo's CME futures (indices, metals) arrive ~10 min late but often don't declare it (exchangeDataDelayedBy 0) —
    * an hourly / 4-hour trade on one may use this much delay on top of the limit when the feed declares none */
   futuresDelayMs: 15 * 60_000,
+  /** v28.17: markets that only open on a LIVE price (no Hyperliquid market; Yahoo's is ~10 min late) */
+  liveOnly: new Set<string>(Object.keys(ETF_PROXY)),
   /** v27.20: the most a single trade may lose, per account (the coin bot: $20; v27.22 the forex bot too) */
   // v28.7 (owner: "its still on turbo, shouldn't it be … 8%, raise it"): the coin bot has NO $ cap — its risk mode sizes every
   // trade (turbo = 8% of the account on the tested stop); the forex bot keeps $20. 0 / missing = no cap.
@@ -209,7 +212,7 @@ export interface Quote {
   bars: Array<[number, number, number, number, number?]>;
   dayChangePct: number | null;
   /** where the price came from (v17: Dukascopy = the backup when Yahoo fails, currency pairs only) */
-  source: 'oanda' | 'yahoo' | 'dukascopy' | 'pyth' | 'yahoo-live' | 'hyperliquid';
+  source: 'oanda' | 'yahoo' | 'dukascopy' | 'pyth' | 'yahoo-live' | 'hyperliquid' | 'etf';
   barsAt?: number;
   /** v17.9: yesterday's close (Yahoo) — the day change of a live Pyth price */
   prevClose?: number;
@@ -221,6 +224,9 @@ export interface Quote {
   /** v17: the source says its prices are delayed this long (Yahoo's COMEX metals: ~10 min) */
   delayMs?: number;
 }
+
+/** v28.17: quote sources that are real time (not Yahoo's late futures / a cached price) */
+export const LIVE_SOURCES: ReadonlySet<Quote['source']> = new Set(['etf', 'hyperliquid', 'oanda', 'pyth', 'yahoo-live']);
 
 /** v17: how old the price behind a quote is (ms; the broker / market time when known). Pure. */
 export const quoteAge = (q: Pick<Quote, 'priceT' | 'bars' | 't'>, now: number) => now - (q.priceT ?? q.bars[q.bars.length - 1]?.[0] ?? q.t);
@@ -1735,7 +1741,15 @@ export class Practice {
         return hq;
       }
     }
-    if (c && Date.now() - c.t < maxAgeMs && c.source !== 'pyth' && c.source !== 'yahoo-live' && c.source !== 'hyperliquid') return c;
+    // v28.17: the Russell 2000 (no Hyperliquid market) live from its ETF (IWM) × the measured futures ratio
+    if (ETF_PROXY[id]) {
+      const eq = await this.etfQuote(inst, Date.now()).catch(() => null);
+      if (eq) {
+        this.cache.set(id, eq);
+        return eq;
+      }
+    }
+    if (c && Date.now() - c.t < maxAgeMs && c.source !== 'pyth' && c.source !== 'yahoo-live' && c.source !== 'hyperliquid' && c.source !== 'etf') return c;
     let q = feeds.allow('yahoo') ? await fetchQuote(inst) : null;
     if (q) {
       this.cache.set(id, q);
@@ -1875,13 +1889,63 @@ export class Practice {
     const q = inst ? this.hlQuote(inst, now) : null;
     return q ? { id, mid: q.mid, conf: (q.ask - q.bid) / 2, t: q.priceT ?? now } : null;
   }
+  /** v28.17: futures ÷ ETF ratio per market (etf-proxy.ts), measured in the background like the gaps above */
+  private etfRatio = new Map<string, { ratio: number; n: number; at: number }>();
+  private etfTried = new Map<string, number>();
+  /** swappable for tests */
+  etfFetch: (symbol: string, now: number, range: string) => Promise<EtfMinutes | null> = (symbol, now, range) => etfMinutes(symbol, now, range);
+  futMinutes: (inst: Instrument) => Promise<Quote | null> = (inst) => fetchQuote(inst);
+  private async etfQuote(inst: Instrument, now: number): Promise<Quote | null> {
+    const sym = ETF_PROXY[inst.id];
+    if (!sym || !clockFor(inst.id, now).open) return null;
+    const m = await this.etfFetch(sym, now, '1d');
+    if (!etfLive(m, now)) return null;
+    let row = this.etfRatio.get(inst.id);
+    if ((!row || now - row.at > PROXY.refreshMs) && now - (this.etfTried.get(inst.id) ?? 0) > 60_000) {
+      this.etfTried.set(inst.id, now);
+      const job = this.measureEtfRatio(inst, sym, now);
+      if (!row) await job; // the first time: wait for it (no price without a ratio)
+      else void job;
+      row = this.etfRatio.get(inst.id);
+    }
+    if (!row || now - row.at > PROXY.maxAgeMs) return null;
+    const r = row.ratio;
+    const half = syntheticHalf(inst, now);
+    const mid = m.px * r;
+    const prev = this.cache.get(inst.id);
+    return { id: inst.id, mid, bid: mid - half, ask: mid + half, t: now, bars: m.bars.slice(-180).map((b) => [b.t, b.h * r, b.l * r, b.c * r, b.o * r] as [number, number, number, number, number]), dayChangePct: prev?.dayChangePct ?? null, source: 'etf', priceT: m.priceT, ...(prev?.prevClose ? { prevClose: prev.prevClose } : {}) };
+  }
+  private async measureEtfRatio(inst: Instrument, sym: string, now: number): Promise<void> {
+    try {
+      const [fq, m] = await Promise.all([this.futMinutes(inst), this.etfFetch(sym, now, '2d')]);
+      if (!fq || !m || m.delayMs > 0) return;
+      const r = measureRatio(fq.bars.map((b) => [b[0], b[3]] as const), m.bars.map((b) => [b.t, b.c] as const));
+      if (!r) {
+        log.warn({ id: inst.id, sym }, 'ETF live price: futures ÷ ETF ratio could not be measured (too few shared minutes or they disagree)');
+        return;
+      }
+      const had = this.etfRatio.has(inst.id);
+      this.etfRatio.set(inst.id, { ...r, at: Date.now() });
+      if (!had) log.info({ id: inst.id, sym, ratio: Math.round(r.ratio * 10_000) / 10_000, n: r.n }, 'live price in use (ETF × futures ratio)');
+    } catch (err) {
+      log.warn({ id: inst.id, err: (err as Error).message }, 'ETF ratio not measured');
+    }
+  }
+  /** v28.17: the ETF-based live price for the dashboard's ticking P&L (null when there is none) */
+  etfTick(id: string): LiveTick | null {
+    const q = this.cache.get(id);
+    return q && q.source === 'etf' && Date.now() - q.t < 15_000 ? { id, mid: q.mid, conf: (q.ask - q.bid) / 2, t: q.priceT ?? q.t } : null;
+  }
+
   /** v27.47: the measured gaps, for Setup */
-  basisNow(): Record<string, BasisRow & { src: 'oanda' | 'hl' }> {
-    const out: Record<string, BasisRow & { src: 'oanda' | 'hl' }> = {};
+  basisNow(): Record<string, BasisRow & { src: 'oanda' | 'hl' | 'etf'; ratio?: number; etf?: string }> {
+    const out: Record<string, BasisRow & { src: 'oanda' | 'hl' | 'etf'; ratio?: number; etf?: string }> = {};
     for (const [key, r] of this.basis) {
       const [src, id] = key.split(':') as ['oanda' | 'hl', string];
       if (!out[id] || src === 'oanda') out[id] = { ...r, src };
     }
+    // v28.17: markets priced from their ETF (basis 0: the ratio does the work)
+    for (const [id, r] of this.etfRatio) if (!out[id]) out[id] = { basis: 0, n: r.n, at: r.at, src: 'etf', ratio: r.ratio, etf: ETF_PROXY[id] };
     return out;
   }
 
@@ -2088,7 +2152,10 @@ export class Practice {
       if (!quote) return { ok: false, error: 'no price right now (market closed or feed down)' };
       if (quote.stale) return { ok: false, error: 'the price feed failed just now (only an older price): not opening on it' };
       if (quote.tradeable === false || quoteAge(quote, Date.now()) > 30 * 60_000) return { ok: false, error: 'market is closed right now (forex: Sunday 22:00 – Friday 22:00 UTC)' };
-      const delay = Math.max(quote.delayMs ?? 0, isFutures(inst.id) ? BOT.futuresDelayMs : 0);
+      // v28.17 (owner: "fix the 10 min delay no matter what"): a market listed here opens ONLY on a live price (its ETF /
+      // Hyperliquid / OANDA) — never on Yahoo's 10-min-late futures price
+      if (BOT.liveOnly.has(inst.id) && !LIVE_SOURCES.has(quote.source)) return { ok: false, error: `no live price for ${inst.id} right now (Yahoo's futures price is ~10 min late; the live one comes from ${ETF_PROXY[inst.id] ?? 'its ETF'}, 04:00–20:00 New York) — not opening on a late price` };
+      const delay = Math.max(quote.delayMs ?? 0, isFutures(inst.id) && !LIVE_SOURCES.has(quote.source) ? BOT.futuresDelayMs : 0);
       const allowed = req.maxQuoteAgeMs === undefined ? Infinity : req.maxQuoteAgeMs + (req.feedDelayOk ? delay : 0);
       if (quoteAge(quote, Date.now()) > allowed) return { ok: false, error: `the newest price is ${Math.round(quoteAge(quote, Date.now()) / 60_000)} min old${delay ? ` (${Math.round(delay / 60_000)}-min delayed feed)` : ''} (this chart needs ≤ ${Math.round((req.maxQuoteAgeMs ?? 0) / 60_000)} min)` };
       const mids: Record<string, number> = {};

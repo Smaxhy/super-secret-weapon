@@ -78,6 +78,7 @@ import { LiquidationLive } from './forex/derivs';
 import { DatabentoSync, loadDatabentoKey } from './forex/databento';
 import { Mt5Mirror } from './forex/mt5-mirror';
 import { HL_FUTURES_KEY, hyperliquidLive } from './forex/hyperliquid';
+import { ETF_PROXY } from './forex/etf-proxy';
 import { INSTRUMENTS, isFutures } from './forex/types';
 import { LevelWatch, replayMissedLevels } from './forex/level-watch';
 import { VENUE_FEES } from './forex/venue-fees';
@@ -431,7 +432,8 @@ async function main(): Promise<void> {
   {
     let lastSig = '';
     hyperliquidLive.onMarkets = (found, unknown) => {
-      const late = INSTRUMENTS.filter((x) => isFutures(x.id) && !found[x.id]).map((x) => x.id);
+      // v28.17: a market with an ETF proxy (Russell 2000 → IWM) is live 04:00–20:00 New York, not late
+      const late = INSTRUMENTS.filter((x) => isFutures(x.id) && !found[x.id]).map((x) => (ETF_PROXY[x.id] ? `${x.id} (live via ${ETF_PROXY[x.id]} 04:00–20:00 New York, else no new trades)` : x.id));
       const sig = `${Object.entries(found).sort().join(',')}|${late.join(',')}`;
       if (sig === lastSig) return;
       lastSig = sig;
@@ -462,6 +464,22 @@ async function main(): Promise<void> {
       const out = ts.map((t) => practice.liveFutTick(t.id)).filter((t): t is NonNullable<typeof t> => !!t);
       if (out.length) fn(out);
     }),
+  });
+  // v28.17: the Russell 2000's live price (IWM × the futures ratio) ticks on the dashboard too — read from the account's own
+  // price cache (the account's checks fetch it), so the push adds no Yahoo calls
+  const lastEtf = new Map<string, number>();
+  const stopEtfPush = startLivePush({
+    onTicks: (fn) => {
+      const timer = setInterval(() => {
+        const out = Object.keys(ETF_PROXY)
+          .map((id) => practice.etfTick(id))
+          .filter((t): t is NonNullable<typeof t> => !!t && lastEtf.get(t.id) !== t.mid);
+        for (const t of out) lastEtf.set(t.id, t.mid);
+        if (out.length) fn(out);
+      }, 2_000);
+      timer.unref?.();
+      return () => clearInterval(timer);
+    },
   });
   forex.practice = practice;
   const fxCalendar = new ForexCalendar(redis);
@@ -1474,6 +1492,7 @@ async function main(): Promise<void> {
       hyperliquidLive.stop();
       stopLivePush();
       stopFutPush();
+      stopEtfPush();
       await fxFeeds.persist(redis, true).catch(() => undefined);
       fxCalendar.stop();
       fxNews.stop();

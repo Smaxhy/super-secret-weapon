@@ -4,7 +4,7 @@ import { useApi } from '../hooks/useApi';
 import { api } from '../lib/api';
 import { Badge, Button, Card, inputCls } from './ui';
 
-interface Data { connected: boolean; token: string | null; accountId: string | null; env: string; updatedAt: string | null; basis?: Record<string, { basis: number; n: number; at: number; src?: 'oanda' | 'hl' }> }
+interface Data { connected: boolean; token: string | null; accountId: string | null; env: string; updatedAt: string | null; basis?: Record<string, { basis: number; n: number; at: number; src?: 'oanda' | 'hl' | 'etf'; ratio?: number; etf?: string }> }
 
 /** v27.47: the futures markets that get a live OANDA price once their gap to the futures price is measured */
 const FUTURES: Array<[string, string]> = [['NDXUSD', 'Nasdaq 100'], ['SPXUSD', 'S&P 500'], ['DJIUSD', 'Dow 30'], ['RUTUSD', 'Russell 2000'], ['XAUUSD', 'Gold'], ['XAGUSD', 'Silver']];
@@ -52,7 +52,7 @@ export function OandaCard() {
               return (
                 <li key={id} className="flex justify-between gap-2">
                   <span>{name}</span>
-                  <span className={fresh ? 'text-up' : 'text-muted'}>{fresh ? `live via ${b!.src === 'hl' ? 'Hyperliquid' : 'OANDA'} · gap ${b!.basis >= 0 ? '+' : '−'}${Math.abs(b!.basis).toFixed(id === 'XAGUSD' ? 3 : 2)} (${ago(b!.at)})` : '10 min late (no live source yet)'}</span>
+                  <span className={fresh ? 'text-up' : 'text-muted'}>{fresh ? (b!.src === 'etf' ? `live via ${b!.etf ?? 'its ETF'} × ${b!.ratio?.toFixed(3)} (04:00–20:00 New York; no new trades outside) (${ago(b!.at)})` : `live via ${b!.src === 'hl' ? 'Hyperliquid' : 'OANDA'} · gap ${b!.basis >= 0 ? '+' : '−'}${Math.abs(b!.basis).toFixed(id === 'XAGUSD' ? 3 : 2)} (${ago(b!.at)})`) : '10 min late (no live source yet)'}</span>
                 </li>
               );
             })}
