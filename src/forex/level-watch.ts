@@ -9,7 +9,7 @@
 import type Redis from 'ioredis';
 import { moduleLogger } from '../lib/logger';
 import { clockFor } from './calendar';
-import { DISCORD_COPY, POSTED_LEVELS, levelSets, levelStrategy, loadLevels, type LevelSet } from './discord';
+import { DISCORD_COPY, POSTED_LEVELS, levelSets, levelStrategy, loadLevels, sessionEnd, type LevelSet } from './discord';
 import { hlCandles, loadHlFutures } from './hyperliquid';
 import { walkTrade, type Practice } from './practice';
 import { postedLevelSignal } from './strategies';
@@ -46,6 +46,56 @@ export function feeTooBig(pair: string, entry: number, stop: number): string | n
   return `the venue fee (${+fee.toPrecision(3)} a unit round trip) is ${Math.round((fee / risk) * 100)}% of its ${+risk.toPrecision(3)} stop — not worth it after fees`;
 }
 
+/**
+ * v28.18 (owner, Nov 2: "just take his levels properly" — his NQ levels + Monitoring posts, the lab took 30 setups in
+ * 2.5 h both ways: 16 shorts +6.9R, 14 longs −12.6R, he had posted no bias): a level trade goes ONE way only — his
+ * bias / his Short- or Long-levels list when he gave one, else the market's own direction (the close vs its 2-hour
+ * average AND that average moving the same way over the last 30 minutes; flat = no trade). One level trade open at a
+ * time per market (as before); after `maxLossesPerDay` losing level trades in a session (17:00 → 17:00 New York) no more
+ * that session. Every setup is still recorded in the level lab, with the reason when it was not taken.
+ */
+export const LEVEL_RULES = {
+  trendMin: 120,
+  slopeMin: 30,
+  /** the average must have moved at least this % of the price over `slopeMin` (a flat market is no direction) */
+  minSlopePct: 0.03,
+  maxLossesPerDay: 3,
+};
+
+/** The market's direction at bar i: +1 / −1 when the close is on one side of its `trendMin`-minute EMA and that EMA moved
+ * the same way over `slopeMin` minutes, else 0. Causal. Pure. */
+export function trendSide(close: ArrayLike<number>, i: number, barMin: number): 1 | -1 | 0 {
+  const n = Math.max(2, Math.round(LEVEL_RULES.trendMin / barMin));
+  const back = Math.max(1, Math.round(LEVEL_RULES.slopeMin / barMin));
+  if (i < n + back) return 0;
+  const k = 2 / (n + 1);
+  const start = Math.max(0, i - 4 * n - back);
+  let e = close[start]!;
+  let eBack = e;
+  for (let j = start + 1; j <= i; j++) {
+    e = close[j]! * k + e * (1 - k);
+    if (j === i - back) eBack = e;
+  }
+  const c = close[i]!;
+  const minMove = (Math.abs(e) * LEVEL_RULES.minSlopePct) / 100;
+  if (c > e && e - eBack >= minMove) return 1;
+  if (c < e && eBack - e >= minMove) return -1;
+  return 0;
+}
+
+/** Why a level signal goes against the direction it may trade, or null. `setSide` = his bias / list side (0 = none). Pure. */
+export function directionSkip(side: 1 | -1, setSide: 1 | -1 | 0, trend: 1 | -1 | 0): string | null {
+  if (setSide) return side === setSide ? null : `against his ${setSide === 1 ? 'long' : 'short'} plan`;
+  if (trend === 0) return 'no clear market direction (and no bias from him)';
+  return side === trend ? null : `against the market's direction (${trend === 1 ? 'rising' : 'falling'}, no bias from him)`;
+}
+
+/** Losing level trades of this market closed in the current session (17:00 → 17:00 New York). Pure. */
+export function levelLossesToday(closed: ReadonlyArray<{ strategy?: string; pair: string; closedAt: number; pnlUsd: number; reason: string }>, strategy: string, pair: string, now: number): number {
+  const from = sessionEnd(now) - 86_400_000;
+  return closed.filter((c) => c.strategy === strategy && c.pair === pair && c.closedAt >= from && c.reason !== 'partial' && c.pnlUsd < 0).length;
+}
+
 export interface LevelTrade {
   pair: string;
   side: 1 | -1;
@@ -58,6 +108,9 @@ export interface LevelTrade {
   source: string;
   /** v27.74: which rule fired, for the bot log */
   why?: string;
+  /** v28.18: his bias / list side for this level (0 = none) and the market's direction at the signal */
+  setSide?: 1 | -1 | 0;
+  trend?: 1 | -1 | 0;
 }
 
 /** Open trades at posted levels: one per candle (Redis NX — a candle seen twice never trades twice), one open at a time
@@ -65,9 +118,18 @@ export interface LevelTrade {
 export async function takeLevelTrades(redis: Redis, practice: Practice, acct: 'bot' | 'cbot', list: readonly LevelTrade[], logBot: (lines: string[]) => void): Promise<void> {
   if (!list.length) return;
   const held = await practice.heldRefs(acct).catch(() => [] as string[]);
+  const closed = (await Promise.resolve().then(() => practice.rawAccount(acct)).catch(() => null))?.closed ?? [];
+  const now = Date.now();
   for (const x of list) {
     const strategy = levelStrategy(x.source);
+    // v28.18: one way only (his plan, else the market's direction) — silently, the lab row carries the reason
+    if (directionSkip(x.side, x.setSide ?? 0, x.trend ?? 0)) continue;
     if (held.some((r) => r.startsWith(`${strategy}:signal:${x.pair}:`))) continue;
+    if (levelLossesToday(closed, strategy, x.pair, now) >= LEVEL_RULES.maxLossesPerDay) {
+      const key = `fx:discord:lvstop:${x.pair}:${sessionEnd(now)}`;
+      if ((await redis.set(key, '1', 'EX', 2 * 86_400, 'NX').catch(() => null)) === 'OK') logBot([`Kojiro levels on ${x.pair}: ${LEVEL_RULES.maxLossesPerDay} losing level trades this session — no more until 17:00 New York`]);
+      continue;
+    }
     const ref = `${strategy}:signal:${x.pair}:${x.barT}`;
     const first = await redis.set(`fx:discord:lvdone:${ref}`, '1', 'EX', 2 * 86_400, 'NX').catch(() => null);
     if (first !== 'OK') continue;
@@ -99,6 +161,8 @@ export interface LabLevelTrade {
   /** entry time (the signal minute's close) */
   t: number;
   why: string;
+  /** v28.18: set when the bot would not take it (its direction rule) — null / missing = taken (or would be) */
+  skip?: string | null;
   done?: { at: number; exit: number; reason: 'stop' | 'target' | 'expired'; locked: boolean; pts: number; r: number };
 }
 
@@ -134,8 +198,16 @@ export function gradeLevelLab(rows: LabLevelTrade[], pair: string, bars: readonl
 }
 
 /** Totals of the lab: finished trades, wins, R after fees. Pure. */
-export function levelLabSummary(rows: readonly LabLevelTrade[]): { n: number; done: number; wins: number; totalR: number; avgR: number | null; open: number; byWhy: Record<string, { n: number; totalR: number }> } {
+export function levelLabSummary(rows: readonly LabLevelTrade[]): { n: number; done: number; wins: number; totalR: number; avgR: number | null; open: number; byWhy: Record<string, { n: number; totalR: number }>; rule: { taken: { n: number; totalR: number }; skipped: { n: number; totalR: number } } } {
   const done = rows.filter((x) => x.done);
+  // v28.18: the direction rule's own record (rows from before it have no `skip` field and are left out)
+  const rule = { taken: { n: 0, totalR: 0 }, skipped: { n: 0, totalR: 0 } };
+  for (const x of done) {
+    if (x.skip === undefined) continue;
+    const g = x.skip ? rule.skipped : rule.taken;
+    g.n++;
+    g.totalR = Math.round((g.totalR + x.done!.r) * 100) / 100;
+  }
   const totalR = Math.round(done.reduce((s, x) => s + x.done!.r, 0) * 100) / 100;
   const byWhy: Record<string, { n: number; totalR: number }> = {};
   for (const x of done) {
@@ -143,7 +215,7 @@ export function levelLabSummary(rows: readonly LabLevelTrade[]): { n: number; do
     g.n++;
     g.totalR = Math.round((g.totalR + x.done!.r) * 100) / 100;
   }
-  return { n: rows.length, done: done.length, wins: done.filter((x) => x.done!.r > 0).length, totalR, avgR: done.length ? Math.round((totalR / done.length) * 100) / 100 : null, open: rows.length - done.length, byWhy };
+  return { n: rows.length, done: done.length, wins: done.filter((x) => x.done!.r > 0).length, totalR, avgR: done.length ? Math.round((totalR / done.length) * 100) / 100 : null, open: rows.length - done.length, byWhy, rule };
 }
 
 /** Live 1-minute candles moved onto the futures price; only finished minutes. Pure. */
@@ -236,7 +308,7 @@ export class LevelWatch {
     this.busy = true;
     try {
       const posted = await loadLevels(this.redis, now);
-      const lab = POSTED_LEVELS.trade ? [] : await loadLevelLab(this.redis);
+      const lab = await loadLevelLab(this.redis);
       let labChanged = false;
       const labHasOpen = lab.some((x) => !x.done);
       if (!Object.values(posted).some((x) => levelSets(x).length) && !labHasOpen) return;
@@ -266,19 +338,27 @@ export class LevelWatch {
         const minRisk = (bars[last]!.c * LEVEL_WATCH.minStopPct) / 100;
         // plain levels (his bias + DOL), then his short / long lists (their side forced, targets = his other levels)
         let sig = null;
-        for (const st of sets) if ((sig = postedLevelSignal(ctx, last, st.levels, st.t, st.side, st.dol, minRisk, st.all))) break;
+        let setSide: 1 | -1 | 0 = 0;
+        for (const st of sets) if ((sig = postedLevelSignal(ctx, last, st.levels, st.t, st.side, st.dol, minRisk, st.all))) {
+          setSide = st.side;
+          break;
+        }
         if (!sig) continue;
-        if (!POSTED_LEVELS.trade) {
-          // v27.77: lab only — record it once per candle, graded on the minutes after it
-          const ref = `${levelStrategy(lv.source)}:lab:${pair}:${bars[last]!.t}`;
-          if (lab.some((x) => x.ref === ref) || feeTooBig(pair, bars[last]!.c, sig.stop)) continue;
-          lab.unshift({ ref, pair, side: sig.side, entry: bars[last]!.c, stop: sig.stop, target: sig.target, t: bars[last]!.t + 60_000, why: sig.note ?? 'level' });
+        const trend = trendSide(ctx.close, last, 1);
+        const skip = directionSkip(sig.side, setSide, trend);
+        // every setup goes in the level lab (graded on the minutes after it), with the reason when the bot skips it
+        const ref = `${levelStrategy(lv.source)}:lab:${pair}:${bars[last]!.t}`;
+        if (!lab.some((x) => x.ref === ref) && !feeTooBig(pair, bars[last]!.c, sig.stop)) {
+          lab.unshift({ ref, pair, side: sig.side, entry: bars[last]!.c, stop: sig.stop, target: sig.target, t: bars[last]!.t + 60_000, why: sig.note ?? 'level', skip });
           lab.splice(LEVEL_LAB.max);
           labChanged = true;
-          this.logBot(pair, [`Kojiro level (LAB, not traded): would ${sig.side === 1 ? 'buy' : 'sell'} ${pair} at ${bars[last]!.c} — ${sig.note ?? 'at his level'}; stop ${+sig.stop.toFixed(2)}${sig.target !== null ? `, target ${sig.target}` : ''}`]);
+        }
+        if (!POSTED_LEVELS.trade) {
+          if (!skip) this.logBot(pair, [`Kojiro level (LAB, not traded): would ${sig.side === 1 ? 'buy' : 'sell'} ${pair} at ${bars[last]!.c} — ${sig.note ?? 'at his level'}; stop ${+sig.stop.toFixed(2)}${sig.target !== null ? `, target ${sig.target}` : ''}`]);
           continue;
         }
-        await takeLevelTrades(this.redis, this.practice, 'bot', [{ pair, side: sig.side, stop: sig.stop, target: sig.target, barT: bars[last]!.t, entry: bars[last]!.c, source: lv.source, why: sig.note }], (l) => this.logBot(pair, l));
+        if (skip) continue;
+        await takeLevelTrades(this.redis, this.practice, 'bot', [{ pair, side: sig.side, stop: sig.stop, target: sig.target, barT: bars[last]!.t, entry: bars[last]!.c, source: lv.source, why: sig.note, setSide, trend }], (l) => this.logBot(pair, l));
       }
       if (labChanged) await this.redis.set(LEVEL_LAB.key, JSON.stringify(lab)).catch(() => undefined);
     } catch (err) {

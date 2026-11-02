@@ -24,9 +24,9 @@ class FakeRedis {
 }
 
 describe('Kojiro calls: copied by default (v28.4), levels lab only', () => {
-  it('his calls are copied by default; level trades stay lab only', () => {
+  it('his calls are copied by default; level trades are on again (v28.18, one way only)', () => {
     expect(DISCORD_COPY.live).toBe(true);
-    expect(POSTED_LEVELS.trade).toBe(false);
+    expect(POSTED_LEVELS.trade).toBe(true);
   });
   it('with DISCORD_COPY_LIVE=off his SIGNAL post is logged and graded, never opened', async () => {
     DISCORD_COPY.live = false;

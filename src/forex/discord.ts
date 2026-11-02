@@ -104,7 +104,9 @@ export const POSTED_LEVELS = {
   /** `DISCORD_LEVEL_TRADES=off` keeps saving / drawing the levels but takes no trades at them */
   /** v27.77 (owner: "keep all Kojiro calls in labs for now — they work for him, apparently not for us"): OFF by default —
    * the level watcher only records what it would have traded (`LEVEL_LAB`); `DISCORD_LEVEL_TRADES=on` trades them again */
-  trade: process.env.DISCORD_LEVEL_TRADES === 'on',
+  /** v28.18 (owner: "just take his levels properly"): ON again, one way only (`LEVEL_RULES`, level-watch.ts);
+   * `DISCORD_LEVEL_TRADES=off` = lab only */
+  trade: process.env.DISCORD_LEVEL_TRADES !== 'off',
   key: 'fx:discord:levels',
   /** a list is used for this long after it was posted (his levels are for the day) */
   validMs: 24 * 3_600_000,
@@ -177,8 +179,11 @@ export function parseBias(raw: string): { pair: string; bias: 1 | -1 | 0 | null;
 }
 
 /** A "Levels" post → the prices in it (brackets, commas and list numbers ignored), or null. Pure. */
+/** v28.18: "28,678,25" (a comma typed for the decimal point) → "28,678.25". Pure. */
+export const fixDecimalComma = (t: string): string => t.replace(/(?<![\d,.])(\d{1,3},\d{3}),(\d{1,2})(?![\d,])/g, '$1.$2');
+
 export function parseLevels(raw: string): { pair: string; levels: number[]; side?: 1 | -1 } | null {
-  const text = raw.replace(/[*_`~>|]/g, ' ');
+  const text = fixDecimalComma(raw.replace(/[*_`~>|]/g, ' '));
   if (!/\bLEVELS?\b/i.test(text)) return null;
   const nums = [...text.matchAll(/(?<![\d.])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d{3,})(?![\d,])/g)].map((m) => Number(m[1]!.replace(/,/g, ''))).filter((x) => Number.isFinite(x) && x > 0);
   if (nums.length < 2) return null;
@@ -197,7 +202,7 @@ export function parseLevels(raw: string): { pair: string; levels: number[]; side
 /** v28.4: a "Monitoring 29,466.25" / "Monitoring 29,563.50 (weaker level)" post → the price(s) he is watching, or null.
  * Pure. */
 export function parseMonitor(raw: string): { pair: string; levels: number[] } | null {
-  const text = raw.replace(/[*_`~>|]/g, ' ');
+  const text = fixDecimalComma(raw.replace(/[*_`~>|]/g, ' '));
   if (!/\bMONITOR(?:ING)?\b/i.test(text)) return null;
   const nums = [...text.matchAll(/(?<![\d.])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d{3,})(?![\d,])/g)].map((m) => Number(m[1]!.replace(/,/g, ''))).filter((x) => Number.isFinite(x) && x > 0);
   if (!nums.length || nums.length > 4) return null;

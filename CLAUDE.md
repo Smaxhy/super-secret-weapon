@@ -758,6 +758,19 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.18 his levels traded again, one way only (Nov 2, owner: "just take his levels properly")
+VPS read 22:48 UTC: his NQ Levels (14:15) + Monitoring posts (18:30, 19:01, elite channel) were all received and parsed; lab only
+→ 30 lab setups 16:47–19:16 UTC, both ways almost every minute: 16 shorts +6.93R, 14 longs −12.59R (he posted no bias; NQ was
+falling). Level lab all time 188 setups −11.64R. Now: `POSTED_LEVELS.trade` ON by default (`DISCORD_LEVEL_TRADES=off` = lab
+only). level-watch.ts `LEVEL_RULES` {trendMin 120, slopeMin 30, minSlopePct 0.03, maxLossesPerDay 3}: `trendSide` (close vs
+its 2-hour EMA and that EMA moved ≥ 0.03% the same way over 30 min, else 0; bar-size aware — 15m = 8 candles), `directionSkip`
+(his bias / Short- or Long-levels list wins; no plan → only the market's direction; flat → nothing), `levelLossesToday`
+(losing level trades of that market this session, 17:00 → 17:00 New York; 3 → no more, one bot-log line). Applied in
+`takeLevelTrades` (LevelWatch 1-minute + fast.ts 15m pass; `LevelTrade.setSide` / `trend`); one open at a time per market as
+before; $20 cap / fee checks / profit lock unchanged. The level lab now records EVERY setup in both modes with `skip` (null =
+taken) → `levelLabSummary.rule` {taken, skipped} = the direction rule's own record (rows before v28.18 left out). Parser:
+`fixDecimalComma` ("28,678,25" → 28,678.25) in parseLevels / parseMonitor. NOT graded before going on (owner's call; judge it
+on `rule` + the discord_kojiro_levels P&L rows). tests/forex-level-direction (7).
 ## v28.17 the Russell 2000 gets a live price from IWM; never trades on the late one (Nov 2, owner: "fix the 10 min delay no
 matter what")
 VPS read: the forex desk's only passing cell = pin_bar:1h on RUTUSD (31 unseen, +0.33R, PF 2.69; pooled row 'no'), and RUTUSD was
