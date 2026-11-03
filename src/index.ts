@@ -694,6 +694,21 @@ async function main(): Promise<void> {
     forex.logBot([`Discord (kojiro, pasted by the owner): ${row.what}`]);
     log.info({ row }, 'Kojiro plan saved by hand');
   });
+  // v28.20 (Nov 3, owner pasted Kojiro's "NQ Levels @Elite" + "28,451.00 is a magnet": "take them" — the copier was down
+  // from 13:33 UTC, so neither post reached the bot): saved once through the same path as a Discord post, stamped at the
+  // moment this runs (valid 24 h from then; level setups count from then on)
+  await oneTimeUpgrade('v28.20-kojiro-levels-nov3', async () => {
+    const at = Date.now();
+    const posts = [
+      { id: 'owner-paste-levels-2026-11-03', text: 'NQ Levels @Elite\n\n28,729.00\n28,600.00\n28,478.50\n28,274.75\n28,148.75\n28,063.50\n28,018.75\n27,975.00 - 27,993.50\n27,801.00 - 27,810.00' },
+      { id: 'owner-paste-magnet-2026-11-03', text: '28,451.00 is a magnet' },
+    ];
+    for (const p of posts) {
+      const row = await handleSignal(redis, practice, { id: p.id, text: p.text, at, source: 'kojiro' });
+      forex.logBot([`Discord (kojiro, pasted by the owner — copier was down): ${row.what}`]);
+    }
+    log.info({ lv: (await loadLevels(redis)).NDXUSD }, 'Kojiro Nov 3 levels saved by hand');
+  });
   // v27.64 (owner: "Short Levels … do the levels that were said, don't miss out"): his 14:55 "Short Levels" post had replaced
   // his 13:24 levels (one list per market then) → both put back: the 13:24 list = his long levels (bias bullish, DOL), the
   // 14:55 list = shorts only

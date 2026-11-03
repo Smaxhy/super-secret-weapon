@@ -758,6 +758,10 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.20 Nov 3 levels saved by hand — the copier was down (owner pasted "NQ Levels @Elite" + "28,451.00 is a magnet")
+VPS read 14:27 UTC: copier lastSeen 13:33, down; neither post in the Discord log; NDXUSD record empty; NQ ≈ 28,294.
+One-time `v28.20-kojiro-levels-nov3` (index.ts): both texts through `handleSignal` stamped at run time → levels 28,729 …
+27,801–27,810 + DOL 28,451 (valid 24 h). The copier itself needs the owner: `docker compose logs discord` on the VPS.
 ## v28.19 "28,451.00 is a magnet" = his target (Nov 3, owner pasted his NQ Levels @Elite + "28,451.00 is a magnet": "take them")
 `parseBias` also reads "X is a (big) magnet" / "magnet at X" as his DOL (draw on liquidity) with no bias → `savePosted`
 keeps any bias he gave and sets the target; level trades aim at it when it is ≥ 1R their way (else his next level).
