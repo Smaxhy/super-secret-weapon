@@ -694,6 +694,18 @@ async function main(): Promise<void> {
     forex.logBot([`Discord (kojiro, pasted by the owner): ${row.what}`]);
     log.info({ row }, 'Kojiro plan saved by hand');
   });
+  // v28.21: the v28.20 paste of "28,451.00 is a magnet" (no lean) revived an expired bearish lean on NDXUSD → removed
+  await oneTimeUpgrade('v28.21-clear-revived-bias', async () => {
+    const raw = await redis.get(POSTED_LEVELS.key);
+    const all = raw ? (JSON.parse(raw) as Record<string, { bias?: number; dol?: number | null; biasT?: number; biasUntil?: number }>) : {};
+    const x = all.NDXUSD;
+    if (x && x.dol === 28451 && x.bias !== undefined && (x.biasT ?? 0) >= Date.parse('2026-11-03T14:25:00Z')) {
+      delete x.bias;
+      delete x.biasUntil;
+      await redis.set(POSTED_LEVELS.key, JSON.stringify(all));
+      forex.logBot(['Kojiro levels on NDXUSD: the bearish lean was an old, expired one revived by the "magnet" post — removed (no lean from him today; the market\'s own direction decides)']);
+    }
+  });
   // v28.20 (Nov 3, owner pasted Kojiro's "NQ Levels @Elite" + "28,451.00 is a magnet": "take them" — the copier was down
   // from 13:33 UTC, so neither post reached the bot): saved once through the same path as a Discord post, stamped at the
   // moment this runs (valid 24 h from then; level setups count from then on)

@@ -758,6 +758,14 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.21 a post without a lean no longer revives an expired one (Nov 3)
+VPS read 14:41 UTC: after the v28.20 paste NDXUSD carried bias −1 (shorts only) — `savePosted` kept the stored bias whenever a
+post had none and stamped it with the new `biasT`, reviving an old expired lean. Now the stored lean carries over only while
+still in force at the post (≤ 24 h, before its `biasUntil`) and keeps its own end; else it is dropped (same for an old DOL).
+One-time `v28.21-clear-revived-bias` removes the revived NDXUSD lean (dol 28,451, biasT ≥ Nov 3 14:25 UTC). Also seen: the
+14:27:55 level long (copier caught the levels 16 s earlier) lost −$32.29 vs $15.35 planned — the 9:30 New York open gapped
+27.5 points through its stop; Kojiro's own indicator skips the first 10 min after the open (offered to the owner, not built).
+tests in forex-level-direction (+2).
 ## v28.20 Nov 3 levels saved by hand — the copier was down (owner pasted "NQ Levels @Elite" + "28,451.00 is a magnet")
 VPS read 14:27 UTC: copier lastSeen 13:33, down; neither post in the Discord log; NDXUSD record empty; NQ ≈ 28,294.
 One-time `v28.20-kojiro-levels-nov3` (index.ts): both texts through `handleSignal` stamped at run time → levels 28,729 …

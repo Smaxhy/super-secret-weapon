@@ -283,8 +283,15 @@ export async function savePosted(redis: Redis, pair: string, patch: { levels: nu
     all[pair] = { ...cur, ...p, levels: [...new Set([...p.levels, ...keep])].sort((a, b) => b - a), added: keep };
   } else {
     if (!force && (cur.biasT ?? 0) > patch.biasT) return;
-    const { biasUntil: _old, ...keep } = cur;
-    all[pair] = { ...keep, ...(patch.bias !== null ? { bias: patch.bias } : {}), ...(patch.dol !== null ? { dol: patch.dol } : {}), biasT: patch.biasT, ...(patch.until ? { biasUntil: patch.until } : {}) };
+    // v28.21 (Nov 3: "28,451.00 is a magnet" brought back an EXPIRED bearish lean): the stored plan only carries over
+    // while it is still in force at this post; a post without a lean keeps a live lean as it was (same expiry)
+    const liveOld = cur.biasT !== undefined && patch.biasT - cur.biasT <= POSTED_LEVELS.validMs && (cur.biasUntil === undefined || patch.biasT < cur.biasUntil);
+    const { biasUntil: oldUntil, bias: oldBias, dol: oldDol, ...keep } = cur;
+    const bias = patch.bias !== null ? patch.bias : liveOld ? oldBias : undefined;
+    const dol = patch.dol !== null ? patch.dol : liveOld ? oldDol : undefined;
+    // a kept lean keeps its own end (its post + a day, or the session end of a full call)
+    const until = patch.until ?? (patch.bias === null && liveOld && oldBias !== undefined ? (oldUntil ?? cur.biasT! + POSTED_LEVELS.validMs) : undefined);
+    all[pair] = { ...keep, ...(bias !== undefined ? { bias } : {}), ...(dol !== undefined && dol !== null ? { dol } : {}), biasT: patch.biasT, ...(until ? { biasUntil: until } : {}) };
   }
   await redis.set(POSTED_LEVELS.key, JSON.stringify(all));
 }

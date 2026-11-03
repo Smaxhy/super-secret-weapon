@@ -113,3 +113,29 @@ describe('his "magnet" posts (v28.19)', () => {
     expect(parseBias('Bias: bearish · DOL: 28,300')).toEqual({ pair: 'NDXUSD', bias: -1, dol: 28_300 });
   });
 });
+
+describe('a post without a lean never revives an old one (v28.21)', () => {
+  const store = () => {
+    const m = new Map<string, string>();
+    return { m, r: { get: async (k: string) => m.get(k) ?? null, set: async (k: string, v: string) => (m.set(k, v), 'OK') } as unknown as Redis };
+  };
+  const H = 3_600_000;
+  const T = Date.UTC(2026, 10, 3, 14, 0);
+  it('an expired bearish lean stays gone when he posts only a magnet', async () => {
+    const { savePosted, loadLevels } = await import('../src/forex/discord');
+    const { r } = store();
+    await savePosted(r, 'NDXUSD', { bias: -1, dol: null, biasT: T - 30 * H, source: 'kojiro' });
+    await savePosted(r, 'NDXUSD', { bias: null, dol: 28_451, biasT: T, source: 'kojiro' });
+    const lv = (await loadLevels(r, T + 60_000)).NDXUSD!;
+    expect(lv.bias).toBeUndefined();
+    expect(lv.dol).toBe(28_451);
+  });
+  it('a live lean is kept with its own end; a full call ends with its session', async () => {
+    const { savePosted, loadLevels } = await import('../src/forex/discord');
+    const { r } = store();
+    await savePosted(r, 'NDXUSD', { bias: 1, dol: null, biasT: T - 2 * H, source: 'kojiro', until: T + H });
+    await savePosted(r, 'NDXUSD', { bias: null, dol: 28_451, biasT: T, source: 'kojiro' });
+    expect((await loadLevels(r, T + 30 * 60_000)).NDXUSD!.bias).toBe(1);
+    expect((await loadLevels(r, T + 2 * H)).NDXUSD?.bias).toBeUndefined();
+  });
+});
