@@ -758,6 +758,10 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.19 "28,451.00 is a magnet" = his target (Nov 3, owner pasted his NQ Levels @Elite + "28,451.00 is a magnet": "take them")
+`parseBias` also reads "X is a (big) magnet" / "magnet at X" as his DOL (draw on liquidity) with no bias → `savePosted`
+keeps any bias he gave and sets the target; level trades aim at it when it is ≥ 1R their way (else his next level).
+tests in forex-level-direction (+1).
 ## v28.18 his levels traded again, one way only (Nov 2, owner: "just take his levels properly")
 VPS read 22:48 UTC: his NQ Levels (14:15) + Monitoring posts (18:30, 19:01, elite channel) were all received and parsed; lab only
 → 30 lab setups 16:47–19:16 UTC, both ways almost every minute: 16 shorts +6.93R, 14 longs −12.59R (he posted no bias; NQ was

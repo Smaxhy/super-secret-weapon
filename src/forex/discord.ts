@@ -169,7 +169,8 @@ export function parseBias(raw: string): { pair: string; bias: 1 | -1 | 0 | null;
   // v27.69: "Leaning towards bearish" / "leaning bullish" / "leaning short" is his bias too (Oct 27: missed → the bot kept
   // the morning's bullish plan and only bought at his evening levels while he was short)
   const b = /\bBIAS\b\W*(BULLISH|BULL|LONG|BEARISH|BEAR|SHORT|NEUTRAL|NONE)/.exec(up) ?? /\bLEANING\b(?:\s+(?:TOWARDS?|TO|MORE|SLIGHTLY|A\s+BIT))*\W*(BULLISH|BULL|LONGS?|BEARISH|BEAR|SHORTS?)\b/.exec(up);
-  const d = /\bDOL\b\W*(?:AROUND|AT|NEAR|~)?\s*([0-9][0-9,]*(?:\.[0-9]+)?)/.exec(up);
+  // v28.19: "28,451.00 is a magnet" / "magnet at 28,451" = his draw on liquidity (a target), like DOL
+  const d = /\bDOL\b\W*(?:AROUND|AT|NEAR|~)?\s*([0-9][0-9,]*(?:\.[0-9]+)?)/.exec(up) ?? /([0-9][0-9,]*(?:\.[0-9]+)?)\s+(?:IS\s+)?(?:A\s+|THE\s+|MY\s+)?(?:BIG\s+|HUGE\s+)?MAGNET\b/.exec(up) ?? /\bMAGNET\b\W*(?:IS\s+|AT\s+|AROUND\s+|NEAR\s+)?([0-9][0-9,]*(?:\.[0-9]+)?)/.exec(up);
   if (!b && !d) return null;
   const word = b?.[1] ?? '';
   const bias = !b ? null : /BULL|LONG/.test(word) ? 1 : /BEAR|SHORT/.test(word) ? -1 : 0;

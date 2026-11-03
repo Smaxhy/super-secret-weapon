@@ -102,3 +102,14 @@ describe('the 1-minute watcher', () => {
     expect(lab[0]!.skip).toBeNull();
   });
 });
+
+describe('his "magnet" posts (v28.19)', () => {
+  it('reads "28,451.00 is a magnet" as his target (DOL), no bias', async () => {
+    const { parseBias } = await import('../src/forex/discord');
+    expect(parseBias('28,451.00 is a magnet')).toEqual({ pair: 'NDXUSD', bias: null, dol: 28_451 });
+    expect(parseBias('magnet at 28,451')?.dol).toBe(28_451);
+    expect(parseBias('**28,451.00** is a big magnet 🧲')?.dol).toBe(28_451);
+    expect(parseBias('who took these shorts')).toBeNull();
+    expect(parseBias('Bias: bearish · DOL: 28,300')).toEqual({ pair: 'NDXUSD', bias: -1, dol: 28_300 });
+  });
+});
