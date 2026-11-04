@@ -145,7 +145,8 @@ export const FX_CONFIG = {
      * the full `cellPass` bar (+0.1R, PF 1.3, Monte Carlo 95%) is still what a very-sure (big) trade needs. VPS Oct 30:
      * the strict bar held back donchian20 / donchian55 / round_break on coins at +0.07…+0.17R, PF 1.18–1.36, and the
      * shadow book scored those refusals +12.1R. A coin where it loses (e.g. SOL round_break −0.04R) stays blocked. */
-    coinPositive: { on: true, minN: 30, minAvgR: 0.05, minPf: 1.15 },
+    /** v28.22 (owner: "turn it all off unless it's proven"): off — a coin trades only where the strict bar passes */
+    coinPositive: { on: false, minN: 30, minAvgR: 0.05, minPf: 1.15 },
   },
   /** v18.7 (owner: "we can't fast trade these charts, they take time"): the bot account trades the 1h + 4h charts only.
    * The 15m / 1m charts stay lab-tested (Strategies / Lab) but place no bot trades while this is off.
@@ -204,7 +205,7 @@ export const FX_CONFIG = {
    * allowed to use maybe strategies, crypto needs to be the safer and main priority"): forex cells back on; `verdicts` = the
    * row verdicts each desk trades (forex Edge + Maybe, coins Edge only). Only Edge rows get the all-in size (`allIn` in
    * toLabTrade); Maybe rows and cells trade at the risk mode's size, which `BOT.sizeToCap` keeps at the account's $ cap on
-   * the tested stop */ cells: { fx: true, crypto: false }, verdicts: { fx: ['edge', 'maybe'], crypto: ['edge', 'maybe'] } as Record<'fx' | 'crypto', ReadonlyArray<string>>,
+   * the tested stop */ cells: { fx: false, crypto: false }, /* v28.22 (owner: "turn it all off unless it's proven"): Edge rows only, no cells, both desks */ verdicts: { fx: ['edge'], crypto: ['edge'] } as Record<'fx' | 'crypto', ReadonlyArray<string>>,
     /** v27.93 (owner: "crypto will still trade solidly enough — check which strats did best and turn them on"): coins trade
      * Maybe rows again, but only solid ones: unseen profit factor ≥ 1.3 (forex: the profit floor's 1.2), on top of the
      * profit floor and the forward check every chosen row needs */

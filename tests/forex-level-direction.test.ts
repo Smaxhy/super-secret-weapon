@@ -1,11 +1,11 @@
 /** v28.18 (owner: "just take his levels properly"): his level trades go one way only, at most 3 losers a session. */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { vi } from 'vitest';
 import type Redis from 'ioredis';
-import { LevelWatch, directionSkip, levelLabSummary, levelLossesToday, trendSide, LEVEL_RULES, LEVEL_LAB, type LabLevelTrade } from '../src/forex/level-watch';
+import { LevelWatch, directionSkip, levelLabSummary, levelLossesToday, levelsProven, trendSide, LEVEL_RULES, LEVEL_LAB, type LabLevelTrade } from '../src/forex/level-watch';
 import type { Practice } from '../src/forex/practice';
 import type { Bar } from '../src/forex/types';
-import { parseLevels, parseMonitor } from '../src/forex/discord';
+import { POSTED_LEVELS, parseLevels, parseMonitor } from '../src/forex/discord';
 
 describe('his level trades, one way only', () => {
   it('reads the market direction from the 2-hour average and its slope', () => {
@@ -96,10 +96,29 @@ describe('the 1-minute watcher', () => {
     expect(lab[0]!.skip).toMatch(/against the market's direction/);
   });
 
-  it('his bullish plan → the same long is taken', async () => {
+  it('his bullish plan → the same long is taken (level trades switched on)', async () => {
+    POSTED_LEVELS.trade = true;
+    onTestFinished(() => { POSTED_LEVELS.trade = false; });
     const { copyOpen, lab } = await run(1);
     expect(copyOpen).toHaveBeenCalledTimes(1);
     expect(lab[0]!.skip).toBeNull();
+  });
+
+  it('v28.22: by default his levels are lab only until the lab proves them', async () => {
+    expect(POSTED_LEVELS.trade).toBe(false);
+    expect(POSTED_LEVELS.autoProve).toBe(true);
+    const { copyOpen, lab } = await run(1);
+    expect(copyOpen).not.toHaveBeenCalled();
+    expect(lab).toHaveLength(1);
+    const row = (r: number, skip: string | null = null) => ({ done: { r }, skip }) as unknown as LabLevelTrade;
+    expect(levelsProven([]).ok).toBe(false);
+    // 30 taken setups: 15 at +1.2R, 15 at −1R → +0.1R a trade, PF 1.2 → not yet
+    const mixed = [...Array(15).fill(row(1.2)), ...Array(15).fill(row(-1))];
+    expect(levelsProven(mixed).ok).toBe(false);
+    // 18 wins, 12 losses → +0.32R, PF 1.8 → proven; skipped setups and older rows don't count
+    const good = [...Array(18).fill(row(1.2)), ...Array(12).fill(row(-1)), ...Array(40).fill(row(-1, 'against')), { done: { r: -1 } } as unknown as LabLevelTrade];
+    expect(levelsProven(good)).toMatchObject({ ok: true, n: 30 });
+    expect(levelsProven(good.slice(1)).ok).toBe(false); // 29 → too few
   });
 });
 

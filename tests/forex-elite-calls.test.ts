@@ -51,9 +51,17 @@ describe('v28.3 elite-channel calls', () => {
     expect(isEliteChannel(undefined)).toBe(false);
   });
 
-  it('takes every elite call at once (his other calls stay in the lab), first in line, and follows his exit and SL-to-BE', async () => {
+  it('v28.22: while his calls are not proven, elite calls stay in the lab too', async () => {
+    const b = book();
+    const row = await handleSignal(new FakeRedis() as unknown as Redis, b, { id: '8', text: 'SIGNAL · NQ — LONG @ 29,900', at: NOW - 60_000, channel: ELITE }, NOW);
+    expect(row.ok).toBe(false);
+    expect(row.what).toMatch(/lab only.*aren't proven/);
+    expect(b.copyOpen).not.toHaveBeenCalled();
+  });
+
+  it('once copying is on: every elite call at once, first in line, and follows his exit and SL-to-BE', async () => {
     const live = DISCORD_COPY.live;
-    DISCORD_COPY.live = false;
+    DISCORD_COPY.live = true;
     try {
       const r = new FakeRedis() as unknown as Redis;
       const b = book();
@@ -62,11 +70,9 @@ describe('v28.3 elite-channel calls', () => {
       expect(row.elite).toBe(true);
       expect(row.what).toMatch(/ELITE-channel call: copied LONG NDXUSD/);
       expect(b.copyOpen.mock.calls[0]![0]).toMatchObject({ pair: 'NDXUSD', side: 1, priority: true });
-      // the same call in his other channel stays lab only
-      const lab = await handleSignal(r, b, { id: '2', text: 'SIGNAL · NQ — LONG @ 29,900', at: NOW - 60_000, channel: OTHER }, NOW);
-      expect(lab.ok).toBe(false);
-      expect(lab.what).toMatch(/lab only/);
-      expect(b.copyOpen).toHaveBeenCalledTimes(1);
+      // the same call in his other channel is copied without the priority room
+      await handleSignal(r, b, { id: '2', text: 'SIGNAL · NQ — LONG @ 29,900', at: NOW - 60_000, channel: OTHER }, NOW);
+      expect(b.copyOpen.mock.calls[1]?.[0]).not.toHaveProperty('priority');
       // a copier catch-up 30 min late still takes it
       expect((await handleSignal(r, b, { id: '3', text: 'SIGNAL · NQ — SHORT @ 29,950', at: NOW - 30 * 60_000, channel: ELITE }, NOW)).ok).toBe(true);
       // his follow-ups: SL to BE, then the exit
@@ -80,14 +86,14 @@ describe('v28.3 elite-channel calls', () => {
     }
   });
 
-  it('DISCORD_ELITE_LIVE=off puts them back in the lab', async () => {
+  it('DISCORD_ELITE_LIVE=off: no priority, and a late elite call is too old', async () => {
     const live = DISCORD_COPY.live;
-    DISCORD_COPY.live = false;
+    DISCORD_COPY.live = true;
     DISCORD_COPY.eliteLive = false;
     try {
       const b = book();
-      const row = await handleSignal(new FakeRedis() as unknown as Redis, b, { id: '9', text: 'SIGNAL · NQ — LONG @ 29,900', at: NOW - 60_000, channel: ELITE }, NOW);
-      expect(row.ok).toBe(false);
+      const row = await handleSignal(new FakeRedis() as unknown as Redis, b, { id: '9', text: 'SIGNAL · NQ — LONG @ 29,900', at: NOW - 30 * 60_000, channel: ELITE }, NOW);
+      expect(row.kind).toBe('old');
       expect(b.copyOpen).not.toHaveBeenCalled();
     } finally {
       DISCORD_COPY.live = live;

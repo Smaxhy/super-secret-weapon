@@ -14,7 +14,7 @@
  * pass takes a trade when the price comes to one of them and the other side gets absorbed there (fast.ts →
  * `postedLevelSignal`). Paper only, like every trade here.
  */
-import { KSTUDY, callRiskFor, kojiroGate, loadCard, saveHistory } from './kojiro-study';
+import { KSTUDY, callRiskFor, callsProven, kojiroGate, loadCard, saveHistory } from './kojiro-study';
 import { sessionOf } from './montecarlo';
 import { nyOffsetMs } from './ny-time';
 import type Redis from 'ioredis';
@@ -46,7 +46,11 @@ export const DISCORD_COPY = {
   /** v27.77: his SIGNAL posts were lab only; v28.4 (owner: "I want it to follow all his signal calls and trades") copied
    * again by default, every channel. `DISCORD_COPY_LIVE=off` = lab only (logged + graded, never opened); his exits always
    * close any copy left open. */
-  live: process.env.DISCORD_COPY_LIVE !== 'off',
+  /** v28.22 (owner: "turn it all off unless it's proven this way"): his calls are copied only once his graded record
+   * proves them (`callsProven`, kojiro-study.ts) — elite-channel and full-conviction calls too. `DISCORD_COPY_LIVE=on`
+   * forces copying, `=off` = lab only even when proven. */
+  live: process.env.DISCORD_COPY_LIVE === 'on',
+  autoProve: process.env.DISCORD_COPY_LIVE !== 'off',
   /** v27.94 (owner: "Fullport FOMC longs is also a call … make sure it happens at all costs"): his FULL-conviction calls
    * ("fullport / full port / full send / all in … longs / shorts", or an event call like "FOMC longs") are taken even
    * while his other calls are lab-only, past his-record gate; `DISCORD_FULLPORT_LIVE=off` = lab only like the rest. */
@@ -106,7 +110,10 @@ export const POSTED_LEVELS = {
    * the level watcher only records what it would have traded (`LEVEL_LAB`); `DISCORD_LEVEL_TRADES=on` trades them again */
   /** v28.18 (owner: "just take his levels properly"): ON again, one way only (`LEVEL_RULES`, level-watch.ts);
    * `DISCORD_LEVEL_TRADES=off` = lab only */
-  trade: process.env.DISCORD_LEVEL_TRADES !== 'off',
+  /** v28.22 (owner: "turn it all off unless it's proven"): his levels are traded only once the level lab proves the
+   * setups the bot would take (`levelsProven`, level-watch.ts); `DISCORD_LEVEL_TRADES=on` forces it, `=off` = lab only */
+  trade: process.env.DISCORD_LEVEL_TRADES === 'on',
+  autoProve: process.env.DISCORD_LEVEL_TRADES !== 'off',
   key: 'fx:discord:levels',
   /** a list is used for this long after it was posted (his levels are for the day) */
   validMs: 24 * 3_600_000,
@@ -454,7 +461,7 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
     if (mon?.levels.length) {
       await savePosted(redis, mon.pair, { levels: mon.levels, t: s.at, msgId: s.id, source, add: true });
       const now2 = (await loadLevels(redis, now))[mon.pair]?.levels ?? mon.levels;
-      return done({ ...base, kind: 'levels', pair: mon.pair, ok: true, what: `${ed}${mon.pair} he is watching ${mon.levels.map(fmt).join(' · ')} — added to today's levels (${now2.map(fmt).join(' · ')})${POSTED_LEVELS.trade ? '' : ' — lab only'}` });
+      return done({ ...base, kind: 'levels', pair: mon.pair, ok: true, what: `${ed}${mon.pair} he is watching ${mon.levels.map(fmt).join(' · ')} — added to today's levels (${now2.map(fmt).join(' · ')})${POSTED_LEVELS.trade ? '' : ' — lab only until his level setups prove themselves'}` });
     }
     if (!lv && !plan) return done({ ...base, kind: 'none', ok: true, what: s.edited && parsed.kind !== 'none' ? 'edited post — trades are only copied from the post as first sent' : 'not a trade message' });
     const said: string[] = [];
@@ -465,21 +472,23 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
     if (lv) {
       await savePosted(redis, lv.pair, { levels: lv.levels, t: s.at, msgId: s.id, source, ...(lv.side ? { side: lv.side } : {}) });
       const which = lv.side === -1 ? 'SHORT levels (shorts only)' : lv.side === 1 ? 'LONG levels (longs only)' : 'levels';
-      said.push(`${lv.pair} ${which} saved for today: ${lv.levels.map(fmt).join(' · ')}${POSTED_LEVELS.trade ? ' — the bot trades a bounce, a break-and-retest or a move toward them (live 1-minute candles)' : ' — lab only: the bot records what it would trade at them'}`);
+      said.push(`${lv.pair} ${which} saved for today: ${lv.levels.map(fmt).join(' · ')}${POSTED_LEVELS.trade ? ' — the bot trades a bounce, a break-and-retest or a move toward them (live 1-minute candles)' : ' — lab only until proven: the bot records what it would trade at them'}`);
     }
     return done({ ...base, kind: 'levels', pair: (lv ?? plan)!.pair, ok: true, what: ed + said.join('; ') });
   }
   if (sig.kind === 'open') {
     const full = sig.conviction === 'full';
     if (full && sig.pair) await savePosted(redis, sig.pair, { bias: sig.side, dol: null, biasT: s.at, source, until: sessionEnd(s.at) }).catch(() => undefined);
-    const eliteGo = elite && DISCORD_COPY.eliteLive;
+    const card = await loadCard(redis);
+    const proof = callsProven(card);
+    const allowed = DISCORD_COPY.live || (DISCORD_COPY.autoProve && proof.ok);
+    const eliteGo = allowed && elite && DISCORD_COPY.eliteLive;
     if (now - s.at > (full || eliteGo ? DISCORD_COPY.fullMaxAgeMs : DISCORD_COPY.maxAgeMs)) return done({ ...base, kind: 'old', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `posted ${Math.round((now - s.at) / 60_000)} min ago — too old to copy` });
     if (!sig.pair || !instrument(sig.pair)) return done({ ...base, kind: 'open', pair: null, side: sig.side, hisPx: sig.price, ok: false, what: `unknown market "${sig.symbol ?? '?'}"` });
     // v27.66: his own record decides — a kind of his calls that kept losing is skipped; the trailing stop is the one
     // that made the most on his past calls (kojiro-study.ts)
     const lv = (await loadLevels(redis, now))[sig.pair];
     const px = sig.price;
-    const card = await loadCard(redis);
     const size = callRiskFor(card);
     const gate = kojiroGate(card, {
       side: sig.side,
@@ -488,7 +497,8 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
       atLevel: px !== null && !!lv && levelSets(lv).some((st) => st.all.some((L) => Math.abs(L - px) <= (px * KSTUDY.levelPct) / 100)),
       stopNamed: sig.stop,
     });
-    const fullGo = (full && DISCORD_COPY.fullLive) || eliteGo;
+    const fullGo = (allowed && full && DISCORD_COPY.fullLive) || eliteGo;
+    if (!allowed) return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `lab only — not traded (${proof.why}): his ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair}${sig.price ? ` @ ${sig.price}` : ''}` });
     if (!gate.take && !fullGo) return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `not copied — his record: ${gate.why}` });
     if (!DISCORD_COPY.live && !fullGo) return done({ ...base, kind: 'open', pair: sig.pair, side: sig.side, hisPx: sig.price, ok: false, what: `lab only — not traded (Kojiro calls are in the lab; his record keeps being graded): his ${sig.side === 1 ? 'LONG' : 'SHORT'} ${sig.pair}${sig.price ? ` @ ${sig.price}` : ''}` });
     // v28.5: a call the other way on the same market replaces his earlier one (Oct 28: "FOMC longs" then "FOMC shorts" left
@@ -531,6 +541,7 @@ export async function handleSignal(redis: Redis, book: CopyBook, s: SignalIn, no
  */
 export async function catchUpFullCalls(redis: Redis, book: CopyBook, now = Date.now(), withinMs = 4 * 3_600_000, final = true): Promise<string[]> {
   if (!DISCORD_COPY.on || (!DISCORD_COPY.fullLive && !DISCORD_COPY.eliteLive)) return [];
+  if (!DISCORD_COPY.live && !(DISCORD_COPY.autoProve && callsProven(await loadCard(redis)).ok)) return []; // v28.22
   const out: string[] = [];
   for (const row of (await copyLog(redis, DISCORD_COPY.logMax)).reverse()) {
     if (row.ok && row.kind === 'open') continue; // already copied

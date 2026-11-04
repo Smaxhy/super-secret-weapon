@@ -23,7 +23,18 @@ const OK = { n: 108, pf: 2.4, totalR: 20, ok: true };
 
 describe('v27.27 only proven strategies trade, big size', () => {
   it('only Edge rows are chosen; no side doors (per-market cells, owner picks); the per-desk list is empty', () => {
-    expect(FX_CONFIG.provenOnly).toEqual({ on: true, riskPct: 10, cells: { fx: true, crypto: false }, verdicts: { fx: ['edge', 'maybe'], crypto: ['edge', 'maybe'] }, maybeMinPf: { fx: 0, crypto: 1.3 }, cellAllIn: { fx: true, crypto: false } });
+    // v28.22 (owner: "turn it all off unless it's proven"): Edge rows only on both desks, no per-market cells
+    expect(FX_CONFIG.provenOnly).toEqual({ on: true, riskPct: 10, cells: { fx: false, crypto: false }, verdicts: { fx: ['edge'], crypto: ['edge'] }, maybeMinPf: { fx: 0, crypto: 1.3 }, cellAllIn: { fx: true, crypto: false } });
+    const v28 = [{ id: 'rsi_dip', tf: '15m', verdict: 'edge' as const }, { id: 'news_drift', tf: '15m', verdict: 'maybe' as const }];
+    expect(chosenOf(v28, [], [], 'fx')).toEqual(['rsi_dip:15m']);
+    expect(chosenOf(v28, [], [], 'crypto')).toEqual(['rsi_dip:15m']);
+    const strictFx = { pair: 'RUTUSD', n: 108, avgR: 0.19, pf: 2.4, winPct: 50, inN: 60, inAvgR: 0.1, mcP: 0.99, mcP5: 0.05 } as never;
+    expect(planChosen('pivot_bounce', 'RUTUSD', false, undefined, false, strictFx, '4h')).toBe(false); // a forex cell no longer trades on its own
+    // the older settings below (v27.85 / v27.93) are still tested with their switches set here
+    const v0 = FX_CONFIG.provenOnly.verdicts;
+    FX_CONFIG.provenOnly.verdicts = { fx: ['edge', 'maybe'], crypto: ['edge', 'maybe'] };
+    FX_CONFIG.provenOnly.cells.fx = true;
+    onTestFinished(() => { FX_CONFIG.provenOnly.verdicts = v0; FX_CONFIG.provenOnly.cells.fx = false; });
     // v27.82 / v27.85: coin cells off — even a strict per-market record doesn't trade without an Edge row; forex cells on
     const strict0 = { pair: 'BTCUSD', n: 108, avgR: 0.19, pf: 2.4, winPct: 50, inN: 60, inAvgR: 0.1, mcP: 0.99, mcP5: 0.05 } as never;
     expect(planChosen('pivot_bounce', 'BTCUSD', false, undefined, false, strict0, '4h', { n: 400, avgR: 0.05, pf: 1.2, verdict: 'maybe' as const })).toBe(false);
@@ -82,6 +93,9 @@ describe('v27.27 only proven strategies trade, big size', () => {
   });
 
   it('v27.34: per-market cells count as live setups in provenCells only where they trade', () => {
+    expect(provenCells([{ id: 'news_drift', tf: '1h', outSample: { n: 400, winPct: 50, avgR: 0.05, medianR: 0, pf: 1.2, totalR: 20, maxDdR: 5 }, verdict: 'maybe', markets: [{ pair: 'RUTUSD', n: 108, avgR: 0.19, pf: 2.4, winPct: 50, inN: 60, inAvgR: 0.1, mcP: 0.99, mcP5: 0.05, sess: [] }] }])).toEqual({}); // v28.22: no cells
+    FX_CONFIG.provenOnly.cells.fx = true;
+    onTestFinished(() => { FX_CONFIG.provenOnly.cells.fx = false; });
     const cell = (pair: string) => ({ pair, n: 108, avgR: 0.19, pf: 2.4, winPct: 50, inN: 60, inAvgR: 0.1, mcP: 0.99, mcP5: 0.05, sess: [] });
     const pooled = { n: 400, winPct: 50, avgR: 0.05, medianR: 0, pf: 1.2, totalR: 20, maxDdR: 5 };
     expect(provenCells([{ id: 'news_drift', tf: '1h', outSample: pooled, verdict: 'maybe', markets: [cell('ETHUSD'), cell('RUTUSD')] }])).toEqual({ RUTUSD: ['news_drift:1h'] }); // v27.85: forex cells on, coin cells off

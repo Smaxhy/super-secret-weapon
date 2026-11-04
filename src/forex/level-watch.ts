@@ -218,6 +218,25 @@ export function levelLabSummary(rows: readonly LabLevelTrade[]): { n: number; do
   return { n: rows.length, done: done.length, wins: done.filter((x) => x.done!.r > 0).length, totalR, avgR: done.length ? Math.round((totalR / done.length) * 100) / 100 : null, open: rows.length - done.length, byWhy, rule };
 }
 
+/** v28.22 (owner: "turn it all off unless it's proven this way"): the bar his level setups must clear in the level lab
+ * before the bot trades them — only setups the direction rule would take (`skip` null), finished. */
+export const LEVEL_PROOF = { minN: 30, minAvgR: 0.1, minPf: 1.3 };
+
+/** Have the setups the bot would take at his levels made money in the level lab? Pure. */
+export function levelsProven(rows: readonly LabLevelTrade[]): { ok: boolean; why: string; n: number; avgR: number | null; pf: number | null } {
+  const rs = rows.filter((x) => x.done && x.skip === null).map((x) => x.done!.r);
+  const n = rs.length;
+  const sum = rs.reduce((a, b) => a + b, 0);
+  const win = rs.filter((r) => r > 0).reduce((a, b) => a + b, 0);
+  const loss = -rs.filter((r) => r < 0).reduce((a, b) => a + b, 0);
+  const avgR = n ? Math.round((sum / n) * 100) / 100 : null;
+  const pf = loss > 0 ? Math.round((win / loss) * 100) / 100 : n ? 99 : null;
+  const p = LEVEL_PROOF;
+  const rec = `${n} lab setups the bot would take, ${avgR === null ? '—' : `${avgR >= 0 ? '+' : ''}${avgR}R`} a trade, profit factor ${pf ?? '—'}`;
+  const ok = n >= p.minN && (avgR ?? -1) >= p.minAvgR && (pf ?? 0) >= p.minPf;
+  return { ok, n, avgR, pf, why: ok ? `his levels are proven: ${rec}` : `his levels aren't proven: ${rec} (needs ${p.minN}+, +${p.minAvgR}R, ${p.minPf}+)` };
+}
+
 /** Live 1-minute candles moved onto the futures price; only finished minutes. Pure. */
 export function shiftedMinutes(live: readonly Bar[], gap: number, now: number): Bar[] {
   return live.filter((b) => b.t + 60_000 <= now).map((b) => ({ ...b, o: b.o + gap, h: b.h + gap, l: b.l + gap, c: b.c + gap }));
@@ -353,8 +372,9 @@ export class LevelWatch {
           lab.splice(LEVEL_LAB.max);
           labChanged = true;
         }
-        if (!POSTED_LEVELS.trade) {
-          if (!skip) this.logBot(pair, [`Kojiro level (LAB, not traded): would ${sig.side === 1 ? 'buy' : 'sell'} ${pair} at ${bars[last]!.c} — ${sig.note ?? 'at his level'}; stop ${+sig.stop.toFixed(2)}${sig.target !== null ? `, target ${sig.target}` : ''}`]);
+        const proof = POSTED_LEVELS.trade ? null : POSTED_LEVELS.autoProve ? levelsProven(lab) : { ok: false, why: 'level trades switched off' };
+        if (proof && !proof.ok) {
+          if (!skip) this.logBot(pair, [`Kojiro level (LAB, not traded — ${proof.why}): would ${sig.side === 1 ? 'buy' : 'sell'} ${pair} at ${bars[last]!.c} — ${sig.note ?? 'at his level'}; stop ${+sig.stop.toFixed(2)}${sig.target !== null ? `, target ${sig.target}` : ''}`]);
           continue;
         }
         if (skip) continue;

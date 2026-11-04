@@ -1,5 +1,5 @@
 /** v27.94 (owner: "Fullport FOMC longs is also a call … make sure it happens at all costs"). */
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type Redis from 'ioredis';
 import { DISCORD_COPY, catchUpFullCalls, fullCall, handleSignal, loadLevels, parseSignal, type CopyBook } from '../src/forex/discord';
 
@@ -56,9 +56,20 @@ describe('v27.94 full-conviction calls', () => {
     expect(parseSignal('SIGNAL · NQ — LONG @ 29,026.25')).toEqual({ kind: 'open', pair: 'NDXUSD', symbol: 'NQ', side: 1, price: 29026.25, stop: null, target: null });
   });
 
-  it('is taken at the market while his other calls are lab-only, and saves his lean', async () => {
+  it('v28.22: while his calls are not proven a full call stays in the lab (his lean is still saved)', async () => {
+    const redis = new FakeRedis();
+    const book = bookOk();
+    const row = await handleSignal(redis as unknown as Redis, book, { id: '1565000000000000009', text: 'Fullport FOMC longs', at: NOW - 3 * 60_000 }, NOW);
+    expect(row.ok).toBe(false);
+    expect(row.what).toMatch(/lab only/);
+    expect(book.copyOpen).not.toHaveBeenCalled();
+    expect((await loadLevels(redis as unknown as Redis, NOW)).NDXUSD?.bias).toBe(1);
+    expect(await catchUpFullCalls(redis as unknown as Redis, book, NOW)).toEqual([]);
+  });
+
+  it('once copying is on: taken at the market, saves his lean, up to 45 min late', async () => {
     const live = DISCORD_COPY.live;
-    DISCORD_COPY.live = false;
+    DISCORD_COPY.live = true;
     try {
       const redis = new FakeRedis();
       const book = bookOk();
@@ -68,11 +79,6 @@ describe('v27.94 full-conviction calls', () => {
       expect(book.copyOpen).toHaveBeenCalledTimes(1);
       expect(book.copyOpen.mock.calls[0]![0]).toMatchObject({ pair: 'NDXUSD', side: 1, hisPx: null, riskPct: DISCORD_COPY.riskPct });
       expect((await loadLevels(redis as unknown as Redis, NOW)).NDXUSD?.bias).toBe(1);
-      // a normal priced signal stays in the lab
-      const lab = await handleSignal(redis as unknown as Redis, book, { id: '1565000000000000002', text: 'SIGNAL · NQ — LONG @ 29,900', at: NOW - 60_000 }, NOW);
-      expect(lab.ok).toBe(false);
-      expect(lab.what).toMatch(/lab only/);
-      expect(book.copyOpen).toHaveBeenCalledTimes(1);
       // reached us 30 min late (copier catch-up) → still taken; 2 h late → not
       expect((await handleSignal(redis as unknown as Redis, book, { id: '1565000000000000003', text: 'full port shorts', at: NOW - 30 * 60_000 }, NOW)).ok).toBe(true);
       expect((await handleSignal(redis as unknown as Redis, book, { id: '1565000000000000004', text: 'full port shorts', at: NOW - 120 * 60_000 }, NOW)).kind).toBe('old');
@@ -82,6 +88,8 @@ describe('v27.94 full-conviction calls', () => {
   });
 
   it('catches up a call the old parser logged as "not a trade message" — once', async () => {
+    DISCORD_COPY.live = true;
+    onTestFinished(() => { DISCORD_COPY.live = false; });
     const redis = new FakeRedis();
     redis.lists.set(DISCORD_COPY.logKey, [
       JSON.stringify({ t: NOW - 40 * 60_000, id: '1565000000000000010', source: 'kojiro', text: 'Fullport FOMC longs', kind: 'none', ok: true, what: 'not a trade message' }),

@@ -1,6 +1,6 @@
 /** v28.4 (owner: "the bot seen these signals? Levels 29,670 / 29,729.50 / … · Monitoring 29,466.25"; "follow all his
  * signal calls"): his edited Levels post, his "Monitoring" levels, a one-off call's lean ends with its session. */
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type Redis from 'ioredis';
 import { DISCORD_COPY, handleSignal, loadLevels, parseMonitor, savePosted, sessionEnd, type CopyBook } from '../src/forex/discord';
 
@@ -23,7 +23,17 @@ const FIRST = '**Levels**\n\n29,609.50\n29,670.00\n29,745.00 -29,750.00\n29,830.
 const EDIT = 'Levels\n\n29,670.00\n29,729.50\n29,745.00 -29,750.00\n29,785.25 - 29,788.00\n29,830.50-29,835.25';
 
 describe('v28.4 edited posts + Monitoring levels + one-off leans', () => {
-  it('his calls are copied by default', () => expect(DISCORD_COPY.live).toBe(true));
+  it('v28.22: his calls are copied only once his graded record proves them', async () => {
+    expect(DISCORD_COPY.live).toBe(false);
+    expect(DISCORD_COPY.autoProve).toBe(true);
+    const { callsProven } = await import('../src/forex/kojiro-study');
+    expect(callsProven(null).ok).toBe(false);
+    const card = (n: number, avgR: number, pf: number) => ({ best: 'copy', plans: { copy: { n, avgR, pf } } }) as never;
+    expect(callsProven(card(20, 0.2, 1.5)).ok).toBe(true);
+    expect(callsProven(card(14, 0.5, 3)).ok).toBe(false);
+    expect(callsProven(card(40, 0.05, 1.5)).ok).toBe(false);
+    expect(callsProven(card(40, 0.2, 1.2)).ok).toBe(false);
+  });
 
   it('reads "Monitoring" prices; list numbers and words are not levels', () => {
     expect(parseMonitor('Monitoring 29,466.25')).toEqual({ pair: 'NDXUSD', levels: [29_466.25] });
@@ -94,6 +104,8 @@ describe('v28.5 copying him right: targets, flips, sweep-and-reclaim at his leve
   });
 
   it('a call the other way closes his earlier copy first; a TP post sets the open copy\'s target', async () => {
+    DISCORD_COPY.live = true; // v28.22: copying is forced on here (by default only once his record is proven)
+    onTestFinished(() => { DISCORD_COPY.live = false; });
     const calls: string[] = [];
     const b = {
       copyOpen: vi.fn(async () => (calls.push('open'), { ok: true, entry: 29_887, stop: 30_036, riskUsd: 20 })),

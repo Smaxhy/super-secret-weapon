@@ -758,6 +758,19 @@ once we have a live account we'll see." Crypto code is untouched (still paper, s
 - Owner wants weekly / monthly big returns; told plainly that only leverage makes that and the risk table shows the cost.
   Live forex needs an account (Hyperliquid / Ostium on-chain perps, or a broker API) — only after Edge + paper agree.
 
+## v28.22 everything unproven is off (Nov 4, owner: "turn it all off then unless it's proven, this way we will never get there")
+VPS read Nov 3 18:00 UTC: 3 level trades on his NQ levels −$48.23 (14:27 bought 2 min before the 9:30 NY open, gapped 27.5
+pts through the stop; 14:57 stopped; 15:02 +$2.06); level lab 201 setups −16.72R. Now: (1) lab.ts `provenOnly.verdicts`
+{fx ['edge'], crypto ['edge']}, `cells` {fx false, crypto false}, `strict.coinPositive.on` false — only Edge rows trade on
+both desks (still: marketMustPass, forward check, coin sureOnly). (2) Kojiro calls (`DISCORD_COPY.live` now only
+`DISCORD_COPY_LIVE=on`; `autoProve` unless `=off`): a SIGNAL / elite / full-conviction call is copied only when
+`callsProven(card)` (kojiro-study.ts: best hold 15+ graded calls, ≥ +0.1R, PF ≥ 1.3), else "lab only — not traded (why)";
+`catchUpFullCalls` the same; his exits still close any copy. (3) His levels (`POSTED_LEVELS.trade` only
+`DISCORD_LEVEL_TRADES=on`; `autoProve` unless `=off`): LevelWatch trades only when `levelsProven(lab)` (level-watch.ts
+`LEVEL_PROOF` {minN 30, minAvgR 0.1, minPf 1.3} on finished lab setups the direction rule would take, `skip === null`);
+the 15m pass takes none unless forced on. `/api/forex/discord` → `callsProof`, `levelLab.proof`. Memecoin paper collector
+untouched. Expect long idle stretches. NOT built (offered): skip 9:25–9:40 NY, one trade per level per 30 min, close log
+lines for level trades. tests in forex-level-direction / discord-edits / elite-calls / fullport / proven-only.
 ## v28.21 a post without a lean no longer revives an expired one (Nov 3)
 VPS read 14:41 UTC: after the v28.20 paste NDXUSD carried bias −1 (shorts only) — `savePosted` kept the stored bias whenever a
 post had none and stamped it with the new `biasT`, reviving an old expired lean. Now the stored lean carries over only while

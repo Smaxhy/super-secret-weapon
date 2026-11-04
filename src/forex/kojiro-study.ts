@@ -272,6 +272,18 @@ export function kojiroGate(card: KCard | null, c: Pick<KCall, 'side' | 'session'
 
 /** v28.8: how much of the account one of his SIGNAL calls risks — `callRiskPct` (5%) until his graded record under the
  * hold the bot uses proves it, then `callRiskPctProven` (10%). Pure. */
+/** v28.22 (owner: "turn it all off unless it's proven"): are his calls proven on OUR candles — the bot's own hold on
+ * his graded calls: `provenMinN`+ calls at ≥ `provenMinAvgR` a call, profit factor ≥ `provenMinPf`? Only then are they
+ * copied for real (`DISCORD_COPY.autoProve`). Pure. */
+export function callsProven(card: KCard | null): { ok: boolean; why: string } {
+  const st = card ? card.plans[card.best] : null;
+  const c = DISCORD_COPY;
+  if (!st || st.n < c.provenMinN) return { ok: false, why: `his calls aren't proven yet: ${st?.n ?? 0} graded, needs ${c.provenMinN}+ at +${c.provenMinAvgR}R a call, profit factor ${c.provenMinPf}+` };
+  const ok = st.avgR >= c.provenMinAvgR && (st.pf ?? 0) >= c.provenMinPf;
+  const rec = `${st.n} graded calls, ${st.avgR >= 0 ? '+' : ''}${st.avgR}R a call, profit factor ${st.pf ?? '—'}`;
+  return ok ? { ok, why: `his calls are proven: ${rec}` } : { ok, why: `his calls aren't proven: ${rec} (needs +${c.provenMinAvgR}R and ${c.provenMinPf}+)` };
+}
+
 export function callRiskFor(card: KCard | null): { pct: number; why: string } {
   const base = DISCORD_COPY.callRiskPct;
   const st = card ? card.plans[card.best] : null;

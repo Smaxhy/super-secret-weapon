@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { marketRecOf } from '../src/forex/lab';
 import type { MarketCell } from '../src/forex/montecarlo';
 
@@ -70,7 +70,9 @@ describe('v27.21 correction rows', () => {
 
 describe('v28.11 coins: a positive record on the coin is enough (the strict bar stays for big trades)', () => {
   it('passes a coin at +0.1R PF 1.2 on 40 unseen trades, blocks a losing coin and a thin one; forex unchanged', async () => {
-    const { marketRecOf } = await import('../src/forex/lab');
+    const { marketRecOf, FX_CONFIG } = await import('../src/forex/lab');
+    FX_CONFIG.strict.coinPositive.on = true; // v28.22 switched it off by default
+    onTestFinished(() => { FX_CONFIG.strict.coinPositive.on = false; });
     const cell = (o: Record<string, unknown>) => ({ pair: 'BTCUSD', n: 40, avgR: 0.1, pf: 1.2, inN: 30, inAvgR: 0.05, mcP: 0.8, ...o }) as never;
     expect(marketRecOf({ n: 80, pf: 1.2, totalR: 5 }, cell({}), false, 'BTCUSD').ok).toBe(true);
     expect(marketRecOf({ n: 80, pf: 0.95, totalR: -2 }, cell({ avgR: -0.04, pf: 0.95 }), false, 'SOLUSD').ok).toBe(false);
